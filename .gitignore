@@ -1,0 +1,7 @@
+build/
+.cache/
+.vscode/
+.idea/
+*.dSYM/
+compile_commands.json
+.DS_Store

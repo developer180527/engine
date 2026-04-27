@@ -17,18 +17,40 @@ set(GLFW_BUILD_TESTS OFF CACHE BOOL "")
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "")
 add_subdirectory(third_party/glfw)
 
-# Engine executable
-add_executable(engine src/main.cpp)
+# ImGui core (no CMakeLists, build it ourselves)
+add_library(imgui STATIC
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/imgui_demo.cpp
+)
+target_include_directories(imgui PUBLIC third_party/imgui)
 
-target_link_libraries(engine PRIVATE
-    bgfx
-    bx
-    bimg
-    glfw
-    "-framework Cocoa"
-    "-framework QuartzCore"
-    "-framework Metal"
-    "-framework IOKit"
+# Engine executable
+add_executable(engine
+    src/main.cpp
+    src/render/imgui_bgfx.cpp
+    src/render/imgui_impl_glfw.cpp
 )
 
-target_include_directories(engine PRIVATE src)
+target_include_directories(engine PRIVATE
+    src
+    src/render
+)
+
+target_link_libraries(engine PRIVATE
+    bgfx bx bimg
+    glfw
+    imgui
+)
+
+# Platform-specific frameworks/libs
+if(APPLE)
+    target_link_libraries(engine PRIVATE
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework Metal"
+        "-framework IOKit"
+    )
+endif()
