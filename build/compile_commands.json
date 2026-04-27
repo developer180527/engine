@@ -1,0 +1,806 @@
+[
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/src -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/glfw/include -g -std=c++20 -arch arm64 -o CMakeFiles/engine.dir/src/main.cpp.o -c /Users/venugopal/Developer/engine/src/main.cpp",
+  "file": "/Users/venugopal/Developer/engine/src/main.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/CMakeFiles/engine.dir/src/main.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/allocator.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/allocator.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/allocator.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/allocator.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/bounds.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/bounds.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/bounds.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/bounds.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/bx.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/bx.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/bx.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/bx.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/commandline.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/commandline.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/commandline.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/commandline.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/crtnone.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/crtnone.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/crtnone.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/crtnone.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/debug.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/debug.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/debug.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/debug.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/dtoa.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/dtoa.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/dtoa.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/dtoa.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/easing.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/easing.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/easing.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/easing.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/file.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/file.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/file.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/file.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/filepath.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/filepath.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/filepath.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/filepath.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/hash.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/hash.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/hash.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/hash.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/math.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/math.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/math.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/math.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/mutex.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/mutex.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/mutex.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/mutex.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/os.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/os.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/os.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/os.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/process.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/process.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/process.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/process.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/semaphore.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/semaphore.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/semaphore.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/semaphore.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/settings.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/settings.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/settings.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/settings.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/sort.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/sort.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/sort.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/sort.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/string.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/string.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/string.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/string.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/thread.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/thread.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/thread.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/thread.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/timer.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/timer.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/timer.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/timer.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/url.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/url.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/src/url.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bx/CMakeFiles/bx.dir/__/__/bx/src/url.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_averages_and_directions.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_averages_and_directions.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_averages_and_directions.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_averages_and_directions.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_block_sizes.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_block_sizes.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_block_sizes.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_block_sizes.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_color_quantize.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_color_quantize.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_color_quantize.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_color_quantize.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_color_unquantize.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_color_unquantize.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_color_unquantize.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_color_unquantize.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_compress_symbolic.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_compress_symbolic.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_compress_symbolic.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_compress_symbolic.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_compute_variance.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_compute_variance.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_compute_variance.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_compute_variance.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_decompress_symbolic.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_decompress_symbolic.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_decompress_symbolic.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_decompress_symbolic.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_diagnostic_trace.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_diagnostic_trace.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_diagnostic_trace.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_diagnostic_trace.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_entry.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_entry.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_entry.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_entry.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_find_best_partitioning.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_find_best_partitioning.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_find_best_partitioning.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_find_best_partitioning.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_ideal_endpoints_and_weights.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_ideal_endpoints_and_weights.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_ideal_endpoints_and_weights.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_ideal_endpoints_and_weights.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_image.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_image.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_image.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_image.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_integer_sequence.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_integer_sequence.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_integer_sequence.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_integer_sequence.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_mathlib.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_mathlib.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_mathlib.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_mathlib.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_mathlib_softfloat.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_mathlib_softfloat.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_mathlib_softfloat.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_mathlib_softfloat.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_partition_tables.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_partition_tables.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_partition_tables.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_partition_tables.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_percentile_tables.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_percentile_tables.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_percentile_tables.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_percentile_tables.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_pick_best_endpoint_format.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_pick_best_endpoint_format.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_pick_best_endpoint_format.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_pick_best_endpoint_format.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_quantization.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_quantization.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_quantization.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_quantization.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_symbolic_physical.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_symbolic_physical.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_symbolic_physical.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_symbolic_physical.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_weight_align.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_weight_align.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_weight_align.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_weight_align.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_weight_quant_xfer_tables.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_weight_quant_xfer_tables.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/source/astcenc_weight_quant_xfer_tables.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/astc-encoder/source/astcenc_weight_quant_xfer_tables.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -g -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/tinyexr/deps/miniz/miniz.c.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps/miniz/miniz.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps/miniz/miniz.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/3rdparty/tinyexr/deps/miniz/miniz.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/src/image.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/src/image.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/src/image.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/src/image.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/src/image_gnf.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/src/image_gnf.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/src/image_gnf.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg.dir/__/__/bimg/src/image_gnf.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -g -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_decode.dir/__/__/bimg/3rdparty/tinyexr/deps/miniz/miniz.c.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps/miniz/miniz.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps/miniz/miniz.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_decode.dir/__/__/bimg/3rdparty/tinyexr/deps/miniz/miniz.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_decode.dir/__/__/bimg/src/image_decode.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/src/image_decode.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/src/image_decode.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_decode.dir/__/__/bimg/src/image_decode.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/edtaa3/edtaa3func.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/edtaa3/edtaa3func.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/edtaa3/edtaa3func.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/edtaa3/edtaa3func.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/etc1/etc1.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/etc1/etc1.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/etc1/etc1.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/etc1/etc1.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/etc2/ProcessRGB.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/etc2/ProcessRGB.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/etc2/ProcessRGB.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/etc2/ProcessRGB.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/etc2/Tables.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/etc2/Tables.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/etc2/Tables.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/etc2/Tables.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -g -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/convolve.c.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/convolve.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/convolve.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/convolve.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -g -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/decimate.c.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/decimate.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/decimate.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/decimate.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -g -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/math_utils.c.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/math_utils.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/math_utils.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/math_utils.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -g -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/ms_ssim.c.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/ms_ssim.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/ms_ssim.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/ms_ssim.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -g -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/mse.c.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/mse.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/mse.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/mse.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -g -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/psnr.c.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/psnr.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/psnr.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/psnr.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -g -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/ssim.c.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/ssim.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/source/ssim.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/iqa/source/ssim.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/alpha.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/alpha.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/alpha.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/alpha.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/clusterfit.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/clusterfit.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/clusterfit.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/clusterfit.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/colourblock.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/colourblock.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/colourblock.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/colourblock.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/colourfit.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/colourfit.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/colourfit.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/colourfit.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/colourset.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/colourset.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/colourset.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/colourset.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/maths.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/maths.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/maths.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/maths.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/rangefit.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/rangefit.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/rangefit.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/rangefit.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/singlecolourfit.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/singlecolourfit.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/singlecolourfit.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/singlecolourfit.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/squish.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/squish.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/libsquish/squish.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/libsquish/squish.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc6h/zoh.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc6h/zoh.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc6h/zoh.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc6h/zoh.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc6h/zoh_utils.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc6h/zoh_utils.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc6h/zoh_utils.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc6h/zoh_utils.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc6h/zohone.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc6h/zohone.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc6h/zohone.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc6h/zohone.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc6h/zohtwo.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc6h/zohtwo.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc6h/zohtwo.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc6h/zohtwo.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode0.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode0.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode0.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode0.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode1.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode1.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode1.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode1.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode2.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode2.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode2.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode2.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode3.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode3.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode3.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode3.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode4.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode4.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode4.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode4.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode5.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode5.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode5.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode5.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode6.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode6.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode6.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode6.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode7.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode7.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_mode7.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_mode7.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_utils.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_utils.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/bc7/avpcl_utils.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/bc7/avpcl_utils.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/nvmath/fitting.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/nvmath/fitting.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/nvmath/fitting.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/nvmath/fitting.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/nvtt.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/nvtt.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt/nvtt.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/nvtt/nvtt.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/pvrtc/BitScale.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/pvrtc/BitScale.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/pvrtc/BitScale.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/pvrtc/BitScale.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/pvrtc/MortonTable.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/pvrtc/MortonTable.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/pvrtc/MortonTable.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/pvrtc/MortonTable.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/pvrtc/PvrTcDecoder.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/pvrtc/PvrTcDecoder.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/pvrtc/PvrTcDecoder.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/pvrtc/PvrTcDecoder.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/pvrtc/PvrTcEncoder.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/pvrtc/PvrTcEncoder.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/pvrtc/PvrTcEncoder.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/pvrtc/PvrTcEncoder.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/pvrtc/PvrTcPacket.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/pvrtc/PvrTcPacket.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/pvrtc/PvrTcPacket.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/3rdparty/pvrtc/PvrTcPacket.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/src/image_cubemap_filter.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/src/image_cubemap_filter.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/src/image_cubemap_filter.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/src/image_cubemap_filter.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/astc-encoder/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/nvtt -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/iqa/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/3rdparty/tinyexr/deps -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -ObjC++ -g -std=c++20 -arch arm64 -fPIC -Wno-implicit-fallthrough -Wno-shadow -Wno-shift-negative-value -Wno-undef -o third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/src/image_encode.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/src/image_encode.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/src/image_encode.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bimg/CMakeFiles/bimg_encode.dir/__/__/bimg/src/image_encode.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/bgfx.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/bgfx.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/bgfx.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/bgfx.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/debug_renderdoc.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/debug_renderdoc.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/debug_renderdoc.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/debug_renderdoc.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/dxgi.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/dxgi.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/dxgi.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/dxgi.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/glcontext_egl.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/glcontext_egl.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/glcontext_egl.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/glcontext_egl.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/glcontext_html5.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/glcontext_html5.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/glcontext_html5.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/glcontext_html5.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/glcontext_wgl.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/glcontext_wgl.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/glcontext_wgl.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/glcontext_wgl.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/nvapi.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/nvapi.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/nvapi.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/nvapi.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_agc.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_agc.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_agc.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_agc.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_d3d11.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_d3d11.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_d3d11.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_d3d11.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_d3d12.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_d3d12.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_d3d12.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_d3d12.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_gl.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_gl.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_gl.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_gl.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_gnm.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_gnm.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_gnm.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_gnm.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_mtl.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_mtl.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_mtl.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_mtl.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_noop.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_noop.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_noop.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_noop.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_nvn.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_nvn.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_nvn.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_nvn.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_vk.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_vk.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_vk.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_vk.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_webgpu.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_webgpu.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/renderer_webgpu.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/renderer_webgpu.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/shader.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/shader.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/shader.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/shader.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/topology.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/topology.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/topology.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/topology.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/c++ -DBGFX_CONFIG_DEBUG_ANNOTATION=1 -DBGFX_CONFIG_MULTITHREADED=1 -DBX_CONFIG_DEBUG=1 -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/3rdparty/khronos -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/3rdparty -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bx/include/compat/osx -I/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bimg/include -F/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks -ObjC++ -g -std=c++20 -arch arm64 -fPIC -o third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/vertexlayout.cpp.o -c /Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/vertexlayout.cpp",
+  "file": "/Users/venugopal/Developer/engine/third_party/bgfx.cmake/bgfx/src/vertexlayout.cpp",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/bgfx.cmake/cmake/bgfx/CMakeFiles/bgfx.dir/__/__/bgfx/src/vertexlayout.cpp.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/context.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/context.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/context.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/context.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/init.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/init.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/init.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/init.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/input.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/input.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/input.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/input.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/monitor.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/monitor.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/monitor.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/monitor.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/platform.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/platform.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/platform.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/platform.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/vulkan.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/vulkan.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/vulkan.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/vulkan.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/window.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/window.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/window.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/window.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/egl_context.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/egl_context.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/egl_context.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/egl_context.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/osmesa_context.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/osmesa_context.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/osmesa_context.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/osmesa_context.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/null_init.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/null_init.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/null_init.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/null_init.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/null_monitor.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/null_monitor.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/null_monitor.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/null_monitor.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/null_window.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/null_window.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/null_window.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/null_window.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/null_joystick.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/null_joystick.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/null_joystick.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/null_joystick.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/macos_time.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/macos_time.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/macos_time.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/macos_time.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/posix_module.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/posix_module.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/posix_module.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/posix_module.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/posix_thread.c.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/posix_thread.c",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/posix_thread.c",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/posix_thread.c.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -x objective-c -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/cocoa_init.m.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/cocoa_init.m",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/cocoa_init.m",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/cocoa_init.m.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -x objective-c -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/cocoa_joystick.m.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/cocoa_joystick.m",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/cocoa_joystick.m",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/cocoa_joystick.m.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -x objective-c -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/cocoa_monitor.m.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/cocoa_monitor.m",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/cocoa_monitor.m",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/cocoa_monitor.m.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -x objective-c -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/cocoa_window.m.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/cocoa_window.m",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/cocoa_window.m",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/cocoa_window.m.o"
+},
+{
+  "directory": "/Users/venugopal/Developer/engine/build",
+  "command": "/usr/bin/cc -D_GLFW_COCOA -I/Users/venugopal/Developer/engine/third_party/glfw/include -I/Users/venugopal/Developer/engine/third_party/glfw/src -I/Users/venugopal/Developer/engine/build/third_party/glfw/src -x objective-c -g -std=c99 -arch arm64 -fPIC -Wall -o third_party/glfw/src/CMakeFiles/glfw.dir/nsgl_context.m.o -c /Users/venugopal/Developer/engine/third_party/glfw/src/nsgl_context.m",
+  "file": "/Users/venugopal/Developer/engine/third_party/glfw/src/nsgl_context.m",
+  "output": "/Users/venugopal/Developer/engine/build/third_party/glfw/src/CMakeFiles/glfw.dir/nsgl_context.m.o"
+}
+]
