@@ -99,7 +99,7 @@ static const bgfx::EmbeddedShader kShaders[] = {
 // Free-fly camera. yaw/pitch in radians.
 // yaw=0, pitch=0 means looking down -Z (matching default GL/bgfx convention).
 struct Camera {
-    bx::Vec3 position { 0.0f, 0.0f,  5.0f };  // start a bit back from origin
+    bx::Vec3 position { 0.0f, 6.0f, 18.0f };  // pulled back + slightly elevated to see the 3x3 grid  // start a bit back from origin
     float    yaw   = 0.0f;
     float    pitch = 0.0f;
 
@@ -263,11 +263,36 @@ int main() {
     // Components are registered implicitly the first time they're used.
     // The entity gets a Transform (default: identity), a MeshRenderer
     // pointing at our cube mesh, and a Name for the editor's hierarchy panel.
-    flecs::entity firstCube = ecs.entity("Cube")
-        .set<Transform>({})
-        .set<MeshRenderer>({ cubeMesh })
-        .set<Name>({ "Cube" })
-        .set<Spinner>({ /*speedYaw=*/0.5f, /*speedPitch=*/0.35f });
+    // Spawn a 3x3 grid of cubes, all sharing the same mesh asset.
+    // Each gets a unique name (for the hierarchy panel) and a slightly
+    // different spinner speed so they rotate out of sync visually.
+    constexpr int   kGridSize    = 3;
+    constexpr float kGridSpacing = 5.0f;  // world units between cubes
+    constexpr float kGridOffset  = -(kGridSize - 1) * 0.5f * kGridSpacing;
+
+    for (int row = 0; row < kGridSize; ++row) {
+        for (int col = 0; col < kGridSize; ++col) {
+            char nameBuf[32];
+            std::snprintf(nameBuf, sizeof(nameBuf), "Cube (%d,%d)", row, col);
+
+            Transform t;
+            t.position = {
+                kGridOffset + col * kGridSpacing,
+                0.0f,
+                kGridOffset + row * kGridSpacing
+            };
+
+            // Vary spinner speeds so the grid looks lively, not mechanical.
+            const float yawSpeed   = 0.4f + 0.05f * (row * kGridSize + col);
+            const float pitchSpeed = 0.3f + 0.04f * (col * kGridSize + row);
+
+            ecs.entity(nameBuf)
+                .set<Transform>(t)
+                .set<MeshRenderer>({ cubeMesh })
+                .set<Name>({ nameBuf })
+                .set<Spinner>({ yawSpeed, pitchSpeed });
+        }
+    }
 
     // Sanity check: count entities with Transform + MeshRenderer.
     // Should be 1. If flecs reports a different number, something's wrong
@@ -279,7 +304,6 @@ int main() {
             ++renderableCount;
         });
     std::printf("[ECS] Renderable entity count: %d\n", renderableCount);
-    (void)firstCube;  // suppress unused warning; we'll use it later
 
     Camera     camera;
     InputState input;
