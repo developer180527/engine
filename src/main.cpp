@@ -35,6 +35,7 @@
 #include "core/transform.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
+#include "components/spinner.h"
 #include "render/mesh.h"
 #include "render/asset_registry.h"
 
@@ -265,7 +266,8 @@ int main() {
     flecs::entity firstCube = ecs.entity("Cube")
         .set<Transform>({})
         .set<MeshRenderer>({ cubeMesh })
-        .set<Name>({ "Cube" });
+        .set<Name>({ "Cube" })
+        .set<Spinner>({ /*speedYaw=*/0.5f, /*speedPitch=*/0.35f });
 
     // Sanity check: count entities with Transform + MeshRenderer.
     // Should be 1. If flecs reports a different number, something's wrong
@@ -320,15 +322,43 @@ int main() {
 
         bgfx::setViewTransform(kSceneView, view, proj);
 
-        // ---- Submit cube ----
-        float model[16];
-        bx::mtxRotateXY(model, spin * 0.7f, spin);
-        bgfx::setTransform(model);
+        // ---- Spinner system: update rotations over time ----
+        // Reads Spinner, writes Transform. First example of an ECS system in
+        // the engine: a query that operates on every entity matching the
+        // component pattern, no matter how many.
+        ecs.query_builder<Transform, const Spinner>()
+            .build()
+            .each([dt](flecs::entity, Transform& t, const Spinner& s) {
+                // Build incremental rotation quats for this frame, then compose
+                // them with the entity's current rotation. bx::fromAxisAngle
+                // returns a Quaternion by value (its default ctor is deleted).
+                const bx::Quaternion qYaw   = bx::fromAxisAngle({0,1,0}, s.speedYaw   * dt);
+                const bx::Quaternion qPitch = bx::fromAxisAngle({1,0,0}, s.speedPitch * dt);
 
-        bgfx::setVertexBuffer(0, vbh);
-        bgfx::setIndexBuffer(ibh);
-        bgfx::setState(BGFX_STATE_DEFAULT);  // includes RGBA write, depth test, MSAA, CCW front, back-cull
-        bgfx::submit(kSceneView, program);
+                // Compose: new = pitchDelta * yawDelta * current
+                t.rotation = bx::mul(qPitch, bx::mul(qYaw, t.rotation));
+                // Re-normalize each frame to prevent drift from accumulated FP error.
+                t.rotation = bx::normalize(t.rotation);
+            });
+
+        // ---- Render system: submit a draw call per renderable entity ----
+        // Iterates every entity with Transform + MeshRenderer. Adding more
+        // such entities (Step 6) will draw more cubes automatically.
+        ecs.query_builder<const Transform, const MeshRenderer>()
+            .build()
+            .each([&](flecs::entity, const Transform& t, const MeshRenderer& mr) {
+                const Mesh* mesh = assets.getMesh(mr.mesh);
+                if (!mesh) return;  // missing-asset placeholder will go here later
+
+                float model[16];
+                t.getMatrix(model);
+                bgfx::setTransform(model);
+
+                bgfx::setVertexBuffer(0, mesh->vbh);
+                bgfx::setIndexBuffer(mesh->ibh);
+                bgfx::setState(BGFX_STATE_DEFAULT);
+                bgfx::submit(kSceneView, program);
+            });
 
         // ---- Stats overlay ----
         ImGui::Begin("Stats");
