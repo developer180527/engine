@@ -29,6 +29,15 @@
 #include <cstdint>
 #include <cmath>
 
+// ECS + engine-internal headers
+#include <flecs.h>
+#include "core/handle.h"
+#include "core/transform.h"
+#include "components/name.h"
+#include "components/mesh_renderer.h"
+#include "render/mesh.h"
+#include "render/asset_registry.h"
+
 // ---------------- Native handle helpers ----------------
 static void* getNativeWindowHandle(GLFWwindow* w) {
 #if defined(__APPLE__)
@@ -208,6 +217,13 @@ int main() {
     init.resolution.reset  = BGFX_RESET_VSYNC;
     init.platformData = pd;
     if (!bgfx::init(init)) { glfwDestroyWindow(window); glfwTerminate(); return 1; }
+
+    // ---- ECS + asset registry ----
+    // The flecs world owns all entities and their components for the engine's
+    // lifetime. The AssetRegistry owns GPU mesh resources that components
+    // reference by handle.
+    flecs::world  ecs;
+    AssetRegistry assets;
 
     constexpr bgfx::ViewId kSceneView = 0;
     bgfx::setViewClear(kSceneView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030ff, 1.0f, 0);
