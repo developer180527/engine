@@ -258,6 +258,27 @@ int main() {
 
     imguiInit(window, 16.0f);
 
+    // ---- Spawn a single entity to verify flecs ----
+    // Components are registered implicitly the first time they're used.
+    // The entity gets a Transform (default: identity), a MeshRenderer
+    // pointing at our cube mesh, and a Name for the editor's hierarchy panel.
+    flecs::entity firstCube = ecs.entity("Cube")
+        .set<Transform>({})
+        .set<MeshRenderer>({ cubeMesh })
+        .set<Name>({ "Cube" });
+
+    // Sanity check: count entities with Transform + MeshRenderer.
+    // Should be 1. If flecs reports a different number, something's wrong
+    // with component registration.
+    int renderableCount = 0;
+    ecs.query_builder<Transform, MeshRenderer>()
+        .build()
+        .each([&](flecs::entity, Transform&, MeshRenderer&) {
+            ++renderableCount;
+        });
+    std::printf("[ECS] Renderable entity count: %d\n", renderableCount);
+    (void)firstCube;  // suppress unused warning; we'll use it later
+
     Camera     camera;
     InputState input;
 
