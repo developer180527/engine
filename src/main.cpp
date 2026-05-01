@@ -240,6 +240,16 @@ int main() {
     bgfx::IndexBufferHandle ibh = bgfx::createIndexBuffer(
         bgfx::makeRef(kCubeIndices, sizeof(kCubeIndices)));
 
+    // Register the cube as a Mesh asset. The Mesh takes ownership of the
+    // bgfx buffer handles via move semantics; when assets goes out of scope,
+    // its Mesh destructor calls bgfx::destroy(). We keep local vbh/ibh as
+    // observers (bgfx handles are just IDs) so the existing render code
+    // still works; Step 5 will switch the render loop to look them up
+    // through the handle.
+    const uint32_t cubeIndexCount = sizeof(kCubeIndices) / sizeof(kCubeIndices[0]);
+    MeshHandle     cubeMesh       = assets.addMesh(Mesh{ vbh, ibh, cubeIndexCount });
+    (void)cubeMesh;  // unused this step; Step 5 will consume it
+
     bgfx::RendererType::Enum rendererType = bgfx::getRendererType();
     bgfx::ProgramHandle program = bgfx::createProgram(
         bgfx::createEmbeddedShader(kShaders, rendererType, "vs_triangle"),
@@ -319,9 +329,17 @@ int main() {
     }
 
     bgfx::destroy(program);
-    bgfx::destroy(ibh);
-    bgfx::destroy(vbh);
+    // Note: vbh/ibh are no longer destroyed here — the AssetRegistry owns
+    // them now via the Mesh asset. Mesh's destructor will call bgfx::destroy
+    // when assets goes out of scope at the end of main().
     imguiShutdown();
+
+    // Release all GPU mesh resources while bgfx is still alive.
+    // Without this, the registry's destructor would run after main returns,
+    // by which time bgfx::shutdown() has already torn down the renderer —
+    // bgfx::destroy() calls on dead handles are technically undefined behavior.
+    assets.clear();
+
     bgfx::shutdown();
     glfwDestroyWindow(window);
     glfwTerminate();
