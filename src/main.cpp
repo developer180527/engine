@@ -38,6 +38,8 @@
 #include "components/spinner.h"
 #include "render/mesh.h"
 #include "render/asset_registry.h"
+#include "editor/editor_state.h"
+#include "editor/hierarchy_panel.h"
 
 // ---------------- Native handle helpers ----------------
 static void* getNativeWindowHandle(GLFWwindow* w) {
@@ -225,6 +227,7 @@ int main() {
     // reference by handle.
     flecs::world  ecs;
     AssetRegistry assets;
+    EditorState   editor;
 
     constexpr bgfx::ViewId kSceneView = 0;
     bgfx::setViewClear(kSceneView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030ff, 1.0f, 0);
@@ -396,6 +399,8 @@ int main() {
         ImGui::Separator();
         ImGui::TextWrapped("Hold right mouse + WASD/QE to fly. Shift = faster.");
         ImGui::End();
+
+        drawHierarchyPanel(ecs, editor);
 
         imguiRender(255);
 
