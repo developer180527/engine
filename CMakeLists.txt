@@ -78,7 +78,10 @@ set_source_files_properties(
 
 target_include_directories(engine PRIVATE
     src
+    src/core
+    src/components
     src/render
+    src/editor
     "${SHADER_OUTPUT_DIR}"
 )
 
