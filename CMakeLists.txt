@@ -15,6 +15,12 @@ set(BGFX_BUILD_TOOLS_TEXTURE OFF CACHE BOOL "")
 set(BGFX_INSTALL OFF CACHE BOOL "")
 add_subdirectory(third_party/bgfx.cmake)
 
+# flecs - ECS framework
+set(FLECS_STATIC ON CACHE BOOL "")
+set(FLECS_SHARED OFF CACHE BOOL "")
+set(FLECS_TESTS OFF CACHE BOOL "")
+add_subdirectory(third_party/flecs)
+
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "")
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "")
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "")
@@ -86,6 +92,7 @@ target_link_libraries(engine PRIVATE
     bgfx bx bimg
     glfw
     imgui
+    flecs_static
 )
 
 if(APPLE)
