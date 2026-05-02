@@ -40,6 +40,7 @@
 #include "render/asset_registry.h"
 #include "editor/editor_state.h"
 #include "editor/hierarchy_panel.h"
+#include "editor/inspector_panel.h"
 
 // ---------------- Native handle helpers ----------------
 static void* getNativeWindowHandle(GLFWwindow* w) {
@@ -401,6 +402,7 @@ int main() {
         ImGui::End();
 
         drawHierarchyPanel(ecs, editor);
+        drawInspectorPanel(ecs, editor);
 
         imguiRender(255);
 
