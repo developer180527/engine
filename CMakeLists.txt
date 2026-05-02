@@ -32,8 +32,12 @@ add_library(imgui STATIC
     third_party/imgui/imgui_tables.cpp
     third_party/imgui/imgui_widgets.cpp
     third_party/imgui/imgui_demo.cpp
+    third_party/ImGuizmo/ImGuizmo.cpp
 )
-target_include_directories(imgui PUBLIC third_party/imgui)
+target_include_directories(imgui PUBLIC
+    third_party/imgui
+    third_party/ImGuizmo
+)
 
 include(third_party/bgfx.cmake/cmake/bgfxToolUtils.cmake)
 
