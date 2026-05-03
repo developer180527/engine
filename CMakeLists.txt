@@ -69,6 +69,7 @@ add_executable(engine
     src/render/imgui_bgfx.cpp
     src/render/imgui_impl_glfw.cpp
     src/io/cgltf_impl.cpp
+    src/io/gltf_importer.cpp
     shaders/vs_triangle.sc
     shaders/fs_triangle.sc
     shaders/varying.def.sc

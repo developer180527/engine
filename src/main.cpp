@@ -38,9 +38,14 @@
 #include "components/spinner.h"
 #include "render/mesh.h"
 #include "render/asset_registry.h"
+#include "render/vertex.h"
+#include "render/primitive_cube.h"
+#include "gltf_importer.h"
+#include "asset_path.h"
 #include "editor/editor_state.h"
 #include "editor/hierarchy_panel.h"
 #include "editor/inspector_panel.h"
+#include "editor/gizmo.h"
 
 // ---------------- Native handle helpers ----------------
 static void* getNativeWindowHandle(GLFWwindow* w) {
@@ -61,36 +66,6 @@ static void* getNativeDisplayHandle() {
     return nullptr;
 #endif
 }
-
-// ---------------- Cube geometry ----------------
-struct PosColorVertex {
-    float    x, y, z;
-    uint32_t abgr;
-};
-
-// 8 corners of a unit cube centered at origin, each with a distinct color
-// Color encoding is little-endian ABGR (bgfx convention).
-static const PosColorVertex kCubeVertices[] = {
-    { -1.0f,  1.0f,  1.0f, 0xff000000 },
-    {  1.0f,  1.0f,  1.0f, 0xff0000ff },
-    { -1.0f, -1.0f,  1.0f, 0xff00ff00 },
-    {  1.0f, -1.0f,  1.0f, 0xff00ffff },
-    { -1.0f,  1.0f, -1.0f, 0xffff0000 },
-    {  1.0f,  1.0f, -1.0f, 0xffff00ff },
-    { -1.0f, -1.0f, -1.0f, 0xffffff00 },
-    {  1.0f, -1.0f, -1.0f, 0xffffffff },
-};
-
-// 36 indices = 12 triangles = 6 faces.
-// Winding is CCW when viewed from outside (front-facing in bgfx default).
-static const uint16_t kCubeIndices[] = {
-    0, 1, 2,  1, 3, 2,   // front  (+Z)
-    4, 6, 5,  5, 6, 7,   // back   (-Z)
-    0, 2, 4,  4, 2, 6,   // left   (-X)
-    1, 5, 3,  5, 7, 3,   // right  (+X)
-    0, 4, 1,  4, 5, 1,   // top    (+Y)
-    2, 3, 6,  6, 3, 7,   // bottom (-Y)
-};
 
 static const bgfx::EmbeddedShader kShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_triangle),
@@ -201,7 +176,7 @@ int main() {
     if (!glfwInit()) { std::fprintf(stderr, "glfwInit failed\n"); return 1; }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Engine [milestone 3]", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "Engine [milestone 4]", nullptr, nullptr);
     if (!window) { glfwTerminate(); return 1; }
     glfwSetWindowSizeLimits(window, 640, 360, GLFW_DONT_CARE, GLFW_DONT_CARE);
 
@@ -229,21 +204,21 @@ int main() {
     flecs::world  ecs;
     AssetRegistry assets;
     EditorState   editor;
+    GizmoState    gizmoState;
 
     constexpr bgfx::ViewId kSceneView = 0;
     bgfx::setViewClear(kSceneView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030ff, 1.0f, 0);
     bgfx::setViewRect(kSceneView, 0, 0, bgfx::BackbufferRatio::Equal);
 
-    bgfx::VertexLayout layout;
-    layout.begin()
-        .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
-        .add(bgfx::Attrib::Color0,   4, bgfx::AttribType::Uint8, true)
-        .end();
-
+    // Use the unified Vertex layout (position + normal + UV) and the cube
+    // primitive data, both defined in render/. The asset registry takes
+    // ownership of the resulting Mesh so its destructor can release the
+    // bgfx handles when assets goes out of scope.
     bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(
-        bgfx::makeRef(kCubeVertices, sizeof(kCubeVertices)), layout);
+        bgfx::makeRef(primitive_cube::kVertices, sizeof(primitive_cube::kVertices)),
+        Vertex::layout());
     bgfx::IndexBufferHandle ibh = bgfx::createIndexBuffer(
-        bgfx::makeRef(kCubeIndices, sizeof(kCubeIndices)));
+        bgfx::makeRef(primitive_cube::kIndices, sizeof(primitive_cube::kIndices)));
 
     // Register the cube as a Mesh asset. The Mesh takes ownership of the
     // bgfx buffer handles via move semantics; when assets goes out of scope,
@@ -251,7 +226,7 @@ int main() {
     // observers (bgfx handles are just IDs) so the existing render code
     // still works; Step 5 will switch the render loop to look them up
     // through the handle.
-    const uint32_t cubeIndexCount = sizeof(kCubeIndices) / sizeof(kCubeIndices[0]);
+    const uint32_t cubeIndexCount = primitive_cube::kIndexCount;
     MeshHandle     cubeMesh       = assets.addMesh(Mesh{ vbh, ibh, cubeIndexCount });
     (void)cubeMesh;  // unused this step; Step 5 will consume it
 
@@ -298,6 +273,27 @@ int main() {
         }
     }
 
+    // ---- Load a glTF mesh and spawn an entity for it ----
+    //
+    // First non-hardcoded mesh in the engine. The importer is fault-tolerant:
+    // a missing or malformed file logs an error but doesn't crash. The cube
+    // grid still renders even if the Duck fails to load.
+    GltfImporter gltfImporter;
+    auto duckResult = gltfImporter.load(asset_path::resolve("Duck.gltf"), assets);
+    if (duckResult.success) {
+        Transform duckTransform;
+        duckTransform.position = { 0.0f, 5.0f, 0.0f };
+        duckTransform.scale = { 0.02f, 0.02f, 0.02f };
+
+        ecs.entity("Duck")
+            .set<Transform>(duckTransform)
+            .set<MeshRenderer>({ duckResult.mesh })
+            .set<Name>({ "Duck" })
+            .set<Spinner>({ 0.5f, 0.0f });
+    } else {
+        std::printf("[glTF] Failed to load Duck: %s\n", duckResult.error.c_str());
+    }
+
     // Sanity check: count entities with Transform + MeshRenderer.
     // Should be 1. If flecs reports a different number, something's wrong
     // with component registration.
@@ -337,6 +333,8 @@ int main() {
 
         // ImGui must process input first so it can claim mouse/keyboard
         imguiNewFrame();
+        gizmoBeginFrame();
+        gizmoHandleHotkeys(window, gizmoState);
 
         updateCamera(camera, input, window, dt);
 
@@ -354,6 +352,11 @@ int main() {
         // Reads Spinner, writes Transform. First example of an ECS system in
         // the engine: a query that operates on every entity matching the
         // component pattern, no matter how many.
+        //
+        // Skipped while the user is actively manipulating a gizmo, so the
+        // spinner's continuous rotation doesn't fight the gizmo's drag.
+        // This is the editor convention: simulation pauses during edits.
+        if (!ImGuizmo::IsUsing())
         ecs.query_builder<Transform, const Spinner>()
             .build()
             .each([dt](flecs::entity, Transform& t, const Spinner& s) {
@@ -403,6 +406,12 @@ int main() {
 
         drawHierarchyPanel(ecs, editor);
         drawInspectorPanel(ecs, editor);
+
+        // Gizmo for the selected entity (translate/rotate/scale handles).
+        // Call AFTER panels so panel-handling and gizmo-handling don't fight
+        // over the same mouse events; ImGuizmo internally checks if it owns
+        // the input.
+        drawGizmo(editor, view, proj, gizmoState);
 
         imguiRender(255);
 
