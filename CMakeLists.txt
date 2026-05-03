@@ -68,6 +68,7 @@ add_executable(engine
     src/main.cpp
     src/render/imgui_bgfx.cpp
     src/render/imgui_impl_glfw.cpp
+    src/io/cgltf_impl.cpp
     shaders/vs_triangle.sc
     shaders/fs_triangle.sc
     shaders/varying.def.sc
@@ -86,6 +87,8 @@ target_include_directories(engine PRIVATE
     src/components
     src/render
     src/editor
+    src/io
+    third_party/cgltf
     "${SHADER_OUTPUT_DIR}"
 )
 
