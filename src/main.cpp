@@ -273,26 +273,59 @@ int main() {
         }
     }
 
-    // ---- Load a glTF mesh and spawn an entity for it ----
+    // ---- Load glTF meshes and spawn entities ----
     //
-    // First non-hardcoded mesh in the engine. The importer is fault-tolerant:
-    // a missing or malformed file logs an error but doesn't crash. The cube
-    // grid still renders even if the Duck fails to load.
+    // Phase 4 stabilization: load multiple real-world models in isolation
+    // so failures in one don't hide the others. Output uses visible
+    // separator lines so the asset-load status is easy to find in the
+    // verbose bgfx startup log.
     GltfImporter gltfImporter;
-    auto duckResult = gltfImporter.load(asset_path::resolve("Duck.gltf"), assets);
-    if (duckResult.success) {
-        Transform duckTransform;
-        duckTransform.position = { 0.0f, 5.0f, 0.0f };
-        duckTransform.scale = { 0.02f, 0.02f, 0.02f };
 
-        ecs.entity("Duck")
-            .set<Transform>(duckTransform)
-            .set<MeshRenderer>({ duckResult.mesh })
-            .set<Name>({ "Duck" })
-            .set<Spinner>({ 0.5f, 0.0f });
-    } else {
-        std::printf("[glTF] Failed to load Duck: %s\n", duckResult.error.c_str());
-    }
+    auto spawnFromFile = [&](const std::string& filename,
+                             bx::Vec3 position,
+                             float    uniformScale) {
+        std::printf("\n========== Loading %s ==========\n", filename.c_str());
+
+        auto result = gltfImporter.load(
+            asset_path::resolve(filename), assets);
+
+        if (!result.success) {
+            std::printf("[FAIL] %s\n", result.error.c_str());
+            std::printf("===================================\n\n");
+            return;
+        }
+
+        std::string entityName = filename;
+        if (auto slash = entityName.find_last_of("/\\");
+            slash != std::string::npos) {
+            entityName = entityName.substr(slash + 1);
+        }
+        if (auto dot = entityName.find_last_of('.');
+            dot != std::string::npos) {
+            entityName = entityName.substr(0, dot);
+        }
+
+        Transform t;
+        t.position = position;
+        t.scale    = { uniformScale, uniformScale, uniformScale };
+
+        ecs.entity(entityName.c_str())
+            .set<Transform>(t)
+            .set<MeshRenderer>({ result.mesh })
+            .set<Name>({ entityName })
+            .set<Spinner>({ 0.3f, 0.0f });
+
+        std::printf("[OK] Spawned '%s' at (%.1f, %.1f, %.1f) scale=%.3f\n",
+                    entityName.c_str(),
+                    position.x, position.y, position.z,
+                    uniformScale);
+        std::printf("===================================\n\n");
+    };
+
+    spawnFromFile("Duck.gltf",      bx::Vec3{   0.0f, 5.0f,   0.0f }, 0.02f);
+    spawnFromFile("person.glb",     bx::Vec3{  10.0f, 5.0f,   0.0f }, 1.0f);
+    spawnFromFile("robot.glb",      bx::Vec3{ -10.0f, 5.0f,   0.0f }, 1.0f);
+    spawnFromFile("Demon_Mask.glb", bx::Vec3{   0.0f, 5.0f,  10.0f }, 1.0f);
 
     // Sanity check: count entities with Transform + MeshRenderer.
     // Should be 1. If flecs reports a different number, something's wrong
@@ -387,7 +420,17 @@ int main() {
 
                 bgfx::setVertexBuffer(0, mesh->vbh);
                 bgfx::setIndexBuffer(mesh->ibh);
-                bgfx::setState(BGFX_STATE_DEFAULT);
+                // Per-mesh culling: BGFX_STATE_DEFAULT includes back-face
+                // culling (CULL_CCW). Some glTF meshes are authored as
+                // double-sided (open masks, sheet-of-leaves geometry, etc.)
+                // and need both faces drawn — for those we strip the cull bit.
+                // The flag comes from the glTF material's "doubleSided" field.
+                const uint64_t state = mesh->doubleSided
+                    ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
+                       | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS
+                       | BGFX_STATE_MSAA)
+                    : BGFX_STATE_DEFAULT;
+                bgfx::setState(state);
                 bgfx::submit(kSceneView, program);
             });
 

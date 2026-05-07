@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include <limits>
 
 #include "render/vertex.h"
 #include "render/mesh.h"
@@ -141,6 +142,20 @@ MeshImportResult GltfImporter::load(const std::string& path,
     }
 
     std::vector<Vertex> vertices(vertexCount);
+
+    // Track AABB during the vertex iteration. Initialized to an "inverted"
+    // range so the first vertex always extends the bounds in both directions.
+    bx::Vec3 boundsMin {
+         std::numeric_limits<float>::infinity(),
+         std::numeric_limits<float>::infinity(),
+         std::numeric_limits<float>::infinity()
+    };
+    bx::Vec3 boundsMax {
+        -std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity()
+    };
+
     for (size_t i = 0; i < vertexCount; ++i) {
         Vertex& v = vertices[i];
 
@@ -161,6 +176,14 @@ MeshImportResult GltfImporter::load(const std::string& path,
             v.uv[0] = 0.0f;
             v.uv[1] = 0.0f;
         }
+
+        // Extend AABB to include this vertex.
+        if (v.position[0] < boundsMin.x) boundsMin.x = v.position[0];
+        if (v.position[1] < boundsMin.y) boundsMin.y = v.position[1];
+        if (v.position[2] < boundsMin.z) boundsMin.z = v.position[2];
+        if (v.position[0] > boundsMax.x) boundsMax.x = v.position[0];
+        if (v.position[1] > boundsMax.y) boundsMax.y = v.position[1];
+        if (v.position[2] > boundsMax.z) boundsMax.z = v.position[2];
     }
 
     // ---- Step 7: build the index array ----
@@ -203,10 +226,22 @@ MeshImportResult GltfImporter::load(const std::string& path,
     }
 
     // ---- Step 9: register the Mesh in the asset registry ----
-    MeshHandle handle = assets.addMesh(Mesh{ vbh, ibh, uint32_t(indexCount) });
+    // Build the Mesh with all its metadata: GPU handles, index count,
+    // double-sided flag from material, and bounding box.
+    Mesh EngineMesh(vbh, ibh, uint32_t(indexCount));
+    EngineMesh.doubleSided = prim.material ? prim.material->double_sided : false;
+    EngineMesh.boundsMin = boundsMin;
+    EngineMesh.boundsMax = boundsMax;
 
-    std::printf("[glTF] Loaded '%s': %zu vertices, %zu indices\n",
-                path.c_str(), vertexCount, indexCount);
+    MeshHandle handle = assets.addMesh(std::move(EngineMesh));
+
+    std::printf("[glTF] Loaded '%s': %zu vertices, %zu indices, "
+                "bounds (%.2f, %.2f, %.2f)-(%.2f, %.2f, %.2f), "
+                "double-sided=%s\n",
+                path.c_str(), vertexCount, indexCount,
+                boundsMin.x, boundsMin.y, boundsMin.z,
+                boundsMax.x, boundsMax.y, boundsMax.z,
+                (prim.material && prim.material->double_sided) ? "yes" : "no");
 
     return MeshImportResult::ok(handle);
 }

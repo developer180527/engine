@@ -1,28 +1,78 @@
 #pragma once
 
 #include <bgfx/bgfx.h>
+#include <bx/math.h>
+#include <limits>
 
 // Mesh asset.
 //
 // Owns the GPU buffers that hold a 3D model's geometry. Heavy: backing memory
-// is on the GPU. Many entities can share one Mesh by holding MeshHandles to it
-// in their MeshRenderer components.
+// is on the GPU. Many entities can share one Mesh by holding MeshHandles to
+// it in their MeshRenderer components.
 //
-// Mesh is move-only because it owns GPU resources; copying would mean we'd
-// have two C++ objects both trying to bgfx::destroy() the same handle on
-// shutdown (a bug). Move semantics let us hand a Mesh off to AssetRegistry's
-// internal storage cleanly.
+// Mesh is move-only because it owns GPU resources; copying would mean two
+// C++ objects both calling bgfx::destroy() on the same handle. Move semantics
+// let us hand a Mesh into AssetRegistry's internal storage cleanly.
+//
+// Plain-data fields (indexCount, doubleSided, boundsMin/Max) tag along —
+// they describe the mesh and travel with it through moves, and are simple
+// to populate at load time.
 struct Mesh {
     bgfx::VertexBufferHandle vbh = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle  ibh = BGFX_INVALID_HANDLE;
+    uint32_t                 indexCount = 0;
 
-    // Number of indices, useful for stats / debugging. Not strictly needed
-    // for rendering since bgfx tracks this internally, but handy.
-    uint32_t indexCount = 0;
+    // Material-derived rendering hints.
+    //
+    // doubleSided: glTF's material.doubleSided flag. When true, both front
+    // and back faces of every triangle are rendered (back-face culling
+    // disabled per-mesh). Used for hollow models, masks, planes-as-leaves,
+    // anything where the geometry expects both sides visible. Default false
+    // (the spec-compliant default for opaque materials).
+    bool doubleSided = false;
+
+    // Object-space axis-aligned bounding box. Populated at load time.
+    // Used later for picking (ray-vs-AABB tests), frustum culling, and
+    // auto-positioning models in the editor.
+    //
+    // Default values represent an "uninitialized" box (min > max). Code
+    // that uses bounds should call hasBounds() first.
+    bx::Vec3 boundsMin {
+         std::numeric_limits<float>::infinity(),
+         std::numeric_limits<float>::infinity(),
+         std::numeric_limits<float>::infinity()
+    };
+    bx::Vec3 boundsMax {
+        -std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity()
+    };
+
+    bool hasBounds() const {
+        return boundsMin.x <= boundsMax.x;
+    }
+
+    bx::Vec3 boundsCenter() const {
+        return {
+            (boundsMin.x + boundsMax.x) * 0.5f,
+            (boundsMin.y + boundsMax.y) * 0.5f,
+            (boundsMin.z + boundsMax.z) * 0.5f
+        };
+    }
+
+    bx::Vec3 boundsSize() const {
+        return {
+            boundsMax.x - boundsMin.x,
+            boundsMax.y - boundsMin.y,
+            boundsMax.z - boundsMin.z
+        };
+    }
 
     Mesh() = default;
 
-    Mesh(bgfx::VertexBufferHandle v, bgfx::IndexBufferHandle i, uint32_t ic)
+    Mesh(bgfx::VertexBufferHandle v,
+         bgfx::IndexBufferHandle  i,
+         uint32_t                 ic)
         : vbh(v), ibh(i), indexCount(ic) {}
 
     // Move-only: see comment above.
@@ -30,7 +80,9 @@ struct Mesh {
     Mesh& operator=(const Mesh&) = delete;
 
     Mesh(Mesh&& o) noexcept
-        : vbh(o.vbh), ibh(o.ibh), indexCount(o.indexCount) {
+        : vbh(o.vbh), ibh(o.ibh), indexCount(o.indexCount),
+          doubleSided(o.doubleSided),
+          boundsMin(o.boundsMin), boundsMax(o.boundsMax) {
         o.vbh = BGFX_INVALID_HANDLE;
         o.ibh = BGFX_INVALID_HANDLE;
         o.indexCount = 0;
@@ -39,9 +91,12 @@ struct Mesh {
     Mesh& operator=(Mesh&& o) noexcept {
         if (this != &o) {
             destroy();
-            vbh = o.vbh;
-            ibh = o.ibh;
-            indexCount = o.indexCount;
+            vbh         = o.vbh;
+            ibh         = o.ibh;
+            indexCount  = o.indexCount;
+            doubleSided = o.doubleSided;
+            boundsMin   = o.boundsMin;
+            boundsMax   = o.boundsMax;
             o.vbh = BGFX_INVALID_HANDLE;
             o.ibh = BGFX_INVALID_HANDLE;
             o.indexCount = 0;
