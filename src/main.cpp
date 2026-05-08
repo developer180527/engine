@@ -37,15 +37,17 @@
 #include "components/mesh_renderer.h"
 #include "components/spinner.h"
 #include "render/mesh.h"
-#include "render/asset_registry.h"
 #include "render/vertex.h"
 #include "render/primitive_cube.h"
-#include "gltf_importer.h"
-#include "asset_path.h"
-#include "editor/editor_state.h"
+#include "render/asset_registry.h"
+#include "io/project_context.h"
+#include "io/importer_registry.h"
+#include "io/gltf_importer.h"
+#include "engine_context.h"
 #include "editor/hierarchy_panel.h"
 #include "editor/inspector_panel.h"
 #include "editor/gizmo.h"
+#include "editor/asset_browser_panel.h"
 
 // ---------------- Native handle helpers ----------------
 static void* getNativeWindowHandle(GLFWwindow* w) {
@@ -201,10 +203,16 @@ int main() {
     // The flecs world owns all entities and their components for the engine's
     // lifetime. The AssetRegistry owns GPU mesh resources that components
     // reference by handle.
-    flecs::world  ecs;
-    AssetRegistry assets;
-    EditorState   editor;
-    GizmoState    gizmoState;
+    flecs::world     ecs;
+    AssetRegistry    assets;
+    ProjectContext   project = ProjectContext::autoDetect();
+    ImporterRegistry importers;
+    importers.registerImporter(std::make_unique<GltfImporter>());
+
+    EngineContext ctx{ ecs, assets, project, importers };
+
+    std::printf("[Engine] Assets root: %s\n",
+                project.assetsRoot.string().c_str());
 
     constexpr bgfx::ViewId kSceneView = 0;
     bgfx::setViewClear(kSceneView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x303030ff, 1.0f, 0);
@@ -273,59 +281,8 @@ int main() {
         }
     }
 
-    // ---- Load glTF meshes and spawn entities ----
-    //
-    // Phase 4 stabilization: load multiple real-world models in isolation
-    // so failures in one don't hide the others. Output uses visible
-    // separator lines so the asset-load status is easy to find in the
-    // verbose bgfx startup log.
-    GltfImporter gltfImporter;
+    // Models are loaded through the asset browser panel.
 
-    auto spawnFromFile = [&](const std::string& filename,
-                             bx::Vec3 position,
-                             float    uniformScale) {
-        std::printf("\n========== Loading %s ==========\n", filename.c_str());
-
-        auto result = gltfImporter.load(
-            asset_path::resolve(filename), assets);
-
-        if (!result.success) {
-            std::printf("[FAIL] %s\n", result.error.c_str());
-            std::printf("===================================\n\n");
-            return;
-        }
-
-        std::string entityName = filename;
-        if (auto slash = entityName.find_last_of("/\\");
-            slash != std::string::npos) {
-            entityName = entityName.substr(slash + 1);
-        }
-        if (auto dot = entityName.find_last_of('.');
-            dot != std::string::npos) {
-            entityName = entityName.substr(0, dot);
-        }
-
-        Transform t;
-        t.position = position;
-        t.scale    = { uniformScale, uniformScale, uniformScale };
-
-        ecs.entity(entityName.c_str())
-            .set<Transform>(t)
-            .set<MeshRenderer>({ result.mesh })
-            .set<Name>({ entityName })
-            .set<Spinner>({ 0.3f, 0.0f });
-
-        std::printf("[OK] Spawned '%s' at (%.1f, %.1f, %.1f) scale=%.3f\n",
-                    entityName.c_str(),
-                    position.x, position.y, position.z,
-                    uniformScale);
-        std::printf("===================================\n\n");
-    };
-
-    spawnFromFile("Duck.gltf",      bx::Vec3{   0.0f, 5.0f,   0.0f }, 0.02f);
-    spawnFromFile("person.glb",     bx::Vec3{  10.0f, 5.0f,   0.0f }, 1.0f);
-    spawnFromFile("robot.glb",      bx::Vec3{ -10.0f, 5.0f,   0.0f }, 1.0f);
-    spawnFromFile("Demon_Mask.glb", bx::Vec3{   0.0f, 5.0f,  10.0f }, 1.0f);
 
     // Sanity check: count entities with Transform + MeshRenderer.
     // Should be 1. If flecs reports a different number, something's wrong
@@ -367,7 +324,7 @@ int main() {
         // ImGui must process input first so it can claim mouse/keyboard
         imguiNewFrame();
         gizmoBeginFrame();
-        gizmoHandleHotkeys(window, gizmoState);
+        gizmoHandleHotkeys(window, ctx);
 
         updateCamera(camera, input, window, dt);
 
@@ -447,14 +404,15 @@ int main() {
         ImGui::TextWrapped("Hold right mouse + WASD/QE to fly. Shift = faster.");
         ImGui::End();
 
-        drawHierarchyPanel(ecs, editor);
-        drawInspectorPanel(ecs, editor);
+        drawHierarchyPanel(ctx);
+        drawInspectorPanel(ctx);
+        drawAssetBrowserPanel(ctx);
 
         // Gizmo for the selected entity (translate/rotate/scale handles).
         // Call AFTER panels so panel-handling and gizmo-handling don't fight
         // over the same mouse events; ImGuizmo internally checks if it owns
         // the input.
-        drawGizmo(editor, view, proj, gizmoState);
+        drawGizmo(ctx, view, proj);
 
         imguiRender(255);
 
