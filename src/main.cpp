@@ -178,7 +178,7 @@ int main() {
     if (!glfwInit()) { std::fprintf(stderr, "glfwInit failed\n"); return 1; }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Engine [milestone 4]", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "Engine [milestone 5]", nullptr, nullptr);
     if (!window) { glfwTerminate(); return 1; }
     glfwSetWindowSizeLimits(window, 640, 360, GLFW_DONT_CARE, GLFW_DONT_CARE);
 
@@ -205,11 +205,13 @@ int main() {
     // reference by handle.
     flecs::world     ecs;
     AssetRegistry    assets;
+    TextureRegistry  textures;
+    MaterialRegistry materials;
     ProjectContext   project = ProjectContext::autoDetect();
     ImporterRegistry importers;
     importers.registerImporter(std::make_unique<GltfImporter>());
 
-    EngineContext ctx{ ecs, assets, project, importers };
+    EngineContext ctx{ ecs, assets, textures, materials, project, importers };
 
     std::printf("[Engine] Assets root: %s\n",
                 project.assetsRoot.string().c_str());
@@ -430,6 +432,8 @@ int main() {
     // Without this, the registry's destructor would run after main returns,
     // by which time bgfx::shutdown() has already torn down the renderer —
     // bgfx::destroy() calls on dead handles are technically undefined behavior.
+    materials.clear();
+    textures.clear();
     assets.clear();
 
     bgfx::shutdown();
