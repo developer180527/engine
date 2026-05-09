@@ -43,6 +43,7 @@
 #include "io/project_context.h"
 #include "io/importer_registry.h"
 #include "io/gltf_importer.h"
+#include "io/asset_storage.h"
 #include "engine_context.h"
 #include "editor/hierarchy_panel.h"
 #include "editor/inspector_panel.h"
@@ -248,6 +249,21 @@ int main() {
 
     imguiInit(window, 16.0f);
 
+    // Shader uniforms for the material system.
+    // s_baseColor: the base color texture sampler (slot 0).
+    // u_params.x:  1.0 = use texture, 0.0 = use normal-debug shader path.
+    // u_colorFactor: RGBA multiplier applied on top of the texture sample.
+    bgfx::UniformHandle s_baseColor   = bgfx::createUniform("s_baseColor",   bgfx::UniformType::Sampler);
+    bgfx::UniformHandle u_params      = bgfx::createUniform("u_params",      bgfx::UniformType::Vec4);
+    bgfx::UniformHandle u_colorFactor = bgfx::createUniform("u_colorFactor", bgfx::UniformType::Vec4);
+
+    // 1x1 white RGBA texture. Bound as a fallback so the sampler is always
+    // valid — the u_params.x uniform controls which code path runs.
+    static const uint32_t kWhitePixel = 0xFFFFFFFFu;
+    bgfx::TextureHandle whiteTex = bgfx::createTexture2D(
+        1, 1, false, 1, bgfx::TextureFormat::RGBA8, 0,
+        bgfx::makeRef(&kWhitePixel, 4));
+
     // ---- Spawn a single entity to verify flecs ----
     // Components are registered implicitly the first time they're used.
     // The entity gets a Transform (default: identity), a MeshRenderer
@@ -389,6 +405,27 @@ int main() {
                        | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS
                        | BGFX_STATE_MSAA)
                     : BGFX_STATE_DEFAULT;
+                // Material binding: look up material and texture from mesh,
+                // set uniforms so the shader knows which code path to use.
+                {
+                    const Material* mat = mesh->material.valid()
+                        ? ctx.materials.getMaterial(mesh->material) : nullptr;
+                    const Texture*  tex = (mat && mat->hasTexture())
+                        ? ctx.textures.getTexture(mat->baseColorTexture) : nullptr;
+
+                    float params[4]  = {tex ? 1.0f : 0.0f, 0, 0, 0};
+                    float factor[4]  = {1,1,1,1};
+                    if (mat) {
+                        factor[0] = mat->baseColorFactor[0];
+                        factor[1] = mat->baseColorFactor[1];
+                        factor[2] = mat->baseColorFactor[2];
+                        factor[3] = mat->baseColorFactor[3];
+                    }
+                    bgfx::setUniform(u_params,      params);
+                    bgfx::setUniform(u_colorFactor, factor);
+                    bgfx::setTexture(0, s_baseColor,
+                                     tex ? tex->handle : whiteTex);
+                }
                 bgfx::setState(state);
                 bgfx::submit(kSceneView, program);
             });
@@ -423,6 +460,10 @@ int main() {
     }
 
     bgfx::destroy(program);
+    bgfx::destroy(s_baseColor);
+    bgfx::destroy(u_params);
+    bgfx::destroy(u_colorFactor);
+    bgfx::destroy(whiteTex);
     // Note: vbh/ibh are no longer destroyed here — the AssetRegistry owns
     // them now via the Mesh asset. Mesh's destructor will call bgfx::destroy
     // when assets goes out of scope at the end of main().

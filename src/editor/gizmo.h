@@ -10,7 +10,6 @@
 #include "engine_context.h"
 #include "editor/gizmo_state.h"
 #include "core/transform.h"
-#include "inspector_panel.h"  // detail:: euler helpers
 
 namespace gizmo_detail {
 

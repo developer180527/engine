@@ -10,6 +10,7 @@
 #include <flecs.h>
 
 #include "engine_context.h"
+#include "io/asset_storage.h"
 #include "core/transform.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
@@ -203,7 +204,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx) {
                 std::printf("\n========== Loading %s ==========\n",
                             f.name.c_str());
 
-                auto result = ctx.importers.loadCached(f.fullPath, ctx.assets);
+                auto result = ([&]() -> MeshImportResult { AssetStorage s{ctx.assets, ctx.textures, ctx.materials}; return ctx.importers.loadCached(f.fullPath, s); })();
 
                 if (!result.success) {
                     std::printf("[FAIL] %s\n===================================\n\n",
@@ -256,7 +257,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx) {
         const FileEntry& f = s_files[s_selectedIdx];
 
         std::printf("\n========== Loading %s ==========\n", f.name.c_str());
-        auto result = ctx.importers.loadCached(f.fullPath, ctx.assets);
+        auto result = ([&]() -> MeshImportResult { AssetStorage s{ctx.assets, ctx.textures, ctx.materials}; return ctx.importers.loadCached(f.fullPath, s); })();
 
         if (!result.success) {
             std::printf("[FAIL] %s\n===================================\n\n",
