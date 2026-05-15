@@ -17,6 +17,7 @@
 #include "render/texture.h"
 #include "render/material.h"
 #include "io/gltf_importer.h"
+#include "io/assimp_importer.h"
 #include "io/asset_storage.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
@@ -101,6 +102,7 @@ bool EngineRuntime::initSystems() {
                 m_project.assetsRoot.string().c_str());
 
     m_importers.registerImporter(std::make_unique<GltfImporter>());
+    m_importers.registerImporter(std::make_unique<AssimpImporter>());
 
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
         m_ecs, m_assets, m_textures,

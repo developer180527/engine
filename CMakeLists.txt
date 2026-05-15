@@ -64,6 +64,30 @@ bgfx_compile_shaders(
     AS_HEADERS
 )
 
+
+# ---- Assimp (multi-format mesh importer) ----
+# Disable ALL importers/exporters by default, then opt-in only what we need.
+# This keeps build time reasonable (7 formats vs 60+).
+set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
+set(ASSIMP_NO_EXPORT          ON  CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_TESTS        OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_INSTALL            OFF CACHE BOOL "" FORCE)
+if(WIN32)
+    set(ASSIMP_BUILD_ZLIB ON  CACHE BOOL "" FORCE)  # no system zlib on Windows
+else()
+    set(ASSIMP_BUILD_ZLIB OFF CACHE BOOL "" FORCE)  # macOS + Linux ship zlib
+endif()
+# Formats cgltf doesn't cover:
+set(ASSIMP_BUILD_FBX_IMPORTER     ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_OBJ_IMPORTER     ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_COLLADA_IMPORTER ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_3DS_IMPORTER     ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_PLY_IMPORTER     ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_STL_IMPORTER     ON CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_BLEND_IMPORTER   ON CACHE BOOL "" FORCE)
+add_subdirectory(third_party/assimp)
 add_executable(engine
     src/main.cpp
     src/render/imgui_bgfx.cpp
@@ -72,6 +96,7 @@ add_executable(engine
     src/io/gltf_importer.cpp
     src/io/stb_impl.cpp
     src/engine/runtime.cpp
+    src/io/assimp_importer.cpp
     shaders/vs_triangle.sc
     shaders/fs_triangle.sc
     shaders/varying.def.sc
@@ -103,6 +128,7 @@ target_compile_definitions(engine PRIVATE
 )
 
 target_link_libraries(engine PRIVATE
+    assimp
     bgfx bx bimg
     glfw
     imgui
