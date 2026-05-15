@@ -61,6 +61,8 @@ private:
     bgfx::UniformHandle m_sBaseColor   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uParams      = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uColorFactor = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_uLightDir    = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_uLightParams = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_whiteTex     = BGFX_INVALID_HANDLE;
 
     static constexpr bgfx::ViewId kSceneView = 0;

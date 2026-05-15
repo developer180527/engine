@@ -88,6 +88,8 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
     m_sBaseColor   = bgfx::createUniform("s_baseColor",   bgfx::UniformType::Sampler);
     m_uParams      = bgfx::createUniform("u_params",      bgfx::UniformType::Vec4);
     m_uColorFactor = bgfx::createUniform("u_colorFactor", bgfx::UniformType::Vec4);
+    m_uLightDir    = bgfx::createUniform("u_lightDir",    bgfx::UniformType::Vec4);
+    m_uLightParams = bgfx::createUniform("u_lightParams", bgfx::UniformType::Vec4);
 
     static const uint32_t kWhite = 0xFFFFFFFFu;
     m_whiteTex = bgfx::createTexture2D(1, 1, false, 1,
@@ -154,6 +156,11 @@ void EngineRuntime::tick(float dt, const float view[16],
                          const float proj[16], bool pauseSystems) {
     bgfx::setViewTransform(kSceneView, view, proj);
     bgfx::touch(kSceneView);
+    // Light: directional sun from upper-right-front, 30% ambient
+    const float kLightDir[4]    = { 0.6f, 0.8f, 0.4f, 0.0f }; // toward light
+    const float kLightParams[4] = { 0.25f, 0.0f, 0.0f, 0.0f }; // ambient
+    bgfx::setUniform(m_uLightDir,    kLightDir);
+    bgfx::setUniform(m_uLightParams, kLightParams);
     tickSystems(dt, pauseSystems);
     renderScene(view, proj);
 }
@@ -255,6 +262,8 @@ void EngineRuntime::shutdownRenderer() {
     if (bgfx::isValid(m_sBaseColor))   bgfx::destroy(m_sBaseColor);
     if (bgfx::isValid(m_uParams))      bgfx::destroy(m_uParams);
     if (bgfx::isValid(m_uColorFactor)) bgfx::destroy(m_uColorFactor);
+    if (bgfx::isValid(m_uLightDir))    bgfx::destroy(m_uLightDir);
+    if (bgfx::isValid(m_uLightParams)) bgfx::destroy(m_uLightParams);
     if (bgfx::isValid(m_whiteTex))     bgfx::destroy(m_whiteTex);
     bgfx::shutdown();
 }
