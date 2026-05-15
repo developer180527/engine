@@ -71,6 +71,7 @@ add_executable(engine
     src/io/cgltf_impl.cpp
     src/io/gltf_importer.cpp
     src/io/stb_impl.cpp
+    src/engine/runtime.cpp
     shaders/vs_triangle.sc
     shaders/fs_triangle.sc
     shaders/varying.def.sc
