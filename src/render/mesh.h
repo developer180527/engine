@@ -3,6 +3,7 @@
 #include <bgfx/bgfx.h>
 #include <bx/math.h>
 #include <limits>
+#include <string>
 #include "core/handle.h"
 
 struct Mesh {
@@ -11,6 +12,7 @@ struct Mesh {
     uint32_t                 indexCount = 0;
     bool                     doubleSided = false;
     MaterialHandle           material;
+    std::string              sourcePath; // absolute path; empty for procedural meshes
 
     bx::Vec3 boundsMin {
          std::numeric_limits<float>::infinity(),
@@ -45,9 +47,10 @@ struct Mesh {
     Mesh(Mesh&& o) noexcept
         : vbh(o.vbh), ibh(o.ibh), indexCount(o.indexCount),
           doubleSided(o.doubleSided), material(o.material),
+          sourcePath(std::move(o.sourcePath)),
           boundsMin(o.boundsMin), boundsMax(o.boundsMax) {
-        o.vbh = BGFX_INVALID_HANDLE;
-        o.ibh = BGFX_INVALID_HANDLE;
+        o.vbh        = BGFX_INVALID_HANDLE;
+        o.ibh        = BGFX_INVALID_HANDLE;
         o.indexCount = 0;
     }
 
@@ -59,6 +62,7 @@ struct Mesh {
             indexCount  = o.indexCount;
             doubleSided = o.doubleSided;
             material    = o.material;
+            sourcePath  = std::move(o.sourcePath);
             boundsMin   = o.boundsMin;
             boundsMax   = o.boundsMax;
             o.vbh       = BGFX_INVALID_HANDLE;

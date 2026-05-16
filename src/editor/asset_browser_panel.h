@@ -205,27 +205,48 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader) {
 
             // Double-click on a supported file: load and spawn.
             if (ImGui::IsMouseDoubleClicked(0) && f.supported) {
-                auto& ecs    = ctx.ecs;
-                auto& assets = ctx.assets;
-                auto& editor = ctx.editor;
-                std::string eName = baseName(f.name);
-                LOG_INFO("Loader", "Queued: %s", f.name.c_str());
-                loader.load(f.fullPath, eName,
-                    [&ecs, &assets, &editor, eName](MeshHandle h, const std::string&) {
-                        if (!h.valid()) return;
-                        const Mesh* mesh = assets.getMesh(h);
-                        const float sc = autoScale(mesh);
-                        const float yo = groundOffset(mesh, sc);
-                        Transform t;
-                        t.position = {0.0f, yo, 0.0f};
-                        t.scale    = {sc,   sc,  sc};
-                        editor.selected = ecs.entity(eName.c_str())
-                            .set<Transform>(t)
-                            .set<MeshRenderer>({h})
-                            .set<Name>({eName});
-                        LOG_SUCCESS("Loader", "Spawned '%s' scale=%.3f",
-                                    eName.c_str(), sc);
-                    });
+                // Route by extension: glTF/GLB → cgltf (sync), others → Assimp (async)
+                {
+                    std::string _ext = std::filesystem::path(f.fullPath).extension().string();
+                    for (auto& _c : _ext) _c = (char)std::tolower(_c);
+                    const bool _isGltf = (_ext == ".glb" || _ext == ".gltf");
+                    if (_isGltf) {
+                        AssetStorage _s{ctx.assets, ctx.textures, ctx.materials};
+                        auto _r = ctx.importers.loadCached(f.fullPath, _s);
+                        if (_r.success) {
+                            if (Mesh* _m = const_cast<Mesh*>(ctx.assets.getMesh(_r.mesh)))
+                                _m->sourcePath = f.fullPath;
+                            const Mesh* _mesh = ctx.assets.getMesh(_r.mesh);
+                            const float _sc = autoScale(_mesh);
+                            const float _yo = groundOffset(_mesh, _sc);
+                            Transform _t; _t.position={0,_yo,0}; _t.scale={_sc,_sc,_sc};
+                            ctx.editor.selected = ctx.ecs.entity(baseName(f.name).c_str())
+                                .set<Transform>(_t)
+                                .set<MeshRenderer>({_r.mesh})
+                                .set<Name>({baseName(f.name)});
+                            LOG_SUCCESS("Loader", "Spawned '%s' (glTF sync)", baseName(f.name).c_str());
+                        } else {
+                            LOG_ERROR("Loader", "glTF load failed: %s", _r.error.c_str());
+                        }
+                    } else {
+                        auto& _ecs = ctx.ecs; auto& _assets = ctx.assets; auto& _ed = ctx.editor;
+                        std::string _en = baseName(f.name);
+                        LOG_INFO("Loader", "Queued: %s", f.name.c_str());
+                        loader.load(f.fullPath, _en,
+                            [&_ecs, &_assets, &_ed, _en](MeshHandle h, const std::string&) {
+                                if (!h.valid()) return;
+                                const Mesh* mesh = _assets.getMesh(h);
+                                const float sc = autoScale(mesh);
+                                const float yo = groundOffset(mesh, sc);
+                                Transform t; t.position={0,yo,0}; t.scale={sc,sc,sc};
+                                _ed.selected = _ecs.entity(_en.c_str())
+                                    .set<Transform>(t)
+                                    .set<MeshRenderer>({h})
+                                    .set<Name>({_en});
+                                LOG_SUCCESS("Loader", "Spawned '%s'", _en.c_str());
+                            });
+                    }
+                }
             }
         }
 
@@ -250,27 +271,48 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader) {
     if (!canLoad) ImGui::BeginDisabled();
     if (ImGui::Button("Load & Spawn") && canLoad) {
         const FileEntry& f = s_files[s_selectedIdx];
-        auto& ecs    = ctx.ecs;
-        auto& assets = ctx.assets;
-        auto& editor = ctx.editor;
-        std::string eName = baseName(f.name);
-        LOG_INFO("Loader", "Queued: %s", f.name.c_str());
-        loader.load(f.fullPath, eName,
-            [&ecs, &assets, &editor, eName](MeshHandle h, const std::string&) {
-                if (!h.valid()) return;
-                const Mesh* mesh = assets.getMesh(h);
-                const float sc = autoScale(mesh);
-                const float yo = groundOffset(mesh, sc);
-                Transform t;
-                t.position = {0.0f, yo, 0.0f};
-                t.scale    = {sc,   sc,  sc};
-                editor.selected = ecs.entity(eName.c_str())
-                    .set<Transform>(t)
-                    .set<MeshRenderer>({h})
-                    .set<Name>({eName});
-                LOG_SUCCESS("Loader", "Spawned '%s' scale=%.3f",
-                            eName.c_str(), sc);
-            });
+        // Route by extension: glTF/GLB → cgltf (sync), others → Assimp (async)
+        {
+            std::string _ext = std::filesystem::path(f.fullPath).extension().string();
+            for (auto& _c : _ext) _c = (char)std::tolower(_c);
+            const bool _isGltf = (_ext == ".glb" || _ext == ".gltf");
+            if (_isGltf) {
+                AssetStorage _s{ctx.assets, ctx.textures, ctx.materials};
+                auto _r = ctx.importers.loadCached(f.fullPath, _s);
+                if (_r.success) {
+                    if (Mesh* _m = const_cast<Mesh*>(ctx.assets.getMesh(_r.mesh)))
+                        _m->sourcePath = f.fullPath;
+                    const Mesh* _mesh = ctx.assets.getMesh(_r.mesh);
+                    const float _sc = autoScale(_mesh);
+                    const float _yo = groundOffset(_mesh, _sc);
+                    Transform _t; _t.position={0,_yo,0}; _t.scale={_sc,_sc,_sc};
+                    ctx.editor.selected = ctx.ecs.entity(baseName(f.name).c_str())
+                        .set<Transform>(_t)
+                        .set<MeshRenderer>({_r.mesh})
+                        .set<Name>({baseName(f.name)});
+                    LOG_SUCCESS("Loader", "Spawned '%s' (glTF sync)", baseName(f.name).c_str());
+                } else {
+                    LOG_ERROR("Loader", "glTF load failed: %s", _r.error.c_str());
+                }
+            } else {
+                auto& _ecs = ctx.ecs; auto& _assets = ctx.assets; auto& _ed = ctx.editor;
+                std::string _en = baseName(f.name);
+                LOG_INFO("Loader", "Queued: %s", f.name.c_str());
+                loader.load(f.fullPath, _en,
+                    [&_ecs, &_assets, &_ed, _en](MeshHandle h, const std::string&) {
+                        if (!h.valid()) return;
+                        const Mesh* mesh = _assets.getMesh(h);
+                        const float sc = autoScale(mesh);
+                        const float yo = groundOffset(mesh, sc);
+                        Transform t; t.position={0,yo,0}; t.scale={sc,sc,sc};
+                        _ed.selected = _ecs.entity(_en.c_str())
+                            .set<Transform>(t)
+                            .set<MeshRenderer>({h})
+                            .set<Name>({_en});
+                        LOG_SUCCESS("Loader", "Spawned '%s'", _en.c_str());
+                    });
+            }
+        }
     }
     if (!canLoad) ImGui::EndDisabled();
 

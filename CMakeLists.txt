@@ -34,7 +34,8 @@ add_library(imgui STATIC
     third_party/imgui/imgui_demo.cpp
     third_party/ImGuizmo/ImGuizmo.cpp
 )
-target_include_directories(imgui PUBLIC
+target_include_directories(
+    imgui PUBLIC
     third_party/imgui
     third_party/ImGuizmo
 )
@@ -110,7 +111,9 @@ set_source_files_properties(
     PROPERTIES HEADER_FILE_ONLY TRUE
 )
 
-target_include_directories(engine PRIVATE
+target_include_directories(
+    engine PRIVATE
+    third_party/nlohmann
     src
     src/core
     src/components

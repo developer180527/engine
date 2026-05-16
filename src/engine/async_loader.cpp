@@ -354,6 +354,7 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
         if (mg.matIndex < matHandles.size())
             mesh.material = matHandles[mg.matIndex];
 
+        mesh.sourcePath = req.asset.path;
         MeshHandle h = storage.meshes.addMesh(std::move(mesh));
         if (!firstHandle.valid()) firstHandle = h;
     }
