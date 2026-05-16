@@ -58,8 +58,13 @@ inline void updateEditorCamera(EditorCamera& cam, EditorInput& inp,
         inp.lastMouseY = my;
 
         constexpr float kSensitivity = 0.0025f;
-        cam.yaw   -= dx * kSensitivity;   // original: -= dx
-        cam.pitch -= dy * kSensitivity;   // original: -= dy
+        // Clamp delta to 200px max — prevents a single bad frame from a
+        // Bluetooth hiccup or focus-loss event spinning the camera wildly.
+        constexpr float kMaxDelta = 200.0f;
+        const float cdx = std::clamp(dx, -kMaxDelta, kMaxDelta);
+        const float cdy = std::clamp(dy, -kMaxDelta, kMaxDelta);
+        cam.yaw   -= cdx * kSensitivity;
+        cam.pitch -= cdy * kSensitivity;
         const float kLimit = bx::kPiHalf - 0.01f;
         cam.pitch = std::clamp(cam.pitch, -kLimit, kLimit);
     }

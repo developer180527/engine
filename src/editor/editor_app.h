@@ -1,10 +1,12 @@
 #pragma once
 #include "engine/runtime.h"
+#include "engine/async_loader.h"
 #include "engine_context.h"
 #include "editor/editor_camera.h"
 #include "editor/hierarchy_panel.h"
 #include "editor/inspector_panel.h"
 #include "editor/asset_browser_panel.h"
+#include "editor/console_panel.h"
 #include "editor/gizmo.h"
 #include "render/imgui_bgfx.h"
 #include "render/imgui_impl_glfw.h"
@@ -52,6 +54,14 @@ public:
                 lastW = fbw; lastH = fbh;
             }
 
+            // ---- Drain async asset uploads (main thread GPU upload)
+            {
+                AssetStorage storage{m_rt.ctx().assets,
+                                     m_rt.ctx().textures,
+                                     m_rt.ctx().materials};
+                m_loader.drainOne(storage); // one per frame — keeps frame time smooth
+            }
+
             // ---- ImGui frame start (must come before any ImGui calls) ----
             imguiNewFrame();
             gizmoBeginFrame();
@@ -85,7 +95,8 @@ public:
     }
 
 private:
-    EngineRuntime& m_rt;
+    EngineRuntime&  m_rt;
+    AsyncLoader      m_loader;
     EditorCamera   m_cam;
     EditorInput    m_input;
     EditorState    m_editor;
@@ -119,7 +130,8 @@ private:
 
         drawHierarchyPanel(ctx);
         drawInspectorPanel(ctx);
-        drawAssetBrowserPanel(ctx);
+        drawAssetBrowserPanel(ctx, m_loader);
+        drawConsolePanel();
         drawGizmo(ctx, view, proj);
     }
 };

@@ -1,3 +1,5 @@
+#include <vector>
+#include <cstring>
 #include "engine/runtime.h"
 
 #include <cstdio>
@@ -180,7 +182,9 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
 }
 
 void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
-    // Frustum planes (column-major, [0,1] NDC depth — Metal convention)
+    // ----------------------------------------------------------------
+    // 1. Frustum planes
+    // ----------------------------------------------------------------
     float vp[16];
     bx::mtxMul(vp, view, proj);
 
@@ -198,14 +202,28 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
         mkPlane(vp[3]-vp[2], vp[7]-vp[6], vp[11]-vp[10], vp[15]-vp[14]),
     };
 
+    // ----------------------------------------------------------------
+    // 2. Collect visible renderables
+    // ----------------------------------------------------------------
+    struct Renderable {
+        float           model[16];
+        const Mesh*     mesh;
+        const Material* mat;
+        const Texture*  tex;
+        uint32_t        meshIdx;  // MeshHandle.idx for instancing key
+        uint32_t        matIdx;   // MaterialHandle.idx for batching key
+    };
+
+    std::vector<Renderable> visible;
+    visible.reserve(64);
+
     m_ecs.query_builder<const Transform, const MeshRenderer>().build()
         .each([&](flecs::entity, const Transform& t, const MeshRenderer& mr) {
             const Mesh* mesh = m_assets.getMesh(mr.mesh);
             if (!mesh) return;
 
-            // Sphere-frustum cull
             if (mesh->hasBounds()) {
-                const bx::Vec3 c   = mesh->boundsCenter();
+                const bx::Vec3 c    = mesh->boundsCenter();
                 const float    maxS = std::max({t.scale.x, t.scale.y, t.scale.z});
                 const float    r    = bx::length(mesh->boundsSize()) * 0.5f * maxS;
                 float m[16]; t.getMatrix(m);
@@ -216,37 +234,75 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
                     if (p.a*wx+p.b*wy+p.c*wz+p.d < -r) return;
             }
 
-            // Material + texture binding
-            const Material* mat = mesh->material.valid()
-                ? m_ctx->materials.getMaterial(mesh->material) : nullptr;
-            const Texture*  tex = (mat && mat->hasTexture())
-                ? m_ctx->textures.getTexture(mat->baseColorTexture) : nullptr;
+            Renderable r;
+            t.getMatrix(r.model);
+            r.mesh    = mesh;
+            r.mat     = mesh->material.valid()
+                        ? m_ctx->materials.getMaterial(mesh->material) : nullptr;
+            r.tex     = (r.mat && r.mat->hasTexture())
+                        ? m_ctx->textures.getTexture(r.mat->baseColorTexture) : nullptr;
+            r.meshIdx = mr.mesh.id;
+            r.matIdx  = mesh->material.id;
+            visible.push_back(r);
+        });
 
-            float params[4] = {tex ? 1.0f : 0.0f, 0, 0, 0};
-            float factor[4] = {1, 1, 1, 1};
-            if (mat) {
-                factor[0] = mat->baseColorFactor[0];
-                factor[1] = mat->baseColorFactor[1];
-                factor[2] = mat->baseColorFactor[2];
-                factor[3] = mat->baseColorFactor[3];
-            }
-            bgfx::setUniform(m_uParams,      params);
-            bgfx::setUniform(m_uColorFactor, factor);
-            bgfx::setTexture(0, m_sBaseColor, tex ? tex->handle : m_whiteTex);
+    // ----------------------------------------------------------------
+    // 3. Sort by (meshIdx, matIdx) — groups instancable entities together
+    //    and minimises material state switches between groups
+    // ----------------------------------------------------------------
+    std::sort(visible.begin(), visible.end(), [](const Renderable& a, const Renderable& b) {
+        if (a.meshIdx != b.meshIdx) return a.meshIdx < b.meshIdx;
+        return a.matIdx < b.matIdx;
+    });
 
-            float model[16]; t.getMatrix(model);
-            bgfx::setTransform(model);
-            bgfx::setVertexBuffer(0, mesh->vbh);
-            bgfx::setIndexBuffer(mesh->ibh);
+    // ----------------------------------------------------------------
+    // 4. Submit — instanced for groups > 1, single draw otherwise
+    // ----------------------------------------------------------------
+    size_t i = 0;
+    while (i < visible.size()) {
+        const Renderable& first = visible[i];
 
-            const uint64_t state = mesh->doubleSided
-                ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
-                   BGFX_STATE_WRITE_Z   | BGFX_STATE_DEPTH_TEST_LESS |
-                   BGFX_STATE_MSAA)
-                : BGFX_STATE_DEFAULT;
+        // Count how many consecutive renderables share the same mesh+mat
+        size_t j = i + 1;
+        while (j < visible.size()
+               && visible[j].meshIdx == first.meshIdx
+               && visible[j].matIdx  == first.matIdx) {
+            ++j;
+        }
+        const uint32_t groupSize = (uint32_t)(j - i);
+
+        // Bind material state once per group
+        float params[4] = {first.tex ? 1.0f : 0.0f, 0, 0, 0};
+        float factor[4] = {1, 1, 1, 1};
+        if (first.mat) {
+            factor[0] = first.mat->baseColorFactor[0];
+            factor[1] = first.mat->baseColorFactor[1];
+            factor[2] = first.mat->baseColorFactor[2];
+            factor[3] = first.mat->baseColorFactor[3];
+        }
+        bgfx::setUniform(m_uParams,      params);
+        bgfx::setUniform(m_uColorFactor, factor);
+        bgfx::setTexture(0, m_sBaseColor,
+                         first.tex ? first.tex->handle : m_whiteTex);
+
+        const uint64_t state = first.mesh->doubleSided
+            ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+               BGFX_STATE_WRITE_Z   | BGFX_STATE_DEPTH_TEST_LESS |
+               BGFX_STATE_MSAA)
+            : BGFX_STATE_DEFAULT;
+
+        // Individual draw calls per group — material state set once above.
+        // Instancing removed until shader supports i_data0-3 per-instance
+        // model matrix (requires VS rewrite to use u_viewProj + i_data rows).
+        for (uint32_t k = 0; k < groupSize; ++k) {
+            bgfx::setTransform(visible[i + k].model);
+            bgfx::setVertexBuffer(0, first.mesh->vbh);
+            bgfx::setIndexBuffer(first.mesh->ibh);
             bgfx::setState(state);
             bgfx::submit(kSceneView, m_program);
-        });
+        }
+        i = j;
+    }
 }
 
 void EngineRuntime::shutdown() {

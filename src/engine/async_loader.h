@@ -1,0 +1,96 @@
+#pragma once
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <set>
+#include <functional>
+#include <string>
+#include <vector>
+#include <atomic>
+#include <cstdint>
+
+#include <bgfx/bgfx.h>
+#include "render/vertex.h"
+#include "io/asset_storage.h"
+
+// -----------------------------------------------------------------------
+// GPU-ready data — ALL heavy work (parse + decode + bgfx::copy memcpy)
+// done on the worker thread. Main thread only creates bgfx handles, which
+// is submitting a command — O(microseconds), no memcpy, no stall.
+// -----------------------------------------------------------------------
+
+struct MeshGPUData {
+    const bgfx::Memory* vertexMem  = nullptr; // pre-copied by worker
+    const bgfx::Memory* indexMem   = nullptr; // pre-copied by worker
+    uint32_t  indexCount  = 0;
+    bool      use32       = false;
+    bool      doubleSided = false;
+    bool      hasBounds   = false;
+    float     boundsMin[3]{};
+    float     boundsMax[3]{};
+    uint32_t  matIndex    = 0;
+};
+
+struct TextureGPUData {
+    const bgfx::Memory* mem = nullptr; // nullptr = no texture
+    uint16_t w = 0, h = 0;
+};
+
+struct MaterialGPUData {
+    float          baseColorFactor[4] = {1, 1, 1, 1};
+    TextureGPUData baseColorTexture;
+};
+
+// Fully prepared asset: all CPU work AND all bgfx::copy() done on worker.
+// drainOne() on the main thread just creates handles and spawns the entity.
+struct LoadedAsset {
+    std::string                   path;
+    std::string                   name;
+    bool                          success = false;
+    std::string                   error;
+    std::vector<MeshGPUData>      meshes;
+    std::vector<MaterialGPUData>  materials;
+};
+
+using OnLoaded = std::function<void(MeshHandle, const std::string&)>;
+
+class AsyncLoader {
+public:
+     AsyncLoader();
+    ~AsyncLoader();
+    AsyncLoader(const AsyncLoader&)            = delete;
+    AsyncLoader& operator=(const AsyncLoader&) = delete;
+
+    // Thread-safe. Silently ignores paths already in flight.
+    void load(const std::string& path, const std::string& name, OnLoaded cb);
+
+    // Main thread only. O(microseconds) — only creates bgfx handles.
+    // Returns true if an asset was processed.
+    bool drainOne(AssetStorage& storage);
+
+    bool isLoading(const std::string& path) const;
+    bool isLoaded (const std::string& path) const;
+    int  pendingCount() const;
+
+private:
+    struct LoadRequest   { std::string path, name; OnLoaded cb; };
+    struct UploadRequest { LoadedAsset asset;       OnLoaded cb; };
+
+    void        workerLoop();
+    LoadedAsset processFile(const std::string& path, const std::string& name);
+
+    std::thread             m_worker;
+    std::atomic<bool>       m_running{true};
+
+    mutable std::mutex      m_pendingMtx;
+    std::condition_variable m_pendingCV;
+    std::queue<LoadRequest> m_pending;
+    std::set<std::string>   m_inFlight;
+
+    mutable std::mutex        m_readyMtx;
+    std::queue<UploadRequest> m_ready;
+
+    mutable std::mutex    m_loadedMtx;
+    std::set<std::string> m_loaded;
+};

@@ -1,3 +1,5 @@
+#include "engine/logger.h"
+#include "engine/async_loader.h"
 #pragma once
 
 #include <filesystem>
@@ -121,7 +123,7 @@ inline float groundOffset(const Mesh* mesh, float scale) {
 
 } // namespace asset_browser_detail
 
-inline void drawAssetBrowserPanel(EngineContext& ctx) {
+inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader) {
     namespace fs = std::filesystem;
     using namespace asset_browser_detail;
 
@@ -161,12 +163,14 @@ inline void drawAssetBrowserPanel(EngineContext& ctx) {
         s_files = scanDirectory(ctx.project.assetsRoot, ctx.importers);
         // Update loaded status from registry cache.
         for (auto& f : s_files)
-            f.loaded = ctx.importers.isLoaded(f.fullPath);
+            f.loaded = ctx.importers.isLoaded(f.fullPath)
+                     || loader.isLoaded(f.fullPath);
         s_needsRefresh = false;
     } else {
         // Update loaded flags without full rescan.
         for (auto& f : s_files)
-            f.loaded = ctx.importers.isLoaded(f.fullPath);
+            f.loaded = ctx.importers.isLoaded(f.fullPath)
+                     || loader.isLoaded(f.fullPath);
     }
 
     // ---- File list ----
@@ -201,41 +205,27 @@ inline void drawAssetBrowserPanel(EngineContext& ctx) {
 
             // Double-click on a supported file: load and spawn.
             if (ImGui::IsMouseDoubleClicked(0) && f.supported) {
-                std::printf("\n========== Loading %s ==========\n",
-                            f.name.c_str());
-
-                auto result = ([&]() -> MeshImportResult { AssetStorage s{ctx.assets, ctx.textures, ctx.materials}; return ctx.importers.loadCached(f.fullPath, s); })();
-
-                if (!result.success) {
-                    std::printf("[FAIL] %s\n===================================\n\n",
-                                result.error.c_str());
-                } else {
-                    const Mesh* mesh = ctx.assets.getMesh(result.mesh);
-                    const float scale   = autoScale(mesh);
-                    const float groundY = groundOffset(mesh, scale);
-
-                    Transform t;
-                    t.position = { 0.0f, groundY, 0.0f };
-                    t.scale    = { scale, scale, scale };
-
-                    const std::string entityName = baseName(f.name);
-
-                    flecs::entity spawned =
-                        ctx.ecs.entity(entityName.c_str())
+                auto& ecs    = ctx.ecs;
+                auto& assets = ctx.assets;
+                auto& editor = ctx.editor;
+                std::string eName = baseName(f.name);
+                LOG_INFO("Loader", "Queued: %s", f.name.c_str());
+                loader.load(f.fullPath, eName,
+                    [&ecs, &assets, &editor, eName](MeshHandle h, const std::string&) {
+                        if (!h.valid()) return;
+                        const Mesh* mesh = assets.getMesh(h);
+                        const float sc = autoScale(mesh);
+                        const float yo = groundOffset(mesh, sc);
+                        Transform t;
+                        t.position = {0.0f, yo, 0.0f};
+                        t.scale    = {sc,   sc,  sc};
+                        editor.selected = ecs.entity(eName.c_str())
                             .set<Transform>(t)
-                            .set<MeshRenderer>({ result.mesh })
-                            .set<Name>({ entityName });
-
-                    // Auto-select the newly spawned entity.
-                    ctx.editor.selected = spawned;
-
-                    std::printf("[OK] Spawned '%s' scale=%.3f\n"
-                                "===================================\n\n",
-                                entityName.c_str(), scale);
-
-                    // Mark file as loaded and flag a soft refresh.
-                    s_files[i].loaded = true;
-                }
+                            .set<MeshRenderer>({h})
+                            .set<Name>({eName});
+                        LOG_SUCCESS("Loader", "Spawned '%s' scale=%.3f",
+                                    eName.c_str(), sc);
+                    });
             }
         }
 
@@ -252,40 +242,35 @@ inline void drawAssetBrowserPanel(EngineContext& ctx) {
                           && s_selectedIdx < (int)s_files.size()
                           && s_files[s_selectedIdx].supported);
 
+    // Show async loading indicator
+    if (canLoad && loader.isLoading(s_files[s_selectedIdx].fullPath)) {
+        ImGui::TextDisabled("Loading... (%.0f in queue)",
+                           (float)loader.pendingCount());
+    }
     if (!canLoad) ImGui::BeginDisabled();
     if (ImGui::Button("Load & Spawn") && canLoad) {
         const FileEntry& f = s_files[s_selectedIdx];
-
-        std::printf("\n========== Loading %s ==========\n", f.name.c_str());
-        auto result = ([&]() -> MeshImportResult { AssetStorage s{ctx.assets, ctx.textures, ctx.materials}; return ctx.importers.loadCached(f.fullPath, s); })();
-
-        if (!result.success) {
-            std::printf("[FAIL] %s\n===================================\n\n",
-                        result.error.c_str());
-        } else {
-            const Mesh* mesh = ctx.assets.getMesh(result.mesh);
-            const float scale   = autoScale(mesh);
-            const float groundY = groundOffset(mesh, scale);
-
-            Transform t;
-            t.position = { 0.0f, groundY, 0.0f };
-            t.scale    = { scale, scale, scale };
-
-            const std::string entityName = baseName(f.name);
-
-            flecs::entity spawned =
-                ctx.ecs.entity(entityName.c_str())
+        auto& ecs    = ctx.ecs;
+        auto& assets = ctx.assets;
+        auto& editor = ctx.editor;
+        std::string eName = baseName(f.name);
+        LOG_INFO("Loader", "Queued: %s", f.name.c_str());
+        loader.load(f.fullPath, eName,
+            [&ecs, &assets, &editor, eName](MeshHandle h, const std::string&) {
+                if (!h.valid()) return;
+                const Mesh* mesh = assets.getMesh(h);
+                const float sc = autoScale(mesh);
+                const float yo = groundOffset(mesh, sc);
+                Transform t;
+                t.position = {0.0f, yo, 0.0f};
+                t.scale    = {sc,   sc,  sc};
+                editor.selected = ecs.entity(eName.c_str())
                     .set<Transform>(t)
-                    .set<MeshRenderer>({ result.mesh })
-                    .set<Name>({ entityName });
-
-            ctx.editor.selected = spawned;
-            s_files[s_selectedIdx].loaded = true;
-
-            std::printf("[OK] Spawned '%s' scale=%.3f\n"
-                        "===================================\n\n",
-                        entityName.c_str(), scale);
-        }
+                    .set<MeshRenderer>({h})
+                    .set<Name>({eName});
+                LOG_SUCCESS("Loader", "Spawned '%s' scale=%.3f",
+                            eName.c_str(), sc);
+            });
     }
     if (!canLoad) ImGui::EndDisabled();
 

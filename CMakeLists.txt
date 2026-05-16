@@ -96,6 +96,7 @@ add_executable(engine
     src/io/gltf_importer.cpp
     src/io/stb_impl.cpp
     src/engine/runtime.cpp
+    src/engine/async_loader.cpp
     src/io/assimp_importer.cpp
     shaders/vs_triangle.sc
     shaders/fs_triangle.sc

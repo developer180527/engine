@@ -1,3 +1,4 @@
+#include "engine/logger.h"
 #include "io/assimp_importer.h"
 #include "render/vertex.h"
 #include "render/mesh.h"
@@ -60,7 +61,7 @@ static std::string discoverTexture(const std::filesystem::path& dir,
                 std::string ls = kSuffixes[i];
                 for (auto& c : ls) c = (char)std::tolower(c);
                 if (lf.find(ls) != std::string::npos) {
-                    std::printf("[Assimp] Texture discovered: %s\n", fname.c_str());
+                    LOG_SUCCESS("Assimp", "Texture discovered: %s", fname.c_str());
                     return de.path().string();
                 }
             }
@@ -124,7 +125,7 @@ static TextureHandle importTexture(const aiScene*   scene,
             for (const auto& c : candidates) {
                 pixels = stbi_load(c.string().c_str(), &w, &h, &ch, 4);
                 if (pixels) {
-                    std::printf("[Assimp] Texture resolved: %s\n",
+                    LOG_SUCCESS("Assimp", "Texture resolved: %s",
                                 c.string().c_str());
                     break;
                 }
@@ -297,7 +298,7 @@ MeshImportResult AssimpImporter::load(const std::string& path,
     if (!scene || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) || !scene->mRootNode)
         return MeshImportResult::fail(std::string("Assimp: ") + importer.GetErrorString());
 
-    std::printf("[Assimp] %s  meshes=%u  mats=%u\n",
+    LOG_INFO("Assimp", "%s  meshes=%u  mats=%u",
         path.c_str(), scene->mNumMeshes, scene->mNumMaterials);
 
     const auto dir = std::filesystem::path(path).parent_path();
