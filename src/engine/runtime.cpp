@@ -74,9 +74,7 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
         return false;
     }
 
-    bgfx::setViewClear(kSceneView,
-        BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1a1a1aff, 1.0f, 0);
-    bgfx::setViewRect(kSceneView, 0, 0, bgfx::BackbufferRatio::Equal);
+    createSceneFB(cfg.width, cfg.height);
 
     m_program = bgfx::createProgram(
         bgfx::createShader(bgfx::makeRef(vs_triangle_mtl, sizeof(vs_triangle_mtl))),
@@ -151,11 +149,12 @@ void EngineRuntime::resize(int w, int h) {
     if (w == m_width && h == m_height) return;
     m_width = w; m_height = h;
     bgfx::reset((uint32_t)w, (uint32_t)h, BGFX_RESET_VSYNC);
-    bgfx::setViewRect(kSceneView, 0, 0, bgfx::BackbufferRatio::Equal);
 }
 
 void EngineRuntime::tick(float dt, const float view[16],
                          const float proj[16], bool pauseSystems) {
+    bgfx::setViewFrameBuffer(kSceneView, m_sceneFB);
+    bgfx::setViewRect(kSceneView, 0, 0, (uint16_t)m_sceneW, (uint16_t)m_sceneH);
     bgfx::setViewTransform(kSceneView, view, proj);
     bgfx::touch(kSceneView);
     // Light: directional sun from upper-right-front, 30% ambient
@@ -313,8 +312,36 @@ void EngineRuntime::shutdown() {
     shutdownPlatform();
 }
 
+void EngineRuntime::createSceneFB(int w, int h) {
+    // Destroy previous FB and textures
+    if (bgfx::isValid(m_sceneFB))       bgfx::destroy(m_sceneFB);
+    if (bgfx::isValid(m_sceneColorTex)) bgfx::destroy(m_sceneColorTex);
+    if (bgfx::isValid(m_sceneDepthTex)) bgfx::destroy(m_sceneDepthTex);
+
+    m_sceneColorTex = bgfx::createTexture2D(
+        (uint16_t)w, (uint16_t)h, false, 1,
+        bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT);
+    m_sceneDepthTex = bgfx::createTexture2D(
+        (uint16_t)w, (uint16_t)h, false, 1,
+        bgfx::TextureFormat::D24S8, BGFX_TEXTURE_RT);
+
+    bgfx::TextureHandle att[2] = { m_sceneColorTex, m_sceneDepthTex };
+    m_sceneFB = bgfx::createFrameBuffer(2, att, false); // we own the textures
+
+    m_sceneW = w; m_sceneH = h;
+
+    bgfx::setViewFrameBuffer(kSceneView, m_sceneFB);
+    bgfx::setViewClear(kSceneView,
+        BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1a1a1aff, 1.0f, 0);
+    bgfx::setViewRect(kSceneView, 0, 0, (uint16_t)w, (uint16_t)h);
+    std::printf("[Runtime] Scene FB: %dx%d\n", w, h);
+}
+
 void EngineRuntime::shutdownRenderer() {
-    if (bgfx::isValid(m_program))      bgfx::destroy(m_program);
+    if (bgfx::isValid(m_sceneFB))       bgfx::destroy(m_sceneFB);
+    if (bgfx::isValid(m_sceneColorTex)) bgfx::destroy(m_sceneColorTex);
+    if (bgfx::isValid(m_sceneDepthTex)) bgfx::destroy(m_sceneDepthTex);
+    if (bgfx::isValid(m_program))       bgfx::destroy(m_program);
     if (bgfx::isValid(m_sBaseColor))   bgfx::destroy(m_sBaseColor);
     if (bgfx::isValid(m_uParams))      bgfx::destroy(m_uParams);
     if (bgfx::isValid(m_uColorFactor)) bgfx::destroy(m_uColorFactor);

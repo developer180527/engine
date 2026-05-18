@@ -33,6 +33,14 @@ public:
     // Framebuffer resize — called by EditorApp when GLFW reports a size change.
     void resize(int w, int h);
 
+    // Scene view framebuffer — resized when the Scene View panel changes size.
+    // EditorApp calls this; color texture is displayed via ImGui::Image().
+    void createSceneFB(int w, int h);
+
+    bgfx::TextureHandle sceneColorTexture() const { return m_sceneColorTex; }
+    int sceneW() const { return m_sceneW; }
+    int sceneH() const { return m_sceneH; }
+
     GLFWwindow*     window() const { return m_window; }
     RuntimeContext& ctx()          { return *m_ctx; }
     int             width()  const { return m_width; }
@@ -64,6 +72,12 @@ private:
     bgfx::UniformHandle m_uLightDir    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uLightParams = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_whiteTex     = BGFX_INVALID_HANDLE;
+
+    // Offscreen scene framebuffer — scene renders here, not to the backbuffer.
+    bgfx::FrameBufferHandle m_sceneFB       = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle     m_sceneColorTex = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle     m_sceneDepthTex = BGFX_INVALID_HANDLE;
+    int m_sceneW = 1280, m_sceneH = 720;
 
     static constexpr bgfx::ViewId kSceneView = 0;
 

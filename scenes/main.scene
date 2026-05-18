@@ -2,6 +2,54 @@
   "entities": [
     {
       "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
+      },
+      "name": "Demon_Mask",
+      "transform": {
+        "position": [
+          -5.190892219543457,
+          9.64320182800293,
+          5.76986026763916
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0531535148620605,
+          1.0531535148620605,
+          1.0531535148620605
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Duck.gltf"
+      },
+      "name": "Duck",
+      "transform": {
+        "position": [
+          -1.9833117723464966,
+          7.83304500579834,
+          6.048151969909668
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.012086169794201851,
+          0.012086169794201851,
+          0.012086169794201851
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
         "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFig001.fbx"
       },
       "name": "PlantBanjoFig001",
@@ -69,54 +117,6 @@
           0.026094583794474602,
           0.026094583794474602,
           0.026094583794474602
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
-      },
-      "name": "Demon_Mask",
-      "transform": {
-        "position": [
-          -5.190892219543457,
-          9.64320182800293,
-          5.76986026763916
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.0531535148620605,
-          1.0531535148620605,
-          1.0531535148620605
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Duck.gltf"
-      },
-      "name": "Duck",
-      "transform": {
-        "position": [
-          -1.9833117723464966,
-          7.83304500579834,
-          6.048151969909668
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          0.012086169794201851,
-          0.012086169794201851,
-          0.012086169794201851
         ]
       }
     }

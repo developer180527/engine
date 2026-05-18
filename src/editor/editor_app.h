@@ -115,17 +115,28 @@ public:
             { auto ctx = buildCtx(); gizmoHandleHotkeys(m_rt.window(), ctx); }
 
             // ---- Editor camera ----
-            updateEditorCamera(m_cam, m_input, m_rt.window(), dt);
+            updateEditorCamera(m_cam, m_input, m_rt.window(), dt, m_sceneViewHovered);
 
             // ---- Camera matrices ----
             float view[16], proj[16];
             m_cam.getViewMatrix(view);
             bx::mtxProj(proj, m_rt.fov(),
-                        float(fbw) / float(fbh),
+                        float(m_rt.sceneW()) / float(m_rt.sceneH()),
                         0.1f, 1000.0f,
                         bgfx::getCaps()->homogeneousDepth);
 
             // ---- Runtime tick (ECS systems + scene render) ----
+            // Resize scene FB before rendering — avoids race condition
+            // where tick() renders to old FB while panel shows new empty FB
+            // Always render at >= full window resolution.
+            // If the panel is smaller, ImGui downscales the texture —
+            // downscaling multiple rendered pixels into one display pixel
+            // gives free SSAA and eliminates the aliasing regression.
+            const int renderW = std::max(m_desiredSceneW, m_rt.width());
+            const int renderH = std::max(m_desiredSceneH, m_rt.height());
+            if (renderW != m_rt.sceneW() || renderH != m_rt.sceneH())
+                m_rt.createSceneFB(renderW, renderH);
+
             m_rt.tick(dt, view, proj, ImGuizmo::IsUsing());
 
             // ---- Editor UI (all ImGui panel draws) ----
@@ -150,6 +161,9 @@ private:
     EditorInput    m_input;
     EditorState    m_editor;
     GizmoState     m_gizmo;
+    bool           m_sceneViewHovered = true;
+    int            m_desiredSceneW    = 1280;
+    int            m_desiredSceneH    = 720;
 
     // Build a fresh EngineContext for this frame's panels.
     // Stack-allocated — valid only for the duration of renderUI().
@@ -160,6 +174,44 @@ private:
             rc.materials, rc.project, rc.importers,
             m_editor, m_gizmo
         };
+    }
+
+    void drawSceneViewPanel(const float view[16], const float proj[16],
+                            EngineContext& ctx) {
+        // Set position/size on first run (no ini file = always first run)
+        ImGuiViewport* _vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(
+            ImVec2(_vp->WorkPos.x + 250, _vp->WorkPos.y + 30),
+            ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(
+            ImVec2(_vp->WorkSize.x - 500, _vp->WorkSize.y - 60),
+            ImGuiCond_FirstUseEver);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::Begin("Scene View");
+        ImGui::PopStyleVar();
+
+        ImVec2 size = ImGui::GetContentRegionAvail();
+        if (size.x < 1.0f) size.x = 1.0f;
+        if (size.y < 1.0f) size.y = 1.0f;
+
+        // Store desired size — resize happens BEFORE tick() next frame
+        // to avoid race condition (tick renders to old FB, panel shows new empty FB)
+        m_desiredSceneW = (int)size.x;
+        m_desiredSceneH = (int)size.y;
+
+        // Display scene texture — ImGui scales to panel size automatically
+        ImTextureID tid = (ImTextureID)(uintptr_t)m_rt.sceneColorTexture().idx;
+        ImVec2 cursorPos = ImGui::GetCursorScreenPos();
+        ImGui::Image(tid, size);
+
+        // Gizmo overlays the scene image — SetRect here overrides the one
+        // set in gizmoBeginFrame(), giving it the correct panel coordinates
+        ImGuizmo::SetRect(cursorPos.x, cursorPos.y, size.x, size.y);
+
+        // Camera is active when this panel is hovered OR while right-dragging
+        // (dragging keeps hover true so camera doesn't cut out mid-drag)
+
+        ImGui::End();
     }
 
     void renderUI(const float view[16], const float proj[16]) {
@@ -190,7 +242,7 @@ private:
 
             ImGuiID dsid = ImGui::GetID("MainDockSpace");
             ImGui::DockSpace(dsid, ImVec2(0,0),
-                ImGuiDockNodeFlags_PassthruCentralNode);
+                ImGuiDockNodeFlags_None);
 
             ImGui::End();
         }
@@ -219,6 +271,8 @@ private:
 
         auto ctx = buildCtx();
 
+        drawSceneViewPanel(view, proj, ctx);
+
         // Stats
         ImGui::Begin("Stats");
         ImGui::Text("FPS: %.1f",      ImGui::GetIO().Framerate);
@@ -235,6 +289,5 @@ private:
         drawInspectorPanel(ctx);
         drawAssetBrowserPanel(ctx, m_loader);
         drawConsolePanel();
-        drawGizmo(ctx, view, proj);
     }
 };

@@ -90,7 +90,7 @@ void imguiInit(GLFWwindow* window, float fontSize) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
-    io.IniFilename = nullptr; // disable imgui.ini for now
+    io.IniFilename = "imgui.ini"; // persist panel layout
 
     ImGui::StyleColorsDark();
 

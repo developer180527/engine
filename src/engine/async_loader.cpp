@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
-#include <cmath>
 
 // -----------------------------------------------------------------------
 // Worker thread helpers — zero main-thread calls, bgfx::copy() IS

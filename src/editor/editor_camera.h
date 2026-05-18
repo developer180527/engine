@@ -34,11 +34,14 @@ struct EditorInput {
 };
 
 inline void updateEditorCamera(EditorCamera& cam, EditorInput& inp,
-                                GLFWwindow* window, float dt) {
+                                GLFWwindow* window, float dt,
+                                bool sceneHovered = true) {
     ImGuiIO& io = ImGui::GetIO();
     const bool typing       = io.WantTextInput;
+    // Scene View IS an ImGui window so WantCaptureMouse is always true there.
+    // Use sceneHovered (set by panel) instead.
     const bool rightDownNow = (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT)
-                               == GLFW_PRESS) && !io.WantCaptureMouse;
+                               == GLFW_PRESS) && sceneHovered;
 
     if (rightDownNow && !inp.rightMouseHeld) {
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -69,7 +72,7 @@ inline void updateEditorCamera(EditorCamera& cam, EditorInput& inp,
         cam.pitch = std::clamp(cam.pitch, -kLimit, kLimit);
     }
 
-    if (typing) return;
+    if (typing || !sceneHovered) return;
 
     const float speed = (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
                          glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS)
