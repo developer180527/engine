@@ -164,6 +164,7 @@ void EngineRuntime::tick(float dt, const float view[16],
     bgfx::setUniform(m_uLightParams, kLightParams);
     tickSystems(dt, pauseSystems);
     renderScene(view, proj);
+
 }
 
 void EngineRuntime::tickSystems(float dt, bool paused) {
@@ -313,27 +314,25 @@ void EngineRuntime::shutdown() {
 }
 
 void EngineRuntime::createSceneFB(int w, int h) {
-    // Destroy previous FB and textures
     if (bgfx::isValid(m_sceneFB))       bgfx::destroy(m_sceneFB);
     if (bgfx::isValid(m_sceneColorTex)) bgfx::destroy(m_sceneColorTex);
     if (bgfx::isValid(m_sceneDepthTex)) bgfx::destroy(m_sceneDepthTex);
 
-    m_sceneColorTex = bgfx::createTexture2D(
-        (uint16_t)w, (uint16_t)h, false, 1,
+    const uint16_t W = (uint16_t)w, H = (uint16_t)h;
+
+    m_sceneColorTex = bgfx::createTexture2D(W, H, false, 1,
         bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT);
-    m_sceneDepthTex = bgfx::createTexture2D(
-        (uint16_t)w, (uint16_t)h, false, 1,
+    m_sceneDepthTex = bgfx::createTexture2D(W, H, false, 1,
         bgfx::TextureFormat::D24S8, BGFX_TEXTURE_RT);
 
     bgfx::TextureHandle att[2] = { m_sceneColorTex, m_sceneDepthTex };
-    m_sceneFB = bgfx::createFrameBuffer(2, att, false); // we own the textures
+    m_sceneFB = bgfx::createFrameBuffer(2, att, false);
 
     m_sceneW = w; m_sceneH = h;
 
     bgfx::setViewFrameBuffer(kSceneView, m_sceneFB);
-    bgfx::setViewClear(kSceneView,
-        BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1a1a1aff, 1.0f, 0);
-    bgfx::setViewRect(kSceneView, 0, 0, (uint16_t)w, (uint16_t)h);
+    bgfx::setViewClear(kSceneView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1a1a1aff, 1.0f, 0);
+    bgfx::setViewRect(kSceneView, 0, 0, W, H);
     std::printf("[Runtime] Scene FB: %dx%d\n", w, h);
 }
 

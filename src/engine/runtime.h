@@ -79,7 +79,9 @@ private:
     bgfx::TextureHandle     m_sceneDepthTex = BGFX_INVALID_HANDLE;
     int m_sceneW = 1280, m_sceneH = 720;
 
-    static constexpr bgfx::ViewId kSceneView = 0;
+    static constexpr bgfx::ViewId kSceneView   = 0;
+    static constexpr bgfx::ViewId kBgView      = 1; // clears backbuffer
+    static constexpr bgfx::ViewId kResolveView = 2; // MSAA blit resolve
 
     bool initPlatform(const EngineConfig& cfg);
     bool initRenderer(const EngineConfig& cfg);

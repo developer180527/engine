@@ -134,7 +134,11 @@ public:
             // gives free SSAA and eliminates the aliasing regression.
             const int renderW = std::max(m_desiredSceneW, m_rt.width());
             const int renderH = std::max(m_desiredSceneH, m_rt.height());
-            if (renderW != m_rt.sceneW() || renderH != m_rt.sceneH())
+            // Hysteresis: only recreate FB when size differs by > 8px.
+            // Prevents GPU texture thrash during window resize animations.
+            const int dw = std::abs(renderW - m_rt.sceneW());
+            const int dh = std::abs(renderH - m_rt.sceneH());
+            if (dw > 8 || dh > 8)
                 m_rt.createSceneFB(renderW, renderH);
 
             m_rt.tick(dt, view, proj, ImGuizmo::IsUsing());
