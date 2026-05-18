@@ -17,3 +17,4 @@ void imguiNewFrame();
 // Render the accumulated ImGui draw data to the given bgfx view.
 // Call this after all ImGui:: calls for the frame.
 void imguiRender(bgfx::ViewId viewId = 255);
+void imguiRenderViewports();

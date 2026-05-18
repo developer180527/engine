@@ -148,6 +148,7 @@ public:
 
             // ---- Submit ImGui draw data then flip ----
             imguiRender();
+            imguiRenderViewports();
             bgfx::frame();
         }
     }
