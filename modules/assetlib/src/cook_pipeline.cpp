@@ -1,5 +1,4 @@
 #include "assetlib/cook_pipeline.h"
-#include <fstream>
 #include <ctime>
 
 namespace assetlib {

@@ -8,80 +8,78 @@
 
 namespace assetlib {
 
-// ── Asset type tag ────────────────────────────────────────────────────────────
 enum class AssetType : uint32_t {
-    Unknown  = 0,
-    Mesh     = 1,
-    Texture  = 2,
-    Material = 3,
-    Scene    = 4,
-    Prefab   = 5,
-    Shader   = 6,
-    Audio    = 7,
+    Unknown=0, Mesh=1, Texture=2, Material=3,
+    Scene=4, Prefab=5, Shader=6, Audio=7,
+};
+std::string assetTypeName(AssetType t);
+AssetType   assetTypeFromExtension(const std::string& ext);
+
+enum class AssetState : uint8_t {
+    Unknown=0, Registered=1, Importing=2, Ready=3,
+    Stale=4, Missing=5, Failed=6, Dirty=7,
+};
+std::string assetStateName(AssetState s);
+
+struct ImportSettings {
+    std::string json;
+    bool empty() const { return json.empty(); }
 };
 
-std::string     assetTypeName(AssetType t);
-AssetType       assetTypeFromExtension(const std::string& ext);
-
-// ── Record ────────────────────────────────────────────────────────────────────
-// One row in the assets table.
 struct AssetRecord {
-    UUID        uuid;
-    AssetType   type         = AssetType::Unknown;
-    std::string sourcePath;   // relative to project root
-    std::string cookedPath;   // relative to .cache/cooked/
-    std::string sourceHash;   // SHA-256 hex of source file
-    uint32_t    cookVersion  = 0;
-    int64_t     cookedAt     = 0; // unix timestamp, 0 = never cooked
+    UUID          uuid;
+    AssetType     type            = AssetType::Unknown;
+    AssetState    state           = AssetState::Unknown;
+    std::string   sourcePath;
+    std::string   sourceHash;
+    int64_t       sourceMtime     = 0;
+    int64_t       sourceSize      = 0;
+    std::string   cookedPath;
+    uint32_t      cookVersion     = 0;
+    uint32_t      importerVersion = 0;
+    int64_t       cookedAt        = 0;
+    ImportSettings importSettings;
+    std::string   errorMessage;
 };
 
-// ── Registry ──────────────────────────────────────────────────────────────────
-// Thin wrapper around a SQLite database.
-// All methods are synchronous — call from a background thread if needed.
 class AssetRegistry {
 public:
-    AssetRegistry() = default;
+    AssetRegistry()  = default;
     ~AssetRegistry();
 
-    // Open (or create) the registry at dbPath.
-    // Runs migrations automatically.
     bool open(const std::filesystem::path& dbPath);
     void close();
     bool isOpen() const { return m_db != nullptr; }
 
-    // ── CRUD ──────────────────────────────────────────────────────────────────
-    bool                        insert(const AssetRecord& rec);
-    bool                        update(const AssetRecord& rec);
-    bool                        remove(const UUID& uuid);
+    bool insert(const AssetRecord& rec);
+    bool update(const AssetRecord& rec);
+    bool remove(const UUID& uuid);
 
-    std::optional<AssetRecord>  findByUUID(const UUID& uuid)             const;
-    std::optional<AssetRecord>  findBySourcePath(const std::string& rel) const;
-    std::vector<AssetRecord>    findByType(AssetType type)               const;
-    std::vector<AssetRecord>    all()                                    const;
+    std::optional<AssetRecord> findByUUID(const UUID& uuid)             const;
+    std::optional<AssetRecord> findBySourcePath(const std::string& rel) const;
+    std::vector<AssetRecord>   findByType(AssetType type)               const;
+    std::vector<AssetRecord>   findByState(AssetState state)            const;
+    std::vector<AssetRecord>   all()                                    const;
 
-    // ── Dependency tracking ───────────────────────────────────────────────────
-    // Record that `asset` depends on `dependency`
-    bool                        addDependency(const UUID& asset,
-                                              const UUID& dependency);
-    bool                        removeDependencies(const UUID& asset);
+    bool setState(const UUID& uuid, AssetState state,
+                  const std::string& errorMsg = {});
 
-    // Who directly depends on `uuid`? (reverse lookup — for cascade invalidation)
-    std::vector<UUID>           dependents(const UUID& uuid)             const;
-    // What does `uuid` directly depend on?
-    std::vector<UUID>           dependencies(const UUID& uuid)           const;
-    // Full transitive dependents (everything that must be re-cooked)
-    std::vector<UUID>           transitiveDependents(const UUID& uuid)   const;
+    bool              addDependency(const UUID& asset, const UUID& dep);
+    bool              removeDependencies(const UUID& asset);
+    bool              wouldCreateCycle(const UUID& from, const UUID& to) const;
+    std::vector<UUID> dependents(const UUID& uuid)           const;
+    std::vector<UUID> dependencies(const UUID& uuid)         const;
+    std::vector<UUID> transitiveDependents(const UUID& uuid) const;
 
-    // ── Scanning ──────────────────────────────────────────────────────────────
-    // Walk assetsRoot, assign UUIDs to new files, update hashes for changed files.
-    // Returns count of new + updated records.
-    int                         scan(const std::filesystem::path& assetsRoot,
-                                     const std::filesystem::path& projectRoot);
+    int scan(const std::filesystem::path& assetsRoot,
+             const std::filesystem::path& projectRoot);
 
 private:
-    void*   m_db = nullptr; // sqlite3* — opaque to keep sqlite3.h out of header
-    bool    execSQL(const std::string& sql);
-    void    migrate();
+    void* m_db = nullptr;
+    bool  execSQL(const std::string& sql);
+    void  migrate();
+    static bool statChanged(const AssetRecord& rec,
+                            const std::filesystem::path& p);
 };
 
 } // namespace assetlib
