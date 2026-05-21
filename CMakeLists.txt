@@ -13,6 +13,8 @@ set(BGFX_BUILD_TOOLS_SHADER ON CACHE BOOL "")
 set(BGFX_BUILD_TOOLS_GEOMETRY OFF CACHE BOOL "")
 set(BGFX_BUILD_TOOLS_TEXTURE OFF CACHE BOOL "")
 set(BGFX_INSTALL OFF CACHE BOOL "")
+add_subdirectory(modules/assetlib)
+
 add_subdirectory(third_party/bgfx.cmake)
 
 # flecs - ECS framework
@@ -132,6 +134,7 @@ target_compile_definitions(engine PRIVATE
 )
 
 target_link_libraries(engine PRIVATE
+    assetlib
     assimp
     bgfx bx bimg
     glfw

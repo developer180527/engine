@@ -2,6 +2,7 @@
 #include "editor/editor_app.h"
 #include "io/project_context.h"
 #include "engine/logger.h"
+#include <assetlib/asset_registry.h>
 
 int main(int argc, char** argv) {
     // Resolve project: argv[1] > last opened > autoDetect
@@ -14,6 +15,26 @@ int main(int argc, char** argv) {
         LOG_INFO("Project", "Opened: %s", project.projectRoot.string().c_str());
     }
     project.saveAsLastProject();
+
+    // ── Asset registry (Milestone A) ─────────────────────────────────────────
+    // Scan assets folder, assign stable UUIDs to new files, update hashes.
+    // Registry lives at .cache/registry.db — zero engine coupling.
+    {
+        assetlib::AssetRegistry registry;
+        auto dbPath     = project.projectRoot / ".cache" / "registry.db";
+        auto assetsRoot = project.projectRoot / "assets";
+        if (registry.open(dbPath)) {
+            int n = 0;
+            if (std::filesystem::exists(assetsRoot))
+                n = registry.scan(assetsRoot, project.projectRoot);
+            auto all = registry.all();
+            LOG_INFO("AssetLib", "Registry ready — %zu asset(s), %d new/updated",
+                     all.size(), n);
+        } else {
+            LOG_WARN("AssetLib", "Could not open registry at: %s",
+                     dbPath.string().c_str());
+        }
+    }
 
     // Boot runtime with project title
     EngineRuntime runtime;
