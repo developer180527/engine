@@ -14,7 +14,6 @@
 #include "editor/console_panel.h"
 #include "editor/gizmo.h"
 #include "render/imgui_bgfx.h"
-#include "render/imgui_impl_glfw.h"
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <chrono>
@@ -111,11 +110,16 @@ public:
 
             // ---- ImGui frame start (must come before any ImGui calls) ----
             imguiNewFrame();
+            // BeginFrame MUST be outside any Begin/End block —
+            // it creates an internal transparent overlay window.
             gizmoBeginFrame();
             { auto ctx = buildCtx(); gizmoHandleHotkeys(m_rt.window(), ctx); }
 
             // ---- Editor camera ----
-            updateEditorCamera(m_cam, m_input, m_rt.window(), dt, m_sceneViewHovered);
+            // Use the GLFW window that currently hosts the Scene View panel.
+            // When docked: main window. When detached: the OS child window.
+            GLFWwindow* camWin = m_sceneGLFWWindow ? m_sceneGLFWWindow : m_rt.window();
+            updateEditorCamera(m_cam, m_input, camWin, dt, m_sceneViewHovered);
 
             // ---- Camera matrices ----
             float view[16], proj[16];
@@ -167,6 +171,8 @@ private:
     EditorState    m_editor;
     GizmoState     m_gizmo;
     bool           m_sceneViewHovered = true;
+    float          m_sceneAspect      = 16.0f / 9.0f;
+    GLFWwindow*    m_sceneGLFWWindow  = nullptr; // GLFW window currently hosting Scene View
     int            m_desiredSceneW    = 1280;
     int            m_desiredSceneH    = 720;
 
@@ -195,23 +201,32 @@ private:
         ImGui::Begin("Scene View");
         ImGui::PopStyleVar();
 
-        ImVec2 size = ImGui::GetContentRegionAvail();
-        if (size.x < 1.0f) size.x = 1.0f;
-        if (size.y < 1.0f) size.y = 1.0f;
+        // Track which GLFW window hosts this panel for camera input.
+        if (ImGuiViewport* vp = ImGui::GetWindowViewport())
+            m_sceneGLFWWindow = (GLFWwindow*)vp->PlatformHandle;
 
-        // Store desired size — resize happens BEFORE tick() next frame
-        // to avoid race condition (tick renders to old FB, panel shows new empty FB)
-        m_desiredSceneW = (int)size.x;
-        m_desiredSceneH = (int)size.y;
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        if (avail.x < 16.0f) avail.x = 16.0f;
+        if (avail.y < 16.0f) avail.y = 16.0f;
 
-        // Display scene texture — ImGui scales to panel size automatically
+        // Free aspect — FB and projection both adapt to panel dimensions.
+        // Projection matrix uses sceneW/sceneH so circles are always circles.
+        // A portrait panel shows less horizontal content (narrower hFOV),
+        // a wide panel shows more. No distortion, just different FOV coverage.
+        m_desiredSceneW = std::max((int)avail.x, 64);
+        m_desiredSceneH = std::max((int)avail.y, 64);
+
         ImTextureID tid = (ImTextureID)(uintptr_t)m_rt.sceneColorTexture().idx;
         ImVec2 cursorPos = ImGui::GetCursorScreenPos();
-        ImGui::Image(tid, size);
+        ImGui::Image(tid, avail);
+        const ImVec2 dispSize = avail;
 
         // Gizmo overlays the scene image — SetRect here overrides the one
         // set in gizmoBeginFrame(), giving it the correct panel coordinates
-        ImGuizmo::SetRect(cursorPos.x, cursorPos.y, size.x, size.y);
+        ImGuizmo::SetDrawlist(); // use Scene View draw list, not gizmo overlay
+        ImGuizmo::SetRect(cursorPos.x, cursorPos.y, dispSize.x, dispSize.y);
+        drawGizmo(ctx, view, proj);
+        m_sceneViewHovered = ImGui::IsWindowHovered() || m_input.rightMouseHeld;
 
         // Camera is active when this panel is hovered OR while right-dragging
         // (dragging keeps hover true so camera doesn't cut out mid-drag)
