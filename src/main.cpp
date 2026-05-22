@@ -21,8 +21,8 @@ int main(int argc, char** argv) {
     // ── Asset registry (Milestone A) ─────────────────────────────────────────
     // Scan assets folder, assign stable UUIDs to new files, update hashes.
     // Registry lives at .cache/registry.db — zero engine coupling.
+    assetlib::AssetRegistry registry; // lives until process exit
     {
-        assetlib::AssetRegistry registry;
         auto dbPath     = project.projectRoot / ".cache" / "registry.db";
         auto assetsRoot = project.projectRoot / "assets";
         if (registry.open(dbPath)) {
@@ -53,10 +53,13 @@ int main(int argc, char** argv) {
         return 1;
 
     // Give runtime access to project context
-    runtime.ctx().project = project;
+    runtime.ctx().project  = project;
+    runtime.ctx().assetLib = &registry; // binary loader looks up cooked paths
 
     EditorApp editor(runtime);
     editor.init();
+    editor.setRegistry(&registry);    // binary loader fast path
+    editor.setProjectRoot(project.projectRoot);
     editor.setProject(project);  // loads scene + restores camera
     editor.run();
 

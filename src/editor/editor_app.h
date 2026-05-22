@@ -6,6 +6,7 @@
 #include "io/project_context.h"
 
 #include "engine/async_loader.h"
+#include <assetlib/asset_registry.h>
 #include "engine_context.h"
 #include "editor/editor_camera.h"
 #include "editor/hierarchy_panel.h"
@@ -27,6 +28,8 @@ public:
     EditorApp(const EditorApp&)            = delete;
     EditorApp& operator=(const EditorApp&) = delete;
 
+    void setRegistry(assetlib::AssetRegistry* r)          { m_loader.setRegistry(r); }
+    void setProjectRoot(const std::filesystem::path& root){ m_loader.setProjectRoot(root); }
     void setProject(const ProjectContext& ctx) {
         m_projectRoot = ctx.projectRoot;
         m_scenePath   = ctx.projectRoot / ctx.lastScene;

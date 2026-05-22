@@ -1,6 +1,7 @@
 #include "engine/async_loader.h"
 #include "engine/logger.h"
 #include "render/mesh.h"
+#include "render/vertex.h"
 #include "render/texture.h"
 #include "render/material.h"
 
@@ -8,6 +9,8 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 #include <assimp/material.h>
+#include <assetlib/mesh_asset.h>
+#include <filesystem>
 
 #include <stb_image.h>
 #include <filesystem>
@@ -110,6 +113,57 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
     LoadedAsset out;
     out.path = path; out.name = name;
 
+    // ── Binary fast path ───────────────────────────────────────────────
+    // If a cooked version exists, read raw bytes directly — no Assimp.
+    if (m_registry) {
+        // Key is relative to project root e.g. "assets/Foo.fbx"
+        std::string relKey;
+        if (!m_projectRoot.empty()) {
+            auto rel = std::filesystem::relative(
+                std::filesystem::path(path), m_projectRoot);
+            relKey = rel.generic_string();
+        } else {
+            relKey = std::filesystem::path(path).filename().string();
+        }
+        auto rec = m_registry->findBySourcePath(relKey);
+        // cooked_path in DB is relative to .cache/ dir
+        std::filesystem::path cookedAbs;
+        if (rec && !rec->cookedPath.empty())
+            cookedAbs = m_projectRoot / ".cache" / rec->cookedPath;
+        if (rec && !rec->cookedPath.empty() &&
+            std::filesystem::exists(cookedAbs)) {
+            assetlib::MeshAsset asset;
+            if (assetlib::loadMesh(asset, cookedAbs)) {
+                const auto& h = asset.header;
+                // Guard: cooked stride must match runtime Vertex exactly.
+                // If not, fall through to Assimp (stale .cooked file).
+                if (h.vertexStride != sizeof(Vertex)) {
+                    LOG_WARN("BinaryLoader",
+                        "Stride mismatch cooked=%u runtime=%zu — falling back to Assimp",
+                        h.vertexStride, sizeof(Vertex));
+                } else {
+                MeshGPUData gd;
+                gd.vertexMem  = bgfx::copy(asset.vertexData.data(),
+                                           (uint32_t)asset.vertexData.size());
+                gd.indexMem   = bgfx::copy(asset.indexData.data(),
+                                           (uint32_t)asset.indexData.size());
+                gd.indexCount  = h.indexCount;
+                gd.use32       = (h.indexStride == 4);
+                gd.doubleSided = false;
+                gd.hasBounds   = true;
+                std::memcpy(gd.boundsMin, h.boundsMin, sizeof(gd.boundsMin));
+                std::memcpy(gd.boundsMax, h.boundsMax, sizeof(gd.boundsMax));
+                out.meshes.push_back(std::move(gd));
+                out.materials.push_back(MaterialGPUData{}); // geometry-only cook
+                out.success = true;
+                LOG_INFO("BinaryLoader", "%-30s verts=%u idx=%u",
+                       name.c_str(), h.vertexCount, h.indexCount);
+                return out;
+                } // stride check
+            }
+        }
+    }
+    // ── Assimp fallback (uncoooked assets) ────────────────────────────
     Assimp::Importer imp;
     const aiScene* scene = imp.ReadFile(path,
         aiProcess_Triangulate        |

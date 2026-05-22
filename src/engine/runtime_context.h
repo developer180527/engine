@@ -5,6 +5,7 @@
 #include "render/material_registry.h"
 #include "io/project_context.h"
 #include "io/importer_registry.h"
+#include <assetlib/asset_registry.h>
 
 struct RuntimeContext {
     flecs::world&     ecs;
@@ -13,4 +14,5 @@ struct RuntimeContext {
     MaterialRegistry& materials;
     ProjectContext&   project;
     ImporterRegistry& importers;
+    assetlib::AssetRegistry* assetLib = nullptr; // null until cook pipeline runs
 };

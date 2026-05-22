@@ -14,7 +14,9 @@ static constexpr unsigned kImportFlags =
     aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices |
     aiProcess_ImproveCacheLocality | aiProcess_FlipUVs;
 
-static constexpr uint32_t kCookFlags = VF_POSITION|VF_NORMAL|VF_TANGENT|VF_UV0;
+// Cook format matches runtime Vertex exactly: Position(12)+Normal(12)+UV(8)=32 bytes
+// Tangent added when normal mapping milestone lands (bumps kVersion → re-cook auto)
+static constexpr uint32_t kCookFlags = VF_POSITION|VF_NORMAL|VF_UV0;
 
 static void pushF(std::vector<uint8_t>& b, float v) {
     uint8_t x[4]; std::memcpy(x,&v,4); b.insert(b.end(),x,x+4);
@@ -56,13 +58,6 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
             bMax[0]=std::max(bMax[0],p.x); bMax[1]=std::max(bMax[1],p.y); bMax[2]=std::max(bMax[2],p.z);
             if (hasN){auto& n=mesh->mNormals[v]; pushF3(asset.vertexData,n.x,n.y,n.z);}
             else pushF3(asset.vertexData,0,1,0);
-            if (hasT){
-                auto& t=mesh->mTangents[v]; auto& bt=mesh->mBitangents[v];
-                aiVector3D n=hasN?mesh->mNormals[v]:aiVector3D(0,1,0);
-                float cx=n.y*t.z-n.z*t.y, cy=n.z*t.x-n.x*t.z, cz=n.x*t.y-n.y*t.x;
-                float sign=(cx*bt.x+cy*bt.y+cz*bt.z)<0?-1.f:1.f;
-                pushF4(asset.vertexData,t.x,t.y,t.z,sign);
-            } else pushF4(asset.vertexData,1,0,0,1);
             if (hasUV){auto& uv=mesh->mTextureCoords[0][v]; pushF2(asset.vertexData,uv.x,uv.y);}
             else pushF2(asset.vertexData,0,0);
         }

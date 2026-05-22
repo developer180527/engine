@@ -1,4 +1,5 @@
 #pragma once
+#include <filesystem>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -11,8 +12,8 @@
 #include <cstdint>
 
 #include <bgfx/bgfx.h>
-#include "render/vertex.h"
 #include "io/asset_storage.h"
+#include <assetlib/asset_registry.h>
 
 // -----------------------------------------------------------------------
 // GPU-ready data — ALL heavy work (parse + decode + bgfx::copy memcpy)
@@ -64,6 +65,9 @@ public:
 
     // Thread-safe. Silently ignores paths already in flight.
     void load(const std::string& path, const std::string& name, OnLoaded cb);
+    // Wire the asset registry so processFile can check for cooked versions.
+    void setRegistry(assetlib::AssetRegistry* r) { m_registry = r; }
+    void setProjectRoot(const std::filesystem::path& root) { m_projectRoot = root; }
 
     // Main thread only. O(microseconds) — only creates bgfx handles.
     // Returns true if an asset was processed.
@@ -93,4 +97,6 @@ private:
 
     mutable std::mutex    m_loadedMtx;
     std::set<std::string> m_loaded;
+    assetlib::AssetRegistry*  m_registry    = nullptr;
+    std::filesystem::path     m_projectRoot;
 };

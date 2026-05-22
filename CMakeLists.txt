@@ -93,6 +93,7 @@ set(ASSIMP_BUILD_BLEND_IMPORTER   ON CACHE BOOL "" FORCE)
 add_subdirectory(third_party/assimp)
 add_executable(engine
     src/cookers/mesh_cooker.cpp
+    src/loaders/mesh_loader.cpp
     src/main.cpp
     src/render/imgui_bgfx.cpp
     src/render/imgui_impl_glfw.cpp
