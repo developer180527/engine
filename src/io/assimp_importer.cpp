@@ -188,9 +188,11 @@ static MaterialHandle importMaterial(const aiScene*    scene,
     return storage.materials.addMaterial(std::move(mat));
 }
 
-static MeshHandle importMesh(const aiMesh*  aiM,
-                              MaterialHandle matH,
-                              AssetStorage&  storage) {
+static MeshHandle importMesh(const aiMesh*      aiM,
+                              const aiMaterial*  aiMat,
+                              MaterialHandle     matH,
+                              const std::string& sourcePath,
+                              AssetStorage&      storage) {
     // Build vertex buffer
     std::vector<Vertex> verts;
     verts.reserve(aiM->mNumVertices);
@@ -316,7 +318,9 @@ MeshImportResult AssimpImporter::load(const std::string& path,
         if (!(m->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
         MaterialHandle mh = (m->mMaterialIndex < matHandles.size())
                             ? matHandles[m->mMaterialIndex] : MaterialHandle{};
-        MeshHandle h = importMesh(m, mh, storage);
+        const aiMaterial* aiMat = (m->mMaterialIndex < scene->mNumMaterials)
+                                  ? scene->mMaterials[m->mMaterialIndex] : nullptr;
+        MeshHandle h = importMesh(m, aiMat, mh, path, storage);
         if (h.valid() && !first.valid()) first = h;
     }
 

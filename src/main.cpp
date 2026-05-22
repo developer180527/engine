@@ -3,6 +3,8 @@
 #include "io/project_context.h"
 #include "engine/logger.h"
 #include <assetlib/asset_registry.h>
+#include <assetlib/cook_pipeline.h>
+#include "cookers/mesh_cooker.h"
 
 int main(int argc, char** argv) {
     // Resolve project: argv[1] > last opened > autoDetect
@@ -27,7 +29,16 @@ int main(int argc, char** argv) {
             int n = 0;
             if (std::filesystem::exists(assetsRoot))
                 n = registry.scan(assetsRoot, project.projectRoot);
-            auto all = registry.all();
+            // Cook any stale or uncooked mesh assets
+        auto cacheRoot = project.projectRoot / ".cache";
+        assetlib::CookPipeline pipeline(registry,
+            project.projectRoot, cacheRoot);
+        pipeline.registerCooker(std::make_unique<MeshCooker>());
+        int cooked = pipeline.cookAll();
+        if (cooked > 0)
+            LOG_INFO("AssetLib", "Cooked %d asset(s)", cooked);
+
+        auto all = registry.all();
             LOG_INFO("AssetLib", "Registry ready — %zu asset(s), %d new/updated",
                      all.size(), n);
         } else {
