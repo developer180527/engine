@@ -5,6 +5,7 @@
 #include <assetlib/asset_registry.h>
 #include <assetlib/cook_pipeline.h>
 #include "cookers/mesh_cooker.h"
+#include "cookers/texture_cooker.h"
 
 int main(int argc, char** argv) {
     // Resolve project: argv[1] > last opened > autoDetect
@@ -34,6 +35,7 @@ int main(int argc, char** argv) {
         assetlib::CookPipeline pipeline(registry,
             project.projectRoot, cacheRoot);
         pipeline.registerCooker(std::make_unique<MeshCooker>());
+        pipeline.registerCooker(std::make_unique<TextureCooker>());
         int cooked = pipeline.cookAll();
         if (cooked > 0)
             LOG_INFO("AssetLib", "Cooked %d asset(s)", cooked);

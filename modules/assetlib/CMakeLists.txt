@@ -9,6 +9,7 @@ add_library(assetlib STATIC
     src/uuid.cpp
     src/asset_registry.cpp
     src/mesh_asset.cpp
+    src/texture_asset.cpp
     src/cook_pipeline.cpp
     src/dependency_graph.cpp
     src/file_watcher.cpp

@@ -10,6 +10,7 @@
 #include <assimp/postprocess.h>
 #include <assimp/material.h>
 #include <assetlib/mesh_asset.h>
+#include <assetlib/texture_asset.h>
 #include <filesystem>
 
 #include <stb_image.h>
@@ -24,10 +25,37 @@
 // All memcpy happens here, so drainOne() on the main thread is instant.
 // -----------------------------------------------------------------------
 
+// Try to load a texture from its cooked binary. Returns empty TextureGPUData on miss.
+static TextureGPUData tryLoadCookedTexture(
+    const std::filesystem::path& absTexPath,
+    assetlib::AssetRegistry*     registry,
+    const std::filesystem::path& projectRoot,
+    const std::filesystem::path& cacheRoot)
+{
+    if (!registry || projectRoot.empty()) return {};
+    std::error_code ec;
+    auto rel = std::filesystem::relative(absTexPath, projectRoot, ec);
+    if (ec) return {};
+    auto rec = registry->findBySourcePath(rel.generic_string());
+    if (!rec || rec->state != assetlib::AssetState::Ready || rec->cookedPath.empty()) return {};
+    auto cookedAbs = cacheRoot / rec->cookedPath;
+    if (!std::filesystem::exists(cookedAbs)) return {};
+    assetlib::TextureAsset asset;
+    if (!assetlib::loadTexture(asset, cookedAbs)) return {};
+    TextureGPUData out;
+    out.mem = bgfx::copy(asset.pixels.data(), (uint32_t)asset.pixels.size());
+    out.w   = (uint16_t)asset.header.width;
+    out.h   = (uint16_t)asset.header.height;
+    return out;
+}
+
 static TextureGPUData loadTextureGPU(const aiScene*   scene,
                                       const char*      rawPath,
                                       const std::filesystem::path& dir,
-                                      const std::string& baseName) {
+                                      const std::string& baseName,
+                                      assetlib::AssetRegistry* registry = nullptr,
+                                      const std::filesystem::path& projectRoot = {},
+                                      const std::filesystem::path& cacheRoot = {}) {
     TextureGPUData out;
     int w = 0, h = 0, ch = 0;
     stbi_uc* px = nullptr;
@@ -82,6 +110,13 @@ static TextureGPUData loadTextureGPU(const aiScene*   scene,
                 for (int i = 0; kSuf[i]; ++i) {
                     std::string ls=kSuf[i]; for(auto& c:ls) c=(char)std::tolower(c);
                     if (lf.find(ls) != std::string::npos) {
+                        // Prefer cooked binary — no stb_image decode needed
+                        auto cooked = tryLoadCookedTexture(
+                            de.path(), registry, projectRoot, cacheRoot);
+                        if (cooked.mem) {
+                            LOG_INFO("BinaryLoader","Texture: %s", fn.c_str());
+                            return cooked;
+                        }
                         tryLoad(de.path().string());
                         if (px) { LOG_SUCCESS("Assimp","Texture discovered: %s",fn.c_str()); break; }
                     }
@@ -156,9 +191,17 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                 std::memcpy(gd.boundsMax, h.boundsMax, sizeof(gd.boundsMax));
                 out.meshes.push_back(std::move(gd));
                 out.materials.push_back(MaterialGPUData{}); // geometry-only cook
+                // Texture: try cooked binary, fall back to stb_image discovery
+                std::filesystem::path srcPath(path);
+                auto texData = loadTextureGPU(
+                    nullptr, nullptr,
+                    srcPath.parent_path(), srcPath.stem().string(),
+                    m_registry, m_projectRoot, m_projectRoot / ".cache");
+                out.materials[0].baseColorTexture = texData;
                 out.success = true;
-                LOG_INFO("BinaryLoader", "%-30s verts=%u idx=%u",
-                       name.c_str(), h.vertexCount, h.indexCount);
+                LOG_INFO("BinaryLoader", "%-30s verts=%u idx=%u tex=%s",
+                       name.c_str(), h.vertexCount, h.indexCount,
+                       texData.mem ? "ok" : "none");
                 return out;
                 } // stride check
             }
@@ -198,9 +241,11 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
         aiString tp;
         if (AI_SUCCESS == ai->GetTexture(aiTextureType_DIFFUSE,    0, &tp) ||
             AI_SUCCESS == ai->GetTexture(aiTextureType_BASE_COLOR, 0, &tp))
-            mg.baseColorTexture = loadTextureGPU(scene, tp.C_Str(), dir, bn);
+            mg.baseColorTexture = loadTextureGPU(scene, tp.C_Str(), dir, bn,
+                m_registry, m_projectRoot, m_projectRoot / ".cache");
         if (!mg.baseColorTexture.mem)
-            mg.baseColorTexture = loadTextureGPU(scene, nullptr, dir, bn);
+            mg.baseColorTexture = loadTextureGPU(scene, nullptr, dir, bn,
+                m_registry, m_projectRoot, m_projectRoot / ".cache");
     }
 
     // Meshes (vertex/index data + bgfx::copy on worker)
