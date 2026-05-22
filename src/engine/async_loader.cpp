@@ -131,6 +131,7 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
         if (rec && !rec->cookedPath.empty())
             cookedAbs = m_projectRoot / ".cache" / rec->cookedPath;
         if (rec && !rec->cookedPath.empty() &&
+            rec->state == assetlib::AssetState::Ready &&
             std::filesystem::exists(cookedAbs)) {
             assetlib::MeshAsset asset;
             if (assetlib::loadMesh(asset, cookedAbs)) {

@@ -56,6 +56,7 @@ CookResult CookPipeline::cookOne(const UUID& uuid) {
         rec->cookedPath   = std::filesystem::relative(outPath, m_cacheRoot).string();
         rec->cookVersion  = kCurrentCookVersion;
         rec->cookedAt     = static_cast<int64_t>(std::time(nullptr));
+        rec->state        = AssetState::Ready;
         m_registry.update(*rec);
         std::printf("[AssetLib] Cooked: %s\n", rec->sourcePath.c_str());
     }
@@ -70,6 +71,10 @@ int CookPipeline::cookAll(std::function<void(int,int)> progress) {
         if (isStale(all[i])) {
             auto r = cookOne(all[i].uuid);
             if (r.success) ++cooked;
+        } else if (all[i].state != AssetState::Ready) {
+            // Already cooked — just mark Ready so binary loader can trust the state
+            auto rec = m_registry.findByUUID(all[i].uuid);
+            if (rec) { rec->state = AssetState::Ready; m_registry.update(*rec); }
         }
         if (progress) progress(i + 1, total);
     }
