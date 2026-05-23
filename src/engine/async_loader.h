@@ -78,6 +78,8 @@ public:
 
     bool isLoading(const std::string& path) const;
     bool isLoaded (const std::string& path) const;
+    // Remove from loaded cache — enables hot-reload by allowing re-queue.
+    void unload(const std::string& path);
     int  pendingCount() const;
 
 private:

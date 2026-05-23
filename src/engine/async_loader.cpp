@@ -345,6 +345,9 @@ AsyncLoader::~AsyncLoader() {
     m_running = false;
     m_pendingCV.notify_all();
     if (m_worker.joinable()) m_worker.join();
+    // Drain pending uploads — bgfx::Memory refs released by bgfx at shutdown
+    std::lock_guard<std::mutex> lk(m_readyMtx);
+    while (!m_ready.empty()) m_ready.pop();
 }
 
 void AsyncLoader::load(const std::string& path, const std::string& name, OnLoaded cb) {
@@ -357,6 +360,10 @@ void AsyncLoader::load(const std::string& path, const std::string& name, OnLoade
     m_pendingCV.notify_one();
 }
 
+void AsyncLoader::unload(const std::string& path) {
+    std::lock_guard<std::mutex> lk(m_loadedMtx);
+    m_loaded.erase(path);
+}
 bool AsyncLoader::isLoading(const std::string& path) const {
     std::lock_guard<std::mutex> lk(m_pendingMtx);
     return m_inFlight.count(path) > 0;
@@ -394,9 +401,16 @@ void AsyncLoader::workerLoop() {
         else
             LOG_ERROR("Loader", "Worker failed: %s", asset.error.c_str());
 
+        const bool succeeded = asset.success;
         {
             std::lock_guard<std::mutex> lk(m_readyMtx);
             m_ready.push({std::move(asset), std::move(req.cb)});
+        }
+        // Mark loaded BEFORE erasing inFlight — closes the race window
+        // where path is in neither set. Failed loads skip so retry works.
+        if (succeeded) {
+            std::lock_guard<std::mutex> lk(m_loadedMtx);
+            m_loaded.insert(req.path);
         }
         {
             std::lock_guard<std::mutex> lk(m_pendingMtx);

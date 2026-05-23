@@ -36,7 +36,13 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
     asset.header.version      = 1;
     asset.header.vertexFlags  = kCookFlags;
     asset.header.vertexStride = vertexStride(kCookFlags);
-    asset.header.indexStride  = 4;
+    // Pre-count vertices to decide 16 vs 32-bit index stride
+    uint32_t totalVerts = 0;
+    for (unsigned m = 0; m < scene->mNumMeshes; ++m)
+        if (scene->mMeshes[m]->HasPositions())
+            totalVerts += scene->mMeshes[m]->mNumVertices;
+    const bool use16 = (totalVerts <= 65535);
+    asset.header.indexStride = use16 ? 2 : 4;
     asset.header.submeshCount = scene->mNumMeshes;
     std::memcpy(asset.header.uuid, ctx.uuid.bytes.data(), 16);
 
@@ -69,8 +75,14 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
         for (unsigned f=0; f<mesh->mNumFaces; ++f) {
             for (unsigned i=0; i<mesh->mFaces[f].mNumIndices; ++i) {
                 uint32_t idx = mesh->mFaces[f].mIndices[i] + vertexBase;
-                uint8_t b[4]; std::memcpy(b, &idx, 4);
-                asset.indexData.insert(asset.indexData.end(), b, b+4);
+                if (use16) {
+                    auto i16 = static_cast<uint16_t>(idx);
+                    uint8_t b[2]; std::memcpy(b, &i16, 2);
+                    asset.indexData.insert(asset.indexData.end(), b, b+2);
+                } else {
+                    uint8_t b[4]; std::memcpy(b, &idx, 4);
+                    asset.indexData.insert(asset.indexData.end(), b, b+4);
+                }
             }
         }
         idxOffset   += sub.indexCount;
@@ -79,7 +91,7 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
     }
 
     asset.header.vertexCount=static_cast<uint32_t>(asset.vertexData.size()/asset.header.vertexStride);
-    asset.header.indexCount =static_cast<uint32_t>(asset.indexData.size()/4);
+    asset.header.indexCount = static_cast<uint32_t>(asset.indexData.size() / asset.header.indexStride);
     for (int i=0;i<3;++i){asset.header.boundsMin[i]=bMin[i]; asset.header.boundsMax[i]=bMax[i];}
 
     if (!saveMesh(asset,ctx.outputPath))
