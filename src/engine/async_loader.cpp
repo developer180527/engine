@@ -189,6 +189,16 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                 gd.hasBounds   = true;
                 std::memcpy(gd.boundsMin, h.boundsMin, sizeof(gd.boundsMin));
                 std::memcpy(gd.boundsMax, h.boundsMax, sizeof(gd.boundsMax));
+                // Submesh ranges — populated BEFORE move into out.meshes
+                if (asset.submeshes.size() > 1) {
+                    for (const auto& sub : asset.submeshes) {
+                        SubRange sr;
+                        sr.indexOffset = sub.indexOffset;
+                        sr.indexCount  = sub.indexCount;
+                        sr.matIndex    = 0; // MaterialCooker wires per-submesh mats
+                        gd.subRanges.push_back(sr);
+                    }
+                }
                 out.meshes.push_back(std::move(gd));
                 out.materials.push_back(MaterialGPUData{}); // geometry-only cook
                 // Texture: try cooked binary, fall back to stb_image discovery
@@ -199,9 +209,10 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                     m_registry, m_projectRoot, m_projectRoot / ".cache");
                 out.materials[0].baseColorTexture = texData;
                 out.success = true;
-                LOG_INFO("BinaryLoader", "%-30s verts=%u idx=%u tex=%s",
+                LOG_INFO("BinaryLoader", "%-30s verts=%u idx=%u tex=%s submeshes=%zu",
                        name.c_str(), h.vertexCount, h.indexCount,
-                       texData.mem ? "ok" : "none");
+                       texData.mem ? "ok" : "none",
+                       out.meshes.empty() ? 0 : out.meshes[0].subRanges.size());
                 return out;
                 } // stride check
             }
@@ -454,6 +465,15 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
             mesh.material = matHandles[mg.matIndex];
 
         mesh.sourcePath = req.asset.path;
+        // Wire submesh ranges for multi-draw rendering
+        for (const auto& sr : mg.subRanges) {
+            SubmeshRange range;
+            range.indexOffset = sr.indexOffset;
+            range.indexCount  = sr.indexCount;
+            range.material    = sr.matIndex < matHandles.size()
+                                ? matHandles[sr.matIndex] : mesh.material;
+            mesh.submeshes.push_back(range);
+        }
         MeshHandle h = storage.meshes.addMesh(std::move(mesh));
         if (!firstHandle.valid()) firstHandle = h;
     }

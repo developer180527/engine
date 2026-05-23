@@ -21,6 +21,8 @@
 // is submitting a command — O(microseconds), no memcpy, no stall.
 // -----------------------------------------------------------------------
 
+struct SubRange { uint32_t indexOffset; uint32_t indexCount; uint32_t matIndex; };
+
 struct MeshGPUData {
     const bgfx::Memory* vertexMem  = nullptr; // pre-copied by worker
     const bgfx::Memory* indexMem   = nullptr; // pre-copied by worker
@@ -31,6 +33,7 @@ struct MeshGPUData {
     float     boundsMin[3]{};
     float     boundsMax[3]{};
     uint32_t  matIndex    = 0;
+    std::vector<SubRange> subRanges; // non-empty → multi-submesh
 };
 
 struct TextureGPUData {

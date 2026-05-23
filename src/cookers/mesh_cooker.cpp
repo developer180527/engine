@@ -43,6 +43,7 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
     float bMin[3]={FLT_MAX,FLT_MAX,FLT_MAX};
     float bMax[3]={-FLT_MAX,-FLT_MAX,-FLT_MAX};
     uint32_t idxOffset=0;
+    uint32_t vertexBase=0;
 
     for (unsigned m=0; m<scene->mNumMeshes; ++m) {
         aiMesh* mesh = scene->mMeshes[m];
@@ -67,12 +68,13 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
         sub.indexCount=mesh->mNumFaces*3;
         for (unsigned f=0; f<mesh->mNumFaces; ++f) {
             for (unsigned i=0; i<mesh->mFaces[f].mNumIndices; ++i) {
-                uint32_t idx=mesh->mFaces[f].mIndices[i];
-                uint8_t b[4]; std::memcpy(b,&idx,4);
-                asset.indexData.insert(asset.indexData.end(),b,b+4);
+                uint32_t idx = mesh->mFaces[f].mIndices[i] + vertexBase;
+                uint8_t b[4]; std::memcpy(b, &idx, 4);
+                asset.indexData.insert(asset.indexData.end(), b, b+4);
             }
         }
-        idxOffset+=sub.indexCount;
+        idxOffset   += sub.indexCount;
+        vertexBase  += mesh->mNumVertices; // next mesh's indices start here
         asset.submeshes.push_back(sub);
     }
 

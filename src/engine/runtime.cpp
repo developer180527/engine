@@ -296,10 +296,25 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
         // model matrix (requires VS rewrite to use u_viewProj + i_data rows).
         for (uint32_t k = 0; k < groupSize; ++k) {
             bgfx::setTransform(visible[i + k].model);
-            bgfx::setVertexBuffer(0, first.mesh->vbh);
-            bgfx::setIndexBuffer(first.mesh->ibh);
-            bgfx::setState(state);
-            bgfx::submit(kSceneView, m_program);
+            if (first.mesh->submeshes.empty()) {
+                // Single draw — whole IB, mesh.material already bound above
+                bgfx::setVertexBuffer(0, first.mesh->vbh);
+                bgfx::setIndexBuffer(first.mesh->ibh);
+                bgfx::setState(state);
+                bgfx::submit(kSceneView, m_program);
+            } else {
+                // Multi-submesh: one draw per range, shared VB+IB.
+                // setTransform must be called before EACH submit —
+                // bgfx consumes the transform state on submit.
+                for (const auto& sub : first.mesh->submeshes) {
+                    bgfx::setTransform(visible[i + k].model);
+                    bgfx::setVertexBuffer(0, first.mesh->vbh);
+                    bgfx::setIndexBuffer(first.mesh->ibh,
+                                        sub.indexOffset, sub.indexCount);
+                    bgfx::setState(state);
+                    bgfx::submit(kSceneView, m_program);
+                }
+            }
         }
         i = j;
     }

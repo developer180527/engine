@@ -4,7 +4,7 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 2; // bumped: removed tangent, matches Vertex
+    static constexpr uint32_t kVersion = 3; // bumped: fixed multi-submesh vertex rebasing
     std::vector<std::string> extensions() const override {
         return {".fbx",".obj",".dae",".ply",".stl"};
     }

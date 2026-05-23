@@ -2,134 +2,14 @@
   "entities": [
     {
       "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
-      },
-      "name": "Demon_Mask",
-      "transform": {
-        "position": [
-          -5.564816474914551,
-          6.807387351989746,
-          1.269134759902954
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.0531535148620605,
-          1.0531535148620605,
-          1.0531535148620605
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Duck.gltf"
-      },
-      "name": "Duck",
-      "transform": {
-        "position": [
-          -1.9833117723464966,
-          7.83304500579834,
-          6.048151969909668
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          0.012086169794201851,
-          0.012086169794201851,
-          0.012086169794201851
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/robot.glb"
-      },
-      "name": "robot",
-      "transform": {
-        "position": [
-          0.0,
-          4.849999904632568,
-          2.000619888305664
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.0,
-          1.0,
-          1.0
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFig001.fbx"
-      },
-      "name": "PlantBanjoFig001",
-      "transform": {
-        "position": [
-          1.9379913806915283,
-          3.545116901397705,
-          -0.7643212080001831
-        ],
-        "rotation": [
-          0.1850125789642334,
-          0.6977437138557434,
-          0.6662120819091797,
-          -0.18731117248535156
-        ],
-        "scale": [
-          5.0,
-          5.0,
-          5.0
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
-      },
-      "name": "PlantBanjoFigVase001",
-      "transform": {
-        "position": [
-          -2.340773820877075,
-          6.101450443267822,
-          -0.8351620435714722
-        ],
-        "rotation": [
-          0.7165725231170654,
-          0.008585034869611263,
-          -0.2555014491081238,
-          0.6489754915237427
-        ],
-        "scale": [
-          5.0,
-          5.0,
-          5.0
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Double_Dagger_Stab.fbx"
       },
       "name": "Double_Dagger_Stab",
       "transform": {
         "position": [
-          0.10553836822509766,
-          4.534492492675781,
-          -1.854308009147644
+          1.6511117219924927,
+          8.447012901306152,
+          -0.05292105674743652
         ],
         "rotation": [
           0.0,
@@ -138,9 +18,9 @@
           1.0
         ],
         "scale": [
-          0.026094583794474602,
-          0.026094583794474602,
-          0.026094583794474602
+          0.010026896372437477,
+          0.010026896372437477,
+          0.010026896372437477
         ]
       }
     }
