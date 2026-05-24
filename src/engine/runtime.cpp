@@ -290,7 +290,8 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
         }
         const uint32_t groupSize = (uint32_t)(j - i);
 
-        // Bind material state once per group
+        // Per-group constants — computed once, re-bound before EVERY submit.
+        // bgfx consumes all state (uniforms, textures, VB, IB) on submit().
         float roughness = first.mat ? first.mat->roughness : 0.7f;
         float metallic  = first.mat ? first.mat->metallic  : 0.0f;
         const Texture* nmTex = (first.mat && first.mat->normalMapTexture.valid())
@@ -303,27 +304,23 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
             factor[2] = first.mat->baseColorFactor[2];
             factor[3] = first.mat->baseColorFactor[3];
         }
-        bgfx::setUniform(m_uParams,      params);
-        bgfx::setUniform(m_uColorFactor, factor);
-        bgfx::setTexture(0, m_sBaseColor,
-                         first.tex ? first.tex->handle : m_whiteTex);
-
         const uint64_t state = first.mesh->doubleSided
             ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                BGFX_STATE_WRITE_Z   | BGFX_STATE_DEPTH_TEST_LESS |
                BGFX_STATE_MSAA)
             : BGFX_STATE_DEFAULT;
-
-        // Individual draw calls per group — material state set once above.
-        // Instancing removed until shader supports i_data0-3 per-instance
-        // model matrix (requires VS rewrite to use u_viewProj + i_data rows).
         for (uint32_t k = 0; k < groupSize; ++k) {
-            bgfx::setTransform(visible[i + k].model);
             if (first.mesh->submeshes.empty()) {
-                // Single draw — whole IB, mesh.material already bound above
+                bgfx::setUniform(m_uParams,      params);
+                bgfx::setUniform(m_uColorFactor, factor);
+                bgfx::setTexture(0, m_sBaseColor,
+                                 first.tex ? first.tex->handle : m_whiteTex);
+                bgfx::setTexture(1, m_sNormalMap,
+                                 nmTex ? nmTex->handle : m_flatNormalTex);
+                bgfx::setState(state);
+                bgfx::setTransform(visible[i + k].model);
                 bgfx::setVertexBuffer(0, first.mesh->vbh);
                 bgfx::setIndexBuffer(first.mesh->ibh);
-                bgfx::setState(state);
                 bgfx::submit(kSceneView, m_program);
             } else {
                 for (const auto& sub : first.mesh->submeshes) {
@@ -345,7 +342,6 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
         i = j;
     }
 }
-
 void EngineRuntime::shutdown() {
     m_materials.clear();
     m_textures.clear();
