@@ -192,7 +192,7 @@ private:
         return EngineContext{
             rc.ecs, rc.assets, rc.textures,
             rc.materials, rc.project, rc.importers,
-            m_editor, m_gizmo
+            m_editor, m_gizmo, rc.assetLib
         };
     }
 

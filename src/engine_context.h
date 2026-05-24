@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/runtime_context.h"
+#include <assetlib/asset_registry.h>
 #include "editor/editor_state.h"
 #include "editor/gizmo_state.h"
 
@@ -16,4 +17,5 @@ struct EngineContext {
     ImporterRegistry& importers;
     EditorState&      editor;
     GizmoState&       gizmoState;
+    assetlib::AssetRegistry* assetLib = nullptr;
 };

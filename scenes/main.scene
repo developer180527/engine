@@ -50,6 +50,30 @@
     },
     {
       "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
+      },
+      "name": "Demon_Mask (2)",
+      "transform": {
+        "position": [
+          -0.5254480838775635,
+          7.7492756843566895,
+          4.005192756652832
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0531535148620605,
+          1.0531535148620605,
+          1.0531535148620605
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Double_Dagger_Stab.fbx"
       },
       "name": "Double_Dagger_Stab",
@@ -122,14 +146,14 @@
     },
     {
       "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
       },
-      "name": "Demon_Mask (2)",
+      "name": "dadasd",
       "transform": {
         "position": [
-          -0.5254480838775635,
-          7.7492756843566895,
-          4.005192756652832
+          4.813047885894775,
+          6.773725986480713,
+          3.389910936355591
         ],
         "rotation": [
           0.0,
@@ -138,9 +162,9 @@
           1.0
         ],
         "scale": [
-          1.0531535148620605,
-          1.0531535148620605,
-          1.0531535148620605
+          3.3333334922790527,
+          3.3333334922790527,
+          3.3333334922790527
         ]
       }
     }
