@@ -6,6 +6,7 @@
 #include "io/project_context.h"
 
 #include "engine/async_loader.h"
+#include "io/cook_service.h"
 #include <assetlib/asset_registry.h>
 #include "engine_context.h"
 #include "editor/editor_camera.h"
@@ -30,6 +31,10 @@ public:
 
     void setRegistry(assetlib::AssetRegistry* r)          { m_loader.setRegistry(r); }
     void setProjectRoot(const std::filesystem::path& root){ m_loader.setProjectRoot(root); }
+    void setCookService(CookService* cs) { m_cookService = cs; }
+    void requestAssetRefresh() {
+        if (m_cookService) m_cookService->requestRefresh();
+    }
     void setProject(const ProjectContext& ctx) {
         m_projectRoot = ctx.projectRoot;
         m_scenePath   = ctx.projectRoot / ctx.lastScene;
@@ -169,6 +174,7 @@ private:
     std::filesystem::path m_projectRoot;
     std::filesystem::path m_scenePath;
     AsyncLoader      m_loader;
+    CookService*     m_cookService = nullptr;
     EditorCamera   m_cam;
     EditorInput    m_input;
     EditorState    m_editor;
@@ -306,11 +312,25 @@ private:
         ImGui::Text("Yaw: %.2f  Pitch: %.2f", m_cam.yaw, m_cam.pitch);
         ImGui::Separator();
         ImGui::TextDisabled("Hold RMB + WASD/QE to fly. Shift = faster.");
+        if (m_cookService) {
+            auto cs = m_cookService->stats();
+            ImGui::Separator();
+            if (cs.active) {
+                ImGui::TextColored({1.0f,0.8f,0.2f,1.0f},
+                    "Cooking: %s", cs.currentAsset.c_str());
+                ImGui::Text("Progress: %d / %d", cs.cooked, cs.total);
+            } else {
+                ImGui::TextColored({0.4f,1.0f,0.4f,1.0f}, "Assets ready");
+            }
+            if (cs.failed > 0)
+                ImGui::TextColored({1.0f,0.3f,0.3f,1.0f},
+                    "Failed: %d", cs.failed);
+        }
         ImGui::End();
 
         drawHierarchyPanel(ctx);
         drawInspectorPanel(ctx);
-        drawAssetBrowserPanel(ctx, m_loader);
+        drawAssetBrowserPanel(ctx, m_loader, m_cookService);
         drawConsolePanel();
     }
 };

@@ -56,8 +56,9 @@ public:
     // Force re-cook regardless of hash.
     CookResult forceRecook(const UUID& uuid);
 
-private:
     bool         isStale(const AssetRecord& rec) const;
+    bool         hasCookerFor(const std::string& ext) const;
+private:
     std::string  computeHash(const std::filesystem::path& p) const;
     ICooker*     findCooker(const std::string& ext) const;
 

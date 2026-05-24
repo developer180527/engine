@@ -1,14 +1,11 @@
 #include "engine/runtime.h"
 #include "editor/editor_app.h"
 #include "io/project_context.h"
+#include "io/cook_service.h"
 #include "engine/logger.h"
 #include <assetlib/asset_registry.h>
-#include <assetlib/cook_pipeline.h>
-#include "cookers/mesh_cooker.h"
-#include "cookers/texture_cooker.h"
 
 int main(int argc, char** argv) {
-    // Resolve project: argv[1] > last opened > autoDetect
     ProjectContext project;
     if (argc > 1 && std::filesystem::is_directory(argv[1])) {
         project = ProjectContext::load(argv[1]);
@@ -19,56 +16,49 @@ int main(int argc, char** argv) {
     }
     project.saveAsLastProject();
 
-    // ── Asset registry (Milestone A) ─────────────────────────────────────────
-    // Scan assets folder, assign stable UUIDs to new files, update hashes.
-    // Registry lives at .cache/registry.db — zero engine coupling.
-    assetlib::AssetRegistry registry; // lives until process exit
-    {
-        auto dbPath     = project.projectRoot / ".cache" / "registry.db";
-        auto assetsRoot = project.projectRoot / "assets";
-        if (registry.open(dbPath)) {
-            int n = 0;
-            if (std::filesystem::exists(assetsRoot))
-                n = registry.scan(assetsRoot, project.projectRoot);
-            // Cook any stale or uncooked mesh assets
-        auto cacheRoot = project.projectRoot / ".cache";
-        assetlib::CookPipeline pipeline(registry,
-            project.projectRoot, cacheRoot);
-        pipeline.registerCooker(std::make_unique<MeshCooker>());
-        pipeline.registerCooker(std::make_unique<TextureCooker>());
-        int cooked = pipeline.cookAll();
-        if (cooked > 0)
-            LOG_INFO("AssetLib", "Cooked %d asset(s)", cooked);
+    auto dbPath     = project.projectRoot / ".cache" / "registry.db";
+    auto assetsRoot = project.projectRoot / "assets";
+    auto cacheRoot  = project.projectRoot / ".cache";
 
+    // Main thread registry — read-only after startup scan.
+    // CookService opens its own connection for writes (WAL concurrency).
+    assetlib::AssetRegistry registry;
+    if (registry.open(dbPath)) {
+        int n = 0;
+        if (std::filesystem::exists(assetsRoot))
+            n = registry.scan(assetsRoot, project.projectRoot);
         auto all = registry.all();
-            LOG_INFO("AssetLib", "Registry ready — %zu asset(s), %d new/updated",
-                     all.size(), n);
-        } else {
-            LOG_WARN("AssetLib", "Could not open registry at: %s",
-                     dbPath.string().c_str());
-        }
+        LOG_INFO("AssetLib", "Registry ready — %zu asset(s), %d new/updated",
+                 all.size(), n);
+    } else {
+        LOG_WARN("AssetLib", "Could not open registry at: %s",
+                 dbPath.string().c_str());
     }
 
-    // Boot runtime with project title
+    // Boot runtime + editor immediately — no blocking cook wait
     EngineRuntime runtime;
     if (!runtime.init({project.name, 1280, 720, 60.0f}))
         return 1;
 
-    // Give runtime access to project context
     runtime.ctx().project  = project;
-    runtime.ctx().assetLib = &registry; // binary loader looks up cooked paths
+    runtime.ctx().assetLib = &registry;
+
+    // Cook service runs in background — editor is already live
+    CookService cookService(dbPath, project.projectRoot, assetsRoot, cacheRoot);
 
     EditorApp editor(runtime);
     editor.init();
-    editor.setRegistry(&registry);    // binary loader fast path
+    editor.setRegistry(&registry);
     editor.setProjectRoot(project.projectRoot);
-    editor.setProject(project);  // loads scene + restores camera
+    editor.setCookService(&cookService);
+    editor.setProject(project);
+
+    cookService.start(); // background thread — doesn't block
+
     editor.run();
 
-    // Save on clean exit
     editor.saveScene();
     project.saveAsLastProject();
-
     editor.shutdown();
     runtime.shutdown();
     return 0;

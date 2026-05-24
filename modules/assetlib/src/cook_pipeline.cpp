@@ -21,6 +21,11 @@ ICooker* CookPipeline::findCooker(const std::string& ext) const {
     return nullptr;
 }
 
+bool CookPipeline::hasCookerFor(const std::string& ext) const {
+    std::string lower = ext;
+    for (auto& c : lower) c = static_cast<char>(std::tolower(c));
+    return findCooker(lower) != nullptr;
+}
 bool CookPipeline::isStale(const AssetRecord& rec) const {
     if (rec.cookedPath.empty()) return true;
     if (rec.cookVersion != kCurrentCookVersion) return true;

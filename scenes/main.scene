@@ -2,6 +2,54 @@
   "entities": [
     {
       "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/robot.glb"
+      },
+      "name": "robot",
+      "transform": {
+        "position": [
+          3.2665624618530273,
+          9.970978736877441,
+          4.651283264160156
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
+      },
+      "name": "Demon_Mask",
+      "transform": {
+        "position": [
+          2.281606435775757,
+          5.8065571784973145,
+          3.430966854095459
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0531535148620605,
+          1.0531535148620605,
+          1.0531535148620605
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Double_Dagger_Stab.fbx"
       },
       "name": "Double_Dagger_Stab",
@@ -21,6 +69,78 @@
           0.010026896372437477,
           0.010026896372437477,
           0.010026896372437477
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFig001.fbx"
+      },
+      "name": "PlantBanjoFig001",
+      "transform": {
+        "position": [
+          1.6928625106811523,
+          10.362678527832031,
+          6.172959804534912
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.838617205619812,
+          1.838617205619812,
+          1.838617205619812
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
+      },
+      "name": "PlantBanjoFigVase001",
+      "transform": {
+        "position": [
+          -7.397457599639893,
+          6.714454650878906,
+          3.131373882293701
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          4.934962272644043,
+          4.934962272644043,
+          4.934962272644043
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
+      },
+      "name": "Demon_Mask (2)",
+      "transform": {
+        "position": [
+          -0.5254480838775635,
+          7.7492756843566895,
+          4.005192756652832
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0531535148620605,
+          1.0531535148620605,
+          1.0531535148620605
         ]
       }
     }

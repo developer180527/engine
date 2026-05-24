@@ -1,5 +1,6 @@
 #include "engine/logger.h"
 #include "engine/async_loader.h"
+#include "io/cook_service.h"
 #pragma once
 
 #include <filesystem>
@@ -123,7 +124,20 @@ inline float groundOffset(const Mesh* mesh, float scale) {
 
 } // namespace asset_browser_detail
 
-inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader) {
+
+// Returns a name that doesn't collide with existing entities.
+// "Demon_Mask" → "Demon_Mask" → "Demon_Mask (2)" → "Demon_Mask (3)" ...
+inline std::string uniqueEntityName(flecs::world& ecs, const std::string& base) {
+    if (!ecs.lookup(base.c_str())) return base;
+    for (int i = 2; i < 10000; ++i) {
+        std::string candidate = base + " (" + std::to_string(i) + ")";
+        if (!ecs.lookup(candidate.c_str())) return candidate;
+    }
+    return base; // fallback
+}
+
+inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
+                                  CookService* cookService = nullptr) {
     namespace fs = std::filesystem;
     using namespace asset_browser_detail;
 
@@ -154,6 +168,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader) {
     if (ImGui::Button("Refresh")) {
         s_needsRefresh = true;
         s_selectedIdx  = -1;
+        if (cookService) cookService->requestRefresh();
     }
 
     ImGui::Separator();
@@ -286,18 +301,20 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader) {
                     const float _sc = autoScale(_mesh);
                     const float _yo = groundOffset(_mesh, _sc);
                     Transform _t; _t.position={0,_yo,0}; _t.scale={_sc,_sc,_sc};
-                    ctx.editor.selected = ctx.ecs.entity(baseName(f.name).c_str())
+                    std::string _uname = uniqueEntityName(ctx.ecs, baseName(f.name));
+                    ctx.editor.selected = ctx.ecs.entity(_uname.c_str())
                         .set<Transform>(_t)
                         .set<MeshRenderer>({_r.mesh})
-                        .set<Name>({baseName(f.name)});
+                        .set<Name>({_uname});
                     LOG_SUCCESS("Loader", "Spawned '%s' (glTF sync)", baseName(f.name).c_str());
                 } else {
                     LOG_ERROR("Loader", "glTF load failed: %s", _r.error.c_str());
                 }
             } else {
                 auto& _ecs = ctx.ecs; auto& _assets = ctx.assets; auto& _ed = ctx.editor;
-                std::string _en = baseName(f.name);
-                LOG_INFO("Loader", "Queued: %s", f.name.c_str());
+                // Unique name generated at queue time — entity doesn't exist yet
+                std::string _en = uniqueEntityName(ctx.ecs, baseName(f.name));
+                LOG_INFO("Loader", "Queued: %s → entity '%s'", f.name.c_str(), _en.c_str());
                 loader.load(f.fullPath, _en,
                     [&_ecs, &_assets, &_ed, _en](MeshHandle h, const std::string&) {
                         if (!h.valid()) return;
