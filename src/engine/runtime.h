@@ -71,6 +71,10 @@ private:
     bgfx::UniformHandle m_uColorFactor = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uLightDir    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uLightParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_uLightColor  = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_uCamPos      = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_sNormalMap   = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_flatNormalTex= BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_whiteTex     = BGFX_INVALID_HANDLE;
 
     // Offscreen scene framebuffer — scene renders here, not to the backbuffer.

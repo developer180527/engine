@@ -16,7 +16,8 @@ static constexpr unsigned kImportFlags =
 
 // Cook format matches runtime Vertex exactly: Position(12)+Normal(12)+UV(8)=32 bytes
 // Tangent added when normal mapping milestone lands (bumps kVersion → re-cook auto)
-static constexpr uint32_t kCookFlags = VF_POSITION|VF_NORMAL|VF_UV0;
+// Position(12)+Normal(12)+Tangent(16)+UV(8) = 48 bytes — matches runtime Vertex exactly
+static constexpr uint32_t kCookFlags = VF_POSITION|VF_NORMAL|VF_TANGENT|VF_UV0;
 
 static void pushF(std::vector<uint8_t>& b, float v) {
     uint8_t x[4]; std::memcpy(x,&v,4); b.insert(b.end(),x,x+4);
@@ -42,7 +43,7 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
         if (scene->mMeshes[m]->HasPositions())
             totalVerts += scene->mMeshes[m]->mNumVertices;
     const bool use16 = (totalVerts <= 65535);
-    asset.header.indexStride = use16 ? 2 : 4;
+    asset.header.indexStride  = use16 ? 2 : 4;
     asset.header.submeshCount = scene->mNumMeshes;
     std::memcpy(asset.header.uuid, ctx.uuid.bytes.data(), 16);
 
@@ -65,6 +66,13 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
             bMax[0]=std::max(bMax[0],p.x); bMax[1]=std::max(bMax[1],p.y); bMax[2]=std::max(bMax[2],p.z);
             if (hasN){auto& n=mesh->mNormals[v]; pushF3(asset.vertexData,n.x,n.y,n.z);}
             else pushF3(asset.vertexData,0,1,0);
+            if (hasT) {
+                auto& t=mesh->mTangents[v]; auto& bt=mesh->mBitangents[v];
+                aiVector3D n2=hasN?mesh->mNormals[v]:aiVector3D(0,1,0);
+                float cx=n2.y*t.z-n2.z*t.y, cy=n2.z*t.x-n2.x*t.z, cz=n2.x*t.y-n2.y*t.x;
+                float sign=(cx*bt.x+cy*bt.y+cz*bt.z)<0?-1.f:1.f;
+                pushF4(asset.vertexData,t.x,t.y,t.z,sign);
+            } else pushF4(asset.vertexData,1,0,0,1);
             if (hasUV){auto& uv=mesh->mTextureCoords[0][v]; pushF2(asset.vertexData,uv.x,uv.y);}
             else pushF2(asset.vertexData,0,0);
         }

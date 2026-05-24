@@ -16,9 +16,10 @@
 // Layout is 32 bytes per vertex: 12 (pos) + 12 (normal) + 8 (uv). On modern
 // GPUs this is a clean 2-cacheline stride, no padding waste.
 struct Vertex {
-    float position[3];  // x, y, z
-    float normal[3];    // nx, ny, nz (unit length)
-    float uv[2];        // u, v in [0, 1]
+    float position[3];  // x, y, z          12 bytes
+    float normal[3];    // nx, ny, nz        12 bytes
+    float tangent[4];   // xyz + handedness  16 bytes
+    float uv[2];        // u, v in [0, 1]    8 bytes
 
     // bgfx vertex layout descriptor. Built once at engine init, referenced
     // every time we create a vertex buffer. Static method so callers don't
@@ -29,6 +30,7 @@ struct Vertex {
             l.begin()
                 .add(bgfx::Attrib::Position,  3, bgfx::AttribType::Float)
                 .add(bgfx::Attrib::Normal,    3, bgfx::AttribType::Float)
+                .add(bgfx::Attrib::Tangent,   4, bgfx::AttribType::Float)
                 .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
                 .end();
             return l;

@@ -223,6 +223,7 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
     const aiScene* scene = imp.ReadFile(path,
         aiProcess_Triangulate        |
         aiProcess_GenSmoothNormals   |
+        aiProcess_CalcTangentSpace   |
         aiProcess_FlipUVs            |
         aiProcess_JoinIdenticalVertices |
         aiProcess_SortByPType);
@@ -257,6 +258,12 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
         if (!mg.baseColorTexture.mem)
             mg.baseColorTexture = loadTextureGPU(scene, nullptr, dir, bn,
                 m_registry, m_projectRoot, m_projectRoot / ".cache");
+        // Normal map
+        aiString nmPath;
+        if (AI_SUCCESS == ai->GetTexture(aiTextureType_NORMALS, 0, &nmPath) ||
+            AI_SUCCESS == ai->GetTexture(aiTextureType_HEIGHT,  0, &nmPath))
+            mg.normalMapTexture = loadTextureGPU(scene, nmPath.C_Str(), dir, bn,
+                m_registry, m_projectRoot, m_projectRoot / ".cache");
     }
 
     // Meshes (vertex/index data + bgfx::copy on worker)
@@ -280,6 +287,18 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                 vtx.normal[1] = am->mNormals[v].y;
                 vtx.normal[2] = am->mNormals[v].z;
             } else { vtx.normal[1] = 1.0f; }
+            if (am->HasTangentsAndBitangents()) {
+                const auto& t  = am->mTangents[v];
+                const auto& bt = am->mBitangents[v];
+                const auto& n  = am->mNormals[v];
+                float cx = n.y*t.z-n.z*t.y, cy = n.z*t.x-n.x*t.z, cz = n.x*t.y-n.y*t.x;
+                float sign = (cx*bt.x+cy*bt.y+cz*bt.z) < 0.0f ? -1.0f : 1.0f;
+                vtx.tangent[0]=t.x; vtx.tangent[1]=t.y;
+                vtx.tangent[2]=t.z; vtx.tangent[3]=sign;
+            } else {
+                vtx.tangent[0]=1.0f; vtx.tangent[1]=0.0f;
+                vtx.tangent[2]=0.0f; vtx.tangent[3]=1.0f;
+            }
             if (am->mTextureCoords[0]) {
                 vtx.uv[0] = am->mTextureCoords[0][v].x;
                 vtx.uv[1] = am->mTextureCoords[0][v].y;
@@ -454,6 +473,16 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
             if (bgfx::isValid(th)) {
                 Texture tex; tex.handle = th;
                 mat.baseColorTexture = storage.textures.addTexture(std::move(tex));
+            }
+        }
+        if (mg.normalMapTexture.mem) {
+            bgfx::TextureHandle th = bgfx::createTexture2D(
+                mg.normalMapTexture.w, mg.normalMapTexture.h,
+                false, 1, bgfx::TextureFormat::RGBA8,
+                0, mg.normalMapTexture.mem);
+            if (bgfx::isValid(th)) {
+                Texture tex; tex.handle = th;
+                mat.normalMapTexture = storage.textures.addTexture(std::move(tex));
             }
         }
         matHandles[i] = storage.materials.addMaterial(std::move(mat));

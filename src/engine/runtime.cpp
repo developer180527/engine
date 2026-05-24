@@ -90,6 +90,13 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
     m_uColorFactor = bgfx::createUniform("u_colorFactor", bgfx::UniformType::Vec4);
     m_uLightDir    = bgfx::createUniform("u_lightDir",    bgfx::UniformType::Vec4);
     m_uLightParams = bgfx::createUniform("u_lightParams", bgfx::UniformType::Vec4);
+    m_uLightColor  = bgfx::createUniform("u_lightColor",  bgfx::UniformType::Vec4);
+    m_uCamPos      = bgfx::createUniform("u_camPos",      bgfx::UniformType::Vec4);
+    m_sNormalMap   = bgfx::createUniform("s_normalMap",   bgfx::UniformType::Sampler);
+    // Flat normal (0.5,0.5,1) → (0,0,1) in tangent space — default when no normal map
+    static const uint8_t kFlatNorm[4] = {128, 128, 255, 255};
+    m_flatNormalTex = bgfx::createTexture2D(1, 1, false, 1,
+        bgfx::TextureFormat::RGBA8, 0, bgfx::copy(kFlatNorm, 4));
 
     static const uint32_t kWhite = 0xFFFFFFFFu;
     m_whiteTex = bgfx::createTexture2D(1, 1, false, 1,
@@ -159,9 +166,21 @@ void EngineRuntime::tick(float dt, const float view[16],
     bgfx::touch(kSceneView);
     // Light: directional sun from upper-right-front, 30% ambient
     const float kLightDir[4]    = { 0.6f, 0.8f, 0.4f, 0.0f }; // toward light
-    const float kLightParams[4] = { 0.25f, 0.0f, 0.0f, 0.0f }; // ambient
+    const float kLightParams[4] = { 0.25f, 0.0f, 0.0f, 0.0f }; // x=ambient
+    const float kLightColor[4]  = { 1.0f, 0.98f, 0.92f, 2.2f }; // rgb + intensity
+    // Camera world position extracted from column-major view matrix.
+    // view[12-14] = translation column = -R*eye, so eye = -R^T * T
+    // bx view matrix is row-major: T=(view[12],view[13],view[14])
+    // cam = -(T · col_i_of_R) where col i = (view[i*4], view[i*4+1], view[i*4+2])
+    const float camPos[4] = {
+        -(view[12]*view[0] + view[13]*view[1] + view[14]*view[2]),
+        -(view[12]*view[4] + view[13]*view[5] + view[14]*view[6]),
+        -(view[12]*view[8] + view[13]*view[9] + view[14]*view[10]),
+        1.0f };
     bgfx::setUniform(m_uLightDir,    kLightDir);
     bgfx::setUniform(m_uLightParams, kLightParams);
+    bgfx::setUniform(m_uLightColor,  kLightColor);
+    bgfx::setUniform(m_uCamPos,      camPos);
     tickSystems(dt, pauseSystems);
     renderScene(view, proj);
 
@@ -272,7 +291,11 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
         const uint32_t groupSize = (uint32_t)(j - i);
 
         // Bind material state once per group
-        float params[4] = {first.tex ? 1.0f : 0.0f, 0, 0, 0};
+        float roughness = first.mat ? first.mat->roughness : 0.7f;
+        float metallic  = first.mat ? first.mat->metallic  : 0.0f;
+        const Texture* nmTex = (first.mat && first.mat->normalMapTexture.valid())
+            ? m_ctx->textures.getTexture(first.mat->normalMapTexture) : nullptr;
+        float params[4] = {first.tex?1.0f:0.0f, roughness, metallic, nmTex?1.0f:0.0f};
         float factor[4] = {1, 1, 1, 1};
         if (first.mat) {
             factor[0] = first.mat->baseColorFactor[0];
@@ -303,15 +326,18 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
                 bgfx::setState(state);
                 bgfx::submit(kSceneView, m_program);
             } else {
-                // Multi-submesh: one draw per range, shared VB+IB.
-                // setTransform must be called before EACH submit —
-                // bgfx consumes the transform state on submit.
                 for (const auto& sub : first.mesh->submeshes) {
+                    bgfx::setUniform(m_uParams,      params);
+                    bgfx::setUniform(m_uColorFactor, factor);
+                    bgfx::setTexture(0, m_sBaseColor,
+                                    first.tex ? first.tex->handle : m_whiteTex);
+                    bgfx::setTexture(1, m_sNormalMap,
+                                    nmTex ? nmTex->handle : m_flatNormalTex);
+                    bgfx::setState(state);
                     bgfx::setTransform(visible[i + k].model);
                     bgfx::setVertexBuffer(0, first.mesh->vbh);
                     bgfx::setIndexBuffer(first.mesh->ibh,
                                         sub.indexOffset, sub.indexCount);
-                    bgfx::setState(state);
                     bgfx::submit(kSceneView, m_program);
                 }
             }
@@ -355,6 +381,10 @@ void EngineRuntime::shutdownRenderer() {
     if (bgfx::isValid(m_sceneFB))       bgfx::destroy(m_sceneFB);
     if (bgfx::isValid(m_sceneColorTex)) bgfx::destroy(m_sceneColorTex);
     if (bgfx::isValid(m_sceneDepthTex)) bgfx::destroy(m_sceneDepthTex);
+    if (bgfx::isValid(m_uLightColor))   bgfx::destroy(m_uLightColor);
+    if (bgfx::isValid(m_uCamPos))       bgfx::destroy(m_uCamPos);
+    if (bgfx::isValid(m_sNormalMap))    bgfx::destroy(m_sNormalMap);
+    if (bgfx::isValid(m_flatNormalTex)) bgfx::destroy(m_flatNormalTex);
     if (bgfx::isValid(m_program))       bgfx::destroy(m_program);
     if (bgfx::isValid(m_sBaseColor))   bgfx::destroy(m_sBaseColor);
     if (bgfx::isValid(m_uParams))      bgfx::destroy(m_uParams);

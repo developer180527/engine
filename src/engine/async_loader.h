@@ -44,6 +44,7 @@ struct TextureGPUData {
 struct MaterialGPUData {
     float          baseColorFactor[4] = {1, 1, 1, 1};
     TextureGPUData baseColorTexture;
+    TextureGPUData normalMapTexture;
 };
 
 // Fully prepared asset: all CPU work AND all bgfx::copy() done on worker.

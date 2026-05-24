@@ -74,6 +74,30 @@
     },
     {
       "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
+      },
+      "name": "dadasd",
+      "transform": {
+        "position": [
+          5.204762935638428,
+          6.256293296813965,
+          3.40728497505188
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          3.3333334922790527,
+          3.3333334922790527,
+          3.3333334922790527
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Double_Dagger_Stab.fbx"
       },
       "name": "Double_Dagger_Stab",
@@ -141,30 +165,6 @@
           4.934962272644043,
           4.934962272644043,
           4.934962272644043
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
-      },
-      "name": "dadasd",
-      "transform": {
-        "position": [
-          4.813047885894775,
-          6.773725986480713,
-          3.389910936355591
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          3.3333334922790527,
-          3.3333334922790527,
-          3.3333334922790527
         ]
       }
     }
