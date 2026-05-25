@@ -11,6 +11,7 @@
 #include "engine_context.h"
 #include "editor/editor_camera.h"
 #include "editor/hierarchy_panel.h"
+#include "editor/menu_bar_panel.h"
 #include "editor/inspector_panel.h"
 #include "editor/asset_browser_panel.h"
 #include "editor/console_panel.h"
@@ -276,22 +277,14 @@ private:
             ImGui::End();
         }
 
-        // ── File menu ────────────────────────────────────────────
-        if (ImGui::BeginMainMenuBar()) {
-            if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("Save Scene", "Cmd+S"))
-                    saveScene();
-                ImGui::Separator();
-                if (ImGui::MenuItem("Reload Scene"))
-                    setProject(m_rt.ctx().project);
-                ImGui::EndMenu();
-            }
-            if (!m_projectRoot.empty()) {
-                ImGui::TextDisabled(" |  %s",
-                    m_projectRoot.filename().string().c_str());
-            }
-            ImGui::EndMainMenuBar();
-        }
+        // ── Menu bar ─────────────────────────────────────────────
+        drawMenuBar({
+            [this]{ saveScene(); },
+            [this]{ setProject(m_rt.ctx().project); },
+            [this]{ glfwSetWindowShouldClose(m_rt.window(), true); },
+            m_projectRoot.empty() ? std::string{}
+                : m_projectRoot.filename().string()
+        });
 
         // Cmd+S shortcut
         if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
