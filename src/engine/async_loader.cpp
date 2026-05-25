@@ -8,6 +8,7 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include "assetlib/mesh_asset.h"
 #include <assimp/material.h>
 #include <assetlib/mesh_asset.h>
 #include <assetlib/texture_asset.h>
@@ -200,18 +201,49 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                     }
                 }
                 out.meshes.push_back(std::move(gd));
-                out.materials.push_back(MaterialGPUData{}); // geometry-only cook
-                // Texture: try cooked binary, fall back to stb_image discovery
-                std::filesystem::path srcPath(path);
-                auto texData = loadTextureGPU(
-                    nullptr, nullptr,
-                    srcPath.parent_path(), srcPath.stem().string(),
-                    m_registry, m_projectRoot, m_projectRoot / ".cache");
-                out.materials[0].baseColorTexture = texData;
+                // Use cooked material section if present;
+                // otherwise fall back to auto-discovery by asset stem name.
+                const std::filesystem::path srcDir =
+                    std::filesystem::path(path).parent_path();
+                const std::string            stem =
+                    std::filesystem::path(path).stem().string();
+                if (!asset.materials.empty()) {
+                    for (uint32_t m = 0; m < (uint32_t)asset.materials.size(); ++m) {
+                    const auto& cm = asset.materials[m];
+                        MaterialGPUData mg;
+                        std::memcpy(mg.baseColorFactor, cm.baseColorFactor, 16);
+                        mg.roughness = cm.roughness;
+                        mg.metallic  = cm.metallic;
+                        if (cm.flags & assetlib::kMatFlag_HasBaseColor)
+                            mg.baseColorTexture = loadTextureGPU(
+                                nullptr, cm.baseColorPath, srcDir, stem,
+                                m_registry, m_projectRoot, m_projectRoot / ".cache");
+                        if (cm.flags & assetlib::kMatFlag_HasNormalMap)
+                            mg.normalMapTexture = loadTextureGPU(
+                                nullptr, cm.normalMapPath, srcDir, stem,
+                                m_registry, m_projectRoot, m_projectRoot / ".cache");
+                        LOG_INFO("BinaryLoader", "Mat[%u] base=%s nm=%s",
+                            m,
+                            mg.baseColorTexture.mem ? "ok" : "none",
+                            mg.normalMapTexture.mem ? "ok" : "none");
+                        if (!mg.baseColorTexture.mem)  // fallback: auto-discover
+                            mg.baseColorTexture = loadTextureGPU(
+                                nullptr, nullptr, srcDir, stem,
+                                m_registry, m_projectRoot, m_projectRoot / ".cache");
+                        out.materials.push_back(std::move(mg));
+                    }
+                } else {
+                    // Legacy / geometry-only cook: auto-discover one texture
+                    MaterialGPUData mg;
+                    mg.baseColorTexture = loadTextureGPU(
+                        nullptr, nullptr, srcDir, stem,
+                        m_registry, m_projectRoot, m_projectRoot / ".cache");
+                    out.materials.push_back(std::move(mg));
+                }
                 out.success = true;
                 LOG_INFO("BinaryLoader", "%-30s verts=%u idx=%u tex=%s submeshes=%zu",
                        name.c_str(), h.vertexCount, h.indexCount,
-                       texData.mem ? "ok" : "none",
+                       out.materials.empty() || !out.materials[0].baseColorTexture.mem ? "none" : "ok",
                        out.meshes.empty() ? 0 : out.meshes[0].subRanges.size());
                 return out;
                 } // stride check
@@ -261,9 +293,12 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
         // Normal map
         aiString nmPath;
         if (AI_SUCCESS == ai->GetTexture(aiTextureType_NORMALS, 0, &nmPath) ||
-            AI_SUCCESS == ai->GetTexture(aiTextureType_HEIGHT,  0, &nmPath))
+            AI_SUCCESS == ai->GetTexture(aiTextureType_HEIGHT,  0, &nmPath)) {
             mg.normalMapTexture = loadTextureGPU(scene, nmPath.C_Str(), dir, bn,
                 m_registry, m_projectRoot, m_projectRoot / ".cache");
+            LOG_INFO("NormalMap", "Found: %s -> %s",
+                     bn.c_str(), nmPath.C_Str());
+        }
     }
 
     // Meshes (vertex/index data + bgfx::copy on worker)
@@ -372,7 +407,11 @@ AsyncLoader::~AsyncLoader() {
 void AsyncLoader::load(const std::string& path, const std::string& name, OnLoaded cb) {
     {
         std::lock_guard<std::mutex> lk(m_pendingMtx);
-        if (m_inFlight.count(path)) return;
+        if (m_inFlight.count(path)) {
+            // Already loading — queue callback so it fires when done
+            m_waiters[path].push_back(std::move(cb));
+            return;
+        }
         m_inFlight.insert(path);
         m_pending.push({path, name, std::move(cb)});
     }
@@ -530,5 +569,17 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
     }
 
     if (req.cb) req.cb(firstHandle, req.asset.name);
+    // Drain any callbacks that queued while this path was in-flight
+    std::vector<OnLoaded> waiters;
+    {
+        std::lock_guard<std::mutex> lk(m_pendingMtx);
+        auto it = m_waiters.find(req.asset.path);
+        if (it != m_waiters.end()) {
+            waiters = std::move(it->second);
+            m_waiters.erase(it);
+        }
+    }
+    for (auto& w : waiters)
+        if (w) w(firstHandle, req.asset.name);
     return true;
 }

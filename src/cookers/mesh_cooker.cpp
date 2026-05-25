@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cfloat>
 #include <algorithm>
+#include <filesystem>
 
 using namespace assetlib;
 
@@ -102,6 +103,36 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
     asset.header.indexCount = static_cast<uint32_t>(asset.indexData.size() / asset.header.indexStride);
     for (int i=0;i<3;++i){asset.header.boundsMin[i]=bMin[i]; asset.header.boundsMax[i]=bMax[i];}
 
+    // ── Material section ──────────────────────────────────────────────
+    for (uint32_t m = 0; m < scene->mNumMaterials; ++m) {
+        const aiMaterial* aiMat = scene->mMaterials[m];
+        assetlib::CookedMaterial cm;
+        aiColor4D col{1,1,1,1};
+        if (AI_SUCCESS == aiGetMaterialColor(aiMat, AI_MATKEY_COLOR_DIFFUSE, &col)) {
+            cm.baseColorFactor[0]=col.r; cm.baseColorFactor[1]=col.g;
+            cm.baseColorFactor[2]=col.b; cm.baseColorFactor[3]=col.a;
+        }
+        float rough=0.7f, metal=0.0f;
+        aiGetMaterialFloat(aiMat, AI_MATKEY_ROUGHNESS_FACTOR, &rough);
+        aiGetMaterialFloat(aiMat, AI_MATKEY_METALLIC_FACTOR,  &metal);
+        cm.roughness = rough; cm.metallic = metal;
+        aiString tp;
+        if (AI_SUCCESS == aiMat->GetTexture(aiTextureType_DIFFUSE,    0, &tp) ||
+            AI_SUCCESS == aiMat->GetTexture(aiTextureType_BASE_COLOR, 0, &tp)) {
+            auto fn = std::filesystem::path(tp.C_Str()).filename().string();
+            std::strncpy(cm.baseColorPath, fn.c_str(), 511);
+            cm.flags |= assetlib::kMatFlag_HasBaseColor;
+        }
+        aiString np;
+        if (AI_SUCCESS == aiMat->GetTexture(aiTextureType_NORMALS, 0, &np) ||
+            AI_SUCCESS == aiMat->GetTexture(aiTextureType_HEIGHT,  0, &np)) {
+            auto fn = std::filesystem::path(np.C_Str()).filename().string();
+            std::strncpy(cm.normalMapPath, fn.c_str(), 511);
+            cm.flags |= assetlib::kMatFlag_HasNormalMap;
+        }
+        asset.materials.push_back(cm);
+    }
+    asset.header.materialCount = (uint32_t)asset.materials.size();
     if (!saveMesh(asset,ctx.outputPath))
         return {.success=false,.error="saveMesh failed"};
 

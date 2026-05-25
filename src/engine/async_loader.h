@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <queue>
 #include <set>
+#include <unordered_map>
 #include <functional>
 #include <string>
 #include <vector>
@@ -43,6 +44,8 @@ struct TextureGPUData {
 
 struct MaterialGPUData {
     float          baseColorFactor[4] = {1, 1, 1, 1};
+    float          roughness          = 0.7f;
+    float          metallic           = 0.0f;
     TextureGPUData baseColorTexture;
     TextureGPUData normalMapTexture;
 };
@@ -97,6 +100,9 @@ private:
     std::condition_variable m_pendingCV;
     std::queue<LoadRequest> m_pending;
     std::set<std::string>   m_inFlight;
+    // Callbacks queued while the same path was already in-flight.
+    // Drained in drainOne() alongside the primary callback.
+    std::unordered_map<std::string, std::vector<OnLoaded>> m_waiters;
 
     mutable std::mutex        m_readyMtx;
     std::queue<UploadRequest> m_ready;

@@ -146,14 +146,62 @@
     },
     {
       "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFig001.fbx"
+      },
+      "name": "PlantBanjoFig001 (2)",
+      "transform": {
+        "position": [
+          -0.04956604540348053,
+          6.011125087738037,
+          6.609675884246826
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.838617205619812,
+          1.838617205619812,
+          1.838617205619812
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
         "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
       },
       "name": "PlantBanjoFigVase001",
       "transform": {
         "position": [
-          -7.397457599639893,
-          6.714454650878906,
-          3.131373882293701
+          -4.080689430236816,
+          4.007953643798828,
+          -0.7524757385253906
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          4.934962272644043,
+          4.934962272644043,
+          4.934962272644043
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
+      },
+      "name": "PlantBanjoFigVase001 (2)",
+      "transform": {
+        "position": [
+          -2.564976930618286,
+          5.352892875671387,
+          0.28140759468078613
         ],
         "rotation": [
           0.0,
