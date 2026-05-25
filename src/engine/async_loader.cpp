@@ -413,10 +413,19 @@ AsyncLoader::~AsyncLoader() {
 }
 
 void AsyncLoader::load(const std::string& path, const std::string& name, OnLoaded cb) {
+    // Fast path: already fully loaded — return cached handle immediately
+    {
+        std::lock_guard<std::mutex> lk(m_loadedMtx);
+        auto it = m_loadedHandles.find(path);
+        if (it != m_loadedHandles.end()) {
+            if (cb) cb(it->second, name);
+            return;
+        }
+    }
+    // In-flight: queue callback for when current load completes
     {
         std::lock_guard<std::mutex> lk(m_pendingMtx);
         if (m_inFlight.count(path)) {
-            // Already loading — queue callback so it fires when done
             m_waiters[path].push_back(std::move(cb));
             return;
         }
@@ -428,7 +437,7 @@ void AsyncLoader::load(const std::string& path, const std::string& name, OnLoade
 
 void AsyncLoader::unload(const std::string& path) {
     std::lock_guard<std::mutex> lk(m_loadedMtx);
-    m_loaded.erase(path);
+    m_loadedHandles.erase(path);
 }
 bool AsyncLoader::isLoading(const std::string& path) const {
     std::lock_guard<std::mutex> lk(m_pendingMtx);
@@ -437,7 +446,7 @@ bool AsyncLoader::isLoading(const std::string& path) const {
 
 bool AsyncLoader::isLoaded(const std::string& path) const {
     std::lock_guard<std::mutex> lk(m_loadedMtx);
-    return m_loaded.count(path) > 0;
+    return m_loadedHandles.count(path) > 0;
 }
 
 int AsyncLoader::pendingCount() const {
@@ -472,11 +481,11 @@ void AsyncLoader::workerLoop() {
             std::lock_guard<std::mutex> lk(m_readyMtx);
             m_ready.push({std::move(asset), std::move(req.cb)});
         }
-        // Mark loaded BEFORE erasing inFlight — closes the race window
-        // where path is in neither set. Failed loads skip so retry works.
+        // Erase inFlight in worker so load() can restart on failure.
+        // m_loadedHandles is populated in drainOne once the handle is ready.
         if (succeeded) {
             std::lock_guard<std::mutex> lk(m_loadedMtx);
-            m_loaded.insert(req.path);
+            m_loadedHandles[req.path] = MeshHandle{}; // placeholder until drainOne
         }
         {
             std::lock_guard<std::mutex> lk(m_pendingMtx);
@@ -503,6 +512,17 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
         LOG_ERROR("Loader", "Upload skipped (parse failed): %s",
                   req.asset.name.c_str());
         if (req.cb) req.cb(MeshHandle{}, req.asset.name);
+        // Drain waiters with invalid handle so they don't block forever
+        std::vector<OnLoaded> failWaiters;
+        {
+            std::lock_guard<std::mutex> lk(m_pendingMtx);
+            auto it = m_waiters.find(req.asset.path);
+            if (it != m_waiters.end()) {
+                failWaiters = std::move(it->second);
+                m_waiters.erase(it);
+            }
+        }
+        for (auto& w : failWaiters) if (w) w(MeshHandle{}, req.asset.name);
         return true;
     }
 
@@ -575,7 +595,7 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
 
     {
         std::lock_guard<std::mutex> lk(m_loadedMtx);
-        m_loaded.insert(req.asset.path);
+        m_loadedHandles[req.asset.path] = firstHandle;
     }
 
     if (req.cb) req.cb(firstHandle, req.asset.name);

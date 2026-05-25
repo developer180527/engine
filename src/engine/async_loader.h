@@ -109,8 +109,8 @@ private:
     mutable std::mutex        m_readyMtx;
     std::queue<UploadRequest> m_ready;
 
-    mutable std::mutex    m_loadedMtx;
-    std::set<std::string> m_loaded;
+    mutable std::mutex                          m_loadedMtx;
+    std::unordered_map<std::string, MeshHandle> m_loadedHandles; // path → cached handle
     assetlib::AssetRegistry*  m_registry    = nullptr;
     std::filesystem::path     m_projectRoot;
 };

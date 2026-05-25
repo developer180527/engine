@@ -79,9 +79,9 @@
       "name": "TV",
       "transform": {
         "position": [
-          5.204762935638428,
-          6.256293296813965,
-          3.40728497505188
+          5.4690117835998535,
+          4.534479141235352,
+          5.2992262840271
         ],
         "rotation": [
           0.0,
@@ -98,14 +98,14 @@
     },
     {
       "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Double_Dagger_Stab.fbx"
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
       },
-      "name": "Double_Dagger_Stab",
+      "name": "Television_01_4k",
       "transform": {
         "position": [
-          1.4976240396499634,
-          5.9579572677612305,
-          0.5879340171813965
+          0.44558092951774597,
+          3.888807773590088,
+          1.3803186416625977
         ],
         "rotation": [
           0.0,
@@ -114,57 +114,9 @@
           1.0
         ],
         "scale": [
-          0.010026896372437477,
-          0.010026896372437477,
-          0.010026896372437477
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFig001.fbx"
-      },
-      "name": "PlantBanjoFig001",
-      "transform": {
-        "position": [
-          1.6928625106811523,
-          10.362678527832031,
-          6.172959804534912
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.838617205619812,
-          1.838617205619812,
-          1.838617205619812
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFig001.fbx"
-      },
-      "name": "PlantBanjoFig001 (2)",
-      "transform": {
-        "position": [
-          -0.04956604540348053,
-          6.011125087738037,
-          6.609675884246826
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.838617205619812,
-          1.838617205619812,
-          1.838617205619812
+          3.3333334922790527,
+          3.3333334922790527,
+          3.3333334922790527
         ]
       }
     },
@@ -194,14 +146,14 @@
     },
     {
       "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFig001.fbx"
       },
-      "name": "Television_01_4k",
+      "name": "PlantBanjoFig001 (2)",
       "transform": {
         "position": [
-          5.245018482208252,
-          2.220454692840576,
-          4.253847599029541
+          -0.04956604540348053,
+          6.011125087738037,
+          6.609675884246826
         ],
         "rotation": [
           0.0,
@@ -210,9 +162,57 @@
           1.0
         ],
         "scale": [
-          3.3333334922790527,
-          3.3333334922790527,
-          3.3333334922790527
+          1.838617205619812,
+          1.838617205619812,
+          1.838617205619812
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFig001.fbx"
+      },
+      "name": "PlantBanjoFig001",
+      "transform": {
+        "position": [
+          1.6928625106811523,
+          10.362678527832031,
+          6.172959804534912
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.838617205619812,
+          1.838617205619812,
+          1.838617205619812
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Double_Dagger_Stab.fbx"
+      },
+      "name": "Double_Dagger_Stab",
+      "transform": {
+        "position": [
+          1.4976240396499634,
+          5.9579572677612305,
+          0.5879340171813965
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.010026896372437477,
+          0.010026896372437477,
+          0.010026896372437477
         ]
       }
     }
