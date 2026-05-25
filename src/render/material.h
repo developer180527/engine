@@ -1,3 +1,4 @@
+#include <string>
 #pragma once
 #include "core/handle.h"
 
@@ -7,6 +8,8 @@
 struct Material {
     TextureHandle baseColorTexture;            // invalid = no texture
     TextureHandle normalMapTexture;            // invalid = no normal map
+    std::string   baseColorName;               // filename for inspector
+    std::string   normalMapName;               // filename for inspector
     float         baseColorFactor[4] = {1,1,1,1};
     float         roughness          = 0.7f; // 0=mirror 1=fully rough
     float         metallic           = 0.0f; // 0=dielectric 1=metal

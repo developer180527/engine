@@ -222,6 +222,8 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                             mg.normalMapTexture = loadTextureGPU(
                                 nullptr, cm.normalMapPath, srcDir, stem,
                                 m_registry, m_projectRoot, m_projectRoot / ".cache");
+                        mg.baseColorName = (cm.flags & assetlib::kMatFlag_HasBaseColor) ? cm.baseColorPath : "";
+                        mg.normalMapName = (cm.flags & assetlib::kMatFlag_HasNormalMap) ? cm.normalMapPath : "";
                         LOG_INFO("BinaryLoader", "Mat[%u] base=%s nm=%s",
                             m,
                             mg.baseColorTexture.mem ? "ok" : "none",
@@ -296,9 +298,15 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
             AI_SUCCESS == ai->GetTexture(aiTextureType_HEIGHT,  0, &nmPath)) {
             mg.normalMapTexture = loadTextureGPU(scene, nmPath.C_Str(), dir, bn,
                 m_registry, m_projectRoot, m_projectRoot / ".cache");
+            mg.normalMapName = std::filesystem::path(nmPath.C_Str()).filename().string();
             LOG_INFO("NormalMap", "Found: %s -> %s",
                      bn.c_str(), nmPath.C_Str());
         }
+        // Base color display name
+        aiString bcp; mg.baseColorName = "";
+        if (AI_SUCCESS == ai->GetTexture(aiTextureType_DIFFUSE,    0, &bcp) ||
+            AI_SUCCESS == ai->GetTexture(aiTextureType_BASE_COLOR, 0, &bcp))
+            mg.baseColorName = std::filesystem::path(bcp.C_Str()).filename().string();
     }
 
     // Meshes (vertex/index data + bgfx::copy on worker)
@@ -524,6 +532,8 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
                 mat.normalMapTexture = storage.textures.addTexture(std::move(tex));
             }
         }
+        mat.baseColorName = mg.baseColorName;
+        mat.normalMapName = mg.normalMapName;
         matHandles[i] = storage.materials.addMaterial(std::move(mat));
     }
 

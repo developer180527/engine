@@ -256,12 +256,15 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
             Renderable r;
             t.getMatrix(r.model);
             r.mesh    = mesh;
-            r.mat     = mesh->material.valid()
-                        ? m_ctx->materials.getMaterial(mesh->material) : nullptr;
+            // Per-entity override wins over shared mesh material
+            MaterialHandle mh = mr.materialOverride.valid()
+                                ? mr.materialOverride : mesh->material;
+            r.mat     = mh.valid()
+                        ? m_ctx->materials.getMaterial(mh) : nullptr;
             r.tex     = (r.mat && r.mat->hasTexture())
                         ? m_ctx->textures.getTexture(r.mat->baseColorTexture) : nullptr;
             r.meshIdx = mr.mesh.id;
-            r.matIdx  = mesh->material.id;
+            r.matIdx  = mh.id;   // override changes sort key → separate draw group
             visible.push_back(r);
         });
 

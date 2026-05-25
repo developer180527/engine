@@ -48,6 +48,8 @@ struct MaterialGPUData {
     float          metallic           = 0.0f;
     TextureGPUData baseColorTexture;
     TextureGPUData normalMapTexture;
+    std::string    baseColorName;
+    std::string    normalMapName;
 };
 
 // Fully prepared asset: all CPU work AND all bgfx::copy() done on worker.
