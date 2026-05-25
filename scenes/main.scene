@@ -76,7 +76,7 @@
       "meshRenderer": {
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
       },
-      "name": "dadasd",
+      "name": "TV",
       "transform": {
         "position": [
           5.204762935638428,
@@ -194,14 +194,14 @@
     },
     {
       "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
       },
-      "name": "PlantBanjoFigVase001 (2)",
+      "name": "Television_01_4k",
       "transform": {
         "position": [
-          -2.564976930618286,
-          5.352892875671387,
-          0.28140759468078613
+          5.245018482208252,
+          2.220454692840576,
+          4.253847599029541
         ],
         "rotation": [
           0.0,
@@ -210,9 +210,9 @@
           1.0
         ],
         "scale": [
-          4.934962272644043,
-          4.934962272644043,
-          4.934962272644043
+          3.3333334922790527,
+          3.3333334922790527,
+          3.3333334922790527
         ]
       }
     }

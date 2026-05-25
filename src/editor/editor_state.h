@@ -19,4 +19,5 @@
 // (not destroyed since we got the handle).
 struct EditorState {
     flecs::entity selected;
+    bool          sceneDirty = false; // set by panels, cleared by saveScene()
 };

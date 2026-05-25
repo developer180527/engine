@@ -117,10 +117,13 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         detail::sectionHeader("Transform");
         Transform& t = e.get_mut<Transform>();
         ImGui::DragFloat3("Position", &t.position.x, 0.05f);
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
         bx::Vec3 eulerDeg = detail::quatToEulerDeg(t.rotation);
         if (ImGui::DragFloat3("Rotation", &eulerDeg.x, 0.5f))
             t.rotation = detail::eulerDegToQuat(eulerDeg);
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
         ImGui::DragFloat3("Scale", &t.scale.x, 0.05f, 0.01f, 100.0f);
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
     }
 
     // ── Spinner ───────────────────────────────────────────────────────
@@ -168,6 +171,7 @@ inline void drawInspectorPanel(EngineContext& ctx) {
                 mrMut.materialOverride = ctx.materials.addMaterial(std::move(copy));
                 mat = const_cast<Material*>(
                     ctx.materials.getMaterial(mrMut.materialOverride));
+                ctx.editor.sceneDirty = true;
             }
         } else {
             ImGui::TextColored({0.4f, 0.9f, 0.4f, 1.0f}, "Override");
@@ -185,17 +189,20 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         ImGui::ColorEdit4("##baseColor", mat->baseColorFactor,
                           ImGuiColorEditFlags_Float |
                           ImGuiColorEditFlags_AlphaBar);
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
 
         // ── PBR sliders ───────────────────────────────────────────────
         ImGui::Text("Roughness");
         ImGui::SameLine(90.0f);
         ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##rough", &mat->roughness, 0.0f, 1.0f, "%.2f");
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
 
         ImGui::Text("Metallic");
         ImGui::SameLine(90.0f);
         ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##metal", &mat->metallic,  0.0f, 1.0f, "%.2f");
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
 
         // ── Texture slots ─────────────────────────────────────────────
         ImGui::Spacing();
