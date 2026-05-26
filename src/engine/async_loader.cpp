@@ -560,6 +560,11 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
     // Upload meshes (handle creation only — data already in bgfx pool)
     MeshHandle firstHandle{};
     for (const MeshGPUData& mg : req.asset.meshes) {
+        if (!mg.vertexMem || !mg.indexMem) {
+            LOG_ERROR("Loader", "Skipping mesh with null GPU memory: %s",
+                      req.asset.name.c_str());
+            continue;
+        }
         bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(
             mg.vertexMem, Vertex::layout()); // instant — no memcpy
 

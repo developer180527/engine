@@ -312,7 +312,7 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16],
             ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                BGFX_STATE_WRITE_Z   | BGFX_STATE_DEPTH_TEST_LESS |
                BGFX_STATE_MSAA)
-            : BGFX_STATE_DEFAULT;
+            : (BGFX_STATE_DEFAULT | BGFX_STATE_CULL_CCW);
         for (uint32_t k = 0; k < groupSize; ++k) {
             if (first.mesh->submeshes.empty()) {
                 bgfx::setUniform(m_uParams,      params);
