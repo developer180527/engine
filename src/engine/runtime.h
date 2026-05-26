@@ -38,6 +38,9 @@ public:
     void createSceneFB(int w, int h);
 
     bgfx::TextureHandle sceneColorTexture() const { return m_sceneColorTex; }
+    bgfx::TextureHandle gameColorTex()      const { return m_gameColorTex; }
+    void renderGameView(const float view[16], const float proj[16],
+                        const float clearColor[4]);
     int sceneW() const { return m_sceneW; }
     int sceneH() const { return m_sceneH; }
 
@@ -81,18 +84,23 @@ private:
     bgfx::FrameBufferHandle m_sceneFB       = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_sceneColorTex = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_sceneDepthTex = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_gameFB        = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle     m_gameColorTex  = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle     m_gameDepthTex  = BGFX_INVALID_HANDLE;
     int m_sceneW = 1280, m_sceneH = 720;
 
     static constexpr bgfx::ViewId kSceneView   = 0;
     static constexpr bgfx::ViewId kBgView      = 1; // clears backbuffer
     static constexpr bgfx::ViewId kResolveView = 2; // MSAA blit resolve
+    static constexpr bgfx::ViewId kGameView    = 3; // game camera view
 
     bool initPlatform(const EngineConfig& cfg);
     bool initRenderer(const EngineConfig& cfg);
     bool initSystems();
     void buildDefaultScene();
     void tickSystems(float dt, bool paused);
-    void renderScene(const float view[16], const float proj[16]);
+    void renderScene(const float view[16], const float proj[16],
+                     bgfx::ViewId viewId = kSceneView);
     void shutdownRenderer();
     void shutdownPlatform();
 };

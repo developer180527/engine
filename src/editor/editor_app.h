@@ -12,6 +12,7 @@
 #include "editor/editor_camera.h"
 #include "editor/hierarchy_panel.h"
 #include "editor/menu_bar_panel.h"
+#include "editor/game_view_panel.h"
 #include "editor/inspector_panel.h"
 #include "editor/asset_browser_panel.h"
 #include "editor/console_panel.h"
@@ -294,6 +295,17 @@ private:
         auto ctx = buildCtx();
 
         drawSceneViewPanel(view, proj, ctx);
+
+        // ── Game view ────────────────────────────────────────────
+        float gameView[16], gameProj[16], gameClear[4];
+        float aspect = m_rt.sceneW() > 0
+            ? (float)m_rt.sceneW() / (float)m_rt.sceneH() : 16.0f/9.0f;
+        bool hasCam = findPrimaryCamera(ctx, gameView, gameProj,
+                                        aspect, gameClear);
+        if (hasCam)
+            m_rt.renderGameView(gameView, gameProj, gameClear);
+        drawGameViewPanel(m_rt.gameColorTex(), hasCam,
+                         m_rt.sceneW(), m_rt.sceneH());
 
         // Stats
         ImGui::Begin("Stats");

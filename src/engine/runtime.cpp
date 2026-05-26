@@ -200,7 +200,8 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
     m_ecs.progress();
 }
 
-void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
+void EngineRuntime::renderScene(const float view[16], const float proj[16],
+                                bgfx::ViewId viewId) {
     // ----------------------------------------------------------------
     // 1. Frustum planes
     // ----------------------------------------------------------------
@@ -324,7 +325,7 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
                 bgfx::setTransform(visible[i + k].model);
                 bgfx::setVertexBuffer(0, first.mesh->vbh);
                 bgfx::setIndexBuffer(first.mesh->ibh);
-                bgfx::submit(kSceneView, m_program);
+                bgfx::submit(viewId, m_program);
             } else {
                 for (const auto& sub : first.mesh->submeshes) {
                     bgfx::setUniform(m_uParams,      params);
@@ -338,13 +339,40 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16]) {
                     bgfx::setVertexBuffer(0, first.mesh->vbh);
                     bgfx::setIndexBuffer(first.mesh->ibh,
                                         sub.indexOffset, sub.indexCount);
-                    bgfx::submit(kSceneView, m_program);
+                    bgfx::submit(viewId, m_program);
                 }
             }
         }
         i = j;
     }
 }
+void EngineRuntime::renderGameView(const float view[16], const float proj[16],
+                                   const float clearColor[4]) {
+    // Lazy-init game FB — created here to avoid bgfx::reset() double-free.
+    if (!bgfx::isValid(m_gameFB)) {
+        const uint16_t W = (uint16_t)m_sceneW, H = (uint16_t)m_sceneH;
+        m_gameColorTex = bgfx::createTexture2D(W, H, false, 1,
+            bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT);
+        m_gameDepthTex = bgfx::createTexture2D(W, H, false, 1,
+            bgfx::TextureFormat::D24S8, BGFX_TEXTURE_RT);
+        bgfx::TextureHandle gatt[2] = { m_gameColorTex, m_gameDepthTex };
+        m_gameFB = bgfx::createFrameBuffer(2, gatt, false);
+    }
+    if (!bgfx::isValid(m_gameFB)) return;
+    const uint32_t cc = (uint8_t)(clearColor[0]*255) << 24
+                      | (uint8_t)(clearColor[1]*255) << 16
+                      | (uint8_t)(clearColor[2]*255) << 8
+                      | (uint8_t)(clearColor[3]*255);
+    bgfx::setViewFrameBuffer(kGameView, m_gameFB);
+    bgfx::setViewRect(kGameView, 0, 0,
+        (uint16_t)m_sceneW, (uint16_t)m_sceneH);
+    bgfx::setViewTransform(kGameView, view, proj);
+    bgfx::setViewClear(kGameView,
+        BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, cc, 1.0f, 0);
+    bgfx::touch(kGameView);
+    renderScene(view, proj, kGameView);
+}
+
 void EngineRuntime::shutdown() {
     m_materials.clear();
     m_textures.clear();
@@ -357,19 +385,22 @@ void EngineRuntime::createSceneFB(int w, int h) {
     if (bgfx::isValid(m_sceneFB))       bgfx::destroy(m_sceneFB);
     if (bgfx::isValid(m_sceneColorTex)) bgfx::destroy(m_sceneColorTex);
     if (bgfx::isValid(m_sceneDepthTex)) bgfx::destroy(m_sceneDepthTex);
+    // Invalidate game FB handles — they are destroyed separately
+    // in shutdownRenderer. Do NOT destroy here; bgfx::reset() may
+    // have already invalidated them, causing a double-free crash.
+    m_gameFB       = BGFX_INVALID_HANDLE;
+    m_gameColorTex = BGFX_INVALID_HANDLE;
+    m_gameDepthTex = BGFX_INVALID_HANDLE;
 
     const uint16_t W = (uint16_t)w, H = (uint16_t)h;
-
     m_sceneColorTex = bgfx::createTexture2D(W, H, false, 1,
         bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT);
     m_sceneDepthTex = bgfx::createTexture2D(W, H, false, 1,
         bgfx::TextureFormat::D24S8, BGFX_TEXTURE_RT);
-
     bgfx::TextureHandle att[2] = { m_sceneColorTex, m_sceneDepthTex };
     m_sceneFB = bgfx::createFrameBuffer(2, att, false);
 
     m_sceneW = w; m_sceneH = h;
-
     bgfx::setViewFrameBuffer(kSceneView, m_sceneFB);
     bgfx::setViewClear(kSceneView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1a1a1aff, 1.0f, 0);
     bgfx::setViewRect(kSceneView, 0, 0, W, H);
@@ -380,6 +411,9 @@ void EngineRuntime::shutdownRenderer() {
     if (bgfx::isValid(m_sceneFB))       bgfx::destroy(m_sceneFB);
     if (bgfx::isValid(m_sceneColorTex)) bgfx::destroy(m_sceneColorTex);
     if (bgfx::isValid(m_sceneDepthTex)) bgfx::destroy(m_sceneDepthTex);
+    if (bgfx::isValid(m_gameFB))        bgfx::destroy(m_gameFB);
+    if (bgfx::isValid(m_gameColorTex))  bgfx::destroy(m_gameColorTex);
+    if (bgfx::isValid(m_gameDepthTex))  bgfx::destroy(m_gameDepthTex);
     if (bgfx::isValid(m_uLightColor))   bgfx::destroy(m_uLightColor);
     if (bgfx::isValid(m_uCamPos))       bgfx::destroy(m_uCamPos);
     if (bgfx::isValid(m_sNormalMap))    bgfx::destroy(m_sNormalMap);
