@@ -90,6 +90,13 @@ set(ASSIMP_BUILD_3DS_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_PLY_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_STL_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_BLEND_IMPORTER   ON CACHE BOOL "" FORCE)
+# ── JoltPhysics ──────────────────────────────────────────────────────────
+set(JOLT_BUILD_SHARED_LIBS   OFF CACHE BOOL "" FORCE)
+set(ENABLE_ALL_WARNINGS      OFF CACHE BOOL "" FORCE)
+set(OVERRIDE_CXX_FLAGS       OFF CACHE BOOL "" FORCE)
+set(ENABLE_OBJECT_STREAM     OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/JoltPhysics/Build)
+
 add_subdirectory(third_party/assimp)
 add_executable(engine
     src/cookers/mesh_cooker.cpp
@@ -128,6 +135,7 @@ target_include_directories(
     src/io
     third_party/cgltf
     third_party/stb
+    third_party/JoltPhysics
     "${SHADER_OUTPUT_DIR}"
 )
 
@@ -144,6 +152,7 @@ target_link_libraries(engine PRIVATE
     glfw
     imgui
     flecs_static
+    Jolt
 )
 
 if(APPLE)

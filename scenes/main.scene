@@ -77,15 +77,15 @@
     },
     {
       "meshRenderer": {
-        "handleId": 4,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
+        "handleId": 5,
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
       },
-      "name": "TV",
+      "name": "PlantBanjoFigVase001",
       "transform": {
         "position": [
-          5.4690117835998535,
-          4.534479141235352,
-          5.2992262840271
+          -3.1950674057006836,
+          1.590807557106018,
+          0.24268144369125366
         ],
         "rotation": [
           0.0,
@@ -94,9 +94,9 @@
           1.0
         ],
         "scale": [
-          3.3333334922790527,
-          3.3333334922790527,
-          3.3333334922790527
+          4.934962272644043,
+          4.934962272644043,
+          4.934962272644043
         ]
       }
     },
@@ -126,16 +126,12 @@
       }
     },
     {
-      "meshRenderer": {
-        "handleId": 5,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
-      },
-      "name": "PlantBanjoFigVase001",
+      "name": "PlantBanjoFig001 (2)",
       "transform": {
         "position": [
-          -3.1950674057006836,
-          1.590807557106018,
-          0.24268144369125366
+          -0.04956604540348053,
+          6.011125087738037,
+          6.609675884246826
         ],
         "rotation": [
           0.0,
@@ -144,9 +140,30 @@
           1.0
         ],
         "scale": [
-          4.934962272644043,
-          4.934962272644043,
-          4.934962272644043
+          1.838617205619812,
+          1.838617205619812,
+          1.838617205619812
+        ]
+      }
+    },
+    {
+      "name": "PlantBanjoFig001",
+      "transform": {
+        "position": [
+          1.6928625106811523,
+          10.362678527832031,
+          6.172959804534912
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.838617205619812,
+          1.838617205619812,
+          1.838617205619812
         ]
       }
     },
@@ -214,12 +231,31 @@
       }
     },
     {
-      "name": "PlantBanjoFig001 (2)",
+      "meshRenderer": {
+        "handleId": 4,
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
+      },
+      "name": "TV",
+      "rigidBody": {
+        "bodyType": 2,
+        "friction": 0.6740000247955322,
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "halfHeight": 0.5,
+        "mass": 1.0,
+        "radius": 0.5,
+        "restitution": 0.38600000739097595,
+        "shape": 0,
+        "useGravity": true
+      },
       "transform": {
         "position": [
-          -0.04956604540348053,
-          6.011125087738037,
-          6.609675884246826
+          -2.3305933475494385,
+          6.747720241546631,
+          2.2867770195007324
         ],
         "rotation": [
           0.0,
@@ -228,19 +264,33 @@
           1.0
         ],
         "scale": [
-          1.838617205619812,
-          1.838617205619812,
-          1.838617205619812
+          3.3333334922790527,
+          3.3333334922790527,
+          3.3333334922790527
         ]
       }
     },
     {
-      "name": "PlantBanjoFig001",
+      "camera": {
+        "clearColor": [
+          0.10000000149011612,
+          0.10000000149011612,
+          0.11999999731779099,
+          1.0
+        ],
+        "farPlane": 1000.0,
+        "fov": 60.0,
+        "isPrimary": true,
+        "nearPlane": 0.10000000149011612,
+        "orthoSize": 10.0,
+        "projection": 0
+      },
+      "name": "Camera (4)",
       "transform": {
         "position": [
-          1.6928625106811523,
-          10.362678527832031,
-          6.172959804534912
+          0.0,
+          6.148840427398682,
+          8.293761253356934
         ],
         "rotation": [
           0.0,
@@ -249,9 +299,9 @@
           1.0
         ],
         "scale": [
-          1.838617205619812,
-          1.838617205619812,
-          1.838617205619812
+          1.0,
+          1.0,
+          1.0
         ]
       }
     }

@@ -9,7 +9,7 @@
 #include "engine/plugin_registry.h"
 #include "engine/input.h"
 #include "engine/meta_registry.h"
-#include "plugins/null_physics_plugin.h"
+#include "plugins/jolt_plugin.h"
 #include "plugins/null_script_plugin.h"
 #include "io/cook_service.h"
 #include <assetlib/asset_registry.h>
@@ -100,7 +100,7 @@ public:
         // Register component meta schemas (drives Lua FFI, Blueprint, inspector)
         MetaRegistry::registerAll(m_rt.ctx().ecs);
         // Register plugins — null backends until real integrations land
-        m_plugins.add(std::make_shared<NullPhysicsPlugin>());
+        m_plugins.add(std::make_shared<JoltPlugin>());
         m_plugins.add(std::make_shared<NullScriptPlugin>());
         auto ctx = buildCtx();
         m_plugins.attachAll(ctx);

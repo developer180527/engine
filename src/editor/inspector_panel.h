@@ -9,6 +9,7 @@
 #include "engine_context.h"
 #include "core/transform.h"
 #include "components/name.h"
+#include "components/rigid_body.h"
 #include "components/mesh_renderer.h"
 #include "components/spinner.h"
 #include "render/mesh.h"
@@ -278,5 +279,75 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
     }
 
+    // ── RigidBody ──────────────────────────────────────────────────────
+    if (e.has<RigidBody>()) {
+        detail::sectionHeader("RigidBody");
+        RigidBody& rb = e.get_mut<RigidBody>();
+
+        // Body type
+        const char* bodyTypes[] = {"Static", "Kinematic", "Dynamic"};
+        int bti = (int)rb.bodyType;
+        ImGui::Text("Body Type"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##btype", &bti, bodyTypes, 3)) {
+            rb.bodyType = (PhysicsBodyType)bti; ctx.editor.sceneDirty = true;
+        }
+
+        // Shape
+        const char* shapes[] = {"Box", "Sphere", "Capsule"};
+        int si = (int)rb.shape;
+        ImGui::Text("Shape"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##shape", &si, shapes, 3)) {
+            rb.shape = (PhysicsShape)si; ctx.editor.sceneDirty = true;
+        }
+
+        // Shape-specific parameters
+        if (rb.shape == PhysicsShape::Box) {
+            ImGui::Text("Half Ext"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
+            if (ImGui::DragFloat3("##hext", &rb.halfExtent.x, 0.01f, 0.01f, 100.f))
+                ctx.editor.sceneDirty = true;
+        } else if (rb.shape == PhysicsShape::Sphere) {
+            ImGui::Text("Radius"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
+            if (ImGui::DragFloat("##srad", &rb.radius, 0.01f, 0.01f, 100.f))
+                ctx.editor.sceneDirty = true;
+        } else {
+            ImGui::Text("Radius"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
+            if (ImGui::DragFloat("##crad", &rb.radius, 0.01f, 0.01f, 100.f))
+                ctx.editor.sceneDirty = true;
+            ImGui::Text("Half H"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
+            if (ImGui::DragFloat("##chh", &rb.halfHeight, 0.01f, 0.01f, 100.f))
+                ctx.editor.sceneDirty = true;
+        }
+
+        // Physics properties
+        if (rb.bodyType == PhysicsBodyType::Dynamic) {
+            ImGui::Text("Mass"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
+            if (ImGui::DragFloat("##mass", &rb.mass, 0.1f, 0.01f, 10000.f, "%.2f kg"))
+                ctx.editor.sceneDirty = true;
+            if (ImGui::Checkbox("Use Gravity", &rb.useGravity))
+                ctx.editor.sceneDirty = true;
+        }
+        ImGui::Text("Restitution"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
+        if (ImGui::SliderFloat("##rest", &rb.restitution, 0.f, 1.f))
+            ctx.editor.sceneDirty = true;
+        ImGui::Text("Friction"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
+        if (ImGui::SliderFloat("##fric", &rb.friction, 0.f, 1.f))
+            ctx.editor.sceneDirty = true;
+
+        // Remove button
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f,0.1f,0.1f,1.f));
+        if (ImGui::Button("Remove RigidBody", {-1, 0})) {
+            e.remove<RigidBody>(); ctx.editor.sceneDirty = true;
+        }
+        ImGui::PopStyleColor();
+    } else {
+        // Add button when entity has no RigidBody
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        if (ImGui::Button("+ Add RigidBody", {-1, 0})) {
+            e.set<RigidBody>({}); ctx.editor.sceneDirty = true;
+        }
+    }
     ImGui::End();
 }

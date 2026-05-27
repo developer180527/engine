@@ -6,6 +6,7 @@
 #include "components/mesh_renderer.h"
 #include "components/camera.h"
 #include "components/spinner.h"
+#include "components/rigid_body.h"
 #include "engine/logger.h"
 
 // ── MetaRegistry ───────────────────────────────────────────────────────────
@@ -63,7 +64,14 @@ inline void registerAll(flecs::world& ecs) {
         .member<float>("speedYaw")
         .member<float>("speedPitch");
 
-    LOG_INFO("Meta", "Component schemas registered — %d types",  7);
+    // RigidBody: physics simulation component
+    ecs.component<RigidBody>()
+        .member<float>("mass")
+        .member<float>("restitution")
+        .member<float>("friction")
+        .member<bool>("useGravity");
+
+    LOG_INFO("Meta", "Component schemas registered — %d types", 8);
 }
 
 } // namespace MetaRegistry

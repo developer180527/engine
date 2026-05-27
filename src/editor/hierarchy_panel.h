@@ -4,6 +4,7 @@
 #include "engine_context.h"
 #include "components/name.h"
 #include "components/camera.h"
+#include "components/rigid_body.h"
 #include "core/transform.h"
 
 // Forward-declared helper from inspector_panel

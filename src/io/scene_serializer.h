@@ -17,6 +17,7 @@
 #include "io/importer_registry.h"
 #include "engine/async_loader.h"
 #include "components/camera.h"
+#include "components/rigid_body.h"
 #include "engine/logger.h"
 
 namespace SceneSerializer {
@@ -57,6 +58,17 @@ inline bool save(const std::filesystem::path& path,
                 je["camera"]["farPlane"]   = cam->farPlane;
                 je["camera"]["clearColor"] = {cam->clearColor[0], cam->clearColor[1],
                                                cam->clearColor[2], cam->clearColor[3]};
+            }
+            if (const RigidBody* rb = e.try_get<RigidBody>()) {
+                je["rigidBody"]["bodyType"]    = (int)rb->bodyType;
+                je["rigidBody"]["shape"]       = (int)rb->shape;
+                je["rigidBody"]["mass"]        = rb->mass;
+                je["rigidBody"]["restitution"] = rb->restitution;
+                je["rigidBody"]["friction"]    = rb->friction;
+                je["rigidBody"]["useGravity"]  = rb->useGravity;
+                je["rigidBody"]["halfExtent"]  = {rb->halfExtent.x, rb->halfExtent.y, rb->halfExtent.z};
+                je["rigidBody"]["radius"]      = rb->radius;
+                je["rigidBody"]["halfHeight"]  = rb->halfHeight;
             }
             scene["entities"].push_back(je);
         });
@@ -197,6 +209,17 @@ inline std::string saveToString(flecs::world& ecs, AssetStorage& assets) {
                 je["camera"]["clearColor"] = {cam->clearColor[0], cam->clearColor[1],
                                               cam->clearColor[2], cam->clearColor[3]};
             }
+            if (const RigidBody* rb = e.try_get<RigidBody>()) {
+                je["rigidBody"]["bodyType"]    = (int)rb->bodyType;
+                je["rigidBody"]["shape"]       = (int)rb->shape;
+                je["rigidBody"]["mass"]        = rb->mass;
+                je["rigidBody"]["restitution"] = rb->restitution;
+                je["rigidBody"]["friction"]    = rb->friction;
+                je["rigidBody"]["useGravity"]  = rb->useGravity;
+                je["rigidBody"]["halfExtent"]  = {rb->halfExtent.x, rb->halfExtent.y, rb->halfExtent.z};
+                je["rigidBody"]["radius"]      = rb->radius;
+                je["rigidBody"]["halfHeight"]  = rb->halfHeight;
+            }
             scene["entities"].push_back(je);
         });
     return scene.dump();
@@ -252,6 +275,23 @@ inline void loadIntoWorld(const std::string& snapshot, flecs::world& world,
                 cam.clearColor[2]=cc[2]; cam.clearColor[3]=cc[3];
             }
             e.set<Camera>(cam);
+        }
+        if (je.contains("rigidBody")) {
+            const auto& jrb = je["rigidBody"];
+            RigidBody rb;
+            rb.bodyType    = (PhysicsBodyType)jrb.value("bodyType",    1);
+            rb.shape       = (PhysicsShape)   jrb.value("shape",       0);
+            rb.mass        = jrb.value("mass",        1.0f);
+            rb.restitution = jrb.value("restitution", 0.3f);
+            rb.friction    = jrb.value("friction",    0.6f);
+            rb.useGravity  = jrb.value("useGravity",  true);
+            if (jrb.contains("halfExtent")) {
+                const auto& he = jrb["halfExtent"];
+                rb.halfExtent = {he[0], he[1], he[2]};
+            }
+            rb.radius     = jrb.value("radius",     0.5f);
+            rb.halfHeight = jrb.value("halfHeight", 0.5f);
+            e.set<RigidBody>(rb);
         }
         ++count;
     }
