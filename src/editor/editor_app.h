@@ -6,6 +6,10 @@
 #include "io/project_context.h"
 
 #include "engine/async_loader.h"
+#include "engine/plugin_registry.h"
+#include "engine/meta_registry.h"
+#include "plugins/null_physics_plugin.h"
+#include "plugins/null_script_plugin.h"
 #include "io/cook_service.h"
 #include <assetlib/asset_registry.h>
 #include "engine_context.h"
@@ -81,6 +85,13 @@ public:
 
     void init() {
         imguiInit(m_rt.window(), 16.0f);
+        // Register component meta schemas (drives Lua FFI, Blueprint, inspector)
+        MetaRegistry::registerAll(m_rt.ctx().ecs);
+        // Register plugins — null backends until real integrations land
+        m_plugins.add(std::make_shared<NullPhysicsPlugin>());
+        m_plugins.add(std::make_shared<NullScriptPlugin>());
+        auto ctx = buildCtx();
+        m_plugins.attachAll(ctx);
     }
 
     void run() {
@@ -157,6 +168,10 @@ public:
 
             m_rt.tick(dt, view, proj, ImGuizmo::IsUsing());
 
+            // ---- Game world update (plugins tick during play) ----
+            if (m_editor.simState == SimState::Playing && m_gameWorld)
+                m_plugins.broadcastUpdate(*m_gameWorld, dt);
+
             // ---- Editor UI (all ImGui panel draws) ----
             renderUI(view, proj);
 
@@ -168,6 +183,7 @@ public:
     }
 
     void shutdown() {
+        m_plugins.detachAll();
         imguiShutdown();
     }
 
@@ -189,6 +205,7 @@ private:
     // Play mode
     std::unique_ptr<flecs::world> m_gameWorld;
     std::string                   m_snapshotJSON;
+    PluginRegistry                m_plugins;
 
     // Build a fresh EngineContext for this frame's panels.
     // Stack-allocated — valid only for the duration of renderUI().
@@ -215,6 +232,7 @@ private:
         SceneSerializer::loadIntoWorld(
             m_snapshotJSON, *m_gameWorld, snap_storage);
         m_editor.simState = SimState::Playing;
+        m_plugins.broadcastSimStart(*m_gameWorld);
         LOG_SUCCESS("Sim", "Play — game world ready");
     }
     void onPause() {
@@ -225,6 +243,7 @@ private:
     }
     void onStop() {
         if (m_editor.simState == SimState::Editing) return;
+        m_plugins.broadcastSimStop();
         m_gameWorld.reset();
         m_snapshotJSON.clear();
         m_editor.simState = SimState::Editing;

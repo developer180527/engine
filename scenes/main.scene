@@ -151,10 +151,48 @@
       }
     },
     {
-      "meshRenderer": {
-        "handleId": 6,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFig001.fbx"
-      },
+      "name": "Camera (2)",
+      "transform": {
+        "position": [
+          0.5837894082069397,
+          7.294795989990234,
+          10.888489723205566
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "Camera (3)",
+      "transform": {
+        "position": [
+          -2.807002544403076,
+          7.499992370605469,
+          11.762316703796387
+        ],
+        "rotation": [
+          0.17041756212711334,
+          -0.03748307749629021,
+          -0.16612422466278076,
+          0.9705439209938049
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
       "name": "PlantBanjoFig001 (2)",
       "transform": {
         "position": [
@@ -176,10 +214,6 @@
       }
     },
     {
-      "meshRenderer": {
-        "handleId": 6,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFig001.fbx"
-      },
       "name": "PlantBanjoFig001",
       "transform": {
         "position": [
@@ -201,10 +235,6 @@
       }
     },
     {
-      "meshRenderer": {
-        "handleId": 7,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Double_Dagger_Stab.fbx"
-      },
       "name": "Double_Dagger_Stab",
       "transform": {
         "position": [
@@ -222,41 +252,6 @@
           0.010026896372437477,
           0.010026896372437477,
           0.010026896372437477
-        ]
-      }
-    },
-    {
-      "camera": {
-        "clearColor": [
-          0.10000000149011612,
-          0.10000000149011612,
-          0.11999999731779099,
-          1.0
-        ],
-        "farPlane": 1000.0,
-        "fov": 60.0,
-        "isPrimary": true,
-        "nearPlane": 0.10000000149011612,
-        "orthoSize": 10.0,
-        "projection": 0
-      },
-      "name": "Camera (2)",
-      "transform": {
-        "position": [
-          0.5837894082069397,
-          7.294795989990234,
-          10.888489723205566
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.0,
-          1.0,
-          1.0
         ]
       }
     }
