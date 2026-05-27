@@ -201,7 +201,8 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
 }
 
 void EngineRuntime::renderScene(const float view[16], const float proj[16],
-                                bgfx::ViewId viewId) {
+                                bgfx::ViewId viewId, flecs::world* worldOverride) {
+    flecs::world& world = worldOverride ? *worldOverride : m_ecs;
     // ----------------------------------------------------------------
     // 1. Frustum planes
     // ----------------------------------------------------------------
@@ -237,7 +238,7 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16],
     std::vector<Renderable> visible;
     visible.reserve(64);
 
-    m_ecs.query_builder<const Transform, const MeshRenderer>().build()
+    world.query_builder<const Transform, const MeshRenderer>().build()
         .each([&](flecs::entity, const Transform& t, const MeshRenderer& mr) {
             const Mesh* mesh = m_assets.getMesh(mr.mesh);
             if (!mesh) return;
@@ -347,7 +348,8 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16],
     }
 }
 void EngineRuntime::renderGameView(const float view[16], const float proj[16],
-                                   const float clearColor[4]) {
+                                   const float clearColor[4],
+                                   flecs::world* gameWorld) {
     // Lazy-init game FB — created here to avoid bgfx::reset() double-free.
     if (!bgfx::isValid(m_gameFB)) {
         const uint16_t W = (uint16_t)m_sceneW, H = (uint16_t)m_sceneH;
@@ -370,7 +372,7 @@ void EngineRuntime::renderGameView(const float view[16], const float proj[16],
     bgfx::setViewClear(kGameView,
         BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, cc, 1.0f, 0);
     bgfx::touch(kGameView);
-    renderScene(view, proj, kGameView);
+    renderScene(view, proj, kGameView, gameWorld);
 }
 
 void EngineRuntime::shutdown() {

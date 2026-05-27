@@ -40,7 +40,8 @@ public:
     bgfx::TextureHandle sceneColorTexture() const { return m_sceneColorTex; }
     bgfx::TextureHandle gameColorTex()      const { return m_gameColorTex; }
     void renderGameView(const float view[16], const float proj[16],
-                        const float clearColor[4]);
+                        const float clearColor[4],
+                        flecs::world* gameWorld = nullptr);
     int sceneW() const { return m_sceneW; }
     int sceneH() const { return m_sceneH; }
 
@@ -100,7 +101,8 @@ private:
     void buildDefaultScene();
     void tickSystems(float dt, bool paused);
     void renderScene(const float view[16], const float proj[16],
-                     bgfx::ViewId viewId = kSceneView);
+                     bgfx::ViewId viewId = kSceneView,
+                     flecs::world* worldOverride = nullptr);
     void shutdownRenderer();
     void shutdownPlatform();
 };

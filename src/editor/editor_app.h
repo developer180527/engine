@@ -186,6 +186,9 @@ private:
     GLFWwindow*    m_sceneGLFWWindow  = nullptr; // GLFW window currently hosting Scene View
     int            m_desiredSceneW    = 1280;
     int            m_desiredSceneH    = 720;
+    // Play mode
+    std::unique_ptr<flecs::world> m_gameWorld;
+    std::string                   m_snapshotJSON;
 
     // Build a fresh EngineContext for this frame's panels.
     // Stack-allocated — valid only for the duration of renderUI().
@@ -198,6 +201,35 @@ private:
         };
     }
 
+    void onPlay() {
+        if (m_editor.simState == SimState::Paused) {
+            m_editor.simState = SimState::Playing; return;
+        }
+        if (m_editor.simState != SimState::Editing) return;
+        AssetStorage snap_storage{m_rt.ctx().assets,
+                                  m_rt.ctx().textures,
+                                  m_rt.ctx().materials};
+        m_snapshotJSON = SceneSerializer::saveToString(
+            m_rt.ctx().ecs, snap_storage);
+        m_gameWorld = std::make_unique<flecs::world>();
+        SceneSerializer::loadIntoWorld(
+            m_snapshotJSON, *m_gameWorld, snap_storage);
+        m_editor.simState = SimState::Playing;
+        LOG_SUCCESS("Sim", "Play — game world ready");
+    }
+    void onPause() {
+        if (m_editor.simState == SimState::Playing)
+            m_editor.simState = SimState::Paused;
+        else if (m_editor.simState == SimState::Paused)
+            m_editor.simState = SimState::Playing;
+    }
+    void onStop() {
+        if (m_editor.simState == SimState::Editing) return;
+        m_gameWorld.reset();
+        m_snapshotJSON.clear();
+        m_editor.simState = SimState::Editing;
+        LOG_SUCCESS("Sim", "Stop — editor world untouched");
+    }
     void drawSceneViewPanel(const float view[16], const float proj[16],
                             EngineContext& ctx) {
         // Set position/size on first run (no ini file = always first run)
@@ -287,10 +319,18 @@ private:
                 : m_projectRoot.filename().string()
         });
 
-        // Cmd+S shortcut
+        // Cmd+S: save  |  Cmd+P: play/pause  |  Escape: stop
         if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
             ImGui::IsKeyPressed(ImGuiKey_S, false))
             saveScene();
+        if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
+            ImGui::IsKeyPressed(ImGuiKey_P, false)) {
+            if (m_editor.simState == SimState::Editing) onPlay();
+            else onPause();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
+            m_editor.simState != SimState::Editing)
+            onStop();
 
         auto ctx = buildCtx();
 
@@ -300,12 +340,25 @@ private:
         float gameView[16], gameProj[16], gameClear[4];
         float aspect = m_rt.sceneW() > 0
             ? (float)m_rt.sceneW() / (float)m_rt.sceneH() : 16.0f/9.0f;
-        bool hasCam = findPrimaryCamera(ctx, gameView, gameProj,
+        // During play: use game world camera + render game world entities
+        // During edit: use editor world camera
+        flecs::world& camWorld = (m_editor.simState != SimState::Editing
+                                  && m_gameWorld)
+                                 ? *m_gameWorld : m_rt.ctx().ecs;
+        bool hasCam = findPrimaryCamera(camWorld, gameView, gameProj,
                                         aspect, gameClear);
-        if (hasCam)
-            m_rt.renderGameView(gameView, gameProj, gameClear);
+        if (hasCam) {
+            flecs::world* renderWorld =
+                (m_editor.simState != SimState::Editing && m_gameWorld)
+                ? m_gameWorld.get() : nullptr;
+            m_rt.renderGameView(gameView, gameProj, gameClear, renderWorld);
+        }
         drawGameViewPanel(m_rt.gameColorTex(), hasCam,
-                         m_rt.sceneW(), m_rt.sceneH());
+                         m_editor.simState,
+                         m_rt.sceneW(), m_rt.sceneH(),
+                         [this]{ onPlay(); },
+                         [this]{ onPause(); },
+                         [this]{ onStop(); });
 
         // Stats
         ImGui::Begin("Stats");

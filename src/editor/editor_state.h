@@ -1,5 +1,7 @@
 #pragma once
 
+enum class SimState { Editing, Playing, Paused };
+
 #include <flecs.h>
 
 // Editor state.
@@ -19,5 +21,6 @@
 // (not destroyed since we got the handle).
 struct EditorState {
     flecs::entity selected;
-    bool          sceneDirty = false; // set by panels, cleared by saveScene()
+    bool          sceneDirty = false;
+    SimState      simState   = SimState::Editing; // set by panels, cleared by saveScene()
 };
