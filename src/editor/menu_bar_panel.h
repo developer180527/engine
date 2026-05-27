@@ -9,6 +9,7 @@ struct MenuBarCallbacks {
     std::function<void()> saveScene;
     std::function<void()> reloadScene;
     std::function<void()> quit;
+    std::function<void()> openProjectSettings;
     std::string           projectName;   // shown after the separator
 };
 
@@ -92,7 +93,8 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
         if (ImGui::MenuItem("Shader Compiler...")) {} // TODO
         ImGui::Separator();
         if (ImGui::MenuItem("Asset Importer Settings...")) {} // TODO
-        if (ImGui::MenuItem("Project Settings..."))        {} // TODO
+        if (ImGui::MenuItem("Project Settings...", "Cmd+,"))
+            if (cb.openProjectSettings) cb.openProjectSettings();
         ImGui::Separator();
         if (ImGui::MenuItem("Generate Project Files"))     {} // TODO: CMake
         ImGui::EndMenu();

@@ -7,6 +7,7 @@
 
 #include "engine/async_loader.h"
 #include "engine/plugin_registry.h"
+#include "engine/input.h"
 #include "engine/meta_registry.h"
 #include "plugins/null_physics_plugin.h"
 #include "plugins/null_script_plugin.h"
@@ -20,6 +21,7 @@
 #include "editor/inspector_panel.h"
 #include "editor/asset_browser_panel.h"
 #include "editor/console_panel.h"
+#include "editor/project_settings_window.h"
 #include "editor/gizmo.h"
 #include "render/imgui_bgfx.h"
 #include <imgui.h>
@@ -85,6 +87,16 @@ public:
 
     void init() {
         imguiInit(m_rt.window(), 16.0f);
+        // Input system — register GLFW callbacks + default action bindings
+        InputSystem::get().init(m_rt.window());
+        auto& map = InputMap::get();
+        map.bindAction("Jump",        Key::Space);
+        map.bindAxis  ("MoveForward", Key::W,    Key::S);
+        map.bindAxis  ("MoveRight",   Key::D,    Key::A);
+        map.bindAxis  ("MoveUp",      Key::E,    Key::Q);
+        map.bindAction("Interact",    Key::F);
+        map.bindAction("Sprint",      Key::LeftShift);
+
         // Register component meta schemas (drives Lua FFI, Blueprint, inspector)
         MetaRegistry::registerAll(m_rt.ctx().ecs);
         // Register plugins — null backends until real integrations land
@@ -108,6 +120,7 @@ public:
 
             // ---- Events ----
             glfwPollEvents();
+            InputSystem::get().processEvents(); // drain queue → update double-buffer
 
             // ---- Resize (runtime handles bgfx::reset) ----
             int fbw, fbh;
@@ -131,6 +144,10 @@ public:
 
             // ---- ImGui frame start (must come before any ImGui calls) ----
             imguiNewFrame();
+            // Gate gameplay input when ImGui owns the keyboard/mouse
+            { auto& io = ImGui::GetIO();
+              InputSystem::get().setUICapture(
+                  io.WantCaptureKeyboard, io.WantCaptureMouse); }
             // BeginFrame MUST be outside any Begin/End block —
             // it creates an internal transparent overlay window.
             gizmoBeginFrame();
@@ -206,6 +223,8 @@ private:
     std::unique_ptr<flecs::world> m_gameWorld;
     std::string                   m_snapshotJSON;
     PluginRegistry                m_plugins;
+    bool                          m_showProjectSettings = false;
+    ProjectSettingsState          m_projectSettingsState;
 
     // Build a fresh EngineContext for this frame's panels.
     // Stack-allocated — valid only for the duration of renderUI().
@@ -334,6 +353,7 @@ private:
             [this]{ saveScene(); },
             [this]{ setProject(m_rt.ctx().project); },
             [this]{ glfwSetWindowShouldClose(m_rt.window(), true); },
+            [this]{ m_showProjectSettings = true; },
             m_projectRoot.empty() ? std::string{}
                 : m_projectRoot.filename().string()
         });
@@ -342,6 +362,9 @@ private:
         if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
             ImGui::IsKeyPressed(ImGuiKey_S, false))
             saveScene();
+        if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
+            ImGui::IsKeyPressed(ImGuiKey_Comma, false)) // Cmd+,
+            m_showProjectSettings = true;
         if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
             ImGui::IsKeyPressed(ImGuiKey_P, false)) {
             if (m_editor.simState == SimState::Editing) onPlay();
@@ -409,5 +432,8 @@ private:
         drawInspectorPanel(ctx);
         drawAssetBrowserPanel(ctx, m_loader, m_cookService);
         drawConsolePanel();
+        drawProjectSettings(&m_showProjectSettings,
+                            m_editor.simState,
+                            m_projectSettingsState);
     }
 };
