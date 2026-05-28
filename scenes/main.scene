@@ -52,7 +52,7 @@
     },
     {
       "meshRenderer": {
-        "handleId": 8,
+        "handleId": 7,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
       },
       "name": "PlantBanjoFigVase001",
@@ -159,46 +159,6 @@
     },
     {
       "meshRenderer": {
-        "handleId": 7,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/robot.glb"
-      },
-      "name": "robot",
-      "rigidBody": {
-        "bodyType": 2,
-        "friction": 0.6000000238418579,
-        "halfExtent": [
-          0.5,
-          0.5,
-          0.5
-        ],
-        "halfHeight": 0.5,
-        "mass": 2.0,
-        "radius": 0.7400000095367432,
-        "restitution": 0.6389999985694885,
-        "shape": 0,
-        "useGravity": true
-      },
-      "transform": {
-        "position": [
-          3.2665624618530273,
-          9.970978736877441,
-          4.651283264160156
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.0,
-          1.0,
-          1.0
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
         "handleId": 5,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
       },
@@ -220,7 +180,7 @@
       },
       "transform": {
         "position": [
-          -0.5254480838775635,
+          -2.45876407623291,
           7.7492756843566895,
           4.005192756652832
         ],
@@ -243,6 +203,7 @@
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
       },
       "name": "TV",
+      "parent": "Demon_Mask (2)",
       "rigidBody": {
         "bodyType": 2,
         "friction": 0.6000000238418579,
@@ -293,17 +254,18 @@
         "projection": 0
       },
       "name": "Camera (2)",
+      "parent": "Demon_Mask (2)",
       "transform": {
         "position": [
-          -0.9847451448440552,
-          11.423137664794922,
-          22.357696533203125
+          0.9421523809432983,
+          1.28847336769104,
+          4.67173433303833
         ],
         "rotation": [
-          -0.23111987113952637,
-          0.0766061544418335,
-          0.0071450164541602135,
-          0.9698783755302429
+          0.0,
+          0.0,
+          0.0,
+          1.0
         ],
         "scale": [
           1.0,

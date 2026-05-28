@@ -27,10 +27,18 @@ bool CookPipeline::hasCookerFor(const std::string& ext) const {
     return findCooker(lower) != nullptr;
 }
 bool CookPipeline::isStale(const AssetRecord& rec) const {
-    if (rec.cookedPath.empty()) return true;
-    if (rec.cookVersion != kCurrentCookVersion) return true;
+    if (rec.cookedPath.empty())                  return true;
+    if (rec.cookVersion != kCurrentCookVersion)  return true;
     auto cooked = m_cacheRoot / rec.cookedPath;
-    if (!std::filesystem::exists(cooked)) return true;
+    if (!std::filesystem::exists(cooked))        return true;
+    if (rec.state == AssetState::Stale)          return true;
+    // Source file newer than cooked file — catches edits on disk
+    auto source = m_projectRoot / rec.sourcePath;
+    if (std::filesystem::exists(source)) {
+        auto st = std::filesystem::last_write_time(source);
+        auto ct = std::filesystem::last_write_time(cooked);
+        if (st > ct) return true;
+    }
     return false;
 }
 

@@ -38,6 +38,11 @@ inline bool save(const std::filesystem::path& path,
 
             nlohmann::json je;
             je["name"] = n.value;
+            // Parent relationship
+            flecs::entity par = e.target(flecs::ChildOf);
+            if (par && par.is_alive())
+                if (const Name* pn = par.try_get<Name>())
+                    je["parent"] = pn->value;
             je["transform"]["position"] = {t.position.x, t.position.y, t.position.z};
             je["transform"]["rotation"] = {t.rotation.x, t.rotation.y,
                                            t.rotation.z, t.rotation.w};
@@ -239,6 +244,19 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
 
     LOG_INFO("Scene", "Queued %d assets for async load → %s",
              queued, scenePath.filename().string().c_str());
+    // ── Restore parent relationships ──────────────────────────────────
+    // Two-pass: all entities already exist with Name set synchronously,
+    // so lookup by name is safe before ChildOf is applied.
+    for (const auto& je : scene.value("entities", nlohmann::json::array())) {
+        if (!je.contains("parent")) continue;
+        std::string childName  = je.value("name", "");
+        std::string parentName = je.value("parent", "");
+        if (childName.empty() || parentName.empty()) continue;
+        flecs::entity child  = ecs.lookup(childName.c_str());
+        flecs::entity parent = ecs.lookup(parentName.c_str());
+        if (child.is_alive() && parent.is_alive() && child != parent)
+            child.add(flecs::ChildOf, parent);
+    }
     return true;
 }
 
@@ -254,6 +272,11 @@ inline std::string saveToString(flecs::world& ecs, AssetStorage& assets) {
             if (e.has<Spinner>()) return;
             nlohmann::json je;
             je["name"] = n.value;
+            // Parent relationship
+            flecs::entity par = e.target(flecs::ChildOf);
+            if (par && par.is_alive())
+                if (const Name* pn = par.try_get<Name>())
+                    je["parent"] = pn->value;
             je["transform"]["position"] = {t.position.x, t.position.y, t.position.z};
             je["transform"]["rotation"] = {t.rotation.x, t.rotation.y,
                                            t.rotation.z, t.rotation.w};
@@ -361,6 +384,17 @@ inline void loadIntoWorld(const std::string& snapshot, flecs::world& world,
             e.set<RigidBody>(rb);
         }
         ++count;
+    }
+    // Restore parent relationships in game world
+    for (const auto& je : scene.value("entities", nlohmann::json::array())) {
+        if (!je.contains("parent")) continue;
+        std::string childName  = je.value("name", "");
+        std::string parentName = je.value("parent", "");
+        if (childName.empty() || parentName.empty()) continue;
+        flecs::entity child  = world.lookup(childName.c_str());
+        flecs::entity parent = world.lookup(parentName.c_str());
+        if (child.is_alive() && parent.is_alive() && child != parent)
+            child.add(flecs::ChildOf, parent);
     }
     LOG_INFO("Scene", "Game world populated: %d entities (instant, shared handles)", count);
 }

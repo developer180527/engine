@@ -35,7 +35,7 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
 
     MeshAsset asset;
     asset.header.magic        = 0x4D455348;
-    asset.header.version      = 1;
+    asset.header.version      = 2;
     asset.header.vertexFlags  = kCookFlags;
     asset.header.vertexStride = vertexStride(kCookFlags);
     // Pre-count vertices to decide 16 vs 32-bit index stride

@@ -16,6 +16,7 @@
 #include "render/vertex.h"
 #include "render/primitive_cube.h"
 #include "render/primitive_library.h"
+#include "core/transform_utils.h"
 #include "render/mesh.h"
 #include "render/texture.h"
 #include "render/material.h"

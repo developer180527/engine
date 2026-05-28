@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include "components/rigid_body.h"
 #include "core/transform.h"
+#include "core/transform_utils.h"
 
 // Jolt headers — Jolt.h must be first
 #include <Jolt/Jolt.h>
@@ -283,10 +284,14 @@ private:
             layer      = PhysLayers::DYNAMIC; break;
         }
 
+        // Use world transform — local t is relative to parent if parented
+        float wm[16]; getWorldMatrix(e, wm);
+        bx::Vec3       wp  = {wm[12], wm[13], wm[14]};
+        bx::Quaternion wr  = quatFromMatrix(wm);
         JPH::BodyCreationSettings settings(
             shape,
-            JPH::RVec3(t.position.x, t.position.y, t.position.z),
-            JPH::Quat(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w),
+            JPH::RVec3(wp.x, wp.y, wp.z),
+            JPH::Quat(wr.x, wr.y, wr.z, wr.w),
             motionType, layer
         );
         settings.mRestitution   = rb.restitution;

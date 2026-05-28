@@ -114,6 +114,23 @@ inline void drawInspectorPanel(EngineContext& ctx) {
             n.value = buf;
     }
 
+    // ── Parent relationship ───────────────────────────────────────────
+    {
+        flecs::entity par = e.target(flecs::ChildOf);
+        if (par && par.is_alive()) {
+            ImGui::TextDisabled("Parent");
+            ImGui::SameLine(90.f);
+            const Name* pn = par.try_get<Name>();
+            ImGui::TextColored({0.6f,0.85f,1.f,1.f},
+                "%s", pn ? pn->value.c_str() : "?");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear")) {
+                e.remove(flecs::ChildOf, flecs::Wildcard);
+                ctx.editor.sceneDirty = true;
+            }
+            ImGui::Spacing();
+        }
+    }
     // ── Transform ─────────────────────────────────────────────────────
     if (e.has<Transform>()) {
         detail::sectionHeader("Transform");

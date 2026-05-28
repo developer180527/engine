@@ -7,6 +7,7 @@
 #include "editor_state.h"
 #include "components/camera.h"
 #include "core/transform.h"
+#include "core/transform_utils.h"
 
 namespace detail_gv {
 inline bx::Vec3 quatRotate(const bx::Quaternion& q, const bx::Vec3& v) {
@@ -24,14 +25,19 @@ inline bool findPrimaryCamera(flecs::world& world,
     bool found = false;
     world.query_builder<const Transform, const Camera>()
         .build()
-        .each([&](flecs::entity, const Transform& t, const Camera& c) {
+        .each([&](flecs::entity e, const Transform& t, const Camera& c) {
             if (!c.isPrimary || found) return;
             found = true;
-            bx::Quaternion q{t.rotation.x, t.rotation.y,
-                             t.rotation.z, t.rotation.w};
-            bx::Vec3 pos = {t.position.x, t.position.y, t.position.z};
-            bx::Vec3 fwd = detail_gv::quatRotate(q, {0.0f, 0.0f, -1.0f});
-            bx::Vec3 up  = detail_gv::quatRotate(q, {0.0f, 1.0f,  0.0f});
+            // Use world matrix so parented cameras inherit parent transform.
+            // Row-major bgfx layout:
+            //   row0=[Rx,Ry,Rz,0]  row1=[Ux,Uy,Uz,0]
+            //   row2=[Bx,By,Bz,0]  row3=[Tx,Ty,Tz,1]
+            // Camera looks along -Z in local space, so world forward = -row2.
+            float wm[16];
+            getWorldMatrix(e, wm);
+            bx::Vec3 pos = {wm[12], wm[13], wm[14]};
+            bx::Vec3 fwd = bx::normalize({-wm[8], -wm[9], -wm[10]});
+            bx::Vec3 up  = bx::normalize({ wm[4],  wm[5],  wm[6]});
             bx::mtxLookAt(view, pos, bx::add(pos, fwd), up);
             const bool rhNdc = bgfx::getCaps()->homogeneousDepth;
             if (c.projection == ProjectionType::Perspective)
