@@ -3,31 +3,6 @@
     {
       "meshRenderer": {
         "handleId": 5,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/robot.glb"
-      },
-      "name": "robot",
-      "transform": {
-        "position": [
-          3.2665624618530273,
-          9.970978736877441,
-          4.651283264160156
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.0,
-          1.0,
-          1.0
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "handleId": 6,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
       },
       "name": "Demon_Mask",
@@ -52,7 +27,7 @@
     },
     {
       "meshRenderer": {
-        "handleId": 7,
+        "handleId": 6,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
       },
       "name": "Television_01_4k",
@@ -72,56 +47,6 @@
           3.3333334922790527,
           3.3333334922790527,
           3.3333334922790527
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "handleId": 7,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
-      },
-      "name": "TV",
-      "transform": {
-        "position": [
-          -2.3305933475494385,
-          6.747720241546631,
-          2.2867770195007324
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          3.3333334922790527,
-          3.3333334922790527,
-          3.3333334922790527
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "handleId": 6,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
-      },
-      "name": "Demon_Mask (2)",
-      "transform": {
-        "position": [
-          -0.5254480838775635,
-          7.7492756843566895,
-          4.005192756652832
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.0531535148620605,
-          1.0531535148620605,
-          1.0531535148620605
         ]
       }
     },
@@ -151,69 +76,6 @@
       }
     },
     {
-      "name": "Double_Dagger_Stab",
-      "transform": {
-        "position": [
-          1.4976240396499634,
-          5.9579572677612305,
-          0.5879340171813965
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          0.010026896372437477,
-          0.010026896372437477,
-          0.010026896372437477
-        ]
-      }
-    },
-    {
-      "name": "PlantBanjoFig001 (2)",
-      "transform": {
-        "position": [
-          -0.04956604540348053,
-          6.011125087738037,
-          6.609675884246826
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.838617205619812,
-          1.838617205619812,
-          1.838617205619812
-        ]
-      }
-    },
-    {
-      "name": "PlantBanjoFig001",
-      "transform": {
-        "position": [
-          1.6928625106811523,
-          10.362678527832031,
-          6.172959804534912
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.838617205619812,
-          1.838617205619812,
-          1.838617205619812
-        ]
-      }
-    },
-    {
       "meshRenderer": {
         "handleId": 2,
         "sourcePath": "engine://primitive/plane",
@@ -224,9 +86,9 @@
         "bodyType": 0,
         "friction": 0.6000000238418579,
         "halfExtent": [
+          50.0,
           0.5,
-          0.5,
-          0.5
+          50.0
         ],
         "halfHeight": 0.5,
         "mass": 1.0,
@@ -272,7 +134,7 @@
         "halfHeight": 0.5,
         "mass": 1.0,
         "radius": 0.5,
-        "restitution": 0.9300000071525574,
+        "restitution": 0.6909999847412109,
         "shape": 0,
         "useGravity": true
       },
@@ -280,7 +142,7 @@
         "position": [
           0.0,
           10.785236358642578,
-          0.0
+          7.007580757141113
         ],
         "rotation": [
           0.0,
@@ -292,6 +154,126 @@
           1.0,
           1.0,
           1.0
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "handleId": 7,
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/robot.glb"
+      },
+      "name": "robot",
+      "rigidBody": {
+        "bodyType": 2,
+        "friction": 0.6000000238418579,
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "halfHeight": 0.5,
+        "mass": 2.0,
+        "radius": 0.7400000095367432,
+        "restitution": 0.6389999985694885,
+        "shape": 0,
+        "useGravity": true
+      },
+      "transform": {
+        "position": [
+          3.2665624618530273,
+          9.970978736877441,
+          4.651283264160156
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "handleId": 5,
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
+      },
+      "name": "Demon_Mask (2)",
+      "rigidBody": {
+        "bodyType": 2,
+        "friction": 0.6000000238418579,
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "halfHeight": 0.5,
+        "mass": 1.0,
+        "radius": 0.5,
+        "restitution": 0.30000001192092896,
+        "shape": 1,
+        "useGravity": true
+      },
+      "transform": {
+        "position": [
+          -0.5254480838775635,
+          7.7492756843566895,
+          4.005192756652832
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0531535148620605,
+          1.0531535148620605,
+          1.0531535148620605
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "handleId": 6,
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
+      },
+      "name": "TV",
+      "rigidBody": {
+        "bodyType": 2,
+        "friction": 0.6000000238418579,
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "halfHeight": 0.5,
+        "mass": 1.0,
+        "radius": 0.5,
+        "restitution": 0.30000001192092896,
+        "shape": 0,
+        "useGravity": true
+      },
+      "transform": {
+        "position": [
+          -9.68557071685791,
+          5.749351501464844,
+          17.192138671875
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          3.3333334922790527,
+          3.3333334922790527,
+          3.3333334922790527
         ]
       }
     },
@@ -313,9 +295,9 @@
       "name": "Camera (2)",
       "transform": {
         "position": [
-          0.0,
-          6.701054096221924,
-          14.059083938598633
+          -0.9847451448440552,
+          11.423137664794922,
+          22.357696533203125
         ],
         "rotation": [
           -0.23111987113952637,

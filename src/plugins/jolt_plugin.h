@@ -245,17 +245,27 @@ private:
     }
 
     void spawnBody(flecs::entity e, const Transform& t, const RigidBody& rb) {
+        // Apply entity scale to shape dimensions so physics matches visual size.
+        // Without this, a plane scaled (10,1,10) would have a 1x1x1 collision box.
+        const float sx = std::max(t.scale.x, 0.001f);
+        const float sy = std::max(t.scale.y, 0.001f);
+        const float sz = std::max(t.scale.z, 0.001f);
+        const float maxS = std::max({sx, sy, sz});
+
         JPH::ShapeRefC shape;
         switch (rb.shape) {
         case PhysicsShape::Sphere:
-            shape = JPH::SphereShapeSettings(rb.radius).Create().Get();
+            shape = JPH::SphereShapeSettings(rb.radius * maxS).Create().Get();
             break;
         case PhysicsShape::Capsule:
-            shape = JPH::CapsuleShapeSettings(rb.halfHeight, rb.radius).Create().Get();
+            shape = JPH::CapsuleShapeSettings(
+                rb.halfHeight * sy, rb.radius * std::max(sx, sz)).Create().Get();
             break;
-        default:
+        default: // Box
             shape = JPH::BoxShapeSettings(
-                JPH::Vec3(rb.halfExtent.x, rb.halfExtent.y, rb.halfExtent.z)).Create().Get();
+                JPH::Vec3(rb.halfExtent.x * sx,
+                          rb.halfExtent.y * sy,
+                          rb.halfExtent.z * sz)).Create().Get();
             break;
         }
 

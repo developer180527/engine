@@ -20,6 +20,14 @@
 #include <cstring>
 #include <cstdio>
 
+// Normalize path separators → forward slashes for consistent cache keys.
+// On Windows, string() returns backslashes; generic_string() returns /.
+// Using a single canonical form prevents cache misses on the same asset.
+static std::string normalizeKey(std::string p) {
+    std::replace(p.begin(), p.end(), '\\', '/');
+    return p;
+}
+
 // -----------------------------------------------------------------------
 // Worker thread helpers — zero main-thread calls, bgfx::copy() IS
 // thread-safe (uses bgfx's internal allocator which wraps malloc).
@@ -416,7 +424,7 @@ void AsyncLoader::load(const std::string& path, const std::string& name, OnLoade
     // Fast path: already fully loaded — return cached handle immediately
     {
         std::lock_guard<std::mutex> lk(m_loadedMtx);
-        auto it = m_loadedHandles.find(path);
+        auto it = m_loadedHandles.find(normalizeKey(path));
         if (it != m_loadedHandles.end()) {
             if (cb) cb(it->second, name);
             return;
@@ -425,11 +433,11 @@ void AsyncLoader::load(const std::string& path, const std::string& name, OnLoade
     // In-flight: queue callback for when current load completes
     {
         std::lock_guard<std::mutex> lk(m_pendingMtx);
-        if (m_inFlight.count(path)) {
-            m_waiters[path].push_back(std::move(cb));
+        if (m_inFlight.count(normalizeKey(path))) {
+            m_waiters[normalizeKey(path)].push_back(std::move(cb));
             return;
         }
-        m_inFlight.insert(path);
+        m_inFlight.insert(normalizeKey(path));
         m_pending.push({path, name, std::move(cb)});
     }
     m_pendingCV.notify_one();
@@ -481,16 +489,10 @@ void AsyncLoader::workerLoop() {
             std::lock_guard<std::mutex> lk(m_readyMtx);
             m_ready.push({std::move(asset), std::move(req.cb)});
         }
-        // Erase inFlight in worker so load() can restart on failure.
-        // m_loadedHandles is populated in drainOne once the handle is ready.
-        if (succeeded) {
-            std::lock_guard<std::mutex> lk(m_loadedMtx);
-            m_loadedHandles[req.path] = MeshHandle{}; // placeholder until drainOne
-        }
-        {
-            std::lock_guard<std::mutex> lk(m_pendingMtx);
-            m_inFlight.erase(req.path);
-        }
+        // Intentionally do NOT touch m_loadedHandles or m_inFlight here.
+        // drainOne() (main thread) sets the real handle then erases inFlight
+        // atomically, closing the window where load() could find an invalid
+        // placeholder handle and call a callback prematurely.
     }
 }
 
@@ -509,6 +511,9 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
     }
 
     if (!req.asset.success) {
+        // Erase from inFlight so the path can be retried or waited on cleanly
+        { std::lock_guard<std::mutex> lk(m_pendingMtx);
+          m_inFlight.erase(req.asset.path); }
         LOG_ERROR("Loader", "Upload skipped (parse failed): %s",
                   req.asset.name.c_str());
         if (req.cb) req.cb(MeshHandle{}, req.asset.name);
