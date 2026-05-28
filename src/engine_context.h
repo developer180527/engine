@@ -1,4 +1,5 @@
 #pragma once
+class PrimitiveLibrary;
 #include "engine/runtime_context.h"
 #include <assetlib/asset_registry.h>
 #include "editor/editor_state.h"
@@ -17,5 +18,6 @@ struct EngineContext {
     ImporterRegistry& importers;
     EditorState&      editor;
     GizmoState&       gizmoState;
-    assetlib::AssetRegistry* assetLib = nullptr;
+    assetlib::AssetRegistry* assetLib   = nullptr;
+    PrimitiveLibrary*        primitives = nullptr;
 };

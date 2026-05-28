@@ -61,7 +61,8 @@ public:
                                    m_rt.ctx().ecs,
                                    storage,
                                    m_loader,
-                                   m_rt.ctx().importers);
+                                   m_rt.ctx().importers,
+                                   m_rt.ctx().primitives);
 
         // Selection restore: entities with Name exist immediately after
         // loadAsync (transform + name are set synchronously).
@@ -233,7 +234,7 @@ private:
         return EngineContext{
             rc.ecs, rc.assets, rc.textures,
             rc.materials, rc.project, rc.importers,
-            m_editor, m_gizmo, rc.assetLib
+            m_editor, m_gizmo, rc.assetLib, rc.primitives
         };
     }
 

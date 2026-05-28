@@ -15,6 +15,7 @@
 
 #include "render/vertex.h"
 #include "render/primitive_cube.h"
+#include "render/primitive_library.h"
 #include "render/mesh.h"
 #include "render/texture.h"
 #include "render/material.h"
@@ -116,6 +117,8 @@ bool EngineRuntime::initSystems() {
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
         m_ecs, m_assets, m_textures,
         m_materials, m_project, m_importers});
+    m_primitives.init(m_assets);
+    m_ctx->primitives = &m_primitives;
     return true;
 }
 

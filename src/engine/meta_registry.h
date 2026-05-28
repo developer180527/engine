@@ -7,6 +7,7 @@
 #include "components/camera.h"
 #include "components/spinner.h"
 #include "components/rigid_body.h"
+#include "components/collision_events.h"
 #include "engine/logger.h"
 
 // ── MetaRegistry ───────────────────────────────────────────────────────────
@@ -71,7 +72,8 @@ inline void registerAll(flecs::world& ecs) {
         .member<float>("friction")
         .member<bool>("useGravity");
 
-    LOG_INFO("Meta", "Component schemas registered — %d types", 8);
+    ecs.component<CollisionEvents>();  // opaque — vector not meta-serializable
+    LOG_INFO("Meta", "Component schemas registered — %d types", 9);
 }
 
 } // namespace MetaRegistry

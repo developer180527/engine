@@ -1,4 +1,5 @@
 #pragma once
+#include "render/primitive_library.h"
 #include <memory>
 #include <string>
 #include <GLFW/glfw3.h>
@@ -47,6 +48,7 @@ public:
 
     GLFWwindow*     window() const { return m_window; }
     RuntimeContext& ctx()          { return *m_ctx; }
+    PrimitiveLibrary& primitives() { return m_primitives; }
     int             width()  const { return m_width; }
     int             height() const { return m_height; }
     float           fov()    const { return m_fov; }
@@ -59,6 +61,7 @@ private:
     float m_fov    = 60.0f;
 
     // Systems — stable addresses, declared before m_ctx
+    PrimitiveLibrary m_primitives;
     flecs::world     m_ecs;
     AssetRegistry    m_assets;
     TextureRegistry  m_textures;

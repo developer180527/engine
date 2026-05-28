@@ -7,6 +7,8 @@
 #include "io/importer_registry.h"
 #include <assetlib/asset_registry.h>
 
+class PrimitiveLibrary; // forward declare
+
 struct RuntimeContext {
     flecs::world&     ecs;
     AssetRegistry&    assets;
@@ -14,5 +16,6 @@ struct RuntimeContext {
     MaterialRegistry& materials;
     ProjectContext&   project;
     ImporterRegistry& importers;
-    assetlib::AssetRegistry* assetLib = nullptr; // null until cook pipeline runs
+    assetlib::AssetRegistry* assetLib   = nullptr;
+    PrimitiveLibrary*        primitives = nullptr;
 };

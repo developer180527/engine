@@ -5,6 +5,7 @@
 #include "components/name.h"
 #include "components/camera.h"
 #include "components/rigid_body.h"
+#include "render/primitive_library.h"
 #include "core/transform.h"
 
 // Forward-declared helper from inspector_panel
@@ -40,11 +41,26 @@ inline void drawAddPopup(EngineContext& ctx, const char* popupId) {
             spawnCamera(ctx);
 
         ImGui::Separator();
-        ImGui::TextDisabled("Primitives (coming soon)");
+        ImGui::TextDisabled("Primitives");
+        if (ctx.primitives && ctx.primitives->ready()) {
+            auto spawnPrim = [&](const char* label, MeshHandle h) {
+                if (!h.valid()) return;
+                Transform t{}; t.scale={1,1,1}; t.rotation={0,0,0,1};
+                auto e = ctx.ecs.entity(label)
+                    .set<Transform>(t).set<Name>({label})
+                    .set<MeshRenderer>({h});
+                ctx.editor.selected  = e;
+                ctx.editor.sceneDirty = true;
+            };
+            if (ImGui::MenuItem("  Cube"))   spawnPrim("Cube",   ctx.primitives->cube());
+            if (ImGui::MenuItem("  Sphere")) spawnPrim("Sphere", ctx.primitives->sphere());
+            if (ImGui::MenuItem("  Plane"))  spawnPrim("Plane",  ctx.primitives->plane());
+        } else {
+            ImGui::BeginDisabled();
+            ImGui::MenuItem("  Cube"); ImGui::MenuItem("  Sphere"); ImGui::MenuItem("  Plane");
+            ImGui::EndDisabled();
+        }
         ImGui::BeginDisabled();
-        ImGui::MenuItem("  Cube");
-        ImGui::MenuItem("  Sphere");
-        ImGui::MenuItem("  Plane");
         ImGui::MenuItem("  Torus");
         ImGui::MenuItem("  Capsule");
         ImGui::EndDisabled();

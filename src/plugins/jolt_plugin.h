@@ -6,6 +6,9 @@
 
 #include "engine/plugin.h"
 #include "engine/logger.h"
+#include "components/collision_events.h"
+#include <mutex>
+#include <unordered_map>
 #include "components/rigid_body.h"
 #include "core/transform.h"
 
@@ -75,6 +78,9 @@ public:
     }
 };
 
+// ── Collision event pair ──────────────────────────────────────────────────
+struct CollisionPair { JPH::BodyID a, b; bool enter; };
+
 // ── JoltPlugin ─────────────────────────────────────────────────────────────
 class JoltPlugin final : public IEnginePlugin {
 public:
@@ -112,6 +118,8 @@ public:
                 spawnBody(e, t, rb);
             });
 
+        m_contactListener.owner = this;
+        m_physics->SetContactListener(&m_contactListener);
         m_physics->OptimizeBroadPhase();
         LOG_SUCCESS("Physics", "Simulation start — %d bodies", (int)m_entityToBody.size());
     }
@@ -143,6 +151,7 @@ public:
             ++steps;
         }
         writeBackTransforms(ecs);
+        flushCollisionEvents(ecs);
     }
 
     void onEditorUI() override {
@@ -173,6 +182,67 @@ private:
 
     std::unordered_map<flecs::entity_t, JPH::BodyID>              m_entityToBody;
     std::unordered_map<JPH::BodyID, flecs::entity_t, BodyIDHash>  m_bodyToEntity;
+
+    // ── Collision events (thread-safe queue) ───────────────────────────
+    std::mutex                   m_collisionMutex;
+    std::vector<CollisionPair>   m_pendingCollisions;
+
+    struct ContactListenerImpl final : public JPH::ContactListener {
+        JoltPlugin* owner = nullptr;
+        JPH::ValidateResult OnContactValidate(
+            const JPH::Body&, const JPH::Body&,
+            JPH::RVec3Arg, const JPH::CollideShapeResult&) override {
+            return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
+        }
+        void OnContactAdded(const JPH::Body& b1, const JPH::Body& b2,
+            const JPH::ContactManifold&, JPH::ContactSettings&) override {
+            std::lock_guard lock(owner->m_collisionMutex);
+            owner->m_pendingCollisions.push_back({b1.GetID(), b2.GetID(), true});
+        }
+        void OnContactPersisted(const JPH::Body&, const JPH::Body&,
+            const JPH::ContactManifold&, JPH::ContactSettings&) override {}
+        void OnContactRemoved(const JPH::SubShapeIDPair& pair) override {
+            std::lock_guard lock(owner->m_collisionMutex);
+            owner->m_pendingCollisions.push_back(
+                {pair.GetBody1ID(), pair.GetBody2ID(), false});
+        }
+    } m_contactListener;
+
+    void flushCollisionEvents(flecs::world& ecs) {
+        std::vector<CollisionPair> local;
+        { std::lock_guard lock(m_collisionMutex); local = std::move(m_pendingCollisions); }
+
+        // Build per-entity event map
+        std::unordered_map<flecs::entity_t, CollisionEvents> evMap;
+        for (auto& p : local) {
+            auto i1 = m_bodyToEntity.find(p.a);
+            auto i2 = m_bodyToEntity.find(p.b);
+            if (i1==m_bodyToEntity.end()||i2==m_bodyToEntity.end()) continue;
+            if (p.enter) {
+                evMap[i1->second].entered.push_back(i2->second);
+                evMap[i2->second].entered.push_back(i1->second);
+            } else {
+                evMap[i1->second].exited.push_back(i2->second);
+                evMap[i2->second].exited.push_back(i1->second);
+            }
+        }
+
+        // Defer all structural ECS changes — flecs locks archetype tables
+        // during each(), calling remove/set inside would crash (LOCKED_STORAGE).
+        ecs.defer_begin();
+        // Apply new events
+        for (auto& [eid, ev] : evMap) {
+            flecs::entity e = ecs.entity(eid);
+            if (e.is_alive()) e.set<CollisionEvents>(ev);
+        }
+        // Remove stale CollisionEvents from last frame
+        ecs.query_builder<CollisionEvents>().build()
+            .each([&](flecs::entity e, CollisionEvents&) {
+                if (evMap.find(e.id()) == evMap.end())
+                    e.remove<CollisionEvents>();
+            });
+        ecs.defer_end(); // flush deferred structural changes
+    }
 
     void spawnBody(flecs::entity e, const Transform& t, const RigidBody& rb) {
         JPH::ShapeRefC shape;

@@ -16,6 +16,8 @@
 #include "io/asset_storage.h"
 #include "io/importer_registry.h"
 #include "engine/async_loader.h"
+#include "render/primitive_library.h"
+#include "render/primitive_library.h"
 #include "components/camera.h"
 #include "components/rigid_body.h"
 #include "engine/logger.h"
@@ -44,8 +46,11 @@ inline bool save(const std::filesystem::path& path,
             if (const MeshRenderer* mr = e.try_get<MeshRenderer>()) {
                 je["meshRenderer"]["handleId"] = mr->mesh.id;
                 const Mesh* mesh = assets.getMesh(mr->mesh);
-                if (mesh && !mesh->sourcePath.empty())
+                if (mesh && !mesh->sourcePath.empty()) {
                     je["meshRenderer"]["sourcePath"] = mesh->sourcePath;
+                    if (mesh->sourcePath.rfind("engine://primitive/", 0) == 0)
+                        je["meshRenderer"]["sourceType"] = "primitive";
+                }
                 if (mr->materialOverride.valid())
                     je["meshRenderer"]["matOverrideId"] = mr->materialOverride.id;
             }
@@ -87,7 +92,8 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
                       flecs::world&     ecs,
                       AssetStorage&     storage,
                       AsyncLoader&      loader,
-                      ImporterRegistry& importers) {
+                      ImporterRegistry& importers,
+                      PrimitiveLibrary* primitives = nullptr) {
     if (!std::filesystem::exists(scenePath)) {
         LOG_WARN("Scene", "Not found: %s", scenePath.string().c_str());
         return false;
@@ -101,6 +107,45 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
         LOG_ERROR("Scene", "Parse error: %s", e.what());
         return false;
     }
+
+    // Restore optional components (Camera, RigidBody) onto any entity.
+    // Called after entity creation in every load path — these components
+    // are immediate and don't depend on async mesh loading.
+    auto restoreComponents = [&](flecs::entity ent, const nlohmann::json& je) {
+        if (je.contains("camera")) {
+            const auto& jc = je["camera"];
+            Camera cam;
+            cam.isPrimary  = jc.value("isPrimary",  true);
+            cam.projection = (ProjectionType)jc.value("projection", 0);
+            cam.fov        = jc.value("fov",        60.0f);
+            cam.orthoSize  = jc.value("orthoSize",  10.0f);
+            cam.nearPlane  = jc.value("nearPlane",  0.1f);
+            cam.farPlane   = jc.value("farPlane",   1000.0f);
+            if (jc.contains("clearColor")) {
+                const auto& cc = jc["clearColor"];
+                cam.clearColor[0]=cc[0]; cam.clearColor[1]=cc[1];
+                cam.clearColor[2]=cc[2]; cam.clearColor[3]=cc[3];
+            }
+            ent.set<Camera>(cam);
+        }
+        if (je.contains("rigidBody")) {
+            const auto& jrb = je["rigidBody"];
+            RigidBody rb;
+            rb.bodyType    = (PhysicsBodyType)jrb.value("bodyType",    1);
+            rb.shape       = (PhysicsShape)   jrb.value("shape",       0);
+            rb.mass        = jrb.value("mass",        1.0f);
+            rb.restitution = jrb.value("restitution", 0.3f);
+            rb.friction    = jrb.value("friction",    0.6f);
+            rb.useGravity  = jrb.value("useGravity",  true);
+            if (jrb.contains("halfExtent")) {
+                const auto& he = jrb["halfExtent"];
+                rb.halfExtent = {he[0], he[1], he[2]};
+            }
+            rb.radius     = jrb.value("radius",     0.5f);
+            rb.halfHeight = jrb.value("halfHeight", 0.5f);
+            ent.set<RigidBody>(rb);
+        }
+    };
 
     int queued = 0;
     for (const auto& je : scene.value("entities", nlohmann::json::array())) {
@@ -120,6 +165,24 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
         }
 
         if (je.contains("meshRenderer")) {
+            // ── Primitive mesh shortcut ───────────────────────────────────
+            std::string srcPath0 = je["meshRenderer"].value("sourcePath", "");
+            std::string sourceType = je["meshRenderer"].value("sourceType", "");
+            bool isPrimitive = (sourceType == "primitive") ||
+                               (srcPath0.rfind("engine://primitive/", 0) == 0);
+            if (isPrimitive && primitives && primitives->ready()) {
+                std::string srcPath = srcPath0;
+                std::string primName = srcPath.substr(srcPath.rfind('/')+1);
+                MeshHandle h = primitives->byName(primName);
+                if (h.valid()) {
+                    { auto ent = ecs.entity(name.c_str())
+                        .set<Transform>(t).set<Name>({name})
+                        .set<MeshRenderer>({h});
+                      restoreComponents(ent, je); }
+                    LOG_SUCCESS("Scene", "Primitive: %s (%s)", name.c_str(), primName.c_str());
+                    continue;
+                }
+            }
             std::string assetPath = je["meshRenderer"].value("sourcePath", "");
             if (!assetPath.empty()) {
                 // Route by extension:
@@ -135,21 +198,24 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
                     if (result.success) {
                         if (Mesh* m = const_cast<Mesh*>(storage.meshes.getMesh(result.mesh)))
                             m->sourcePath = assetPath;
-                        ecs.entity(name.c_str())
+                        { auto ent = ecs.entity(name.c_str())
                             .set<Transform>(t)
                             .set<Name>({name})
                             .set<MeshRenderer>({result.mesh});
+                          restoreComponents(ent, je); }
                         LOG_SUCCESS("Scene", "Loaded glTF: %s",
                                     std::filesystem::path(assetPath).filename().string().c_str());
                     } else {
                         LOG_ERROR("Scene", "glTF load failed: %s", result.error.c_str());
-                        ecs.entity(name.c_str()).set<Transform>(t).set<Name>({name});
+                        { auto ent = ecs.entity(name.c_str()).set<Transform>(t).set<Name>({name});
+                          restoreComponents(ent, je); }
                     }
                 } else {
                     // Async — Assimp handles FBX/OBJ/DAE/etc on worker thread
                     auto e = ecs.entity(name.c_str())
                                 .set<Transform>(t)
                                 .set<Name>({name});
+                    restoreComponents(e, je);
 
                     flecs::entity_t eid = e.id();
                     flecs::world*   pw  = &ecs;
@@ -166,7 +232,8 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
             }
         } else {
             // Entity with no mesh — spawn immediately
-            ecs.entity(name.c_str()).set<Transform>(t).set<Name>({name});
+            { auto ent = ecs.entity(name.c_str()).set<Transform>(t).set<Name>({name});
+              restoreComponents(ent, je); }
         }
     }
 
