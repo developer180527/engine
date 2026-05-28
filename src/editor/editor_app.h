@@ -3,6 +3,7 @@
 #include "engine/runtime.h"
 #include "io/scene_serializer.h"
 #include "editor/editor_prefs.h"
+#include "editor/editor_theme.h"
 #include "io/project_context.h"
 
 #include "engine/async_loader.h"
@@ -88,6 +89,7 @@ public:
 
     void init() {
         imguiInit(m_rt.window(), 16.0f);
+        applyEditorTheme(); // editor owns its look — runtime stays neutral
         // Input system — register GLFW callbacks + default action bindings
         InputSystem::get().init(m_rt.window());
         auto& map = InputMap::get();

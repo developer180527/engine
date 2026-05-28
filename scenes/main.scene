@@ -2,31 +2,6 @@
   "entities": [
     {
       "meshRenderer": {
-        "handleId": 7,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
-      },
-      "name": "PlantBanjoFigVase001",
-      "transform": {
-        "position": [
-          -3.1950674057006836,
-          1.590807557106018,
-          0.24268144369125366
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          4.934962272644043,
-          4.934962272644043,
-          4.934962272644043
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
         "handleId": 5,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
       },
@@ -52,11 +27,36 @@
     },
     {
       "meshRenderer": {
+        "handleId": 7,
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
+      },
+      "name": "PlantBanjoFigVase001",
+      "transform": {
+        "position": [
+          -3.1950674057006836,
+          1.590807557106018,
+          0.24268144369125366
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          4.934962272644043,
+          4.934962272644043,
+          4.934962272644043
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
         "handleId": 2,
         "sourcePath": "engine://primitive/plane",
         "sourceType": "primitive"
       },
-      "name": "Plane",
+      "name": "Ground",
       "rigidBody": {
         "bodyType": 0,
         "friction": 0.6000000238418579,

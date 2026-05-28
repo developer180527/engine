@@ -189,7 +189,7 @@ void imguiInit(GLFWwindow* window, float fontSize) {
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasViewports;
     io.IniFilename = "imgui.ini";
-    ImGui::StyleColorsDark();
+    ImGui::StyleColorsDark();        // neutral base; editor applies its own theme
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding              = 0.0f;
     style.Colors[ImGuiCol_WindowBg].w = 1.0f;
