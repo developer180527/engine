@@ -2,56 +2,6 @@
   "entities": [
     {
       "meshRenderer": {
-        "handleId": 5,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
-      },
-      "name": "Demon_Mask",
-      "transform": {
-        "position": [
-          1.1532154083251953,
-          7.749000072479248,
-          4.005000114440918
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.0531535148620605,
-          1.0531535148620605,
-          1.0531535148620605
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
-        "handleId": 6,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
-      },
-      "name": "Television_01_4k",
-      "transform": {
-        "position": [
-          4.31677770614624,
-          3.99665904045105,
-          1.4007031917572021
-        ],
-        "rotation": [
-          0.0,
-          0.9817398190498352,
-          0.0,
-          -0.19022852182388306
-        ],
-        "scale": [
-          3.3333334922790527,
-          3.3333334922790527,
-          3.3333334922790527
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
         "handleId": 7,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
       },
@@ -72,6 +22,31 @@
           4.934962272644043,
           4.934962272644043,
           4.934962272644043
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "handleId": 5,
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
+      },
+      "name": "Television_01_4k",
+      "transform": {
+        "position": [
+          4.31677770614624,
+          3.99665904045105,
+          1.4007031917572021
+        ],
+        "rotation": [
+          0.0,
+          0.9817398190498352,
+          0.0,
+          -0.19022852182388306
+        ],
+        "scale": [
+          3.3333334922790527,
+          3.3333334922790527,
+          3.3333334922790527
         ]
       }
     },
@@ -159,7 +134,7 @@
     },
     {
       "meshRenderer": {
-        "handleId": 5,
+        "handleId": 6,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
       },
       "name": "Demon_Mask (2)",
@@ -180,9 +155,9 @@
       },
       "transform": {
         "position": [
-          -2.45876407623291,
-          7.7492756843566895,
-          4.005192756652832
+          -6.874497413635254,
+          11.134791374206543,
+          9.636964797973633
         ],
         "rotation": [
           0.0,
@@ -199,11 +174,11 @@
     },
     {
       "meshRenderer": {
-        "handleId": 6,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
+        "handleId": 3,
+        "sourcePath": "engine://primitive/sphere",
+        "sourceType": "primitive"
       },
-      "name": "TV",
-      "parent": "Demon_Mask (2)",
+      "name": "Sphere",
       "rigidBody": {
         "bodyType": 2,
         "friction": 0.6000000238418579,
@@ -221,9 +196,9 @@
       },
       "transform": {
         "position": [
-          -9.68557071685791,
-          5.749351501464844,
-          17.192138671875
+          -3.2533247470855713,
+          8.85096263885498,
+          2.139486312866211
         ],
         "rotation": [
           0.0,
@@ -232,9 +207,9 @@
           1.0
         ],
         "scale": [
-          3.3333334922790527,
-          3.3333334922790527,
-          3.3333334922790527
+          1.0,
+          1.0,
+          1.0
         ]
       }
     },

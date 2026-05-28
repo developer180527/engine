@@ -355,6 +355,12 @@ private:
             [this]{ setProject(m_rt.ctx().project); },
             [this]{ glfwSetWindowShouldClose(m_rt.window(), true); },
             [this]{ m_showProjectSettings = true; },
+            [this]{ m_editor.undoStack.undo(m_rt.ctx().ecs); },
+            [this]{ m_editor.undoStack.redo(m_rt.ctx().ecs); },
+            m_editor.undoStack.canUndo(),
+            m_editor.undoStack.canRedo(),
+            m_editor.undoStack.undoDescription(),
+            m_editor.undoStack.redoDescription(),
             m_projectRoot.empty() ? std::string{}
                 : m_projectRoot.filename().string()
         });
@@ -363,6 +369,14 @@ private:
         if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
             ImGui::IsKeyPressed(ImGuiKey_S, false))
             saveScene();
+        if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
+            !ImGui::IsKeyDown(ImGuiKey_LeftShift) &&
+            ImGui::IsKeyPressed(ImGuiKey_Z, false))
+            m_editor.undoStack.undo(m_rt.ctx().ecs);
+        if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
+            ImGui::IsKeyDown(ImGuiKey_LeftShift) &&
+            ImGui::IsKeyPressed(ImGuiKey_Z, false))
+            m_editor.undoStack.redo(m_rt.ctx().ecs);
         if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
             ImGui::IsKeyPressed(ImGuiKey_Comma, false)) // Cmd+,
             m_showProjectSettings = true;

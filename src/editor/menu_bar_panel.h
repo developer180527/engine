@@ -10,6 +10,12 @@ struct MenuBarCallbacks {
     std::function<void()> reloadScene;
     std::function<void()> quit;
     std::function<void()> openProjectSettings;
+    std::function<void()> onUndo;
+    std::function<void()> onRedo;
+    bool canUndo = false;
+    bool canRedo = false;
+    std::string undoDesc;
+    std::string redoDesc;
     std::string           projectName;   // shown after the separator
 };
 
@@ -42,8 +48,14 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
     // ── Edit ─────────────────────────────────────────────────────────
     if (ImGui::BeginMenu("Edit")) {
         ImGui::BeginDisabled(); // TODO: undo/redo system
-        ImGui::MenuItem("Undo",  "Cmd+Z");
-        ImGui::MenuItem("Redo",  "Cmd+Shift+Z");
+        if (!cb.canUndo) ImGui::BeginDisabled();
+        { std::string label = cb.undoDesc.empty() ? "Undo" : "Undo " + cb.undoDesc;
+          if (ImGui::MenuItem(label.c_str(), "Cmd+Z") && cb.onUndo) cb.onUndo(); }
+        if (!cb.canUndo) ImGui::EndDisabled();
+        if (!cb.canRedo) ImGui::BeginDisabled();
+        { std::string label = cb.redoDesc.empty() ? "Redo" : "Redo " + cb.redoDesc;
+          if (ImGui::MenuItem(label.c_str(), "Cmd+Shift+Z") && cb.onRedo) cb.onRedo(); }
+        if (!cb.canRedo) ImGui::EndDisabled();
         ImGui::EndDisabled();
         ImGui::Separator();
         ImGui::BeginDisabled(); // TODO: clipboard ops

@@ -19,8 +19,10 @@
 // query completes, exactly like toDelete.
 struct ReparentOp {
     flecs::entity child;
-    flecs::entity newParent; // invalid entity = unparent to root
+    flecs::entity newParent;
     bool pending = false;
+    std::string   oldParentName;   // for undo
+    Transform     oldLocalTransform{}; // for undo
 };
 
 namespace detail_hier {
@@ -34,8 +36,9 @@ inline void drawAddMenuItems(EngineContext& ctx) {
         std::string name = uniqueEntityName(ctx.ecs, "Camera");
         Transform t{}; t.scale={1,1,1}; t.rotation={0,0,0,1};
         Camera cam; cam.isPrimary = false;
-        ctx.ecs.entity(name.c_str())
-            .set<Transform>(t).set<Name>({name}).set<Camera>(cam);
+        { auto ne = ctx.ecs.entity(name.c_str())
+              .set<Transform>(t).set<Name>({name}).set<Camera>(cam);
+          ctx.editor.undoStack.pushEntityAdd(ne); }
         ctx.editor.sceneDirty = true;
     }
 
@@ -49,6 +52,7 @@ inline void drawAddMenuItems(EngineContext& ctx) {
             auto e = ctx.ecs.entity(name.c_str())
                 .set<Transform>(t).set<Name>({name})
                 .set<MeshRenderer>({h});
+            ctx.editor.undoStack.pushEntityAdd(e);
             ctx.editor.selected = e;
             ctx.editor.sceneDirty = true;
         };
@@ -119,13 +123,14 @@ inline void drawEntityNode(flecs::entity e, EngineContext& ctx,
     if (ctx.editor.selected == e)
         flags |= ImGuiTreeNodeFlags_Selected;
 
-    bool open = ImGui::TreeNodeEx((void*)(uintptr_t)e.id(), flags, "%s", label);
+    ImGui::PushID((int)(uint32_t)e.id());
+    bool open = ImGui::TreeNodeEx("##node", flags, "%s", label);
 
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
         ctx.editor.selected = e;
 
     // Drag source
-    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+    if (ImGui::BeginDragDropSource()) {
         flecs::entity_t id = e.id();
         ImGui::SetDragDropPayload("ENTITY_ID", &id, sizeof(id));
         ImGui::Text("  %s", n->value.c_str());
@@ -137,19 +142,31 @@ inline void drawEntityNode(flecs::entity e, EngineContext& ctx,
         if (auto* pl = ImGui::AcceptDragDropPayload("ENTITY_ID")) {
             flecs::entity_t dragId = *(flecs::entity_t*)pl->Data;
             flecs::entity dragged  = ctx.ecs.entity(dragId);
-            if (dragged && dragged.is_alive() && dragged != e)
-                reparentOp = {dragged, e, true};
+            if (dragged && dragged.is_alive() && dragged != e) {
+                std::string oldPar;
+                flecs::entity dp = dragged.target(flecs::ChildOf);
+                if (dp && dp.is_alive()) { const Name* pn=dp.try_get<Name>(); oldPar=pn?pn->value:""; }
+                Transform oldTf{};
+                if (const Transform* dt=dragged.try_get<Transform>()) oldTf=*dt;
+                reparentOp = {dragged, e, true, oldPar, oldTf};
+            }
         }
         ImGui::EndDragDropTarget();
     }
 
     // Right-click context menu
-    if (ImGui::BeginPopupContextItem("##entityCtx")) {
+    if (ImGui::BeginPopupContextItem("##ctx")) {
         if (ImGui::MenuItem("Select")) ctx.editor.selected = e;
         flecs::entity par = e.target(flecs::ChildOf);
         if (par && par.is_alive())
-            if (ImGui::MenuItem("Unparent"))
-                reparentOp = {e, flecs::entity{}, true}; // deferred
+            if (ImGui::MenuItem("Unparent")) {
+                std::string oldPar;
+                flecs::entity ep = e.target(flecs::ChildOf);
+                if (ep && ep.is_alive()) { const Name* pn=ep.try_get<Name>(); oldPar=pn?pn->value:""; }
+                Transform oldTf{};
+                if (const Transform* et=e.try_get<Transform>()) oldTf=*et;
+                reparentOp = {e, flecs::entity{}, true, oldPar, oldTf};
+            }
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Text, {1,0.3f,0.3f,1});
         if (ImGui::MenuItem("Delete")) toDelete = e;
@@ -157,7 +174,6 @@ inline void drawEntityNode(flecs::entity e, EngineContext& ctx,
         ImGui::EndPopup();
     }
 
-    // Recurse children
     if (open && childCount > 0) {
         e.children([&](flecs::entity child) {
             if (child.has<Name>())
@@ -165,6 +181,7 @@ inline void drawEntityNode(flecs::entity e, EngineContext& ctx,
         });
         ImGui::TreePop();
     }
+    ImGui::PopID(); // always last — after TreePop for open nodes, safe for leaves
 }
 
 } // namespace detail_hier
@@ -213,8 +230,14 @@ inline void drawHierarchyPanel(EngineContext& ctx) {
             if (auto* pl = ImGui::AcceptDragDropPayload("ENTITY_ID")) {
                 flecs::entity_t id = *(flecs::entity_t*)pl->Data;
                 flecs::entity dropped = ctx.ecs.entity(id);
-                if (dropped && dropped.is_alive())
-                    reparentOp = {dropped, flecs::entity{}, true};
+                if (dropped && dropped.is_alive()) {
+                    std::string oldPar2;
+                    flecs::entity dp2 = dropped.target(flecs::ChildOf);
+                    if (dp2 && dp2.is_alive()) { const Name* pn=dp2.try_get<Name>(); oldPar2=pn?pn->value:""; }
+                    Transform oldTf2{};
+                    if (const Transform* dt2=dropped.try_get<Transform>()) oldTf2=*dt2;
+                    reparentOp = {dropped, flecs::entity{}, true, oldPar2, oldTf2};
+                }
             }
             ImGui::EndDragDropTarget();
         }
@@ -247,11 +270,25 @@ inline void drawHierarchyPanel(EngineContext& ctx) {
             Transform& t = reparentOp.child.get_mut<Transform>();
             t.position = wPos; t.rotation = wRot; t.scale = wScale;
         }
+        // Push undo command with old/new state
+        std::string newParName;
+        if (reparentOp.newParent && reparentOp.newParent.is_alive()) {
+            const Name* nn = reparentOp.newParent.try_get<Name>();
+            if (nn) newParName = nn->value;
+        }
+        Transform newTf{};
+        if (const Transform* nt = reparentOp.child.try_get<Transform>()) newTf = *nt;
+        std::string childName;
+        if (const Name* cn = reparentOp.child.try_get<Name>()) childName = cn->value;
+        ctx.editor.undoStack.pushReparent(childName,
+            reparentOp.oldParentName, reparentOp.oldLocalTransform,
+            newParName, newTf);
         ctx.editor.sceneDirty = true;
     }
 
     // ── Apply deferred delete ──────────────────────────────────────────────
     if (toDelete && toDelete.is_alive()) {
+        ctx.editor.undoStack.pushEntityDelete(toDelete);
         if (ctx.editor.selected == toDelete) ctx.editor.selected = {};
         toDelete.destruct();
         ctx.editor.sceneDirty = true;
@@ -261,6 +298,7 @@ inline void drawHierarchyPanel(EngineContext& ctx) {
     if (ImGui::IsWindowFocused() &&
         ImGui::IsKeyPressed(ImGuiKey_Delete) &&
         ctx.editor.selected.is_alive()) {
+        ctx.editor.undoStack.pushEntityDelete(ctx.editor.selected);
         ctx.editor.selected.destruct();
         ctx.editor.selected = {};
         ctx.editor.sceneDirty = true;

@@ -19,8 +19,10 @@ enum class SimState { Editing, Playing, Paused };
 // flecs::entity is just an ID + a pointer to the world; default construction
 // gives a "null" entity (id=0). entity::is_alive() checks if it's still valid
 // (not destroyed since we got the handle).
+#include "editor/undo_stack.h"
 struct EditorState {
     flecs::entity selected;
     bool          sceneDirty = false;
-    SimState      simState   = SimState::Editing; // set by panels, cleared by saveScene()
+    SimState      simState   = SimState::Editing;
+    UndoStack     undoStack;
 };
