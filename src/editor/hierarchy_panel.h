@@ -11,6 +11,7 @@
 #include "core/transform.h"
 #include "editor/asset_browser/spawn.h"
 #include "core/transform_utils.h"
+#include "core/entity_id_util.h"
 
 // ── ReparentOp ─────────────────────────────────────────────────────────────
 // Structural ECS changes (add/remove ChildOf) cannot happen inside a flecs
@@ -21,7 +22,7 @@ struct ReparentOp {
     flecs::entity child;
     flecs::entity newParent;
     bool pending = false;
-    std::string   oldParentName;   // for undo
+    flecs::entity oldParent;            // for undo (invalid = was root)
     Transform     oldLocalTransform{}; // for undo
 };
 
@@ -142,13 +143,11 @@ inline void drawEntityNode(flecs::entity e, EngineContext& ctx,
         if (auto* pl = ImGui::AcceptDragDropPayload("ENTITY_ID")) {
             flecs::entity_t dragId = *(flecs::entity_t*)pl->Data;
             flecs::entity dragged  = ctx.ecs.entity(dragId);
-            if (dragged && dragged.is_alive() && dragged != e) {
-                std::string oldPar;
+            if (dragged && dragged.is_alive() && dragged != e && !isAncestorOf(dragged, e)) {
                 flecs::entity dp = dragged.target(flecs::ChildOf);
-                if (dp && dp.is_alive()) { const Name* pn=dp.try_get<Name>(); oldPar=pn?pn->value:""; }
                 Transform oldTf{};
                 if (const Transform* dt=dragged.try_get<Transform>()) oldTf=*dt;
-                reparentOp = {dragged, e, true, oldPar, oldTf};
+                reparentOp = {dragged, e, true, dp, oldTf};
             }
         }
         ImGui::EndDragDropTarget();
@@ -160,12 +159,10 @@ inline void drawEntityNode(flecs::entity e, EngineContext& ctx,
         flecs::entity par = e.target(flecs::ChildOf);
         if (par && par.is_alive())
             if (ImGui::MenuItem("Unparent")) {
-                std::string oldPar;
                 flecs::entity ep = e.target(flecs::ChildOf);
-                if (ep && ep.is_alive()) { const Name* pn=ep.try_get<Name>(); oldPar=pn?pn->value:""; }
                 Transform oldTf{};
                 if (const Transform* et=e.try_get<Transform>()) oldTf=*et;
-                reparentOp = {e, flecs::entity{}, true, oldPar, oldTf};
+                reparentOp = {e, flecs::entity{}, true, ep, oldTf};
             }
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Text, {1,0.3f,0.3f,1});
@@ -231,12 +228,10 @@ inline void drawHierarchyPanel(EngineContext& ctx) {
                 flecs::entity_t id = *(flecs::entity_t*)pl->Data;
                 flecs::entity dropped = ctx.ecs.entity(id);
                 if (dropped && dropped.is_alive()) {
-                    std::string oldPar2;
                     flecs::entity dp2 = dropped.target(flecs::ChildOf);
-                    if (dp2 && dp2.is_alive()) { const Name* pn=dp2.try_get<Name>(); oldPar2=pn?pn->value:""; }
                     Transform oldTf2{};
                     if (const Transform* dt2=dropped.try_get<Transform>()) oldTf2=*dt2;
-                    reparentOp = {dropped, flecs::entity{}, true, oldPar2, oldTf2};
+                    reparentOp = {dropped, flecs::entity{}, true, dp2, oldTf2};
                 }
             }
             ImGui::EndDragDropTarget();
@@ -258,7 +253,7 @@ inline void drawHierarchyPanel(EngineContext& ctx) {
             // Compute child local = child_world * inverse(parent_world)
             float parentWorld[16], parentInv[16];
             getWorldMatrix(reparentOp.newParent, parentWorld);
-            bx::mtxInverse(parentInv, parentWorld);
+            safeInvert(parentInv, parentWorld);
             bx::Vec3 lPos{0,0,0}; bx::Quaternion lRot{0,0,0,1}; bx::Vec3 lScale{1,1,1};
             float localMtx[16];
             bx::mtxMul(localMtx, childWorld, parentInv);
@@ -270,19 +265,15 @@ inline void drawHierarchyPanel(EngineContext& ctx) {
             Transform& t = reparentOp.child.get_mut<Transform>();
             t.position = wPos; t.rotation = wRot; t.scale = wScale;
         }
-        // Push undo command with old/new state
-        std::string newParName;
-        if (reparentOp.newParent && reparentOp.newParent.is_alive()) {
-            const Name* nn = reparentOp.newParent.try_get<Name>();
-            if (nn) newParName = nn->value;
-        }
+        // Push undo command with old/new state (ids resolved here — post-query, safe)
+        uint64_t oldPid = (reparentOp.oldParent && reparentOp.oldParent.is_alive())
+                            ? ensureEntityId(reparentOp.oldParent) : 0;
+        uint64_t newPid = (reparentOp.newParent && reparentOp.newParent.is_alive())
+                            ? ensureEntityId(reparentOp.newParent) : 0;
         Transform newTf{};
         if (const Transform* nt = reparentOp.child.try_get<Transform>()) newTf = *nt;
-        std::string childName;
-        if (const Name* cn = reparentOp.child.try_get<Name>()) childName = cn->value;
-        ctx.editor.undoStack.pushReparent(childName,
-            reparentOp.oldParentName, reparentOp.oldLocalTransform,
-            newParName, newTf);
+        ctx.editor.undoStack.pushReparent(reparentOp.child, oldPid,
+            reparentOp.oldLocalTransform, newPid, newTf);
         ctx.editor.sceneDirty = true;
     }
 

@@ -69,7 +69,7 @@ inline void decomposeMatrix(const float m[16],
 // ── getWorldMatrix ─────────────────────────────────────────────────────────
 // Walk the flecs ChildOf chain and accumulate transforms.
 // Row-major: world = local * parent_world
-inline void getWorldMatrix(flecs::entity e, float out[16]) {
+inline void getWorldMatrix(flecs::entity e, float out[16], int depth = 0) {
     float local[16];
     if (const Transform* t = e.try_get<Transform>())
         t->getMatrix(local);
@@ -77,11 +77,40 @@ inline void getWorldMatrix(flecs::entity e, float out[16]) {
         bx::mtxIdentity(local);
 
     flecs::entity parent = e.target(flecs::ChildOf);
-    if (parent && parent.is_alive() && parent.has<Transform>()) {
+    // depth cap is a backstop: a cycle that slips past the reparent/load
+    // guards stops here instead of overflowing the stack.
+    if (parent && parent.is_alive() && parent.has<Transform>() && depth < 256) {
         float parentWorld[16];
-        getWorldMatrix(parent, parentWorld);
+        getWorldMatrix(parent, parentWorld, depth + 1);
         bx::mtxMul(out, local, parentWorld);
     } else {
         std::memcpy(out, local, 16 * sizeof(float));
     }
+}
+
+// ── safeInvert ─────────────────────────────────────────────────────────────
+// Invert an affine SRT matrix, guarding against a singular linear part
+// (zero / near-zero scale from scripts or loaded files). Returns false and
+// writes identity when the upper-left 3x3 is non-invertible.
+inline bool safeInvert(float out[16], const float m[16], float eps = 1e-8f) {
+    float det3 = m[0]*(m[5]*m[10] - m[6]*m[9])
+               - m[1]*(m[4]*m[10] - m[6]*m[8])
+               + m[2]*(m[4]*m[9]  - m[5]*m[8]);
+    if (std::fabs(det3) < eps) { bx::mtxIdentity(out); return false; }
+    bx::mtxInverse(out, m);
+    return true;
+}
+
+// ── isAncestorOf ───────────────────────────────────────────────────────────
+// True if `ancestor` appears on the ChildOf chain above `node`. Depth-capped
+// so an already-cyclic graph can't hang the walk. Read-only: safe to call
+// inside a flecs query iteration.
+inline bool isAncestorOf(flecs::entity ancestor, flecs::entity node) {
+    if (!ancestor.is_alive() || !node.is_alive()) return false;
+    flecs::entity p = node.target(flecs::ChildOf);
+    for (int guard = 0; p && p.is_alive() && guard < 4096; ++guard) {
+        if (p == ancestor) return true;
+        p = p.target(flecs::ChildOf);
+    }
+    return false;
 }

@@ -137,6 +137,48 @@
       }
     },
     {
+      "id": 15386141648548072725,
+      "meshRenderer": {
+        "handleId": 1,
+        "sourcePath": "engine://primitive/cube",
+        "sourceType": "primitive"
+      },
+      "name": "Cube",
+      "rigidBody": {
+        "bodyType": 2,
+        "friction": 0.6000000238418579,
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "halfHeight": 0.5,
+        "mass": 1.0,
+        "radius": 0.5,
+        "restitution": 0.6909999847412109,
+        "shape": 0,
+        "useGravity": true
+      },
+      "transform": {
+        "position": [
+          0.0,
+          10.785236358642578,
+          7.007580280303955
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
       "id": 1423140140260966028,
       "meshRenderer": {
         "handleId": 6,
@@ -200,9 +242,9 @@
       "parentId": 1423140140260966028,
       "transform": {
         "position": [
-          0.9421523809432983,
-          1.28847336769104,
-          4.67173433303833
+          0.9421520233154297,
+          1.288473129272461,
+          4.671733856201172
         ],
         "rotation": [
           0.0,
@@ -214,49 +256,6 @@
           1.0,
           1.0,
           1.0
-        ]
-      }
-    },
-    {
-      "id": 15386141648548072725,
-      "meshRenderer": {
-        "handleId": 1,
-        "sourcePath": "engine://primitive/cube",
-        "sourceType": "primitive"
-      },
-      "name": "Cube",
-      "parentId": 16235234808625830255,
-      "rigidBody": {
-        "bodyType": 2,
-        "friction": 0.6000000238418579,
-        "halfExtent": [
-          0.5,
-          0.5,
-          0.5
-        ],
-        "halfHeight": 0.5,
-        "mass": 1.0,
-        "radius": 0.5,
-        "restitution": 0.6909999847412109,
-        "shape": 0,
-        "useGravity": true
-      },
-      "transform": {
-        "position": [
-          0.6474350094795227,
-          1.8631203174591064,
-          1.370810627937317
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          0.9999999403953552
-        ],
-        "scale": [
-          0.20263579487800598,
-          0.20263579487800598,
-          0.20263579487800598
         ]
       }
     }

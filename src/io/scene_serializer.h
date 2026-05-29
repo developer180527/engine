@@ -1,4 +1,5 @@
 #pragma once
+#include "core/transform_utils.h"
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -276,7 +277,8 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
                 child = ecs.lookup(je.value("name", "").c_str());
             if (!parent.is_alive() && je.contains("parent"))
                 parent = ecs.lookup(je.value("parent", "").c_str());
-            if (child.is_alive() && parent.is_alive() && child != parent)
+            if (child.is_alive() && parent.is_alive() && child != parent
+                && !isAncestorOf(child, parent))
                 child.add(flecs::ChildOf, parent);
         }
     }
@@ -435,7 +437,8 @@ inline void loadIntoWorld(const std::string& snapshot, flecs::world& world,
                 child = world.lookup(je.value("name", "").c_str());
             if (!parent.is_alive() && je.contains("parent"))
                 parent = world.lookup(je.value("parent", "").c_str());
-            if (child.is_alive() && parent.is_alive() && child != parent)
+            if (child.is_alive() && parent.is_alive() && child != parent
+                && !isAncestorOf(child, parent))
                 child.add(flecs::ChildOf, parent);
         }
     }

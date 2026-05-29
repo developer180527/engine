@@ -134,21 +134,18 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         }
     }
     // ── Transform capture for undo ────────────────────────────────────
-    static std::string s_tfEntity;
     static Transform   s_tfBefore;
     static bool        s_tfCapturing = false;
     auto onTfActivate = [&]{
         if (!s_tfCapturing && ImGui::IsItemActivated()) {
             if (const Transform* t = e.try_get<Transform>()) s_tfBefore = *t;
-            const Name* nm = e.try_get<Name>();
-            s_tfEntity    = nm ? nm->value : "";
             s_tfCapturing = true;
         }
     };
     auto onTfCommit = [&]{
         if (s_tfCapturing && ImGui::IsItemDeactivatedAfterEdit()) {
             if (const Transform* t = e.try_get<Transform>())
-                ctx.editor.undoStack.pushTransform(s_tfEntity, s_tfBefore, *t);
+                ctx.editor.undoStack.pushTransform(e, s_tfBefore, *t);
             s_tfCapturing = false;
         }
     };

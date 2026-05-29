@@ -337,7 +337,7 @@ private:
                     bx::mtxFromQuaternion(world, bx::Quaternion{q.GetX(),q.GetY(),q.GetZ(),q.GetW()});
                     world[12]=p.GetX(); world[13]=p.GetY(); world[14]=p.GetZ();
                     float parentWorld[16]; getWorldMatrix(par, parentWorld);
-                    float parentInv[16];   bx::mtxInverse(parentInv, parentWorld);
+                    float parentInv[16];   safeInvert(parentInv, parentWorld);
                     float local[16];       bx::mtxMul(local, world, parentInv);
                     bx::Vec3 lp{0,0,0}; bx::Quaternion lr{0,0,0,1}; bx::Vec3 ls{1,1,1};
                     decomposeMatrix(local, lp, lr, ls);
