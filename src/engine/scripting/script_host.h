@@ -110,6 +110,9 @@ public:
     void applyImpulse(flecs::entity e, float x, float y, float z) { if (m_physics) m_physics->applyImpulse(e,x,y,z); }
     void setVelocity (flecs::entity e, float x, float y, float z) { if (m_physics) m_physics->setVelocity(e,x,y,z); }
     bool getVelocity (flecs::entity e, float& x, float& y, float& z) { return m_physics ? m_physics->getVelocity(e,x,y,z) : false; }
+    RaycastHit raycast(float ox,float oy,float oz, float dx,float dy,float dz, float maxDist) {
+        return m_physics ? m_physics->raycast(ox,oy,oz,dx,dy,dz,maxDist) : RaycastHit{};
+    }
     void setPhysicsService(IPhysicsService* s) { m_physics = s; }
 
     // ── Audio (RESERVED — no-op until a service is registered) ──────────

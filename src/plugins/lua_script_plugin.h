@@ -50,6 +50,7 @@ public:
         m_host.setWorld(&gw);
         m_host.beginSession();   // invalidate entity refs stashed in prior plays
         m_elapsed = 0.0; m_frame = 0;
+        bindPhysics(gw);         // grab the physics service if it is already up
 
         // Collect first (don't instantiate inside the query — onStart may
         // make structural changes). Then instantiate inside a defer scope.
@@ -71,11 +72,13 @@ public:
             if (!inst.errored) dispatch(inst, "onDestroy", false, 0.0f);
         clearInstances();
         clearModules();          // next Play reloads scripts from disk
+        m_host.setPhysicsService(nullptr);
         m_host.setWorld(nullptr);
     }
 
     void onUpdate(flecs::world& gw, float dt) override {
         if (!m_L) return;
+        bindPhysics(gw);         // order-independent: service is up by first update
         m_elapsed += dt; ++m_frame;
         m_host.setFrame(dt, m_elapsed, m_frame);
         gw.defer_begin();        // defer spawn/destroy issued from scripts
@@ -186,6 +189,10 @@ private:
         lua_pop(m_L, 1);           // pop instance
     }
 
+    void bindPhysics(flecs::world& gw) {
+        if (const PhysicsServiceRef* ref = gw.try_get<PhysicsServiceRef>())
+            m_host.setPhysicsService(ref->svc);
+    }
     void clearInstances() {
         if (m_L) for (auto& inst : m_instances) luaL_unref(m_L, LUA_REGISTRYINDEX, inst.ref);
         m_instances.clear();

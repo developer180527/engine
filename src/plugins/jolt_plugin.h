@@ -25,6 +25,16 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+
+#include "engine/scripting/script_services.h"
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+
+#include "engine/scripting/script_services.h"
 
 // ── Physics layers ─────────────────────────────────────────────────────────
 namespace PhysLayers {
@@ -83,7 +93,7 @@ public:
 struct CollisionPair { JPH::BodyID a, b; bool enter; };
 
 // ── JoltPlugin ─────────────────────────────────────────────────────────────
-class JoltPlugin final : public IEnginePlugin {
+class JoltPlugin final : public IEnginePlugin, public IPhysicsService {
 public:
     const char* name()    const override { return "Physics"; }
     const char* version() const override { return "0.1.0-jolt5"; }
@@ -113,6 +123,8 @@ public:
         m_physics->Init(4096, 0, 4096, 4096,
             m_bpInterface, m_objVsBP, m_objPairFilter);
         m_physics->SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
+        ecs.set<PhysicsServiceRef>({ this });   // publish to the script backend
+        ecs.set<PhysicsServiceRef>({ this });   // publish to the script backend
 
         ecs.query_builder<const Transform, const RigidBody>().build()
             .each([this](flecs::entity e, const Transform& t, const RigidBody& rb) {
@@ -167,6 +179,58 @@ public:
             ImGui::TextDisabled("Enter play mode to simulate");
         }
         ImGui::TextDisabled("Gravity: (0, -9.81, 0)");
+    }
+
+    // ── IPhysicsService (scripts reach these through ScriptHost) ────────
+    void applyImpulse(flecs::entity e, float x, float y, float z) override {
+        if (!m_physics) return;
+        auto it = m_entityToBody.find(e.id());
+        if (it == m_entityToBody.end()) return;
+        auto& bi = m_physics->GetBodyInterface();
+        bi.ActivateBody(it->second);
+        bi.AddImpulse(it->second, JPH::Vec3(x, y, z));
+    }
+    void setVelocity(flecs::entity e, float x, float y, float z) override {
+        if (!m_physics) return;
+        auto it = m_entityToBody.find(e.id());
+        if (it == m_entityToBody.end()) return;
+        auto& bi = m_physics->GetBodyInterface();
+        bi.ActivateBody(it->second);
+        bi.SetLinearVelocity(it->second, JPH::Vec3(x, y, z));
+    }
+    bool getVelocity(flecs::entity e, float& x, float& y, float& z) override {
+        if (!m_physics) return false;
+        auto it = m_entityToBody.find(e.id());
+        if (it == m_entityToBody.end()) return false;
+        JPH::Vec3 v = m_physics->GetBodyInterface().GetLinearVelocity(it->second);
+        x = v.GetX(); y = v.GetY(); z = v.GetZ();
+        return true;
+    }
+    RaycastHit raycast(float ox, float oy, float oz,
+                       float dx, float dy, float dz, float maxDist) override {
+        RaycastHit out;
+        if (!m_physics) return out;
+        JPH::Vec3 dir(dx, dy, dz);
+        float len = dir.Length();
+        if (len < 1e-6f || maxDist <= 0.0f) return out;
+        dir = dir / len;                                       // normalize, extend by maxDist
+        JPH::RRayCast ray(JPH::RVec3(ox, oy, oz), dir * maxDist);
+        JPH::RayCastResult res;
+        if (!m_physics->GetNarrowPhaseQuery().CastRay(ray, res)) return out;
+
+        out.hit      = true;
+        out.distance = res.mFraction * maxDist;
+        JPH::RVec3 pt = ray.GetPointOnRay(res.mFraction);
+        out.point[0] = (float)pt.GetX(); out.point[1] = (float)pt.GetY(); out.point[2] = (float)pt.GetZ();
+
+        JPH::BodyLockRead lock(m_physics->GetBodyLockInterface(), res.mBodyID);
+        if (lock.Succeeded()) {
+            JPH::Vec3 n = lock.GetBody().GetWorldSpaceSurfaceNormal(res.mSubShapeID2, pt);
+            out.normal[0] = n.GetX(); out.normal[1] = n.GetY(); out.normal[2] = n.GetZ();
+        }
+        auto it = m_bodyToEntity.find(res.mBodyID);
+        out.entity = (it != m_bodyToEntity.end()) ? (uint64_t)it->second : 0;
+        return out;
     }
 
 private:

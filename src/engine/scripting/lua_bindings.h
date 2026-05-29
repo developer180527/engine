@@ -152,6 +152,30 @@ inline int audio_playAt(lua_State* L) {
         (float)luaL_checknumber(L,2), (float)luaL_checknumber(L,3), (float)luaL_checknumber(L,4))); return 1;
 }
 
+// Physics.raycast(origin{x,y,z}, dir{x,y,z}, maxDist?) ->
+//   { hit, distance, point{x,y,z}, normal{x,y,z}, entity }
+inline int phys_raycast(lua_State* L) {
+    ScriptHost* h = host(L);
+    luaL_checktype(L, 1, LUA_TTABLE);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    int o = lua_absindex(L,1), d = lua_absindex(L,2);
+    float ox=fieldNum(L,o,"x",0), oy=fieldNum(L,o,"y",0), oz=fieldNum(L,o,"z",0);
+    float dx=fieldNum(L,d,"x",0), dy=fieldNum(L,d,"y",0), dz=fieldNum(L,d,"z",0);
+    float maxDist = lua_isnoneornil(L,3) ? 1000.0f : (float)luaL_checknumber(L,3);
+    RaycastHit r = h->raycast(ox,oy,oz,dx,dy,dz,maxDist);
+    lua_createtable(L, 0, 5);
+    lua_pushboolean(L, r.hit); lua_setfield(L, -2, "hit");
+    if (r.hit) {
+        lua_pushnumber(L, r.distance);                       lua_setfield(L, -2, "distance");
+        pushVec3(L, r.point[0],  r.point[1],  r.point[2]);   lua_setfield(L, -2, "point");
+        pushVec3(L, r.normal[0], r.normal[1], r.normal[2]);  lua_setfield(L, -2, "normal");
+        if (r.entity) pushEntity(L, h->world()->entity((flecs::entity_t)r.entity), h);
+        else          lua_pushnil(L);
+        lua_setfield(L, -2, "entity");
+    }
+    return 1;
+}
+
 // ── install ──────────────────────────────────────────────────────────────
 inline void install(lua_State* L, ScriptHost* h) {
     // Entity metatable (methods resolve via __index = metatable)
@@ -180,8 +204,9 @@ inline void install(lua_State* L, ScriptHost* h) {
     static const luaL_Reg kTime[]  = {{"dt",time_dt},{"elapsed",time_elapsed},{"frame",time_frame},{nullptr,nullptr}};
     static const luaL_Reg kWorld[] = {{"find",world_find},{"create",world_create},{nullptr,nullptr}};
     static const luaL_Reg kAudio[] = {{"play",audio_play},{"playAt",audio_playAt},{nullptr,nullptr}};
+    static const luaL_Reg kPhysics[] = {{"raycast",phys_raycast},{nullptr,nullptr}};
     table("Input", kInput); table("Log", kLog); table("Time", kTime);
-    table("World", kWorld); table("Audio", kAudio);
+    table("World", kWorld); table("Audio", kAudio); table("Physics", kPhysics);
 }
 
 } // namespace LuaBindings
