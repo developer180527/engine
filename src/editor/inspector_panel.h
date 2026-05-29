@@ -1,4 +1,6 @@
 #pragma once
+#include "components/script_component.h"
+#include <cstdio>
 
 #include <flecs.h>
 #include <imgui.h>
@@ -360,6 +362,31 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         ImGui::Spacing();
         if (ImGui::Button("+ Add RigidBody", {-1, 0})) {
             e.set<RigidBody>({}); ctx.editor.sceneDirty = true;
+        }
+    }
+
+    // ── Script ─────────────────────────────────────────────────────────
+    if (e.has<ScriptComponent>()) {
+        detail::sectionHeader("Script");
+        ScriptComponent& sc = e.get_mut<ScriptComponent>();
+        char buf[256];
+        snprintf(buf, sizeof(buf), "%s", sc.scriptPath.c_str());
+        ImGui::TextDisabled("Path (relative to project root)");
+        if (ImGui::InputText("##scriptPath", buf, sizeof(buf))) {
+            sc.scriptPath = buf; ctx.editor.sceneDirty = true;
+        }
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f,0.1f,0.1f,1.f));
+        if (ImGui::Button("Remove Script", {-1, 0})) {
+            e.remove<ScriptComponent>(); ctx.editor.sceneDirty = true;
+        }
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        if (ImGui::Button("+ Add Script", {-1, 0})) {
+            e.set<ScriptComponent>({}); ctx.editor.sceneDirty = true;
         }
     }
     ImGui::End();

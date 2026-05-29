@@ -243,7 +243,7 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16],
     visible.reserve(64);
 
     world.query_builder<const Transform, const MeshRenderer>().build()
-        .each([&](flecs::entity, const Transform& t, const MeshRenderer& mr) {
+        .each([&](flecs::entity e, const Transform& t, const MeshRenderer& mr) {
             const Mesh* mesh = m_assets.getMesh(mr.mesh);
             if (!mesh) return;
 
@@ -251,7 +251,7 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16],
                 const bx::Vec3 c    = mesh->boundsCenter();
                 const float    maxS = std::max({t.scale.x, t.scale.y, t.scale.z});
                 const float    r    = bx::length(mesh->boundsSize()) * 0.5f * maxS;
-                float m[16]; t.getMatrix(m);
+                float m[16]; getWorldMatrix(e, m);
                 const float wx = m[0]*c.x+m[4]*c.y+m[8]*c.z +m[12];
                 const float wy = m[1]*c.x+m[5]*c.y+m[9]*c.z +m[13];
                 const float wz = m[2]*c.x+m[6]*c.y+m[10]*c.z+m[14];
@@ -260,7 +260,7 @@ void EngineRuntime::renderScene(const float view[16], const float proj[16],
             }
 
             Renderable r;
-            t.getMatrix(r.model);
+            getWorldMatrix(e, r.model);
             r.mesh    = mesh;
             // Per-entity override wins over shared mesh material
             MaterialHandle mh = mr.materialOverride.valid()

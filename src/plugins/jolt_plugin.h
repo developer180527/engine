@@ -327,8 +327,25 @@ private:
                 if (it == m_entityToBody.end()) return;
                 JPH::Vec3 p = bi.GetPosition(it->second);
                 JPH::Quat q = bi.GetRotation(it->second);
-                t.position = {p.GetX(), p.GetY(), p.GetZ()};
-                t.rotation = {q.GetX(), q.GetY(), q.GetZ(), q.GetW()};
+                // Jolt returns a WORLD pose, but Transform is LOCAL and
+                // rendering re-applies the parent via getWorldMatrix. For a
+                // parented body, convert world -> local so the parent is not
+                // applied twice (which caused drift/jumps).
+                flecs::entity par = e.target(flecs::ChildOf);
+                if (par && par.is_alive() && par.has<Transform>()) {
+                    float world[16];
+                    bx::mtxFromQuaternion(world, bx::Quaternion{q.GetX(),q.GetY(),q.GetZ(),q.GetW()});
+                    world[12]=p.GetX(); world[13]=p.GetY(); world[14]=p.GetZ();
+                    float parentWorld[16]; getWorldMatrix(par, parentWorld);
+                    float parentInv[16];   bx::mtxInverse(parentInv, parentWorld);
+                    float local[16];       bx::mtxMul(local, world, parentInv);
+                    bx::Vec3 lp{0,0,0}; bx::Quaternion lr{0,0,0,1}; bx::Vec3 ls{1,1,1};
+                    decomposeMatrix(local, lp, lr, ls);
+                    t.position = lp; t.rotation = lr; // scale stays local
+                } else {
+                    t.position = {p.GetX(), p.GetY(), p.GetZ()};
+                    t.rotation = {q.GetX(), q.GetY(), q.GetZ(), q.GetW()};
+                }
             });
     }
 };

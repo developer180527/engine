@@ -134,46 +134,6 @@
     },
     {
       "meshRenderer": {
-        "handleId": 6,
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
-      },
-      "name": "Demon_Mask (2)",
-      "rigidBody": {
-        "bodyType": 2,
-        "friction": 0.6000000238418579,
-        "halfExtent": [
-          0.5,
-          0.5,
-          0.5
-        ],
-        "halfHeight": 0.5,
-        "mass": 1.0,
-        "radius": 0.5,
-        "restitution": 0.30000001192092896,
-        "shape": 1,
-        "useGravity": true
-      },
-      "transform": {
-        "position": [
-          -6.874497413635254,
-          11.134791374206543,
-          9.636964797973633
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.0531535148620605,
-          1.0531535148620605,
-          1.0531535148620605
-        ]
-      }
-    },
-    {
-      "meshRenderer": {
         "handleId": 3,
         "sourcePath": "engine://primitive/sphere",
         "sourceType": "primitive"
@@ -210,6 +170,49 @@
           1.0,
           1.0,
           1.0
+        ]
+      }
+    },
+    {
+      "meshRenderer": {
+        "handleId": 6,
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
+      },
+      "name": "Demon_Mask (2)",
+      "rigidBody": {
+        "bodyType": 2,
+        "friction": 0.6000000238418579,
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "halfHeight": 0.5,
+        "mass": 1.0,
+        "radius": 0.5,
+        "restitution": 0.30000001192092896,
+        "shape": 1,
+        "useGravity": true
+      },
+      "script": {
+        "path": "scripts/spin.lua"
+      },
+      "transform": {
+        "position": [
+          -6.874497413635254,
+          11.134791374206543,
+          9.636964797973633
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0531535148620605,
+          1.0531535148620605,
+          1.0531535148620605
         ]
       }
     },

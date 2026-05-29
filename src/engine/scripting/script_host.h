@@ -49,6 +49,9 @@ inline Key keyFromName(const char* name) {
 class ScriptHost {
 public:
     explicit ScriptHost(flecs::world* world) : m_world(world) {}
+    void setWorld(flecs::world* w) { m_world = w; } // bound per Play
+    void     beginSession() { ++m_epoch; } // invalidates entity refs from prior plays
+    uint32_t epoch() const  { return m_epoch; }
 
     // Backend sets per-frame state before dispatching onUpdate.
     void setFrame(float dt, double elapsed, uint64_t frame) {
@@ -64,7 +67,15 @@ public:
     flecs::entity find(const char* name)              { return m_world->lookup(name); }
     bool          isAlive(flecs::entity e) const      { return e.is_alive(); }
     void          setParent(flecs::entity c, flecs::entity p) {
-        if (c.is_alive() && p.is_alive()) { c.remove(flecs::ChildOf, flecs::Wildcard); c.add(flecs::ChildOf, p); }
+        if (!c.is_alive() || !p.is_alive() || c == p) return;
+        // Refuse cycles: if p is a descendant of c, parenting would make c
+        // its own ancestor and getWorldMatrix would infinite-recurse.
+        int guard = 0;
+        for (flecs::entity a = p; a && a.is_alive() && guard < 4096;
+             a = a.target(flecs::ChildOf), ++guard)
+            if (a == c) return;
+        c.remove(flecs::ChildOf, flecs::Wildcard);
+        c.add(flecs::ChildOf, p);
     }
     void          clearParent(flecs::entity c)        { if (c.is_alive()) c.remove(flecs::ChildOf, flecs::Wildcard); }
 
@@ -116,4 +127,5 @@ private:
     float    m_dt      = 0.0f;
     double   m_elapsed = 0.0;
     uint64_t m_frame   = 0;
+    uint32_t m_epoch   = 0;
 };

@@ -47,7 +47,6 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
 
     // ── Edit ─────────────────────────────────────────────────────────
     if (ImGui::BeginMenu("Edit")) {
-        ImGui::BeginDisabled(); // TODO: undo/redo system
         if (!cb.canUndo) ImGui::BeginDisabled();
         { std::string label = cb.undoDesc.empty() ? "Undo" : "Undo " + cb.undoDesc;
           if (ImGui::MenuItem(label.c_str(), "Cmd+Z") && cb.onUndo) cb.onUndo(); }
@@ -56,7 +55,6 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
         { std::string label = cb.redoDesc.empty() ? "Redo" : "Redo " + cb.redoDesc;
           if (ImGui::MenuItem(label.c_str(), "Cmd+Shift+Z") && cb.onRedo) cb.onRedo(); }
         if (!cb.canRedo) ImGui::EndDisabled();
-        ImGui::EndDisabled();
         ImGui::Separator();
         ImGui::BeginDisabled(); // TODO: clipboard ops
         ImGui::MenuItem("Cut",   "Cmd+X");

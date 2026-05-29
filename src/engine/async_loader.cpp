@@ -513,7 +513,7 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
     if (!req.asset.success) {
         // Erase from inFlight so the path can be retried or waited on cleanly
         { std::lock_guard<std::mutex> lk(m_pendingMtx);
-          m_inFlight.erase(req.asset.path); }
+          m_inFlight.erase(normalizeKey(req.asset.path)); }
         LOG_ERROR("Loader", "Upload skipped (parse failed): %s",
                   req.asset.name.c_str());
         if (req.cb) req.cb(MeshHandle{}, req.asset.name);
@@ -618,6 +618,7 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
             waiters = std::move(it->second);
             m_waiters.erase(it);
         }
+        m_inFlight.erase(normalizeKey(req.asset.path)); // clear in-flight on success
     }
     for (auto& w : waiters)
         if (w) w(firstHandle, req.asset.name);

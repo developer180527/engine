@@ -1,55 +1,205 @@
 #pragma once
 #include "engine/plugin.h"
 #include "engine/logger.h"
-#include <lua.hpp>   // extern "C" wrapper around lua.h/lualib.h/lauxlib.h
+#include "engine_context.h"      // full EngineContext (plugin.h only fwd-decls it)
+#include "io/project_context.h"  // ProjectContext::projectRoot
+#include "engine/scripting/script_host.h"
+#include "engine/scripting/lua_bindings.h"
+#include "components/script_component.h"
+#include <lua.hpp>
 #include <imgui.h>
+#include <filesystem>
+#include <unordered_map>
+#include <vector>
+#include <string>
 
 // ── LuaScriptPlugin ────────────────────────────────────────────────────────
-// Lua 5.4 (PUC-Rio) scripting backend. Owns one lua_State for the session.
+// Lua 5.4 backend with per-entity script lifecycle.
 //
-// Stage 1 (here): boot the VM, open standard libraries, run a smoke test to
-//   prove the build links and the interpreter executes on this platform.
-// Stage 2: bind ScriptHost into Lua, load per-entity scripts, dispatch
-//   onStart/onUpdate during Play.
-// Stage 3: ScriptComponent inspector UI + a real gameplay test script.
+// Script file convention — returns a table of methods (a "behavior"):
+//   local M = {}
+//   function M:onStart()        self.speed = 5 end
+//   function M:onUpdate(dt)     ... self.entity:getTransform() ... end
+//   function M:onDestroy()      ... end
+//   return M
+//
+// Each entity with a ScriptComponent gets an instance table (state lives on
+// self; self.entity is the entity handle). Modules are cached by path and
+// cleared on Stop, so editing a script and pressing Play reloads it.
 class LuaScriptPlugin final : public IEnginePlugin {
 public:
     const char* name()    const override { return "Scripting"; }
     const char* version() const override { return "5.4-lua"; }
 
-    void onAttach(EngineContext&) override {
+    void onAttach(EngineContext& ec) override {
+        m_projectRoot = ec.project.projectRoot;
         m_L = luaL_newstate();
         if (!m_L) { LOG_ERROR("Script", "Failed to create Lua state"); return; }
-        luaL_openlibs(m_L);
-
-        // Smoke test — prove the VM actually executes bytecode.
-        if (luaL_dostring(m_L, "return 2 + 2") == LUA_OK) {
-            int r = (int)lua_tointeger(m_L, -1);
-            lua_pop(m_L, 1);
-            LOG_SUCCESS("Script", "%s online — smoke test 2+2=%d", LUA_RELEASE, r);
-        } else {
-            LOG_ERROR("Script", "Lua smoke test failed: %s", lua_tostring(m_L, -1));
-            lua_pop(m_L, 1);
-        }
+        openSafeLibs(m_L);
+        LuaBindings::install(m_L, &m_host);
+        LOG_SUCCESS("Script", "%s online — bindings installed", LUA_RELEASE);
     }
 
     void onDetach() override {
+        clearInstances(); clearModules();
         if (m_L) { lua_close(m_L); m_L = nullptr; }
     }
 
-    void onSimulationStart(flecs::world&) override {} // Stage 2
-    void onSimulationStop()               override {} // Stage 2
-    void onUpdate(flecs::world&, float)   override {} // Stage 2
+    void onSimulationStart(flecs::world& gw) override {
+        if (!m_L) return;
+        m_host.setWorld(&gw);
+        m_host.beginSession();   // invalidate entity refs stashed in prior plays
+        m_elapsed = 0.0; m_frame = 0;
+
+        // Collect first (don't instantiate inside the query — onStart may
+        // make structural changes). Then instantiate inside a defer scope.
+        struct Init { flecs::entity e; std::string path; };
+        std::vector<Init> toInit;
+        gw.query_builder<ScriptComponent>().build()
+            .each([&](flecs::entity e, ScriptComponent& sc) {
+                if (!sc.scriptPath.empty()) toInit.push_back({e, sc.scriptPath});
+            });
+
+        gw.defer_begin();
+        for (auto& i : toInit) instantiate(i.e, i.path);
+        gw.defer_end();
+        LOG_INFO("Script", "Play: %zu script instance(s)", m_instances.size());
+    }
+
+    void onSimulationStop() override {
+        for (auto& inst : m_instances)
+            if (!inst.errored) dispatch(inst, "onDestroy", false, 0.0f);
+        clearInstances();
+        clearModules();          // next Play reloads scripts from disk
+        m_host.setWorld(nullptr);
+    }
+
+    void onUpdate(flecs::world& gw, float dt) override {
+        if (!m_L) return;
+        m_elapsed += dt; ++m_frame;
+        m_host.setFrame(dt, m_elapsed, m_frame);
+        gw.defer_begin();        // defer spawn/destroy issued from scripts
+        for (auto& inst : m_instances) {
+            if (inst.errored) continue;
+            if (!gw.entity(inst.id).is_alive()) continue;
+            dispatch(inst, "onUpdate", true, dt);
+        }
+        gw.defer_end();
+    }
 
     void onEditorUI() override {
-        ImGui::TextDisabled("Backend:  Lua 5.4 (PUC-Rio)");
-        ImGui::TextDisabled("State:    %s", m_L ? "VM running" : "not initialized");
+        ImGui::TextDisabled("Backend:   Lua 5.4 (PUC-Rio)");
+        ImGui::TextDisabled("State:     %s", m_L ? "VM running" : "off");
+        ImGui::TextDisabled("Instances: %d", (int)m_instances.size());
         ImGui::Spacing();
-        ImGui::TextDisabled("Stage 1:  VM boot + smoke test   [active]");
-        ImGui::TextDisabled("Stage 2:  ScriptHost bindings + onStart/onUpdate");
-        ImGui::TextDisabled("Stage 3:  ScriptComponent inspector + test script");
+        ImGui::TextDisabled("Lifecycle: onStart / onUpdate / onDestroy");
+        ImGui::TextDisabled("Scripts reload on each Play");
     }
 
 private:
-    lua_State* m_L = nullptr;
+    struct Instance { flecs::entity_t id; int ref; bool errored = false; };
+
+    // Sandbox: open only base/table/string/math/coroutine. io/os/package/
+    // debug are never opened; strip code-loading base globals.
+    static void openSafeLibs(lua_State* L) {
+        luaL_requiref(L, LUA_GNAME,       luaopen_base,      1); lua_pop(L, 1);
+        luaL_requiref(L, LUA_TABLIBNAME,  luaopen_table,     1); lua_pop(L, 1);
+        luaL_requiref(L, LUA_STRLIBNAME,  luaopen_string,    1); lua_pop(L, 1);
+        luaL_requiref(L, LUA_MATHLIBNAME, luaopen_math,      1); lua_pop(L, 1);
+        luaL_requiref(L, LUA_COLIBNAME,   luaopen_coroutine, 1); lua_pop(L, 1);
+        static const char* kStrip[] = {"dofile","loadfile","load","require","collectgarbage",nullptr};
+        for (int i = 0; kStrip[i]; ++i) { lua_pushnil(L); lua_setglobal(L, kStrip[i]); }
+    }
+
+    // Reject absolute paths, ".." components, and any path that resolves
+    // outside the project root.
+    bool validateScriptPath(const std::string& rel, std::filesystem::path& outFull) {
+        namespace fs = std::filesystem;
+        fs::path p(rel);
+        if (p.is_absolute()) {
+            LOG_ERROR("Script", "Rejected absolute script path: %s", rel.c_str()); return false;
+        }
+        for (const auto& part : p)
+            if (part == "..") { LOG_ERROR("Script", "Rejected '..' in script path: %s", rel.c_str()); return false; }
+        fs::path root = fs::weakly_canonical(m_projectRoot);
+        fs::path full = fs::weakly_canonical(m_projectRoot / p);
+        fs::path relToRoot = full.lexically_relative(root);
+        bool escapes = relToRoot.empty();
+        if (!escapes) { auto f = relToRoot.begin(); if (f != relToRoot.end() && *f == "..") escapes = true; }
+        if (escapes) { LOG_ERROR("Script", "Script path escapes project root: %s", rel.c_str()); return false; }
+        outFull = full; return true;
+    }
+
+    int loadModule(const std::string& path) {
+        auto it = m_moduleRefs.find(path);
+        if (it != m_moduleRefs.end()) return it->second;
+        std::filesystem::path full;
+        if (!validateScriptPath(path, full)) return LUA_NOREF;
+        if (luaL_loadfile(m_L, full.string().c_str()) != LUA_OK) {
+            LOG_ERROR("Script", "load %s: %s", path.c_str(), lua_tostring(m_L, -1));
+            lua_pop(m_L, 1); return LUA_NOREF;
+        }
+        if (lua_pcall(m_L, 0, 1, 0) != LUA_OK) {
+            LOG_ERROR("Script", "run %s: %s", path.c_str(), lua_tostring(m_L, -1));
+            lua_pop(m_L, 1); return LUA_NOREF;
+        }
+        if (!lua_istable(m_L, -1)) {
+            LOG_ERROR("Script", "%s must 'return' a table of methods", path.c_str());
+            lua_pop(m_L, 1); return LUA_NOREF;
+        }
+        int ref = luaL_ref(m_L, LUA_REGISTRYINDEX);
+        m_moduleRefs[path] = ref;
+        return ref;
+    }
+
+    void instantiate(flecs::entity e, const std::string& path) {
+        int moduleRef = loadModule(path);
+        if (moduleRef == LUA_NOREF) return;
+        // instance = setmetatable({ entity = <ud> }, { __index = module })
+        lua_newtable(m_L);                              // instance
+        lua_rawgeti(m_L, LUA_REGISTRYINDEX, moduleRef); // module
+        lua_newtable(m_L);                              // mt
+        lua_pushvalue(m_L, -2);                         // module (dup)
+        lua_setfield(m_L, -2, "__index");               // mt.__index = module
+        lua_setmetatable(m_L, -3);                      // setmetatable(instance, mt)
+        lua_pop(m_L, 1);                                // pop module
+        LuaBindings::pushEntity(m_L, e, &m_host);       // entity userdata (epoch-stamped)
+        lua_setfield(m_L, -2, "entity");                // instance.entity = ud
+        int instRef = luaL_ref(m_L, LUA_REGISTRYINDEX); // pop instance
+        m_instances.push_back({ (flecs::entity_t)e.id(), instRef, false });
+        dispatch(m_instances.back(), "onStart", false, 0.0f);
+    }
+
+    // instance:method([dt]) via __index → module. pcall-guarded.
+    void dispatch(Instance& inst, const char* method, bool hasDt, float dt) {
+        lua_rawgeti(m_L, LUA_REGISTRYINDEX, inst.ref);  // instance
+        lua_getfield(m_L, -1, method);                  // method
+        if (!lua_isfunction(m_L, -1)) { lua_pop(m_L, 2); return; }
+        lua_pushvalue(m_L, -2);                         // self
+        int nargs = 1;
+        if (hasDt) { lua_pushnumber(m_L, dt); nargs = 2; }
+        if (lua_pcall(m_L, nargs, 0, 0) != LUA_OK) {
+            LOG_ERROR("Script", "%s: %s", method, lua_tostring(m_L, -1));
+            lua_pop(m_L, 1);
+            inst.errored = true;   // stop re-running a broken script
+        }
+        lua_pop(m_L, 1);           // pop instance
+    }
+
+    void clearInstances() {
+        if (m_L) for (auto& inst : m_instances) luaL_unref(m_L, LUA_REGISTRYINDEX, inst.ref);
+        m_instances.clear();
+    }
+    void clearModules() {
+        if (m_L) for (auto& kv : m_moduleRefs) luaL_unref(m_L, LUA_REGISTRYINDEX, kv.second);
+        m_moduleRefs.clear();
+    }
+
+    lua_State*  m_L = nullptr;
+    ScriptHost  m_host{nullptr};
+    std::filesystem::path m_projectRoot;
+    std::unordered_map<std::string,int> m_moduleRefs;
+    std::vector<Instance> m_instances;
+    double   m_elapsed = 0.0;
+    uint64_t m_frame   = 0;
 };
