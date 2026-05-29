@@ -21,6 +21,8 @@
 #include "components/camera.h"
 #include "components/rigid_body.h"
 #include "components/script_component.h"
+#include "core/entity_id_util.h"
+#include <unordered_map>
 #include "engine/logger.h"
 
 namespace SceneSerializer {
@@ -29,6 +31,7 @@ namespace SceneSerializer {
 inline bool save(const std::filesystem::path& path,
                  flecs::world& ecs, AssetRegistry& assets) {
     std::filesystem::create_directories(path.parent_path());
+    assignMissingIds(ecs);   // every saved entity gets a stable id
     nlohmann::json scene;
     scene["version"]  = 1;
     scene["entities"] = nlohmann::json::array();
@@ -39,11 +42,13 @@ inline bool save(const std::filesystem::path& path,
 
             nlohmann::json je;
             je["name"] = n.value;
-            // Parent relationship
+            // Stable identity + parent reference (by id, not mutable name)
+            if (const EntityId* myId = e.try_get<EntityId>())
+                je["id"] = myId->value;
             flecs::entity par = e.target(flecs::ChildOf);
             if (par && par.is_alive())
-                if (const Name* pn = par.try_get<Name>())
-                    je["parent"] = pn->value;
+                if (const EntityId* pid = par.try_get<EntityId>())
+                    je["parentId"] = pid->value;
             je["transform"]["position"] = {t.position.x, t.position.y, t.position.z};
             je["transform"]["rotation"] = {t.rotation.x, t.rotation.y,
                                            t.rotation.z, t.rotation.w};
@@ -121,6 +126,8 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
     // Called after entity creation in every load path — these components
     // are immediate and don't depend on async mesh loading.
     auto restoreComponents = [&](flecs::entity ent, const nlohmann::json& je) {
+        uint64_t eid = je.value("id", (uint64_t)0);
+        ent.set<EntityId>({ eid != 0 ? eid : generateEntityId() });
         if (je.contains("camera")) {
             const auto& jc = je["camera"];
             Camera cam;
@@ -253,18 +260,25 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
 
     LOG_INFO("Scene", "Queued %d assets for async load → %s",
              queued, scenePath.filename().string().c_str());
-    // ── Restore parent relationships ──────────────────────────────────
-    // Two-pass: all entities already exist with Name set synchronously,
-    // so lookup by name is safe before ChildOf is applied.
-    for (const auto& je : scene.value("entities", nlohmann::json::array())) {
-        if (!je.contains("parent")) continue;
-        std::string childName  = je.value("name", "");
-        std::string parentName = je.value("parent", "");
-        if (childName.empty() || parentName.empty()) continue;
-        flecs::entity child  = ecs.lookup(childName.c_str());
-        flecs::entity parent = ecs.lookup(parentName.c_str());
-        if (child.is_alive() && parent.is_alive() && child != parent)
-            child.add(flecs::ChildOf, parent);
+    // ── Restore parent relationships (by stable id) ───────────────────
+    // Resolve child/parent by EntityId; fall back to name for legacy
+    // scenes that predate ids.
+    {
+        std::unordered_map<uint64_t, flecs::entity> byId;
+        ecs.query_builder<const EntityId>().build()
+            .each([&](flecs::entity e, const EntityId& id) { byId[id.value] = e; });
+        for (const auto& je : scene.value("entities", nlohmann::json::array())) {
+            uint64_t cid = je.value("id", (uint64_t)0);
+            uint64_t pid = je.value("parentId", (uint64_t)0);
+            flecs::entity child  = (cid && byId.count(cid)) ? byId[cid] : flecs::entity{};
+            flecs::entity parent = (pid && byId.count(pid)) ? byId[pid] : flecs::entity{};
+            if (!child.is_alive() && je.contains("name"))
+                child = ecs.lookup(je.value("name", "").c_str());
+            if (!parent.is_alive() && je.contains("parent"))
+                parent = ecs.lookup(je.value("parent", "").c_str());
+            if (child.is_alive() && parent.is_alive() && child != parent)
+                child.add(flecs::ChildOf, parent);
+        }
     }
     return true;
 }
@@ -273,6 +287,7 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
 // Stores handle IDs alongside source paths so game world can reuse
 // live asset handles without any re-loading (instant game world creation).
 inline std::string saveToString(flecs::world& ecs, AssetStorage& assets) {
+    assignMissingIds(ecs);   // every snapshotted entity gets a stable id
     nlohmann::json scene;
     scene["version"]  = 1;
     scene["entities"] = nlohmann::json::array();
@@ -281,11 +296,13 @@ inline std::string saveToString(flecs::world& ecs, AssetStorage& assets) {
             if (e.has<Spinner>()) return;
             nlohmann::json je;
             je["name"] = n.value;
-            // Parent relationship
+            // Stable identity + parent reference (by id, not mutable name)
+            if (const EntityId* myId = e.try_get<EntityId>())
+                je["id"] = myId->value;
             flecs::entity par = e.target(flecs::ChildOf);
             if (par && par.is_alive())
-                if (const Name* pn = par.try_get<Name>())
-                    je["parent"] = pn->value;
+                if (const EntityId* pid = par.try_get<EntityId>())
+                    je["parentId"] = pid->value;
             je["transform"]["position"] = {t.position.x, t.position.y, t.position.z};
             je["transform"]["rotation"] = {t.rotation.x, t.rotation.y,
                                            t.rotation.z, t.rotation.w};
@@ -352,6 +369,8 @@ inline void loadIntoWorld(const std::string& snapshot, flecs::world& world,
                 t.scale = {jt["scale"][0], jt["scale"][1], jt["scale"][2]};
         }
         auto e = world.entity(name.c_str()).set<Transform>(t).set<Name>({name});
+        { uint64_t eid = je.value("id", (uint64_t)0);
+          e.set<EntityId>({ eid != 0 ? eid : generateEntityId() }); }
         if (je.contains("meshRenderer")) {
             uint32_t hid = je["meshRenderer"].value("handleId", 0u);
             if (hid > 0) {
@@ -402,16 +421,23 @@ inline void loadIntoWorld(const std::string& snapshot, flecs::world& world,
         }
         ++count;
     }
-    // Restore parent relationships in game world
-    for (const auto& je : scene.value("entities", nlohmann::json::array())) {
-        if (!je.contains("parent")) continue;
-        std::string childName  = je.value("name", "");
-        std::string parentName = je.value("parent", "");
-        if (childName.empty() || parentName.empty()) continue;
-        flecs::entity child  = world.lookup(childName.c_str());
-        flecs::entity parent = world.lookup(parentName.c_str());
-        if (child.is_alive() && parent.is_alive() && child != parent)
-            child.add(flecs::ChildOf, parent);
+    // Restore parent relationships in game world (by stable id)
+    {
+        std::unordered_map<uint64_t, flecs::entity> byId;
+        world.query_builder<const EntityId>().build()
+            .each([&](flecs::entity e, const EntityId& id) { byId[id.value] = e; });
+        for (const auto& je : scene.value("entities", nlohmann::json::array())) {
+            uint64_t cid = je.value("id", (uint64_t)0);
+            uint64_t pid = je.value("parentId", (uint64_t)0);
+            flecs::entity child  = (cid && byId.count(cid)) ? byId[cid] : flecs::entity{};
+            flecs::entity parent = (pid && byId.count(pid)) ? byId[pid] : flecs::entity{};
+            if (!child.is_alive() && je.contains("name"))
+                child = world.lookup(je.value("name", "").c_str());
+            if (!parent.is_alive() && je.contains("parent"))
+                parent = world.lookup(je.value("parent", "").c_str());
+            if (child.is_alive() && parent.is_alive() && child != parent)
+                child.add(flecs::ChildOf, parent);
+        }
     }
     LOG_INFO("Scene", "Game world populated: %d entities (instant, shared handles)", count);
 }

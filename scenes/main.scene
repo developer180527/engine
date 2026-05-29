@@ -1,6 +1,7 @@
 {
   "entities": [
     {
+      "id": 1560048093920929339,
       "meshRenderer": {
         "handleId": 5,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
@@ -26,6 +27,7 @@
       }
     },
     {
+      "id": 16235234808625830255,
       "meshRenderer": {
         "handleId": 7,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
@@ -51,6 +53,7 @@
       }
     },
     {
+      "id": 4286930083610790379,
       "meshRenderer": {
         "handleId": 2,
         "sourcePath": "engine://primitive/plane",
@@ -92,47 +95,7 @@
       }
     },
     {
-      "meshRenderer": {
-        "handleId": 1,
-        "sourcePath": "engine://primitive/cube",
-        "sourceType": "primitive"
-      },
-      "name": "Cube",
-      "rigidBody": {
-        "bodyType": 2,
-        "friction": 0.6000000238418579,
-        "halfExtent": [
-          0.5,
-          0.5,
-          0.5
-        ],
-        "halfHeight": 0.5,
-        "mass": 1.0,
-        "radius": 0.5,
-        "restitution": 0.6909999847412109,
-        "shape": 0,
-        "useGravity": true
-      },
-      "transform": {
-        "position": [
-          0.0,
-          10.785236358642578,
-          7.007580757141113
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.0,
-          1.0,
-          1.0
-        ]
-      }
-    },
-    {
+      "id": 1881529086687028663,
       "meshRenderer": {
         "handleId": 3,
         "sourcePath": "engine://primitive/sphere",
@@ -174,6 +137,7 @@
       }
     },
     {
+      "id": 1423140140260966028,
       "meshRenderer": {
         "handleId": 6,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
@@ -199,9 +163,9 @@
       },
       "transform": {
         "position": [
-          -6.874497413635254,
-          11.134791374206543,
-          9.636964797973633
+          -7.318642616271973,
+          11.475664138793945,
+          9.604732513427734
         ],
         "rotation": [
           0.0,
@@ -231,8 +195,9 @@
         "orthoSize": 10.0,
         "projection": 0
       },
+      "id": 7428876341975280172,
       "name": "Camera (2)",
-      "parent": "Demon_Mask (2)",
+      "parentId": 1423140140260966028,
       "transform": {
         "position": [
           0.9421523809432983,
@@ -249,6 +214,49 @@
           1.0,
           1.0,
           1.0
+        ]
+      }
+    },
+    {
+      "id": 15386141648548072725,
+      "meshRenderer": {
+        "handleId": 1,
+        "sourcePath": "engine://primitive/cube",
+        "sourceType": "primitive"
+      },
+      "name": "Cube",
+      "parentId": 16235234808625830255,
+      "rigidBody": {
+        "bodyType": 2,
+        "friction": 0.6000000238418579,
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "halfHeight": 0.5,
+        "mass": 1.0,
+        "radius": 0.5,
+        "restitution": 0.6909999847412109,
+        "shape": 0,
+        "useGravity": true
+      },
+      "transform": {
+        "position": [
+          0.6474350094795227,
+          1.8631203174591064,
+          1.370810627937317
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          0.9999999403953552
+        ],
+        "scale": [
+          0.20263579487800598,
+          0.20263579487800598,
+          0.20263579487800598
         ]
       }
     }

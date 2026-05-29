@@ -9,6 +9,7 @@
 #include "components/rigid_body.h"
 #include "components/collision_events.h"
 #include "components/script_component.h"
+#include "components/entity_id.h"
 #include "engine/logger.h"
 
 // ── MetaRegistry ───────────────────────────────────────────────────────────
@@ -77,7 +78,9 @@ inline void registerAll(flecs::world& ecs) {
     // ScriptComponent: std::string scriptPath not trivially meta-serializable.
     // Registered by name only; serialized explicitly by the scene serializer.
     ecs.component<ScriptComponent>();
-    LOG_INFO("Meta", "Component schemas registered — %d types", 10);
+    // EntityId: stable persistent identity (opaque uint64) — by name.
+    ecs.component<EntityId>();
+    LOG_INFO("Meta", "Component schemas registered — %d types", 11);
 }
 
 } // namespace MetaRegistry
