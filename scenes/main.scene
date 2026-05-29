@@ -3,7 +3,6 @@
     {
       "id": 1560048093920929339,
       "meshRenderer": {
-        "handleId": 5,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
       },
       "name": "Television_01_4k",
@@ -27,9 +26,59 @@
       }
     },
     {
+      "id": 10527567801639476244,
+      "meshRenderer": {
+        "sourcePath": "engine://primitive/cube",
+        "sourceType": "primitive"
+      },
+      "name": "Cube",
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": 5096898856242760390,
+      "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Medieval Village MegaKit[Standard]/glTF/DoorFrame_Flat_Brick.gltf"
+      },
+      "name": "DoorFrame_Flat_Brick",
+      "transform": {
+        "position": [
+          -13.089553833007813,
+          12.867868423461914,
+          -1.4911117553710938
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.8418717384338379,
+          0.8418717384338379,
+          0.8418717384338379
+        ]
+      }
+    },
+    {
       "id": 16235234808625830255,
       "meshRenderer": {
-        "handleId": 7,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
       },
       "name": "PlantBanjoFigVase001",
@@ -53,9 +102,33 @@
       }
     },
     {
+      "id": 11013466836813743833,
+      "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Medieval Village MegaKit[Standard]/FBX/Corner_Interior_Big.fbx"
+      },
+      "name": "Corner_Interior_Big",
+      "transform": {
+        "position": [
+          -9.20545482635498,
+          9.865312576293945,
+          13.375306129455566
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.6666666865348816,
+          0.6666666865348816,
+          0.6666666865348816
+        ]
+      }
+    },
+    {
       "id": 4286930083610790379,
       "meshRenderer": {
-        "handleId": 2,
         "sourcePath": "engine://primitive/plane",
         "sourceType": "primitive"
       },
@@ -95,51 +168,8 @@
       }
     },
     {
-      "id": 1881529086687028663,
-      "meshRenderer": {
-        "handleId": 3,
-        "sourcePath": "engine://primitive/sphere",
-        "sourceType": "primitive"
-      },
-      "name": "Sphere",
-      "rigidBody": {
-        "bodyType": 2,
-        "friction": 0.6000000238418579,
-        "halfExtent": [
-          0.5,
-          0.5,
-          0.5
-        ],
-        "halfHeight": 0.5,
-        "mass": 1.0,
-        "radius": 0.5,
-        "restitution": 0.30000001192092896,
-        "shape": 0,
-        "useGravity": true
-      },
-      "transform": {
-        "position": [
-          -3.2533247470855713,
-          8.85096263885498,
-          2.139486312866211
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          1.0,
-          1.0,
-          1.0
-        ]
-      }
-    },
-    {
       "id": 15386141648548072725,
       "meshRenderer": {
-        "handleId": 1,
         "sourcePath": "engine://primitive/cube",
         "sourceType": "primitive"
       },
@@ -181,7 +211,6 @@
     {
       "id": 1423140140260966028,
       "meshRenderer": {
-        "handleId": 6,
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
       },
       "name": "Demon_Mask (2)",

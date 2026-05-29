@@ -4,19 +4,20 @@
 #include <nlohmann/json.hpp>
 #include <flecs.h>
 #include "core/transform.h"
+#include "core/transform_utils.h"
 #include "components/name.h"
-#include "components/mesh_renderer.h"
-#include "components/camera.h"
-#include "components/rigid_body.h"
 #include "components/entity_id.h"
 #include "core/entity_id_util.h"
+#include "io/entity_serializer.h"
 #include "engine/logger.h"
 
 // ── UndoStack ──────────────────────────────────────────────────────────────
-// Session-only. Entity references key on the stable EntityId (not Name), so a
-// rename between an edit and its undo no longer breaks the command. Recreated
-// entities (delete→undo, add→redo) restore their original id so any other
-// command still resolves them.
+// Session-only. Entity references key on the stable EntityId. Full-entity
+// snapshots (add/delete) run through the SAME EntitySerde table as scene save,
+// so undo can no longer drift from the serializer: restoring a deleted entity
+// brings back every serialized component, not the partial set the old
+// hand-written snapshot captured. Respawn preserves the original id, so other
+// commands still in the stack continue to resolve the entity.
 enum class UndoCmdType { Transform, EntityAdd, EntityDelete, Reparent };
 
 struct UndoCommand {
@@ -63,6 +64,8 @@ public:
     }
     void pushEntityAdd(flecs::entity e) {
         if (!e.is_alive()) return;
+        ensureEntityId(e);   // lazy ids: snapshot must capture a real id, else undo can't find it
+        if (flecs::entity p = e.target(flecs::ChildOf); p && p.is_alive()) ensureEntityId(p);
         UndoCommand c; c.type = UndoCmdType::EntityAdd;
         c.after = snapshot(e);
         c.description = "Add " + c.after.value("name", std::string("entity"));
@@ -70,6 +73,8 @@ public:
     }
     void pushEntityDelete(flecs::entity e) {   // call BEFORE destruct
         if (!e.is_alive()) return;
+        ensureEntityId(e);   // lazy ids: snapshot must capture a real id, else undo can't find it
+        if (flecs::entity p = e.target(flecs::ChildOf); p && p.is_alive()) ensureEntityId(p);
         UndoCommand c; c.type = UndoCmdType::EntityDelete;
         c.before = snapshot(e);
         c.description = "Delete " + c.before.value("name", std::string("entity"));
@@ -116,47 +121,34 @@ private:
         if (!e.is_alive()) return;
         e.remove(flecs::ChildOf, flecs::Wildcard);
         uint64_t pid = j.value("parentId",(uint64_t)0);
-        if (pid) { flecs::entity p = findById(ecs, pid); if (p.is_alive()) e.add(flecs::ChildOf, p); }
+        if (pid) {
+            flecs::entity p = findById(ecs, pid);
+            if (p.is_alive() && p != e && !isAncestorOf(e, p)) e.add(flecs::ChildOf, p);
+        }
         if (j.contains("transform")) { Transform& t = e.get_mut<Transform>(); desTf(j["transform"], t); }
     }
     static void destroyById(flecs::world& ecs, uint64_t id) {
         flecs::entity e = findById(ecs, id); if (e.is_alive()) e.destruct();
     }
+
+    // ── Full-entity snapshot / respawn via the shared serializer (Memory) ───
+    static nlohmann::json snapshot(flecs::entity e) {
+        EntitySerde::SerdeContext ctx; ctx.mode = EntitySerde::SerdeMode::Memory;
+        return EntitySerde::saveEntity(e, ctx);
+    }
     static void spawnFromSnapshot(flecs::world& ecs, const nlohmann::json& j) {
-        std::string name = j.value("name", "");
-        if (name.empty()) return;
         uint64_t id = j.value("id", (uint64_t)0);
-        if (id && findById(ecs, id).is_alive()) return;     // already present
-        Transform t{}; if (j.contains("transform")) desTf(j["transform"], t);
-        auto e = ecs.entity(name.c_str()).set<Transform>(t).set<Name>({name});
-        if (id) e.set<EntityId>({id});                       // restore SAME id
-        if (j.contains("meshRenderer")) {
-            uint32_t hid = j["meshRenderer"].value("handleId", 0u);
-            if (hid > 0) { MeshHandle h; h.id = hid; e.set<MeshRenderer>({h}); }
+        if (id && findById(ecs, id).is_alive()) return;          // already present
+        EntitySerde::SerdeContext ctx; ctx.mode = EntitySerde::SerdeMode::Memory;
+        flecs::entity e = EntitySerde::createEntity(ecs, j, ctx, EntitySerde::IdPolicy::Preserve);
+        uint64_t pid = j.value("parentId", (uint64_t)0);         // restore parent link
+        if (pid) {
+            flecs::entity p = findById(ecs, pid);
+            if (p.is_alive() && p != e && !isAncestorOf(e, p)) e.add(flecs::ChildOf, p);
         }
-        if (j.contains("camera")) {
-            const auto& jc = j["camera"]; Camera cam;
-            cam.isPrimary  = jc.value("isPrimary", false);
-            cam.projection = (ProjectionType)jc.value("projection", 0);
-            cam.fov        = jc.value("fov", 60.0f);
-            cam.nearPlane  = jc.value("near", 0.1f);
-            cam.farPlane   = jc.value("far", 1000.0f);
-            e.set<Camera>(cam);
-        }
-        if (j.contains("rigidBody")) {
-            const auto& jr = j["rigidBody"]; RigidBody rb;
-            rb.bodyType    = (PhysicsBodyType)jr.value("bodyType", 1);
-            rb.shape       = (PhysicsShape)   jr.value("shape", 0);
-            rb.mass        = jr.value("mass", 1.0f);
-            rb.restitution = jr.value("restitution", 0.3f);
-            rb.friction    = jr.value("friction", 0.6f);
-            rb.useGravity  = jr.value("useGravity", true);
-            e.set<RigidBody>(rb);
-        }
-        uint64_t pid = j.value("parentId", (uint64_t)0);
-        if (pid) { flecs::entity p = findById(ecs, pid); if (p.is_alive()) e.add(flecs::ChildOf, p); }
     }
 
+    // ── Bare Transform <-> json (lightweight transform / reparent commands) ─
     static nlohmann::json serTf(const Transform& t) {
         return { {"position", {t.position.x, t.position.y, t.position.z}},
                  {"rotation", {t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w}},
@@ -166,23 +158,5 @@ private:
         if (j.contains("position")) t.position = {j["position"][0], j["position"][1], j["position"][2]};
         if (j.contains("rotation")) t.rotation = {j["rotation"][0], j["rotation"][1], j["rotation"][2], j["rotation"][3]};
         if (j.contains("scale"))    t.scale    = {j["scale"][0], j["scale"][1], j["scale"][2]};
-    }
-    static nlohmann::json snapshot(flecs::entity e) {
-        nlohmann::json j;
-        j["id"] = ensureEntityId(e);
-        const Name* n = e.try_get<Name>(); j["name"] = n ? n->value : "";
-        if (const Transform* t = e.try_get<Transform>()) j["transform"] = serTf(*t);
-        flecs::entity par = e.target(flecs::ChildOf);
-        if (par && par.is_alive()) j["parentId"] = ensureEntityId(par);
-        if (const MeshRenderer* mr = e.try_get<MeshRenderer>())
-            j["meshRenderer"]["handleId"] = mr->mesh.id;
-        if (const Camera* cam = e.try_get<Camera>())
-            j["camera"] = {{"isPrimary",cam->isPrimary},{"projection",(int)cam->projection},
-                           {"fov",cam->fov},{"near",cam->nearPlane},{"far",cam->farPlane}};
-        if (const RigidBody* rb = e.try_get<RigidBody>())
-            j["rigidBody"] = {{"bodyType",(int)rb->bodyType},{"shape",(int)rb->shape},
-                              {"mass",rb->mass},{"restitution",rb->restitution},
-                              {"friction",rb->friction},{"useGravity",rb->useGravity}};
-        return j;
     }
 };
