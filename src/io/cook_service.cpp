@@ -91,31 +91,30 @@ void CookService::runOneCookPass() {
         return;
     }
 
-    LOG_INFO("CookService", "Cooking %d asset(s) in background...", total);
+    LOG_INFO("CookService", "Cooking %d asset(s) in background (parallel)...", total);
 
-    for (auto& rec : all) {
-        if (!m_running) break;
-        if (!isCookable(rec)) continue;
+    // Collect cookable stale UUIDs and cook them across all cores. cookMany
+    // does registry I/O on this thread and runs only cook() on the pool, so
+    // the single registry connection stays single-threaded. The callback
+    // (serialized) drives progress; shouldContinue stops dispatch on shutdown.
+    std::vector<assetlib::UUID> todo;
+    todo.reserve(all.size());
+    for (auto& rec : all)
+        if (isCookable(rec)) todo.push_back(rec.uuid);
 
-        {
+    pipeline.cookMany(todo,
+        [&](const std::string& src, bool ok) {
+            if (ok) {
+                ++cooked; m_stats.cooked = cooked;
+                LOG_INFO("CookService", "[%d/%d] Cooked: %s", cooked, total, src.c_str());
+            } else {
+                ++failed; m_stats.failed = failed;
+                LOG_WARN("CookService", "Failed: %s", src.c_str());
+            }
             std::lock_guard<std::mutex> lk(m_stats.nameMtx);
-            m_stats.currentAsset = std::filesystem::path(rec.sourcePath)
-                                       .filename().string();
-        }
-
-        auto result = pipeline.cookOne(rec.uuid);
-        if (result.success) {
-            ++cooked;
-            m_stats.cooked = cooked;
-            LOG_INFO("CookService", "[%d/%d] Cooked: %s",
-                     cooked, total, rec.sourcePath.c_str());
-        } else {
-            ++failed;
-            m_stats.failed = failed;
-            LOG_WARN("CookService", "Failed: %s — %s",
-                     rec.sourcePath.c_str(), result.error.c_str());
-        }
-    }
+            m_stats.currentAsset = std::filesystem::path(src).filename().string();
+        },
+        [this] { return (bool)m_running; });
 
     m_stats.active = false;
     {

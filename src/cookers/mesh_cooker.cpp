@@ -2,142 +2,224 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <assimp/config.h>
+#include <assimp/matrix4x4.h>
+#include <assimp/matrix3x3.h>
 #include <cstring>
 #include <cstdio>
 #include <cfloat>
+#include <cmath>
 #include <algorithm>
 #include <filesystem>
+
+// MeshCooker::cook is a pure function: it owns its Assimp importer and writes a
+// single unique output file, sharing no mutable state. That — and nothing more
+// exotic — is what lets the cook pipeline run many cooks concurrently.
 
 using namespace assetlib;
 
 static constexpr unsigned kImportFlags =
     aiProcess_Triangulate | aiProcess_GenSmoothNormals |
     aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices |
-    aiProcess_ImproveCacheLocality | aiProcess_FlipUVs;
+    aiProcess_ImproveCacheLocality | aiProcess_FlipUVs |
+    aiProcess_SortByPType;   // with SBP_REMOVE below -> triangle-only meshes
 
-// Cook format matches runtime Vertex exactly: Position(12)+Normal(12)+UV(8)=32 bytes
-// Tangent added when normal mapping milestone lands (bumps kVersion → re-cook auto)
-// Position(12)+Normal(12)+Tangent(16)+UV(8) = 48 bytes — matches runtime Vertex exactly
-static constexpr uint32_t kCookFlags = VF_POSITION|VF_NORMAL|VF_TANGENT|VF_UV0;
+static constexpr uint32_t kCookFlags = VF_POSITION | VF_NORMAL | VF_TANGENT | VF_UV0;
 
-static void pushF(std::vector<uint8_t>& b, float v) {
-    uint8_t x[4]; std::memcpy(x,&v,4); b.insert(b.end(),x,x+4);
+// Layout for kCookFlags: pos(3) + normal(3) + tangent(4, w=handedness) + uv(2) = 48 bytes.
+struct CookVertex {
+    float px, py, pz;
+    float nx, ny, nz;
+    float tx, ty, tz, tw;
+    float u, v;
+};
+
+// Buffers + running cursors threaded through the node-tree emit walk.
+struct EmitState {
+    CookVertex* verts     = nullptr;
+    uint8_t*    idxBytes  = nullptr;
+    uint32_t    vWrite    = 0;     // vertex write cursor
+    uint32_t    iByteOff  = 0;     // index byte cursor
+    uint32_t    vBase     = 0;     // running base for global index rebasing
+    bool        use16     = true;
+    uint32_t    idxStride = 2;
+    float       bMin[3]   = { FLT_MAX,  FLT_MAX,  FLT_MAX};
+    float       bMax[3]   = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+    std::vector<MeshSubmesh>* submeshes = nullptr;
+};
+
+// Count (node, mesh) occurrences — a mesh instanced under several nodes is
+// emitted once per node, so it must be sized that way too.
+static void countNode(const aiScene* s, const aiNode* node,
+                      uint32_t& verts, uint32_t& indices) {
+    for (unsigned i = 0; i < node->mNumMeshes; ++i) {
+        const aiMesh* m = s->mMeshes[node->mMeshes[i]];
+        if (m->HasPositions()) { verts += m->mNumVertices; indices += m->mNumFaces * 3; }
+    }
+    for (unsigned c = 0; c < node->mNumChildren; ++c)
+        countNode(s, node->mChildren[c], verts, indices);
 }
-static void pushF3(std::vector<uint8_t>& b,float x,float y,float z){pushF(b,x);pushF(b,y);pushF(b,z);}
-static void pushF2(std::vector<uint8_t>& b,float x,float y){pushF(b,x);pushF(b,y);}
-static void pushF4(std::vector<uint8_t>& b,float x,float y,float z,float w){pushF(b,x);pushF(b,y);pushF(b,z);pushF(b,w);}
+
+static void emitMesh(const aiMesh* mesh, const aiMatrix4x4& world, EmitState& st) {
+    if (!mesh->HasPositions()) return;
+
+    const aiMatrix3x3 w3(world);                 // linear part — directions
+    aiMatrix3x3 nm(world);                        // normals — inverse-transpose,
+    float det = nm.Determinant();                 // guarded against degenerate scale
+    if (std::fabs(det) > 1e-12f) { nm.Inverse(); nm.Transpose(); }
+    else                         { nm = aiMatrix3x3(); }
+
+    const bool hasN  = mesh->HasNormals();
+    const bool hasT  = mesh->HasTangentsAndBitangents();
+    const bool hasUV = mesh->HasTextureCoords(0);
+
+    for (unsigned v = 0; v < mesh->mNumVertices; ++v) {
+        CookVertex& vtx = st.verts[st.vWrite++];
+
+        aiVector3D P = world * mesh->mVertices[v];        // point transform (incl. translation)
+        vtx.px = P.x; vtx.py = P.y; vtx.pz = P.z;
+        st.bMin[0]=std::min(st.bMin[0],P.x); st.bMin[1]=std::min(st.bMin[1],P.y); st.bMin[2]=std::min(st.bMin[2],P.z);
+        st.bMax[0]=std::max(st.bMax[0],P.x); st.bMax[1]=std::max(st.bMax[1],P.y); st.bMax[2]=std::max(st.bMax[2],P.z);
+
+        aiVector3D N = hasN ? (nm * mesh->mNormals[v]) : aiVector3D(0, 1, 0);
+        N.Normalize();
+        vtx.nx = N.x; vtx.ny = N.y; vtx.nz = N.z;
+
+        if (hasT) {
+            aiVector3D T = w3 * mesh->mTangents[v];
+            aiVector3D B = w3 * mesh->mBitangents[v];
+            aiVector3D c(N.y*T.z - N.z*T.y, N.z*T.x - N.x*T.z, N.x*T.y - N.y*T.x);
+            float sign = (c.x*B.x + c.y*B.y + c.z*B.z) < 0.0f ? -1.0f : 1.0f; // world-space handedness
+            T.Normalize();
+            vtx.tx = T.x; vtx.ty = T.y; vtx.tz = T.z; vtx.tw = sign;
+        } else {
+            vtx.tx = 1.0f; vtx.ty = 0.0f; vtx.tz = 0.0f; vtx.tw = 1.0f;
+        }
+
+        if (hasUV) { const auto& uv = mesh->mTextureCoords[0][v]; vtx.u = uv.x; vtx.v = uv.y; }
+        else       { vtx.u = 0.0f; vtx.v = 0.0f; }
+    }
+
+    MeshSubmesh sub{};                               // value-init: no garbage in uuid/pad
+    sub.indexOffset   = st.iByteOff / st.idxStride;
+    sub.indexCount    = mesh->mNumFaces * 3;
+    sub.materialIndex = mesh->mMaterialIndex;         // -> MeshAsset::materials[idx]
+
+    if (st.use16) {
+        auto* d = reinterpret_cast<uint16_t*>(&st.idxBytes[st.iByteOff]); uint32_t o = 0;
+        for (unsigned f = 0; f < mesh->mNumFaces; ++f) {
+            const aiFace& face = mesh->mFaces[f];
+            d[o++] = (uint16_t)(face.mIndices[0] + st.vBase);
+            d[o++] = (uint16_t)(face.mIndices[1] + st.vBase);
+            d[o++] = (uint16_t)(face.mIndices[2] + st.vBase);
+        }
+        st.iByteOff += sub.indexCount * 2;
+    } else {
+        auto* d = reinterpret_cast<uint32_t*>(&st.idxBytes[st.iByteOff]); uint32_t o = 0;
+        for (unsigned f = 0; f < mesh->mNumFaces; ++f) {
+            const aiFace& face = mesh->mFaces[f];
+            d[o++] = face.mIndices[0] + st.vBase;
+            d[o++] = face.mIndices[1] + st.vBase;
+            d[o++] = face.mIndices[2] + st.vBase;
+        }
+        st.iByteOff += sub.indexCount * 4;
+    }
+
+    st.vBase += mesh->mNumVertices;
+    st.submeshes->push_back(sub);
+}
+
+static void emitNode(const aiScene* s, const aiNode* node,
+                     const aiMatrix4x4& parentWorld, EmitState& st) {
+    const aiMatrix4x4 world = parentWorld * node->mTransformation;
+    for (unsigned i = 0; i < node->mNumMeshes; ++i)
+        emitMesh(s->mMeshes[node->mMeshes[i]], world, st);
+    for (unsigned c = 0; c < node->mNumChildren; ++c)
+        emitNode(s, node->mChildren[c], world, st);
+}
 
 CookResult MeshCooker::cook(const CookContext& ctx) {
-    Assimp::Importer imp;
+    Assimp::Importer imp;   // isolated per cook — safe inside the worker pool
+    imp.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE,
+                           aiPrimitiveType_POINT | aiPrimitiveType_LINE);
     const aiScene* scene = imp.ReadFile(ctx.sourcePath.string(), kImportFlags);
-    if (!scene||!scene->mRootNode||(scene->mFlags&AI_SCENE_FLAGS_INCOMPLETE))
-        return {.success=false,.error=std::string("Assimp: ")+imp.GetErrorString()};
+    if (!scene || !scene->mRootNode || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE))
+        return {.success = false, .error = std::string("Assimp: ") + imp.GetErrorString()};
 
     MeshAsset asset;
     asset.header.magic        = 0x4D455348;
     asset.header.version      = 2;
     asset.header.vertexFlags  = kCookFlags;
-    asset.header.vertexStride = vertexStride(kCookFlags);
-    // Pre-count vertices to decide 16 vs 32-bit index stride
-    uint32_t totalVerts = 0;
-    for (unsigned m = 0; m < scene->mNumMeshes; ++m)
-        if (scene->mMeshes[m]->HasPositions())
-            totalVerts += scene->mMeshes[m]->mNumVertices;
-    const bool use16 = (totalVerts <= 65535);
-    asset.header.indexStride  = use16 ? 2 : 4;
-    asset.header.submeshCount = scene->mNumMeshes;
+    asset.header.vertexStride = sizeof(CookVertex);
     std::memcpy(asset.header.uuid, ctx.uuid.bytes.data(), 16);
 
-    float bMin[3]={FLT_MAX,FLT_MAX,FLT_MAX};
-    float bMax[3]={-FLT_MAX,-FLT_MAX,-FLT_MAX};
-    uint32_t idxOffset=0;
-    uint32_t vertexBase=0;
+    // 1. Size buffers from the full node tree (instancing-aware).
+    uint32_t totalVerts = 0, totalIndices = 0;
+    countNode(scene, scene->mRootNode, totalVerts, totalIndices);
 
-    for (unsigned m=0; m<scene->mNumMeshes; ++m) {
-        aiMesh* mesh = scene->mMeshes[m];
-        if (!mesh->HasPositions()) continue;
-        bool hasN=mesh->HasNormals();
-        bool hasT=mesh->HasTangentsAndBitangents();
-        bool hasUV=mesh->HasTextureCoords(0);
+    const bool use16 = (totalVerts <= 65535);
+    asset.header.indexStride = use16 ? 2 : 4;
+    asset.vertexData.resize((size_t)totalVerts  * sizeof(CookVertex));
+    asset.indexData.resize ((size_t)totalIndices * asset.header.indexStride);
 
-        for (unsigned v=0; v<mesh->mNumVertices; ++v) {
-            auto& p=mesh->mVertices[v];
-            pushF3(asset.vertexData,p.x,p.y,p.z);
-            bMin[0]=std::min(bMin[0],p.x); bMin[1]=std::min(bMin[1],p.y); bMin[2]=std::min(bMin[2],p.z);
-            bMax[0]=std::max(bMax[0],p.x); bMax[1]=std::max(bMax[1],p.y); bMax[2]=std::max(bMax[2],p.z);
-            if (hasN){auto& n=mesh->mNormals[v]; pushF3(asset.vertexData,n.x,n.y,n.z);}
-            else pushF3(asset.vertexData,0,1,0);
-            if (hasT) {
-                auto& t=mesh->mTangents[v]; auto& bt=mesh->mBitangents[v];
-                aiVector3D n2=hasN?mesh->mNormals[v]:aiVector3D(0,1,0);
-                float cx=n2.y*t.z-n2.z*t.y, cy=n2.z*t.x-n2.x*t.z, cz=n2.x*t.y-n2.y*t.x;
-                float sign=(cx*bt.x+cy*bt.y+cz*bt.z)<0?-1.f:1.f;
-                pushF4(asset.vertexData,t.x,t.y,t.z,sign);
-            } else pushF4(asset.vertexData,1,0,0,1);
-            if (hasUV){auto& uv=mesh->mTextureCoords[0][v]; pushF2(asset.vertexData,uv.x,uv.y);}
-            else pushF2(asset.vertexData,0,0);
-        }
+    // 2. Emit: bake each node's accumulated world transform into its meshes.
+    EmitState st;
+    st.verts     = reinterpret_cast<CookVertex*>(asset.vertexData.data());
+    st.idxBytes  = asset.indexData.data();
+    st.use16     = use16;
+    st.idxStride = asset.header.indexStride;
+    st.submeshes = &asset.submeshes;
+    if (totalVerts > 0)
+        emitNode(scene, scene->mRootNode, aiMatrix4x4(), st);
 
-        MeshSubmesh sub;
-        sub.indexOffset=idxOffset;
-        sub.indexCount=mesh->mNumFaces*3;
-        for (unsigned f=0; f<mesh->mNumFaces; ++f) {
-            for (unsigned i=0; i<mesh->mFaces[f].mNumIndices; ++i) {
-                uint32_t idx = mesh->mFaces[f].mIndices[i] + vertexBase;
-                if (use16) {
-                    auto i16 = static_cast<uint16_t>(idx);
-                    uint8_t b[2]; std::memcpy(b, &i16, 2);
-                    asset.indexData.insert(asset.indexData.end(), b, b+2);
-                } else {
-                    uint8_t b[4]; std::memcpy(b, &idx, 4);
-                    asset.indexData.insert(asset.indexData.end(), b, b+4);
-                }
-            }
-        }
-        idxOffset   += sub.indexCount;
-        vertexBase  += mesh->mNumVertices; // next mesh's indices start here
-        asset.submeshes.push_back(sub);
+    asset.header.vertexCount  = totalVerts;
+    asset.header.indexCount   = totalIndices;
+    asset.header.submeshCount = (uint32_t)asset.submeshes.size();
+    for (int i = 0; i < 3; ++i) {
+        asset.header.boundsMin[i] = totalVerts ? st.bMin[i] : 0.0f;
+        asset.header.boundsMax[i] = totalVerts ? st.bMax[i] : 0.0f;
     }
 
-    asset.header.vertexCount=static_cast<uint32_t>(asset.vertexData.size()/asset.header.vertexStride);
-    asset.header.indexCount = static_cast<uint32_t>(asset.indexData.size() / asset.header.indexStride);
-    for (int i=0;i<3;++i){asset.header.boundsMin[i]=bMin[i]; asset.header.boundsMax[i]=bMax[i];}
-
-    // ── Material section ──────────────────────────────────────────────
+    // 3. Materials — submesh.materialIndex indexes this array in source order.
+    asset.materials.reserve(scene->mNumMaterials);
     for (uint32_t m = 0; m < scene->mNumMaterials; ++m) {
         const aiMaterial* aiMat = scene->mMaterials[m];
-        assetlib::CookedMaterial cm;
-        aiColor4D col{1,1,1,1};
-        if (AI_SUCCESS == aiGetMaterialColor(aiMat, AI_MATKEY_COLOR_DIFFUSE, &col)) {
+        CookedMaterial cm{};
+
+        aiColor4D col{1.0f, 1.0f, 1.0f, 1.0f};
+        if (aiGetMaterialColor(aiMat, AI_MATKEY_COLOR_DIFFUSE, &col) == AI_SUCCESS) {
             cm.baseColorFactor[0]=col.r; cm.baseColorFactor[1]=col.g;
             cm.baseColorFactor[2]=col.b; cm.baseColorFactor[3]=col.a;
         }
-        float rough=0.7f, metal=0.0f;
+        float rough = 0.7f, metal = 0.0f;
         aiGetMaterialFloat(aiMat, AI_MATKEY_ROUGHNESS_FACTOR, &rough);
         aiGetMaterialFloat(aiMat, AI_MATKEY_METALLIC_FACTOR,  &metal);
         cm.roughness = rough; cm.metallic = metal;
+
         aiString tp;
-        if (AI_SUCCESS == aiMat->GetTexture(aiTextureType_DIFFUSE,    0, &tp) ||
-            AI_SUCCESS == aiMat->GetTexture(aiTextureType_BASE_COLOR, 0, &tp)) {
+        if (aiMat->GetTexture(aiTextureType_DIFFUSE, 0, &tp) == AI_SUCCESS ||
+            aiMat->GetTexture(aiTextureType_BASE_COLOR, 0, &tp) == AI_SUCCESS) {
             auto fn = std::filesystem::path(tp.C_Str()).filename().string();
-            std::strncpy(cm.baseColorPath, fn.c_str(), 511);
-            cm.flags |= assetlib::kMatFlag_HasBaseColor;
+            std::snprintf(cm.baseColorPath, sizeof(cm.baseColorPath), "%s", fn.c_str());
+            cm.flags |= kMatFlag_HasBaseColor;
         }
         aiString np;
-        if (AI_SUCCESS == aiMat->GetTexture(aiTextureType_NORMALS, 0, &np) ||
-            AI_SUCCESS == aiMat->GetTexture(aiTextureType_HEIGHT,  0, &np)) {
+        if (aiMat->GetTexture(aiTextureType_NORMALS, 0, &np) == AI_SUCCESS ||
+            aiMat->GetTexture(aiTextureType_HEIGHT,  0, &np) == AI_SUCCESS) {
             auto fn = std::filesystem::path(np.C_Str()).filename().string();
-            std::strncpy(cm.normalMapPath, fn.c_str(), 511);
-            cm.flags |= assetlib::kMatFlag_HasNormalMap;
+            std::snprintf(cm.normalMapPath, sizeof(cm.normalMapPath), "%s", fn.c_str());
+            cm.flags |= kMatFlag_HasNormalMap;
         }
         asset.materials.push_back(cm);
     }
     asset.header.materialCount = (uint32_t)asset.materials.size();
-    if (!saveMesh(asset,ctx.outputPath))
-        return {.success=false,.error="saveMesh failed"};
 
-    std::printf("[MeshCooker] %s -> verts=%u idx=%u submeshes=%u\n",
+    if (!saveMesh(asset, ctx.outputPath))
+        return {.success = false, .error = "saveMesh failed"};
+
+    std::printf("[MeshCooker] %s -> verts=%u idx=%u submeshes=%u mats=%u\n",
         ctx.sourcePath.filename().string().c_str(),
-        asset.header.vertexCount, asset.header.indexCount, asset.header.submeshCount);
-    return {.success=true};
+        asset.header.vertexCount, asset.header.indexCount,
+        asset.header.submeshCount, asset.header.materialCount);
+    return {.success = true};
 }

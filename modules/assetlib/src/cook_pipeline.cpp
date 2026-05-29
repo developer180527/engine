@@ -1,5 +1,10 @@
 #include "assetlib/cook_pipeline.h"
 #include <ctime>
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <algorithm>
 
 namespace assetlib {
 
@@ -78,19 +83,113 @@ CookResult CookPipeline::cookOne(const UUID& uuid) {
 
 int CookPipeline::cookAll(std::function<void(int,int)> progress) {
     auto all   = m_registry.all();
-    int  cooked = 0;
-    int  total  = static_cast<int>(all.size());
-    for (int i = 0; i < total; ++i) {
-        if (isStale(all[i])) {
-            auto r = cookOne(all[i].uuid);
-            if (r.success) ++cooked;
-        } else if (all[i].state != AssetState::Ready) {
-            // Already cooked — just mark Ready so binary loader can trust the state
-            auto rec = m_registry.findByUUID(all[i].uuid);
-            if (rec) { rec->state = AssetState::Ready; m_registry.update(*rec); }
+    int  total = static_cast<int>(all.size());
+
+    std::vector<UUID> stale;
+    for (auto& rec : all) {
+        if (isStale(rec)) { stale.push_back(rec.uuid); continue; }
+        if (rec.state != AssetState::Ready) {            // fresh but unmarked
+            auto r = m_registry.findByUUID(rec.uuid);
+            if (r) { r->state = AssetState::Ready; m_registry.update(*r); }
         }
-        if (progress) progress(i + 1, total);
     }
+
+    std::atomic<int> done{ total - static_cast<int>(stale.size()) };
+    int cooked = cookMany(stale, [&](const std::string&, bool) {
+        if (progress) progress(done.fetch_add(1) + 1, total);
+    });
+    if (progress) progress(total, total);
+    return cooked;
+}
+
+int CookPipeline::cookMany(const std::vector<UUID>& uuids,
+                           std::function<void(const std::string&, bool)> onResult,
+                           std::function<bool()> shouldContinue) {
+    struct Work {
+        UUID                  uuid;
+        ICooker*              cooker = nullptr;
+        std::filesystem::path sourcePath, outputPath;
+        std::string           sourceRel;
+        std::vector<UUID>     deps;
+        CookResult            result;
+    };
+
+    // ── Phase 1 (caller thread): resolve records into self-contained work ──
+    std::vector<Work> work;
+    work.reserve(uuids.size());
+    for (const auto& uuid : uuids) {
+        auto rec = m_registry.findByUUID(uuid);
+        if (!rec || !isStale(*rec)) continue;
+        auto ext = std::filesystem::path(rec->sourcePath).extension().string();
+        for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+        ICooker* cooker = findCooker(ext);
+        if (!cooker) continue;
+        auto outDir = m_cacheRoot / (assetTypeName(rec->type) + "s");
+        std::filesystem::create_directories(outDir);
+        Work w;
+        w.uuid       = uuid;
+        w.cooker     = cooker;
+        w.sourcePath = m_projectRoot / rec->sourcePath;
+        w.outputPath = outDir / (uuid.toString() + ".cooked");
+        w.sourceRel  = rec->sourcePath;
+        work.push_back(std::move(w));
+    }
+    const int numWork = static_cast<int>(work.size());
+    if (numWork == 0) return 0;
+
+    // ── Phase 2 (parallel): pure cook() across the cores ──────────────────
+    const unsigned hw      = std::max(1u, std::thread::hardware_concurrency());
+    const int      workers = static_cast<int>(std::min<unsigned>(hw, (unsigned)numWork));
+    std::atomic<int> next{0};
+    std::mutex       cbMtx;
+    const auto       t0 = std::chrono::steady_clock::now();
+    std::printf("[AssetLib] Cooking %d asset(s) on %d worker(s)...\n", numWork, workers);
+
+    auto run = [&]() {
+        for (;;) {
+            if (shouldContinue && !shouldContinue()) break;
+            int i = next.fetch_add(1);
+            if (i >= numWork) break;
+            Work& w = work[i];
+            CookContext ctx;
+            ctx.uuid          = w.uuid;
+            ctx.sourcePath    = w.sourcePath;
+            ctx.outputPath    = w.outputPath;
+            ctx.addDependency = [&w](const UUID& dep) { w.deps.push_back(dep); };
+            w.result = w.cooker->cook(ctx);
+            if (onResult) {
+                std::lock_guard<std::mutex> lk(cbMtx);
+                onResult(w.sourceRel, w.result.success);
+            }
+        }
+    };
+    std::vector<std::thread> pool;
+    pool.reserve(workers);
+    for (int t = 0; t < workers; ++t) pool.emplace_back(run);
+    for (auto& th : pool) th.join();
+
+    // ── Phase 3 (caller thread): commit registry mutations ────────────────
+    int cooked = 0;
+    for (auto& w : work) {
+        if (!w.result.success) {
+            std::printf("[AssetLib] Cook FAILED: %s — %s\n",
+                        w.sourceRel.c_str(), w.result.error.c_str());
+            continue;
+        }
+        for (auto& dep : w.deps) m_registry.addDependency(w.uuid, dep);
+        if (auto rec = m_registry.findByUUID(w.uuid)) {
+            rec->cookedPath  = std::filesystem::relative(w.outputPath, m_cacheRoot).string();
+            rec->cookVersion = kCurrentCookVersion;
+            rec->cookedAt    = static_cast<int64_t>(std::time(nullptr));
+            rec->state       = AssetState::Ready;
+            m_registry.update(*rec);
+        }
+        ++cooked;
+    }
+    const double ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    std::printf("[AssetLib] Cooked %d/%d asset(s) in %.1f ms on %d worker(s)\n",
+                cooked, numWork, ms, workers);
     return cooked;
 }
 

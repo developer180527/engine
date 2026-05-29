@@ -52,6 +52,13 @@ public:
     // Returns number of assets cooked.
     // Progress callback receives (cooked, total).
     int        cookAll(std::function<void(int,int)> progress = {});
+    // Cook a fixed UUID set across all cores. Registry I/O stays on the caller
+    // thread; only cook() runs on the pool. onResult(sourcePath, success) is
+    // invoked serialized as each finishes; shouldContinue() (optional) stops
+    // dispatching new work when false.
+    int        cookMany(const std::vector<UUID>& uuids,
+                        std::function<void(const std::string&, bool)> onResult = {},
+                        std::function<bool()> shouldContinue = {});
 
     // Force re-cook regardless of hash.
     CookResult forceRecook(const UUID& uuid);

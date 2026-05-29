@@ -4,7 +4,7 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 7; // bumped: material section in cooked file // bumped: fixed multi-submesh vertex rebasing
+    static constexpr uint32_t kVersion = 8; // bumped: bake node transforms + per-submesh materialIndex
     std::vector<std::string> extensions() const override {
         return {".fbx",".obj",".dae",".ply",".stl"};
     }

@@ -36,8 +36,9 @@ static_assert(sizeof(MeshHeader) == 80, "MeshHeader size changed");
 struct MeshSubmesh {
     uint32_t indexOffset      = 0;
     uint32_t indexCount       = 0;
-    uint8_t  materialUUID[16] = {};
-    uint8_t  _pad[8]          = {};
+    uint8_t  materialUUID[16] = {};   // external material asset (reserved)
+    uint32_t materialIndex    = 0;    // index into MeshAsset::materials (embedded)
+    uint8_t  _pad[4]          = {};
 };
 static_assert(sizeof(MeshSubmesh) == 32, "MeshSubmesh size changed");
 
