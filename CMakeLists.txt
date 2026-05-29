@@ -98,6 +98,7 @@ set(ENABLE_OBJECT_STREAM     OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/JoltPhysics/Build)
 
 add_subdirectory(third_party/assimp)
+add_subdirectory(third_party/lua)
 add_executable(engine
     src/cookers/mesh_cooker.cpp
     src/io/cook_service.cpp
@@ -153,6 +154,7 @@ target_link_libraries(engine PRIVATE
     imgui
     flecs_static
     Jolt
+    lua
 )
 
 if(APPLE)

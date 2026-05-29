@@ -11,7 +11,7 @@
 #include "engine/input.h"
 #include "engine/meta_registry.h"
 #include "plugins/jolt_plugin.h"
-#include "plugins/null_script_plugin.h"
+#include "plugins/lua_script_plugin.h"
 #include "io/cook_service.h"
 #include <assetlib/asset_registry.h>
 #include "engine_context.h"
@@ -104,7 +104,7 @@ public:
         MetaRegistry::registerAll(m_rt.ctx().ecs);
         // Register plugins — null backends until real integrations land
         m_plugins.add(std::make_shared<JoltPlugin>());
-        m_plugins.add(std::make_shared<NullScriptPlugin>());
+        m_plugins.add(std::make_shared<LuaScriptPlugin>());
         auto ctx = buildCtx();
         m_plugins.attachAll(ctx);
     }

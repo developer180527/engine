@@ -20,6 +20,7 @@
 #include "render/primitive_library.h"
 #include "components/camera.h"
 #include "components/rigid_body.h"
+#include "components/script_component.h"
 #include "engine/logger.h"
 
 namespace SceneSerializer {
@@ -80,6 +81,9 @@ inline bool save(const std::filesystem::path& path,
                 je["rigidBody"]["radius"]      = rb->radius;
                 je["rigidBody"]["halfHeight"]  = rb->halfHeight;
             }
+            if (const ScriptComponent* sc = e.try_get<ScriptComponent>())
+                if (!sc->scriptPath.empty())
+                    je["script"]["path"] = sc->scriptPath;
             scene["entities"].push_back(je);
         });
 
@@ -149,6 +153,11 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
             rb.radius     = jrb.value("radius",     0.5f);
             rb.halfHeight = jrb.value("halfHeight", 0.5f);
             ent.set<RigidBody>(rb);
+        }
+        if (je.contains("script")) {
+            ScriptComponent sc;
+            sc.scriptPath = je["script"].value("path", "");
+            ent.set<ScriptComponent>(sc);
         }
     };
 
@@ -310,6 +319,9 @@ inline std::string saveToString(flecs::world& ecs, AssetStorage& assets) {
                 je["rigidBody"]["radius"]      = rb->radius;
                 je["rigidBody"]["halfHeight"]  = rb->halfHeight;
             }
+            if (const ScriptComponent* sc = e.try_get<ScriptComponent>())
+                if (!sc->scriptPath.empty())
+                    je["script"]["path"] = sc->scriptPath;
             scene["entities"].push_back(je);
         });
     return scene.dump();
@@ -382,6 +394,11 @@ inline void loadIntoWorld(const std::string& snapshot, flecs::world& world,
             rb.radius     = jrb.value("radius",     0.5f);
             rb.halfHeight = jrb.value("halfHeight", 0.5f);
             e.set<RigidBody>(rb);
+        }
+        if (je.contains("script")) {
+            ScriptComponent sc;
+            sc.scriptPath = je["script"].value("path", "");
+            e.set<ScriptComponent>(sc);
         }
         ++count;
     }
