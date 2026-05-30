@@ -42,8 +42,9 @@ inline std::vector<FileEntry> scanDir(const std::filesystem::path& dir,
 // Draw a single icon cell in grid view.
 // Returns true on double-click; sets singleClick=true on single click.
 inline bool drawIconCell(int id, const FileEntry& f, bool selected,
-                         float cellW, float iconH, bool& singleClick) {
+                         float cellW, float iconH, bool& singleClick, bool& rightClick) {
     singleClick = false;
+    rightClick  = false;
     auto* dl   = ImGui::GetWindowDrawList();
     ImVec2 cur = ImGui::GetCursorScreenPos();
 
@@ -51,6 +52,7 @@ inline bool drawIconCell(int id, const FileEntry& f, bool selected,
     bool dbl = false;
     ImGui::InvisibleButton("##ic", {cellW, iconH + 20});
     if (ImGui::IsItemClicked())                                  singleClick = true;
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right))            rightClick  = true;
     if (ImGui::IsMouseDoubleClicked(0) && ImGui::IsItemHovered()) dbl = true;
     ImGui::PopID();
 

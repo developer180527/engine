@@ -1,26 +1,28 @@
 #pragma once
 // Asset browser panel — main entry point.
-// Implementation is split across:
-//   types.h    — FileEntry, RegistryInfo, ViewMode, formatters, icon styles
-//   registry.h — queryRegistry, stateColor, stateName
-//   spawn.h    — spawnFile, uniqueEntityName, autoScale, groundOffset
-//   widgets.h  — scanDir, drawIconCell, drawFolderTree
+// Split across: types.h registry.h spawn.h widgets.h actions.h
+// Owns a ScriptViewer (function-static) for double-click code viewing; its
+// floating windows are drawn after the Assets window's End() so they're real
+// top-level windows. Fully self-contained — no editor_app changes required.
 
 #include "types.h"
 #include "registry.h"
 #include "spawn.h"
 #include "widgets.h"
+#include "actions.h"
 
 #include "engine_context.h"
 #include "engine/async_loader.h"
 #include "io/cook_service.h"
 #include "components/spinner.h"
 #include "components/mesh_renderer.h"
+#include "editor/script_viewer.h"
 
 #include <imgui.h>
 #include <flecs.h>
 #include <filesystem>
 #include <vector>
+#include <cstring>
 
 inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
                                   CookService* cookService = nullptr) {
@@ -33,14 +35,21 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
     static int                s_selectedIdx = -1;
     static bool               s_needRefresh = true;
     static ViewMode           s_viewMode    = ViewMode::Grid;
+    static ScriptViewer       s_scriptViewer;
 
-    // Reset when project changes
+    // context-menu / modal state
+    static ab::NewKind s_newKind = ab::NewKind::None;
+    static char        s_nameBuf[128] = {};
+    static bool        s_openCreate = false, s_openRename = false, s_openDelete = false;
+    static std::string s_actionTarget;
+    static bool        s_actionIsDir = false, s_actionSupported = false;
+    static std::string s_actionExt;
+
     if (s_root.empty() || s_root != ctx.project.assetsRoot) {
         s_root       = ctx.project.assetsRoot;
         s_currentDir = s_root;
         s_needRefresh = true;
     }
-
     auto cacheRoot = ctx.project.projectRoot / ".cache";
 
     ImGui::Begin("Assets");
@@ -71,12 +80,24 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
                           ctx.assetLib, ctx.project.projectRoot, cacheRoot);
         s_needRefresh = false;
     } else {
-        // Live-update loaded flags every frame (cheap string-set lookup)
         for (auto& f : s_files)
             if (!f.isDir)
                 f.loaded = ctx.importers.isLoaded(f.fullPath)
                          || loader.isLoaded(f.fullPath);
     }
+
+    // shared routing helpers
+    auto setAction = [&](const FileEntry& f) {
+        s_actionTarget    = f.fullPath;
+        s_actionIsDir     = f.isDir;
+        s_actionSupported = f.supported;
+        s_actionExt       = f.ext;
+    };
+    auto openEntry = [&](const FileEntry& f) {
+        if (f.isDir)            { s_currentDir = f.fullPath; s_needRefresh = true; }
+        else if (f.supported)     spawnFile(f, ctx, loader);
+        else if (isViewableText(f.ext)) s_scriptViewer.open(f.fullPath);
+    };
 
     // ── 3-column layout: [tree] [grid] [detail] ──────────────────────────────
     constexpr float kTreeW   = 165.f;
@@ -107,16 +128,16 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
             auto& f = s_files[i];
             if (col > 0) ImGui::SameLine(0, 4);
 
-            bool clicked = false;
-            bool dbl = drawIconCell(i, f, s_selectedIdx == i, kIconW, kIconH, clicked);
-            if (clicked)               s_selectedIdx = i;
-            if (dbl && f.isDir)        { s_currentDir = f.fullPath; s_needRefresh = true; }
-            if (dbl && !f.isDir && f.supported) spawnFile(f, ctx, loader);
+            bool clicked = false, rclick = false;
+            bool dbl = drawIconCell(i, f, s_selectedIdx == i, kIconW, kIconH,
+                                    clicked, rclick);
+            if (clicked) s_selectedIdx = i;
+            if (rclick)  { s_selectedIdx = i; setAction(f); ImGui::OpenPopup("##itemctx"); }
+            if (dbl)     openEntry(f);
 
             if (++col >= cols) { col = 0; ImGui::Dummy({0, 4}); }
         }
     } else {
-        // List view
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {4, 2});
         for (int i = 0; i < (int)s_files.size(); ++i) {
             auto& f = s_files[i];
@@ -140,15 +161,73 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
             if (ImGui::Selectable(row.c_str(), s_selectedIdx == i,
                                   ImGuiSelectableFlags_AllowDoubleClick)) {
                 s_selectedIdx = i;
-                if (ImGui::IsMouseDoubleClicked(0)) {
-                    if (f.isDir)           { s_currentDir = f.fullPath; s_needRefresh = true; }
-                    else if (f.supported)    spawnFile(f, ctx, loader);
-                }
+                if (ImGui::IsMouseDoubleClicked(0)) openEntry(f);
             }
             if (!f.supported && !f.isDir) ImGui::PopStyleColor();
+
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                s_selectedIdx = i; setAction(f); ImGui::OpenPopup("##itemctx");
+            }
             ImGui::PopID();
         }
         ImGui::PopStyleVar();
+    }
+
+    // ── Per-item context menu (operates on captured s_actionTarget) ───────────
+    if (ImGui::BeginPopup("##itemctx")) {
+        fs::path tp = s_actionTarget;
+        ImGui::TextDisabled("%s", tp.filename().string().c_str());
+        ImGui::Separator();
+        if (ImGui::MenuItem("Open")) {
+            if (s_actionIsDir) { s_currentDir = tp; s_needRefresh = true; }
+            else if (s_actionSupported) {
+                for (auto& fe : s_files)
+                    if (fe.fullPath == s_actionTarget) { spawnFile(fe, ctx, loader); break; }
+            } else if (isViewableText(s_actionExt)) {
+                s_scriptViewer.open(s_actionTarget);
+            }
+        }
+        if (ImGui::MenuItem("Rename")) {
+            std::strncpy(s_nameBuf, tp.filename().string().c_str(), sizeof s_nameBuf - 1);
+            s_nameBuf[sizeof s_nameBuf - 1] = 0;
+            s_openRename = true;
+        }
+        if (!s_actionIsDir && ImGui::MenuItem("Duplicate")) {
+            ab::duplicatePath(tp);
+            s_needRefresh = true; if (cookService) cookService->requestRefresh();
+        }
+        if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(s_actionTarget.c_str());
+        if (ImGui::MenuItem("Reveal in Finder")) ab::revealInFinder(tp);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Delete")) s_openDelete = true;
+        ImGui::EndPopup();
+    }
+
+    // ── Empty-area context menu (creation lives here) ─────────────────────────
+    if (ImGui::BeginPopupContextWindow("##bgctx",
+            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+        if (ImGui::MenuItem("New Folder")) {
+            s_newKind = ab::NewKind::Folder;
+            std::strncpy(s_nameBuf, "New Folder", sizeof s_nameBuf - 1);
+            s_nameBuf[sizeof s_nameBuf - 1] = 0; s_openCreate = true;
+        }
+        if (ImGui::BeginMenu("New Script")) {
+            auto pick = [&](ab::NewKind k){
+                s_newKind = k;
+                std::strncpy(s_nameBuf, "NewScript", sizeof s_nameBuf - 1);
+                s_nameBuf[sizeof s_nameBuf - 1] = 0; s_openCreate = true;
+            };
+            if (ImGui::MenuItem("Lua"))    pick(ab::NewKind::ScriptLua);
+            if (ImGui::MenuItem("Python")) pick(ab::NewKind::ScriptPython);
+            if (ImGui::MenuItem("C++"))    pick(ab::NewKind::ScriptCpp);
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Reveal in Finder")) ab::revealInFinder(s_currentDir);
+        if (ImGui::MenuItem("Refresh")) {
+            s_needRefresh = true; if (cookService) cookService->requestRefresh();
+        }
+        ImGui::EndPopup();
     }
     ImGui::EndChild();
 
@@ -163,8 +242,6 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
     if (sel && !sel->isDir) {
         ImGui::TextColored({1, 0.9f, 0.5f, 1}, "%s", sel->name.c_str());
         ImGui::Separator();
-
-        // Type icon preview
         {
             auto sty = iconStyle(sel->ext);
             ImVec2 p  = ImGui::GetCursorScreenPos();
@@ -188,12 +265,10 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
 
         if (sel->reg.found) {
             ImGui::Separator();
-
             ImGui::TextDisabled("UUID    "); ImGui::SameLine(62);
             std::string sid = sel->reg.uuid.substr(0,14) + "...";
             ImGui::TextUnformatted(sid.c_str());
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", sel->reg.uuid.c_str());
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sel->reg.uuid.c_str());
 
             ImGui::TextDisabled("State   "); ImGui::SameLine(62);
             ImGui::TextColored(
@@ -206,14 +281,12 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
             if (sel->reg.cookedBytes > 0) {
                 ImGui::TextDisabled("Cooked  "); ImGui::SameLine(62);
                 ImGui::Text("%s", formatSize(sel->reg.cookedBytes).c_str());
-
                 if (sel->sizeBytes > 0) {
                     float ratio = (float)sel->reg.cookedBytes / sel->sizeBytes * 100.f;
                     ImGui::TextDisabled("Ratio   "); ImGui::SameLine(62);
                     ImGui::TextDisabled("%.0f%% of source", ratio);
                 }
             }
-
             if (sel->reg.cookedAt > 0) {
                 ImGui::Separator();
                 ImGui::TextDisabled("Cooked at");
@@ -226,7 +299,6 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
 
         ImGui::PopStyleVar();
 
-        // Load & Spawn pinned to bottom of detail panel
         ImGui::SetCursorPosY(ImGui::GetWindowHeight()
                              - ImGui::GetFrameHeightWithSpacing() - 6);
         ImGui::Separator();
@@ -262,5 +334,73 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
         ctx.editor.selected = flecs::entity{};
     }
 
+    // ── Open modals from flags (window scope = matches modal scope) ───────────
+    if (s_openCreate) { ImGui::OpenPopup("Create New###createmodal"); s_openCreate = false; }
+    if (s_openRename) { ImGui::OpenPopup("Rename###renamemodal");     s_openRename = false; }
+    if (s_openDelete) { ImGui::OpenPopup("Delete?###deletemodal");    s_openDelete = false; }
+
+    if (ImGui::BeginPopupModal("Create New###createmodal", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(s_newKind == ab::NewKind::Folder ? "Folder name"
+                                                                : "Script name");
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        bool enter = ImGui::InputText("##cn", s_nameBuf, sizeof s_nameBuf,
+                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::Spacing();
+        bool ok = ImGui::Button("Create", {120,0}) || enter;
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", {120,0})) { s_newKind = ab::NewKind::None; ImGui::CloseCurrentPopup(); }
+        if (ok && s_nameBuf[0]) {
+            if (s_newKind == ab::NewKind::Folder) {
+                ab::createFolder(s_currentDir, s_nameBuf);
+            } else {
+                std::string p = ab::createScript(s_currentDir, s_nameBuf, s_newKind);
+                if (!p.empty()) s_scriptViewer.open(p);
+            }
+            s_needRefresh = true; if (cookService) cookService->requestRefresh();
+            s_newKind = ab::NewKind::None; ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (ImGui::BeginPopupModal("Rename###renamemodal", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("New name");
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        bool enter = ImGui::InputText("##rn", s_nameBuf, sizeof s_nameBuf,
+                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::Spacing();
+        bool ok = ImGui::Button("Rename", {120,0}) || enter;
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", {120,0})) ImGui::CloseCurrentPopup();
+        if (ok && s_nameBuf[0]) {
+            ab::renamePath(s_actionTarget, s_nameBuf);
+            s_needRefresh = true; s_selectedIdx = -1;
+            if (cookService) cookService->requestRefresh();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (ImGui::BeginPopupModal("Delete?###deletemodal", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Delete \"%s\"?",
+                    fs::path(s_actionTarget).filename().string().c_str());
+        ImGui::TextDisabled("This cannot be undone.");
+        ImGui::Spacing();
+        if (ImGui::Button("Delete", {120,0})) {
+            ab::deletePath(s_actionTarget);
+            s_needRefresh = true; s_selectedIdx = -1;
+            if (cookService) cookService->requestRefresh();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", {120,0})) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
     ImGui::End();
+
+    // Floating code-viewer windows (top-level, after Assets' End()).
+    s_scriptViewer.draw();
 }
