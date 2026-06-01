@@ -25,6 +25,7 @@
 #include "components/camera.h"
 #include "components/rigid_body.h"
 #include "components/script_component.h"
+#include "components/character_controller.h"
 #include "components/entity_id.h"
 #include "render/asset_registry.h"
 #include "io/asset_storage.h"
@@ -210,6 +211,28 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
 }
 
 // ── The one table ─────────────────────────────────────────────────────────────
+// ── CharacterController (capsule controller; 'grounded' is runtime-only) ──────
+inline bool hasCharacterController(flecs::entity e) { return e.try_get<CharacterController>() != nullptr; }
+inline void saveCharacterController(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
+    const CharacterController* cc = e.try_get<CharacterController>(); if (!cc) return;
+    j["radius"]       = cc->radius;
+    j["height"]       = cc->height;
+    j["maxSlopeDeg"]  = cc->maxSlopeDeg;
+    j["stepHeight"]   = cc->stepHeight;
+    j["mass"]         = cc->mass;
+    j["gravityScale"] = cc->gravityScale;
+}
+inline void loadCharacterController(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
+    CharacterController cc;
+    cc.radius       = j.value("radius", 0.3f);
+    cc.height       = j.value("height", 1.8f);
+    cc.maxSlopeDeg  = j.value("maxSlopeDeg", 45.0f);
+    cc.stepHeight   = j.value("stepHeight", 0.3f);
+    cc.mass         = j.value("mass", 70.0f);
+    cc.gravityScale = j.value("gravityScale", 1.0f);
+    e.set<CharacterController>(cc);
+}
+
 inline const std::vector<ComponentSerde>& table() {
     static const std::vector<ComponentSerde> t = {
         { "transform",    hasTransform, saveTransform, loadTransform },
@@ -218,6 +241,7 @@ inline const std::vector<ComponentSerde>& table() {
         { "camera",       hasCamera,    saveCamera,    loadCamera    },
         { "rigidBody",    hasRigidBody, saveRigidBody, loadRigidBody },
         { "script",       hasScript,    saveScript,    loadScript    },
+        { "characterController", hasCharacterController, saveCharacterController, loadCharacterController },
     };
     return t;
 }

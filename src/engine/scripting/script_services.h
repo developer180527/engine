@@ -27,6 +27,11 @@ struct IPhysicsService {
     virtual bool getVelocity (flecs::entity e, float& x, float& y, float& z)     = 0;
     virtual RaycastHit raycast(float ox, float oy, float oz,
                                float dx, float dy, float dz, float maxDist)      = 0;
+
+    // Character controller (default no-op so non-Jolt backends compile as-is)
+    virtual void charMove (flecs::entity /*e*/, float /*vx*/, float /*vz*/)        {}
+    virtual void charJump (flecs::entity /*e*/, float /*speed*/)                   {}
+    virtual bool charIsGrounded(flecs::entity /*e*/)                               { return false; }
 };
 
 struct IAudioService {

@@ -35,7 +35,7 @@
       "transform": {
         "position": [
           0.0,
-          0.0,
+          6.166262149810791,
           0.0
         ],
         "rotation": [
@@ -59,9 +59,9 @@
       "name": "DoorFrame_Flat_Brick",
       "transform": {
         "position": [
-          -13.089553833007813,
-          12.867868423461914,
-          -1.4911117553710938
+          -13.94527530670166,
+          14.955224990844727,
+          -8.98499870300293
         ],
         "rotation": [
           0.0,
@@ -77,56 +77,6 @@
       }
     },
     {
-      "id": 16235234808625830255,
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/PlantBanjoFigVase001.fbx"
-      },
-      "name": "PlantBanjoFigVase001",
-      "transform": {
-        "position": [
-          -3.1950674057006836,
-          1.590807557106018,
-          0.24268144369125366
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          4.934962272644043,
-          4.934962272644043,
-          4.934962272644043
-        ]
-      }
-    },
-    {
-      "id": 11013466836813743833,
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Medieval Village MegaKit[Standard]/FBX/Corner_Interior_Big.fbx"
-      },
-      "name": "Corner_Interior_Big",
-      "transform": {
-        "position": [
-          -9.20545482635498,
-          9.865312576293945,
-          13.375306129455566
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          0.6666666865348816,
-          0.6666666865348816,
-          0.6666666865348816
-        ]
-      }
-    },
-    {
       "id": 4286930083610790379,
       "meshRenderer": {
         "sourcePath": "engine://primitive/plane",
@@ -137,9 +87,9 @@
         "bodyType": 0,
         "friction": 0.6000000238418579,
         "halfExtent": [
-          50.0,
+          10.0,
           0.5,
-          50.0
+          10.0
         ],
         "halfHeight": 0.5,
         "mass": 1.0,
@@ -189,11 +139,14 @@
         "shape": 0,
         "useGravity": true
       },
+      "script": {
+        "path": "scripts/jumper.lua"
+      },
       "transform": {
         "position": [
-          0.0,
-          10.785236358642578,
-          7.007580280303955
+          -7.67335319519043,
+          2.1448051929473877,
+          -0.3417247533798218
         ],
         "rotation": [
           0.0,
@@ -209,34 +162,27 @@
       }
     },
     {
+      "characterController": {
+        "gravityScale": 1.0,
+        "height": 1.7999999523162842,
+        "mass": 70.0,
+        "maxSlopeDeg": 45.0,
+        "radius": 0.30000001192092896,
+        "stepHeight": 0.30000001192092896
+      },
       "id": 1423140140260966028,
       "meshRenderer": {
         "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
       },
-      "name": "Demon_Mask (2)",
-      "rigidBody": {
-        "bodyType": 2,
-        "friction": 0.6000000238418579,
-        "halfExtent": [
-          0.5,
-          0.5,
-          0.5
-        ],
-        "halfHeight": 0.5,
-        "mass": 1.0,
-        "radius": 0.5,
-        "restitution": 0.30000001192092896,
-        "shape": 1,
-        "useGravity": true
-      },
+      "name": "Demon_Mask",
       "script": {
-        "path": "scripts/spin.lua"
+        "path": "scripts/player_controller.lua"
       },
       "transform": {
         "position": [
-          -7.318642616271973,
-          11.475664138793945,
-          9.604732513427734
+          -7.503509044647217,
+          -1.2375789880752563,
+          999.0
         ],
         "rotation": [
           0.0,

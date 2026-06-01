@@ -7,11 +7,16 @@
 #include <bx/math.h>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <vector>
+#include <utility>
+#include <algorithm>
 
 #include "engine_context.h"
 #include "core/transform.h"
 #include "components/name.h"
 #include "components/rigid_body.h"
+#include "components/character_controller.h"
 #include "components/mesh_renderer.h"
 #include "components/spinner.h"
 #include "render/mesh.h"
@@ -92,6 +97,35 @@ inline void texRow(const char* slot, bool loaded, bool isNormal,
     } else {
         ImGui::TextDisabled("%s  —  none", slot);
     }
+}
+
+// Recursively find .lua files under projectRoot (skips .cache/.git/build).
+// Returns {displayRelPath, projectRelativePath} (currently identical).
+inline std::vector<std::pair<std::string,std::string>>
+scanLuaScripts(const std::filesystem::path& projectRoot) {
+    namespace fs = std::filesystem;
+    std::vector<std::pair<std::string,std::string>> out;
+    std::error_code ec;
+    fs::recursive_directory_iterator it(projectRoot,
+        fs::directory_options::skip_permission_denied, ec), end;
+    for (; it != end; it.increment(ec)) {
+        if (ec) { ec.clear(); continue; }
+        const auto& q = it->path();
+        std::error_code dec;
+        if (fs::is_directory(q, dec)) {
+            std::string nm = q.filename().string();
+            if (nm==".cache" || nm==".git" || nm=="build" || nm=="node_modules")
+                it.disable_recursion_pending();
+            continue;
+        }
+        if (q.extension() == ".lua") {
+            std::error_code rec;
+            auto rel = fs::relative(q, projectRoot, rec);
+            if (!rec) { std::string r = rel.generic_string(); out.push_back({r, r}); }
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 } // namespace detail
@@ -352,8 +386,8 @@ inline void drawInspectorPanel(EngineContext& ctx) {
             e.remove<RigidBody>(); ctx.editor.sceneDirty = true;
         }
         ImGui::PopStyleColor();
-    } else {
-        // Add button when entity has no RigidBody
+    } else if (!e.has<CharacterController>()) {
+        // Add only when the entity has neither RigidBody nor CharacterController
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -362,16 +396,100 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         }
     }
 
+    // ── CharacterController ─────────────────────────────────────────────
+    if (e.has<CharacterController>()) {
+        detail::sectionHeader("Character Controller");
+        CharacterController& cc = e.get_mut<CharacterController>();
+        ImGui::Text("Radius");    ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
+        if (ImGui::DragFloat("##ccr", &cc.radius, 0.01f, 0.05f, 5.f)) ctx.editor.sceneDirty=true;
+        ImGui::Text("Height");    ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
+        if (ImGui::DragFloat("##cch", &cc.height, 0.01f, 0.1f, 10.f)) ctx.editor.sceneDirty=true;
+        ImGui::Text("Max Slope"); ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
+        if (ImGui::SliderFloat("##ccslope", &cc.maxSlopeDeg, 0.f, 80.f, "%.0f deg")) ctx.editor.sceneDirty=true;
+        ImGui::Text("Step Up");   ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
+        if (ImGui::DragFloat("##ccstep", &cc.stepHeight, 0.01f, 0.f, 2.f)) ctx.editor.sceneDirty=true;
+        ImGui::Text("Mass");      ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
+        if (ImGui::DragFloat("##ccmass", &cc.mass, 1.f, 1.f, 1000.f, "%.0f kg")) ctx.editor.sceneDirty=true;
+        ImGui::Text("Gravity x"); ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
+        if (ImGui::DragFloat("##ccgrav", &cc.gravityScale, 0.05f, 0.f, 5.f)) ctx.editor.sceneDirty=true;
+        ImGui::TextDisabled("Grounded: %s", cc.grounded ? "yes" : "no");
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f,0.1f,0.1f,1.f));
+        if (ImGui::Button("Remove Character Controller", {-1, 0})) {
+            e.remove<CharacterController>(); ctx.editor.sceneDirty = true;
+        }
+        ImGui::PopStyleColor();
+    } else if (!e.has<RigidBody>()) {
+        ImGui::Spacing();
+        if (ImGui::Button("+ Add Character Controller", {-1, 0})) {
+            e.set<CharacterController>({}); ctx.editor.sceneDirty = true;
+        }
+    }
+
     // ── Script ─────────────────────────────────────────────────────────
+    namespace fsi = std::filesystem;
+    static std::vector<std::pair<std::string,std::string>> s_scriptList;
+
+    // Drop target: accept an ASSET_PATH payload if it's a .lua and store it as
+    // a path relative to the project root (so it always resolves at Play).
+    auto acceptScriptDrop = [&](ScriptComponent* scPtr) {
+        if (!ImGui::BeginDragDropTarget()) return;
+        if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("ASSET_PATH")) {
+            fsi::path ap((const char*)pl->Data);
+            if (ap.extension() == ".lua") {
+                std::error_code ec;
+                auto rel = fsi::relative(ap, ctx.project.projectRoot, ec);
+                if (!ec) {
+                    if (!scPtr) { e.set<ScriptComponent>({}); scPtr = &e.get_mut<ScriptComponent>(); }
+                    scPtr->scriptPath = rel.generic_string();
+                    ctx.editor.sceneDirty = true;
+                }
+            }
+        }
+        ImGui::EndDragDropTarget();
+    };
+
     if (e.has<ScriptComponent>()) {
         detail::sectionHeader("Script");
         ScriptComponent& sc = e.get_mut<ScriptComponent>();
+
+        ImGui::TextDisabled("Path (relative to project root)");
         char buf[256];
         snprintf(buf, sizeof(buf), "%s", sc.scriptPath.c_str());
-        ImGui::TextDisabled("Path (relative to project root)");
+        ImGui::SetNextItemWidth(-1);
         if (ImGui::InputText("##scriptPath", buf, sizeof(buf))) {
             sc.scriptPath = buf; ctx.editor.sceneDirty = true;
         }
+        acceptScriptDrop(&sc);
+
+        bool valid = false;
+        if (!sc.scriptPath.empty()) {
+            std::error_code ec;
+            valid = fsi::is_regular_file(ctx.project.projectRoot / sc.scriptPath, ec);
+        }
+        if (sc.scriptPath.empty())
+            ImGui::TextDisabled("Drag a .lua here, or Pick");
+        else if (valid)
+            ImGui::TextColored({0.4f,0.9f,0.4f,1}, "* Found");
+        else
+            ImGui::TextColored({0.95f,0.45f,0.45f,1}, "* Not found at this path");
+
+        if (ImGui::Button("Pick...")) {
+            s_scriptList = detail::scanLuaScripts(ctx.project.projectRoot);
+            ImGui::OpenPopup("##pickscript");
+        }
+        if (ImGui::BeginPopup("##pickscript")) {
+            ImGui::TextDisabled("Lua scripts in project");
+            ImGui::Separator();
+            if (s_scriptList.empty()) ImGui::TextDisabled("(none found)");
+            for (auto& sp : s_scriptList)
+                if (ImGui::Selectable(sp.first.c_str())) {
+                    sc.scriptPath = sp.second; ctx.editor.sceneDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
+            ImGui::EndPopup();
+        }
+
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f,0.1f,0.1f,1.f));
         if (ImGui::Button("Remove Script", {-1, 0})) {
@@ -379,12 +497,11 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         }
         ImGui::PopStyleColor();
     } else {
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
         if (ImGui::Button("+ Add Script", {-1, 0})) {
             e.set<ScriptComponent>({}); ctx.editor.sceneDirty = true;
         }
+        acceptScriptDrop(nullptr);
     }
     ImGui::End();
 }

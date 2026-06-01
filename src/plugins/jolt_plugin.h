@@ -10,6 +10,7 @@
 #include <mutex>
 #include <unordered_map>
 #include "components/rigid_body.h"
+#include "components/character_controller.h"
 #include "core/transform.h"
 #include "core/transform_utils.h"
 
@@ -25,6 +26,10 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Collision/ShapeFilter.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Body/BodyLock.h>
@@ -124,11 +129,15 @@ public:
             m_bpInterface, m_objVsBP, m_objPairFilter);
         m_physics->SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
         ecs.set<PhysicsServiceRef>({ this });   // publish to the script backend
-        ecs.set<PhysicsServiceRef>({ this });   // publish to the script backend
 
         ecs.query_builder<const Transform, const RigidBody>().build()
             .each([this](flecs::entity e, const Transform& t, const RigidBody& rb) {
                 spawnBody(e, t, rb);
+            });
+
+        ecs.query_builder<const Transform, const CharacterController>().build()
+            .each([this](flecs::entity e, const Transform& t, const CharacterController& cc) {
+                spawnCharacter(e, t, cc);
             });
 
         m_contactListener.owner = this;
@@ -146,6 +155,8 @@ public:
         }
         m_entityToBody.clear();
         m_bodyToEntity.clear();
+        m_characters.clear();   // JPH::Ref releases each CharacterVirtual
+        m_charState.clear();
         m_physics.reset();
         m_jobSystem.reset();
         m_tempAllocator.reset();
@@ -160,10 +171,12 @@ public:
         while (m_accumulator >= kFixedDt && steps < 4) {
             m_physics->Update(kFixedDt, 1,
                 m_tempAllocator.get(), m_jobSystem.get());
+            updateCharacters(kFixedDt);
             m_accumulator -= kFixedDt;
             ++steps;
         }
         writeBackTransforms(ecs);
+        writeBackCharacters(ecs);
         flushCollisionEvents(ecs);
     }
 
@@ -233,7 +246,20 @@ public:
         return out;
     }
 
-private:
+    // ── Character controller service (scripts -> ScriptHost -> here) ────
+    void charMove(flecs::entity e, float vx, float vz) override {
+        auto it = m_charState.find(e.id());
+        if (it != m_charState.end()) it->second.desiredHoriz = JPH::Vec3(vx, 0, vz);
+    }
+    void charJump(flecs::entity e, float speed) override {
+        auto it = m_charState.find(e.id());
+        if (it != m_charState.end() && it->second.grounded) it->second.vertVel = speed;
+    }
+    bool charIsGrounded(flecs::entity e) override {
+        auto it = m_charState.find(e.id());
+        return it != m_charState.end() && it->second.grounded;
+    }
+
     static constexpr float kFixedDt = 1.0f / 60.0f;
 
     BPLayerInterfaceImpl m_bpInterface;
@@ -247,6 +273,17 @@ private:
 
     std::unordered_map<flecs::entity_t, JPH::BodyID>              m_entityToBody;
     std::unordered_map<JPH::BodyID, flecs::entity_t, BodyIDHash>  m_bodyToEntity;
+
+    // Character controllers
+    struct CharState {
+        JPH::Vec3 desiredHoriz = JPH::Vec3::sZero();
+        float     vertVel      = 0.0f;
+        bool      grounded     = false;
+        float     gravityScale = 1.0f;
+        float     stepHeight   = 0.3f;
+    };
+    std::unordered_map<flecs::entity_t, JPH::Ref<JPH::CharacterVirtual>> m_characters;
+    std::unordered_map<flecs::entity_t, CharState>                       m_charState;
 
     // ── Collision events (thread-safe queue) ───────────────────────────
     std::mutex                   m_collisionMutex;
@@ -380,6 +417,77 @@ private:
         } else {
             LOG_WARN("Physics", "Body creation failed for entity %llu", (uint64_t)e.id());
         }
+    }
+
+    void spawnCharacter(flecs::entity e, const Transform&, const CharacterController& cc) {
+        float radius  = std::max(0.05f, cc.radius);
+        float halfCyl = std::max(0.0f, cc.height * 0.5f - radius);
+        JPH::ShapeRefC capsule = JPH::CapsuleShapeSettings(halfCyl, radius).Create().Get();
+        JPH::ShapeRefC shape = JPH::RotatedTranslatedShapeSettings(
+            JPH::Vec3(0, cc.height * 0.5f, 0), JPH::Quat::sIdentity(), capsule).Create().Get();
+
+        float wm[16]; getWorldMatrix(e, wm);
+        JPH::CharacterVirtualSettings settings;
+        settings.mShape         = shape;
+        settings.mMaxSlopeAngle = JPH::DegreesToRadians(cc.maxSlopeDeg);
+        settings.mMass          = cc.mass;
+
+        JPH::Ref<JPH::CharacterVirtual> ch = new JPH::CharacterVirtual(
+            &settings, JPH::RVec3(wm[12], wm[13], wm[14]),
+            JPH::Quat::sIdentity(), m_physics.get());
+
+        m_characters[e.id()] = ch;
+        CharState st; st.gravityScale = cc.gravityScale; st.stepHeight = cc.stepHeight;
+        m_charState[e.id()] = st;
+    }
+
+    void updateCharacters(float dt) {
+        if (m_characters.empty()) return;
+        JPH::Vec3 gravity = m_physics->GetGravity();
+        JPH::DefaultBroadPhaseLayerFilter bpFilter =
+            m_physics->GetDefaultBroadPhaseLayerFilter(PhysLayers::DYNAMIC);
+        JPH::DefaultObjectLayerFilter objFilter =
+            m_physics->GetDefaultLayerFilter(PhysLayers::DYNAMIC);
+        JPH::BodyFilter  bodyFilter;
+        JPH::ShapeFilter shapeFilter;
+
+        for (auto& [eid, ch] : m_characters) {
+            CharState& st = m_charState[eid];
+            bool grounded = ch->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+            if (grounded && st.vertVel < 0.0f) st.vertVel = 0.0f;
+            st.vertVel += gravity.GetY() * st.gravityScale * dt;
+
+            ch->SetLinearVelocity(st.desiredHoriz + JPH::Vec3(0, st.vertVel, 0));
+
+            JPH::CharacterVirtual::ExtendedUpdateSettings up;
+            up.mWalkStairsStepUp = JPH::Vec3(0, st.stepHeight, 0);
+            ch->ExtendedUpdate(dt, gravity * st.gravityScale, up,
+                bpFilter, objFilter, bodyFilter, shapeFilter, *m_tempAllocator);
+
+            st.grounded = ch->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+        }
+    }
+
+    void writeBackCharacters(flecs::world& ecs) {
+        ecs.query_builder<Transform, CharacterController>().build()
+            .each([&](flecs::entity e, Transform& t, CharacterController& cc) {
+                auto it = m_characters.find(e.id());
+                if (it == m_characters.end()) return;
+                JPH::RVec3 p = it->second->GetPosition();
+                flecs::entity par = e.target(flecs::ChildOf);
+                if (par && par.is_alive() && par.has<Transform>()) {
+                    float world[16]; bx::mtxIdentity(world);
+                    world[12]=(float)p.GetX(); world[13]=(float)p.GetY(); world[14]=(float)p.GetZ();
+                    float parentWorld[16]; getWorldMatrix(par, parentWorld);
+                    float parentInv[16];   safeInvert(parentInv, parentWorld);
+                    float local[16];       bx::mtxMul(local, world, parentInv);
+                    t.position = {local[12], local[13], local[14]};
+                } else {
+                    t.position = {(float)p.GetX(), (float)p.GetY(), (float)p.GetZ()};
+                }
+                auto sit = m_charState.find(e.id());
+                cc.grounded = (sit != m_charState.end()) && sit->second.grounded;
+            });
     }
 
     void writeBackTransforms(flecs::world& ecs) {

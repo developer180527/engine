@@ -54,6 +54,12 @@ inline bool drawIconCell(int id, const FileEntry& f, bool selected,
     if (ImGui::IsItemClicked())                                  singleClick = true;
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right))            rightClick  = true;
     if (ImGui::IsMouseDoubleClicked(0) && ImGui::IsItemHovered()) dbl = true;
+    if (!f.isDir && ImGui::BeginDragDropSource()) {
+        ImGui::SetDragDropPayload("ASSET_PATH", f.fullPath.c_str(),
+                                  f.fullPath.size() + 1);
+        ImGui::TextUnformatted(f.name.c_str());
+        ImGui::EndDragDropSource();
+    }
     ImGui::PopID();
 
     // Hover / selection highlight

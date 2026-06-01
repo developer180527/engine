@@ -115,6 +115,11 @@ public:
     }
     void setPhysicsService(IPhysicsService* s) { m_physics = s; }
 
+    // Character controller (no-op until a physics service is registered)
+    void charMove(flecs::entity e, float vx, float vz) { if (m_physics) m_physics->charMove(e,vx,vz); }
+    void charJump(flecs::entity e, float speed)        { if (m_physics) m_physics->charJump(e,speed); }
+    bool charGrounded(flecs::entity e)                 { return m_physics ? m_physics->charIsGrounded(e) : false; }
+
     // ── Audio (RESERVED — no-op until a service is registered) ──────────
     uint32_t playSound  (const char* path)                          { return m_audio ? m_audio->play(path) : 0; }
     uint32_t playSoundAt(const char* path, float x, float y, float z) { return m_audio ? m_audio->playAt(path,x,y,z) : 0; }

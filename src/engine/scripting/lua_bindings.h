@@ -123,8 +123,22 @@ inline int e_setVelocity(lua_State* L) {
     h->setVelocity(e, (float)luaL_checknumber(L,2), (float)luaL_checknumber(L,3), (float)luaL_checknumber(L,4));
     return 0;
 }
-
 // ── Input / Log / Time / World / Audio ──────────────────────────────────
+inline int e_move(lua_State* L) {
+    ScriptHost* h = host(L); flecs::entity e = checkEntity(L,1,h);
+    h->charMove(e, (float)luaL_checknumber(L,2), (float)luaL_checknumber(L,3));
+    return 0;
+}
+inline int e_jump(lua_State* L) {
+    ScriptHost* h = host(L); flecs::entity e = checkEntity(L,1,h);
+    h->charJump(e, (float)luaL_optnumber(L,2, 5.0));
+    return 0;
+}
+inline int e_isGrounded(lua_State* L) {
+    ScriptHost* h = host(L); flecs::entity e = checkEntity(L,1,h);
+    lua_pushboolean(L, h->charGrounded(e)); return 1;
+}
+
 inline int in_keyDown(lua_State* L)    { lua_pushboolean(L, host(L)->keyDown(luaL_checkstring(L,1))); return 1; }
 inline int in_keyPressed(lua_State* L) { lua_pushboolean(L, host(L)->keyPressed(luaL_checkstring(L,1))); return 1; }
 inline int in_axis(lua_State* L)       { lua_pushnumber(L, host(L)->axis(luaL_checkstring(L,1))); return 1; }
@@ -186,6 +200,7 @@ inline void install(lua_State* L, ScriptHost* h) {
         {"isAlive", e_isAlive}, {"name", e_name}, {"destroy", e_destroy},
         {"setParent", e_setParent}, {"clearParent", e_clearParent},
         {"applyImpulse", e_applyImpulse}, {"setVelocity", e_setVelocity},
+        {"move", e_move}, {"jump", e_jump}, {"isGrounded", e_isGrounded},
         {nullptr, nullptr}
     };
     lua_pushlightuserdata(L, h);

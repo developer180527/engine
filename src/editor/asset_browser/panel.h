@@ -165,6 +165,12 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
             }
             if (!f.supported && !f.isDir) ImGui::PopStyleColor();
 
+            if (!f.isDir && ImGui::BeginDragDropSource()) {
+                ImGui::SetDragDropPayload("ASSET_PATH", f.fullPath.c_str(),
+                                          f.fullPath.size() + 1);
+                ImGui::TextUnformatted(f.name.c_str());
+                ImGui::EndDragDropSource();
+            }
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                 s_selectedIdx = i; setAction(f); ImGui::OpenPopup("##itemctx");
             }
@@ -203,9 +209,12 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
         ImGui::EndPopup();
     }
 
-    // ── Empty-area context menu (creation lives here) ─────────────────────────
-    if (ImGui::BeginPopupContextWindow("##bgctx",
-            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+    // ── Empty-area context menu — manual open, gated on "no item hovered" so
+    //    it can never collide with the per-item menu on the same right-click ──
+    if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered()
+        && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+        ImGui::OpenPopup("##bgctx");
+    if (ImGui::BeginPopup("##bgctx")) {
         if (ImGui::MenuItem("New Folder")) {
             s_newKind = ab::NewKind::Folder;
             std::strncpy(s_nameBuf, "New Folder", sizeof s_nameBuf - 1);
@@ -354,8 +363,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
             if (s_newKind == ab::NewKind::Folder) {
                 ab::createFolder(s_currentDir, s_nameBuf);
             } else {
-                std::string p = ab::createScript(s_currentDir, s_nameBuf, s_newKind);
-                if (!p.empty()) s_scriptViewer.open(p);
+                ab::createScript(s_currentDir, s_nameBuf, s_newKind);
             }
             s_needRefresh = true; if (cookService) cookService->requestRefresh();
             s_newKind = ab::NewKind::None; ImGui::CloseCurrentPopup();

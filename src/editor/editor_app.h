@@ -149,8 +149,10 @@ public:
             imguiNewFrame();
             // Gate gameplay input when ImGui owns the keyboard/mouse
             { auto& io = ImGui::GetIO();
+              const bool __playing = (m_editor.simState == SimState::Playing);
               InputSystem::get().setUICapture(
-                  io.WantCaptureKeyboard, io.WantCaptureMouse); }
+                  __playing ? io.WantTextInput : io.WantCaptureKeyboard,
+                  io.WantCaptureMouse); }
             // BeginFrame MUST be outside any Begin/End block —
             // it creates an internal transparent overlay window.
             gizmoBeginFrame();
