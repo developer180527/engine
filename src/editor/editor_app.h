@@ -163,6 +163,28 @@ public:
             // When docked: main window. When detached: the OS child window.
             GLFWwindow* camWin = m_sceneGLFWWindow ? m_sceneGLFWWindow : m_rt.window();
             updateEditorCamera(m_cam, m_input, camWin, dt, m_sceneViewHovered);
+            // ---- Play-mode cursor capture (FPS mouse-look) ----
+            {
+                GLFWwindow* gw = m_rt.window();
+                const bool playing = (m_editor.simState == SimState::Playing);
+                if (playing && !m_wasPlaying) m_playCursorLocked = true;
+                if (playing) {
+                    const bool escNow = glfwGetKey(gw, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+                    if (escNow && !m_escPrev) {
+                        if (m_playCursorLocked) m_playCursorLocked = false; // 1st Esc: free mouse
+                        else onStop();                                       // 2nd Esc: stop play
+                    }
+                    m_escPrev = escNow;
+                    const int want = m_playCursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
+                    if (glfwGetInputMode(gw, GLFW_CURSOR) != want)
+                        glfwSetInputMode(gw, GLFW_CURSOR, want);
+                } else {
+                    m_escPrev = false;
+                    if (m_playCursorLocked) { m_playCursorLocked = false;
+                        glfwSetInputMode(gw, GLFW_CURSOR, GLFW_CURSOR_NORMAL); }
+                }
+                m_wasPlaying = playing;
+            }
 
             // ---- Camera matrices ----
             float view[16], proj[16];
@@ -220,6 +242,9 @@ private:
     EditorState    m_editor;
     GizmoState     m_gizmo;
     bool           m_sceneViewHovered = true;
+    bool           m_playCursorLocked = false;
+    bool           m_escPrev          = false;
+    bool           m_wasPlaying       = false;
     float          m_sceneAspect      = 16.0f / 9.0f;
     GLFWwindow*    m_sceneGLFWWindow  = nullptr; // GLFW window currently hosting Scene View
     int            m_desiredSceneW    = 1280;
@@ -389,9 +414,6 @@ private:
             if (m_editor.simState == SimState::Editing) onPlay();
             else onPause();
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-            m_editor.simState != SimState::Editing)
-            onStop();
 
         auto ctx = buildCtx();
 

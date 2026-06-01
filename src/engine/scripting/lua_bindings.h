@@ -143,6 +143,7 @@ inline int in_keyDown(lua_State* L)    { lua_pushboolean(L, host(L)->keyDown(lua
 inline int in_keyPressed(lua_State* L) { lua_pushboolean(L, host(L)->keyPressed(luaL_checkstring(L,1))); return 1; }
 inline int in_axis(lua_State* L)       { lua_pushnumber(L, host(L)->axis(luaL_checkstring(L,1))); return 1; }
 inline int in_mouseDown(lua_State* L)  { lua_pushboolean(L, host(L)->mouseDown((int)luaL_checkinteger(L,1))); return 1; }
+inline int in_mouseDelta(lua_State* L) { float dx,dy; host(L)->mouseDelta(dx,dy); lua_pushnumber(L,dx); lua_pushnumber(L,dy); return 2; }
 
 inline int log_info(lua_State* L)  { host(L)->logInfo (luaL_checkstring(L,1)); return 0; }
 inline int log_warn(lua_State* L)  { host(L)->logWarn (luaL_checkstring(L,1)); return 0; }
@@ -154,7 +155,7 @@ inline int time_frame(lua_State* L)   { lua_pushinteger(L, (lua_Integer)host(L)-
 
 inline int world_find(lua_State* L) {
     ScriptHost* h = host(L); flecs::entity e = h->find(luaL_checkstring(L,1));
-    if (e.is_alive()) pushEntity(L, e, h); else lua_pushnil(L); return 1;
+    if (e.id() != 0 && e.is_alive()) pushEntity(L, e, h); else lua_pushnil(L); return 1;
 }
 inline int world_create(lua_State* L) {
     ScriptHost* h = host(L); pushEntity(L, h->create(luaL_checkstring(L,1)), h); return 1;
@@ -214,7 +215,7 @@ inline void install(lua_State* L, ScriptHost* h) {
         lua_setglobal(L, gname);
     };
     static const luaL_Reg kInput[] = {{"keyDown",in_keyDown},{"keyPressed",in_keyPressed},
-        {"axis",in_axis},{"mouseDown",in_mouseDown},{nullptr,nullptr}};
+        {"axis",in_axis},{"mouseDown",in_mouseDown},{"mouseDelta",in_mouseDelta},{nullptr,nullptr}};
     static const luaL_Reg kLog[]   = {{"info",log_info},{"warn",log_warn},{"error",log_error},{nullptr,nullptr}};
     static const luaL_Reg kTime[]  = {{"dt",time_dt},{"elapsed",time_elapsed},{"frame",time_frame},{nullptr,nullptr}};
     static const luaL_Reg kWorld[] = {{"find",world_find},{"create",world_create},{nullptr,nullptr}};

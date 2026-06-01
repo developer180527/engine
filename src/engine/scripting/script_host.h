@@ -64,7 +64,16 @@ public:
         return m_world->entity(name).set<Transform>(t).set<Name>({name});
     }
     void          destroy(flecs::entity e)            { if (e.is_alive()) e.destruct(); }
-    flecs::entity find(const char* name)              { return m_world->lookup(name); }
+    flecs::entity find(const char* name) {
+        // Scene entities are named via the Name component, not flecs' builtin
+        // name (load creates them anonymous), so search Name first.
+        flecs::entity found;
+        m_world->query_builder<const Name>().build().each([&](flecs::entity e, const Name& n) {
+            if (!found && n.value == name) found = e;
+        });
+        if (found) return found;
+        return m_world->lookup(name); // fallback: flecs-named (script-created) entities
+    }
     bool          isAlive(flecs::entity e) const      { return e.is_alive(); }
     void          setParent(flecs::entity c, flecs::entity p) {
         if (!c.is_alive() || !p.is_alive() || c == p) return;

@@ -146,8 +146,10 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         Name& n = e.get_mut<Name>();
         char buf[64];
         std::snprintf(buf, sizeof(buf), "%s", n.value.c_str());
+        ImGui::PushID((int)(uint32_t)e.id());
         if (ImGui::InputText("Name", buf, sizeof(buf)))
             n.value = buf;
+        ImGui::PopID();
     }
 
     // ── Parent relationship ───────────────────────────────────────────
