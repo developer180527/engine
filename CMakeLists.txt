@@ -113,6 +113,7 @@ add_executable(engine
     src/engine/runtime.cpp
     src/engine/async_loader.cpp
     src/io/assimp_importer.cpp
+    src/plugins/audio_impl.cpp
     shaders/vs_triangle.sc
     shaders/fs_triangle.sc
     shaders/varying.def.sc
@@ -137,6 +138,7 @@ target_include_directories(
     third_party/cgltf
     third_party/stb
     third_party/JoltPhysics
+    third_party/miniaudio
     "${SHADER_OUTPUT_DIR}"
 )
 
@@ -163,5 +165,9 @@ if(APPLE)
         "-framework QuartzCore"
         "-framework Metal"
         "-framework IOKit"
+        "-framework CoreAudio"
+        "-framework AudioToolbox"
+        "-framework AudioUnit"
+        "-framework CoreFoundation"
     )
 endif()

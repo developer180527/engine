@@ -45,3 +45,4 @@ struct IAudioService {
 // service without a compile-time dependency on the physics plugin. The physics
 // backend publishes itself here on simulation start.
 struct PhysicsServiceRef { IPhysicsService* svc = nullptr; };
+struct AudioServiceRef   { IAudioService*   svc = nullptr; };
