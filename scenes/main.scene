@@ -77,47 +77,6 @@
       }
     },
     {
-      "id": 4286930083610790379,
-      "meshRenderer": {
-        "sourcePath": "engine://primitive/plane",
-        "sourceType": "primitive"
-      },
-      "name": "Ground",
-      "rigidBody": {
-        "bodyType": 0,
-        "friction": 0.6000000238418579,
-        "halfExtent": [
-          10.0,
-          0.5,
-          10.0
-        ],
-        "halfHeight": 0.5,
-        "mass": 1.0,
-        "radius": 0.5,
-        "restitution": 0.30000001192092896,
-        "shape": 0,
-        "useGravity": false
-      },
-      "transform": {
-        "position": [
-          -0.049089908599853516,
-          -2.2844924926757813,
-          0.5524539947509766
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          50.0,
-          1.0,
-          50.0
-        ]
-      }
-    },
-    {
       "id": 15386141648548072725,
       "meshRenderer": {
         "sourcePath": "engine://primitive/cube",
@@ -158,6 +117,50 @@
           1.0,
           1.0,
           1.0
+        ]
+      }
+    },
+    {
+      "id": 4286930083610790379,
+      "meshRenderer": {
+        "sourcePath": "engine://primitive/plane",
+        "sourceType": "primitive"
+      },
+      "name": "Ground",
+      "rigidBody": {
+        "bodyType": 0,
+        "friction": 0.6000000238418579,
+        "halfExtent": [
+          10.0,
+          0.5,
+          10.0
+        ],
+        "halfHeight": 0.5,
+        "mass": 1.0,
+        "radius": 0.5,
+        "restitution": 0.30000001192092896,
+        "shape": 0,
+        "useGravity": false
+      },
+      "script": {
+        "path": "scripts/audio_test.lua"
+      },
+      "transform": {
+        "position": [
+          -0.049089908599853516,
+          -2.2844924926757813,
+          0.5524539947509766
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          50.0,
+          1.0,
+          50.0
         ]
       }
     },
@@ -217,7 +220,7 @@
       "parentId": 1423140140260966028,
       "transform": {
         "position": [
-          0.9421520233154297,
+          -0.13746559619903564,
           1.288473129272461,
           4.671733856201172
         ],

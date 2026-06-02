@@ -34,8 +34,8 @@ function M:onUpdate(dt)
     local fwd,strafe = 0,0
     if Input.keyDown("W") then fwd=fwd+1 end
     if Input.keyDown("S") then fwd=fwd-1 end
-    if Input.keyDown("D") then strafe=strafe+1 end
-    if Input.keyDown("A") then strafe=strafe-1 end
+    if Input.keyDown("A") then strafe=strafe+1 end
+    if Input.keyDown("D") then strafe=strafe-1 end
     if fwd~=0 and strafe~=0 then fwd=fwd*0.7071; strafe=strafe*0.7071 end
     local fx,fz = -math.sin(self.yaw), -math.cos(self.yaw)
     local rx,rz =  math.cos(self.yaw), -math.sin(self.yaw)
