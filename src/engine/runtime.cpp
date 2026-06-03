@@ -1,4 +1,6 @@
 #include <vector>
+#include "components/light.h"
+#include "render/render_pipeline.h"
 #include <cstring>
 #include "engine/runtime.h"
 
@@ -28,8 +30,7 @@
 #include "components/spinner.h"
 #include "core/transform.h"
 
-#include "metal/vs_triangle.sc.bin.h"
-#include "metal/fs_triangle.sc.bin.h"
+#include "render/forward_pipeline.h"
 
 EngineRuntime::EngineRuntime()  = default;
 EngineRuntime::~EngineRuntime() = default;
@@ -78,23 +79,6 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
 
     createSceneFB(cfg.width, cfg.height);
 
-    m_program = bgfx::createProgram(
-        bgfx::createShader(bgfx::makeRef(vs_triangle_mtl, sizeof(vs_triangle_mtl))),
-        bgfx::createShader(bgfx::makeRef(fs_triangle_mtl, sizeof(fs_triangle_mtl))),
-        true);
-    if (!bgfx::isValid(m_program)) {
-        std::printf("[Runtime] Shader program failed\n");
-        return false;
-    }
-
-    m_sBaseColor   = bgfx::createUniform("s_baseColor",   bgfx::UniformType::Sampler);
-    m_uParams      = bgfx::createUniform("u_params",      bgfx::UniformType::Vec4);
-    m_uColorFactor = bgfx::createUniform("u_colorFactor", bgfx::UniformType::Vec4);
-    m_uLightDir    = bgfx::createUniform("u_lightDir",    bgfx::UniformType::Vec4);
-    m_uLightParams = bgfx::createUniform("u_lightParams", bgfx::UniformType::Vec4);
-    m_uLightColor  = bgfx::createUniform("u_lightColor",  bgfx::UniformType::Vec4);
-    m_uCamPos      = bgfx::createUniform("u_camPos",      bgfx::UniformType::Vec4);
-    m_sNormalMap   = bgfx::createUniform("s_normalMap",   bgfx::UniformType::Sampler);
     // Flat normal (0.5,0.5,1) → (0,0,1) in tangent space — default when no normal map
     static const uint8_t kFlatNorm[4] = {128, 128, 255, 255};
     m_flatNormalTex = bgfx::createTexture2D(1, 1, false, 1,
@@ -103,6 +87,10 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
     static const uint32_t kWhite = 0xFFFFFFFFu;
     m_whiteTex = bgfx::createTexture2D(1, 1, false, 1,
         bgfx::TextureFormat::RGBA8, 0, bgfx::makeRef(&kWhite, 4));
+
+    m_pipeline = std::make_unique<ForwardPipeline>();
+    RenderContext rc = makeContext();
+    m_pipeline->onAttach(rc);
 
     return true;
 }
@@ -164,30 +152,18 @@ void EngineRuntime::resize(int w, int h) {
 
 void EngineRuntime::tick(float dt, const float view[16],
                          const float proj[16], bool pauseSystems) {
-    bgfx::setViewFrameBuffer(kSceneView, m_sceneFB);
-    bgfx::setViewRect(kSceneView, 0, 0, (uint16_t)m_sceneW, (uint16_t)m_sceneH);
-    bgfx::setViewTransform(kSceneView, view, proj);
-    bgfx::touch(kSceneView);
-    // Light: directional sun from upper-right-front, 30% ambient
-    const float kLightDir[4]    = { 0.6f, 0.8f, 0.4f, 0.0f }; // toward light
-    const float kLightParams[4] = { 0.25f, 0.0f, 0.0f, 0.0f }; // x=ambient
-    const float kLightColor[4]  = { 1.0f, 0.98f, 0.92f, 2.2f }; // rgb + intensity
-    // Camera world position extracted from column-major view matrix.
-    // view[12-14] = translation column = -R*eye, so eye = -R^T * T
-    // bx view matrix is row-major: T=(view[12],view[13],view[14])
-    // cam = -(T · col_i_of_R) where col i = (view[i*4], view[i*4+1], view[i*4+2])
-    const float camPos[4] = {
-        -(view[12]*view[0] + view[13]*view[1] + view[14]*view[2]),
-        -(view[12]*view[4] + view[13]*view[5] + view[14]*view[6]),
-        -(view[12]*view[8] + view[13]*view[9] + view[14]*view[10]),
-        1.0f };
-    bgfx::setUniform(m_uLightDir,    kLightDir);
-    bgfx::setUniform(m_uLightParams, kLightParams);
-    bgfx::setUniform(m_uLightColor,  kLightColor);
-    bgfx::setUniform(m_uCamPos,      camPos);
     tickSystems(dt, pauseSystems);
-    renderScene(view, proj);
 
+    RenderTarget target;
+    target.fb         = m_sceneFB;
+    target.w          = (uint16_t)m_sceneW;
+    target.h          = (uint16_t)m_sceneH;
+    target.clearColor = { 0.102f, 0.102f, 0.102f, 1.0f }; // matches old 0x1a1a1a
+    target.clearFlags = BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH;
+
+    RenderView    rv = buildView(m_ecs, view, proj, target, kSceneView);
+    RenderContext rc = makeContext();
+    m_pipeline->render(rv, rc);
 }
 
 void EngineRuntime::tickSystems(float dt, bool paused) {
@@ -204,157 +180,87 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
     m_ecs.progress();
 }
 
-void EngineRuntime::renderScene(const float view[16], const float proj[16],
-                                bgfx::ViewId viewId, flecs::world* worldOverride) {
-    flecs::world& world = worldOverride ? *worldOverride : m_ecs;
-    // ----------------------------------------------------------------
-    // 1. Frustum planes
-    // ----------------------------------------------------------------
-    float vp[16];
-    bx::mtxMul(vp, view, proj);
+RenderView EngineRuntime::buildView(flecs::world& world, const float view[16],
+                                    const float proj[16], const RenderTarget& target,
+                                    bgfx::ViewId baseViewId) {
+    RenderView rv;
+    rv.view       = Mat4::from(view);
+    rv.proj       = Mat4::from(proj);
+    rv.target     = target;
+    rv.baseViewId = baseViewId;
 
-    struct Plane { float a, b, c, d; };
-    auto mkPlane = [](float a, float b, float c, float d) -> Plane {
-        float l = std::sqrt(a*a + b*b + c*c);
-        return l > 1e-6f ? Plane{a/l, b/l, c/l, d/l} : Plane{};
+    // Camera world position from the row-major view matrix.
+    rv.camPos = { -(view[12]*view[0] + view[13]*view[1] + view[14]*view[2]),
+                  -(view[12]*view[4] + view[13]*view[5] + view[14]*view[6]),
+                  -(view[12]*view[8] + view[13]*view[9] + view[14]*view[10]),
+                  1.0f };
+
+    // Frustum planes from view*proj.
+    float vp[16]; bx::mtxMul(vp, view, proj);
+    auto setPlane = [&](int i, float a, float b, float c, float d) {
+        float l = std::sqrt(a*a + b*b + c*c); if (l < 1e-6f) l = 1.0f;
+        rv.frustum[i][0]=a/l; rv.frustum[i][1]=b/l; rv.frustum[i][2]=c/l; rv.frustum[i][3]=d/l;
     };
-    const Plane planes[6] = {
-        mkPlane(vp[3]+vp[0], vp[7]+vp[4], vp[11]+vp[8],  vp[15]+vp[12]),
-        mkPlane(vp[3]-vp[0], vp[7]-vp[4], vp[11]-vp[8],  vp[15]-vp[12]),
-        mkPlane(vp[3]+vp[1], vp[7]+vp[5], vp[11]+vp[9],  vp[15]+vp[13]),
-        mkPlane(vp[3]-vp[1], vp[7]-vp[5], vp[11]-vp[9],  vp[15]-vp[13]),
-        mkPlane(vp[2],        vp[6],        vp[10],         vp[14]),
-        mkPlane(vp[3]-vp[2], vp[7]-vp[6], vp[11]-vp[10], vp[15]-vp[14]),
-    };
+    setPlane(0, vp[3]+vp[0], vp[7]+vp[4], vp[11]+vp[8],  vp[15]+vp[12]);
+    setPlane(1, vp[3]-vp[0], vp[7]-vp[4], vp[11]-vp[8],  vp[15]-vp[12]);
+    setPlane(2, vp[3]+vp[1], vp[7]+vp[5], vp[11]+vp[9],  vp[15]+vp[13]);
+    setPlane(3, vp[3]-vp[1], vp[7]-vp[5], vp[11]-vp[9],  vp[15]-vp[13]);
+    setPlane(4, vp[2],        vp[6],        vp[10],         vp[14]);
+    setPlane(5, vp[3]-vp[2], vp[7]-vp[6], vp[11]-vp[10], vp[15]-vp[14]);
 
-    // ----------------------------------------------------------------
-    // 2. Collect visible renderables
-    // ----------------------------------------------------------------
-    struct Renderable {
-        float           model[16];
-        const Mesh*     mesh;
-        const Material* mat;
-        const Texture*  tex;
-        uint32_t        meshIdx;  // MeshHandle.idx for instancing key
-        uint32_t        matIdx;   // MaterialHandle.idx for batching key
-    };
-
-    std::vector<Renderable> visible;
-    visible.reserve(64);
-
+    // Extract renderables (UNCULLED — the pipeline culls).
+    m_items.clear();
     world.query_builder<const Transform, const MeshRenderer>().build()
-        .each([&](flecs::entity e, const Transform& t, const MeshRenderer& mr) {
+        .each([&](flecs::entity e, const Transform&, const MeshRenderer& mr) {
             const Mesh* mesh = m_assets.getMesh(mr.mesh);
             if (!mesh) return;
-
-            if (mesh->hasBounds()) {
-                const bx::Vec3 c    = mesh->boundsCenter();
-                const float    maxS = std::max({t.scale.x, t.scale.y, t.scale.z});
-                const float    r    = bx::length(mesh->boundsSize()) * 0.5f * maxS;
-                float m[16]; getWorldMatrix(e, m);
-                const float wx = m[0]*c.x+m[4]*c.y+m[8]*c.z +m[12];
-                const float wy = m[1]*c.x+m[5]*c.y+m[9]*c.z +m[13];
-                const float wz = m[2]*c.x+m[6]*c.y+m[10]*c.z+m[14];
-                for (const Plane& p : planes)
-                    if (p.a*wx+p.b*wy+p.c*wz+p.d < -r) return;
-            }
-
-            Renderable r;
-            getWorldMatrix(e, r.model);
-            r.mesh    = mesh;
-            // Per-entity override wins over shared mesh material
+            RenderItem it;
+            getWorldMatrix(e, it.model.m);
+            it.mesh = mesh;
             MaterialHandle mh = mr.materialOverride.valid()
                                 ? mr.materialOverride : mesh->material;
-            r.mat     = mh.valid()
-                        ? m_ctx->materials.getMaterial(mh) : nullptr;
-            r.tex     = (r.mat && r.mat->hasTexture())
-                        ? m_ctx->textures.getTexture(r.mat->baseColorTexture) : nullptr;
-            r.meshIdx = mr.mesh.id;
-            r.matIdx  = mh.id;   // override changes sort key → separate draw group
-            visible.push_back(r);
+            it.mat = mh.valid() ? m_materials.getMaterial(mh) : nullptr;
+            it.tex = (it.mat && it.mat->hasTexture())
+                     ? m_textures.getTexture(it.mat->baseColorTexture) : nullptr;
+            it.meshKey = mr.mesh.id;
+            it.matKey  = mh.id;
+            m_items.push_back(it);
         });
 
-    // ----------------------------------------------------------------
-    // 3. Sort by (meshIdx, matIdx) — groups instancable entities together
-    //    and minimises material state switches between groups
-    // ----------------------------------------------------------------
-    std::sort(visible.begin(), visible.end(), [](const Renderable& a, const Renderable& b) {
-        if (a.meshIdx != b.meshIdx) return a.meshIdx < b.meshIdx;
-        return a.matIdx < b.matIdx;
-    });
+    m_lights.clear();
+    world.query_builder<const Transform, const Light>().build()
+        .each([&](flecs::entity e, const Transform&, const Light& lc) {
+            float m[16]; getWorldMatrix(e, m);
+            LightItem li;
+            li.type      = lc.type;
+            li.color     = lc.color;
+            li.intensity = lc.intensity;
+            li.range     = lc.range;
+            li.position  = bx::Vec3{ m[12], m[13], m[14] };
+            // light emits along local -Z, so toward-light = +local-Z in world
+            li.direction = bx::normalize(bx::Vec3{ -m[8], -m[9], -m[10] });
+            li.spotInnerCos = std::cos(lc.spotInner * (3.14159265f / 180.0f));
+            li.spotOuterCos = std::cos(lc.spotOuter * (3.14159265f / 180.0f));
+            m_lights.push_back(li);
+        });
 
-    // ----------------------------------------------------------------
-    // 4. Submit — instanced for groups > 1, single draw otherwise
-    // ----------------------------------------------------------------
-    size_t i = 0;
-    while (i < visible.size()) {
-        const Renderable& first = visible[i];
-
-        // Count how many consecutive renderables share the same mesh+mat
-        size_t j = i + 1;
-        while (j < visible.size()
-               && visible[j].meshIdx == first.meshIdx
-               && visible[j].matIdx  == first.matIdx) {
-            ++j;
-        }
-        const uint32_t groupSize = (uint32_t)(j - i);
-
-        // Per-group constants — computed once, re-bound before EVERY submit.
-        // bgfx consumes all state (uniforms, textures, VB, IB) on submit().
-        float roughness = first.mat ? first.mat->roughness : 0.7f;
-        float metallic  = first.mat ? first.mat->metallic  : 0.0f;
-        const Texture* nmTex = (first.mat && first.mat->normalMapTexture.valid())
-            ? m_ctx->textures.getTexture(first.mat->normalMapTexture) : nullptr;
-        float params[4] = {first.tex?1.0f:0.0f, roughness, metallic, nmTex?1.0f:0.0f};
-        float factor[4] = {1, 1, 1, 1};
-        if (first.mat) {
-            factor[0] = first.mat->baseColorFactor[0];
-            factor[1] = first.mat->baseColorFactor[1];
-            factor[2] = first.mat->baseColorFactor[2];
-            factor[3] = first.mat->baseColorFactor[3];
-        }
-        const uint64_t state = first.mesh->doubleSided
-            ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
-               BGFX_STATE_WRITE_Z   | BGFX_STATE_DEPTH_TEST_LESS |
-               BGFX_STATE_MSAA)
-            : (BGFX_STATE_DEFAULT | BGFX_STATE_CULL_CCW);
-        for (uint32_t k = 0; k < groupSize; ++k) {
-            if (first.mesh->submeshes.empty()) {
-                bgfx::setUniform(m_uParams,      params);
-                bgfx::setUniform(m_uColorFactor, factor);
-                bgfx::setTexture(0, m_sBaseColor,
-                                 first.tex ? first.tex->handle : m_whiteTex);
-                bgfx::setTexture(1, m_sNormalMap,
-                                 nmTex ? nmTex->handle : m_flatNormalTex);
-                bgfx::setState(state);
-                bgfx::setTransform(visible[i + k].model);
-                bgfx::setVertexBuffer(0, first.mesh->vbh);
-                bgfx::setIndexBuffer(first.mesh->ibh);
-                bgfx::submit(viewId, m_program);
-            } else {
-                for (const auto& sub : first.mesh->submeshes) {
-                    bgfx::setUniform(m_uParams,      params);
-                    bgfx::setUniform(m_uColorFactor, factor);
-                    bgfx::setTexture(0, m_sBaseColor,
-                                    first.tex ? first.tex->handle : m_whiteTex);
-                    bgfx::setTexture(1, m_sNormalMap,
-                                    nmTex ? nmTex->handle : m_flatNormalTex);
-                    bgfx::setState(state);
-                    bgfx::setTransform(visible[i + k].model);
-                    bgfx::setVertexBuffer(0, first.mesh->vbh);
-                    bgfx::setIndexBuffer(first.mesh->ibh,
-                                        sub.indexOffset, sub.indexCount);
-                    bgfx::submit(viewId, m_program);
-                }
-            }
-        }
-        i = j;
-    }
+    rv.items   = { m_items.data(),  m_items.size() };
+    rv.lights  = { m_lights.data(), m_lights.size() };
+    rv.ambient = 0.25f;
+    return rv;
 }
+
+RenderContext EngineRuntime::makeContext() {
+    RenderContext rc{ m_assets, m_textures, m_materials };
+    rc.whiteTex      = m_whiteTex;
+    rc.flatNormalTex = m_flatNormalTex;
+    rc.viewCursor    = &m_viewCursor;
+    return rc;
+}
+
 void EngineRuntime::renderGameView(const float view[16], const float proj[16],
                                    const float clearColor[4],
                                    flecs::world* gameWorld) {
-    // Lazy-init game FB — created here to avoid bgfx::reset() double-free.
     if (!bgfx::isValid(m_gameFB)) {
         const uint16_t W = (uint16_t)m_sceneW, H = (uint16_t)m_sceneH;
         m_gameColorTex = bgfx::createTexture2D(W, H, false, 1,
@@ -365,18 +271,18 @@ void EngineRuntime::renderGameView(const float view[16], const float proj[16],
         m_gameFB = bgfx::createFrameBuffer(2, gatt, false);
     }
     if (!bgfx::isValid(m_gameFB)) return;
-    const uint32_t cc = (uint8_t)(clearColor[0]*255) << 24
-                      | (uint8_t)(clearColor[1]*255) << 16
-                      | (uint8_t)(clearColor[2]*255) << 8
-                      | (uint8_t)(clearColor[3]*255);
-    bgfx::setViewFrameBuffer(kGameView, m_gameFB);
-    bgfx::setViewRect(kGameView, 0, 0,
-        (uint16_t)m_sceneW, (uint16_t)m_sceneH);
-    bgfx::setViewTransform(kGameView, view, proj);
-    bgfx::setViewClear(kGameView,
-        BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, cc, 1.0f, 0);
-    bgfx::touch(kGameView);
-    renderScene(view, proj, kGameView, gameWorld);
+
+    RenderTarget target;
+    target.fb         = m_gameFB;
+    target.w          = (uint16_t)m_sceneW;
+    target.h          = (uint16_t)m_sceneH;
+    target.clearColor = { clearColor[0], clearColor[1], clearColor[2], clearColor[3] };
+    target.clearFlags = BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH;
+
+    flecs::world& world = gameWorld ? *gameWorld : m_ecs;
+    RenderView    rv = buildView(world, view, proj, target, kGameView);
+    RenderContext rc = makeContext();
+    m_pipeline->render(rv, rc);
 }
 
 void EngineRuntime::shutdown() {
@@ -414,22 +320,14 @@ void EngineRuntime::createSceneFB(int w, int h) {
 }
 
 void EngineRuntime::shutdownRenderer() {
+    if (m_pipeline) m_pipeline->onDetach();
     if (bgfx::isValid(m_sceneFB))       bgfx::destroy(m_sceneFB);
     if (bgfx::isValid(m_sceneColorTex)) bgfx::destroy(m_sceneColorTex);
     if (bgfx::isValid(m_sceneDepthTex)) bgfx::destroy(m_sceneDepthTex);
     if (bgfx::isValid(m_gameFB))        bgfx::destroy(m_gameFB);
     if (bgfx::isValid(m_gameColorTex))  bgfx::destroy(m_gameColorTex);
     if (bgfx::isValid(m_gameDepthTex))  bgfx::destroy(m_gameDepthTex);
-    if (bgfx::isValid(m_uLightColor))   bgfx::destroy(m_uLightColor);
-    if (bgfx::isValid(m_uCamPos))       bgfx::destroy(m_uCamPos);
-    if (bgfx::isValid(m_sNormalMap))    bgfx::destroy(m_sNormalMap);
     if (bgfx::isValid(m_flatNormalTex)) bgfx::destroy(m_flatNormalTex);
-    if (bgfx::isValid(m_program))       bgfx::destroy(m_program);
-    if (bgfx::isValid(m_sBaseColor))   bgfx::destroy(m_sBaseColor);
-    if (bgfx::isValid(m_uParams))      bgfx::destroy(m_uParams);
-    if (bgfx::isValid(m_uColorFactor)) bgfx::destroy(m_uColorFactor);
-    if (bgfx::isValid(m_uLightDir))    bgfx::destroy(m_uLightDir);
-    if (bgfx::isValid(m_uLightParams)) bgfx::destroy(m_uLightParams);
     if (bgfx::isValid(m_whiteTex))     bgfx::destroy(m_whiteTex);
     bgfx::shutdown();
 }

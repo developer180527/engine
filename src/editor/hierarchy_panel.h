@@ -1,4 +1,5 @@
 #pragma once
+#include "components/light.h"
 #include <imgui.h>
 #include <flecs.h>
 #include <string>
@@ -83,11 +84,38 @@ inline void drawAddMenuItems(EngineContext& ctx) {
     }
 
     ImGui::Separator();
-    ImGui::BeginDisabled();
-    ImGui::MenuItem("  Empty Object");
-    ImGui::MenuItem("  Point Light");
-    ImGui::MenuItem("  Directional Light");
-    ImGui::EndDisabled();
+    ImGui::TextDisabled("Lights");
+    {
+        auto spawnLight = [&](const char* label, const Transform& t, const Light& lc) {
+            std::string nm = uniqueEntityName(ctx.ecs, label);
+            auto e = ctx.ecs.entity(nm.c_str())
+                .set<Transform>(t).set<Name>({nm}).set<Light>(lc);
+            ctx.editor.undoStack.pushEntityAdd(e);
+            ctx.editor.selected = e;
+            ctx.editor.sceneDirty = true;
+        };
+        if (ImGui::MenuItem("[sun] Directional Light")) {
+            Transform t{}; t.scale={1,1,1};
+            t.rotation={-0.70710678f, 0.0f, 0.0f, 0.70710678f};
+            Light lc; lc.type = LightType::Directional; lc.intensity = 3.0f;
+            spawnLight("DirectionalLight", t, lc);
+        }
+        if (ImGui::MenuItem("[pt] Point Light")) {
+            Transform t{}; t.scale={1,1,1}; t.rotation={0,0,0,1};
+            t.position={0.0f, 5.0f, 0.0f};
+            Light lc; lc.type = LightType::Point; lc.range = 20.0f; lc.intensity = 25.0f;
+            spawnLight("PointLight", t, lc);
+        }
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("  Empty Object")) {
+        std::string nm = uniqueEntityName(ctx.ecs, "Empty");
+        Transform t{}; t.scale={1,1,1}; t.rotation={0,0,0,1};
+        auto e = ctx.ecs.entity(nm.c_str()).set<Transform>(t).set<Name>({nm});
+        ctx.editor.undoStack.pushEntityAdd(e);
+        ctx.editor.selected = e;
+        ctx.editor.sceneDirty = true;
+    }
 }
 
 // ── Add-entity button popup wrapper ──────────────────────────────────────
@@ -97,6 +125,8 @@ inline void drawAddPopup(EngineContext& ctx) {
     ImGui::EndPopup();
 }
 
+// TODO: Cache hierarchy nodes/entities in a HierarchyModel and render from
+// the cached tree. Avoid recursive ECS traversal every frame for large scenes.
 // ── Recursive entity tree node ─────────────────────────────────────────────
 // toDelete and reparentOp are collected here but applied AFTER all queries
 // complete, avoiding the LOCKED_STORAGE crash on structural changes.
@@ -190,6 +220,7 @@ inline void drawHierarchyPanel(EngineContext& ctx) {
     // Header
     if (ImGui::Button("+ Add")) ImGui::OpenPopup("##addEntity");
     ImGui::SameLine();
+    // TODO: Cache frequently used flecs queries instead of rebuilding them every frame.
     int total = 0;
     ctx.ecs.query_builder<const Name>().without<Spinner>()
         .build().each([&](flecs::entity, const Name&) { ++total; });
@@ -205,9 +236,13 @@ inline void drawHierarchyPanel(EngineContext& ctx) {
 
     ImGui::Separator();
 
+    // TODO: Add hierarchy search/filter bar.
+    // TODO: Introduce SelectionManager to support scene, asset, runtime and multi-selection.
+
     flecs::entity toDelete{};
     ReparentOp    reparentOp{};
 
+    // TODO: Use a cached query and HierarchyModel for hierarchy rendering.
     // Only show root entities (no named parent)
     ctx.ecs.query_builder<const Name>()
         .without<Spinner>()

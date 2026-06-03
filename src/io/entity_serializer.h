@@ -23,6 +23,7 @@
 #include "components/name.h"
 #include "components/mesh_renderer.h"
 #include "components/camera.h"
+#include "components/light.h"
 #include "components/rigid_body.h"
 #include "components/script_component.h"
 #include "components/character_controller.h"
@@ -233,6 +234,30 @@ inline void loadCharacterController(flecs::entity e, const nlohmann::json& j, Se
     e.set<CharacterController>(cc);
 }
 
+// ── Light (parameters only; world pos/dir derive from Transform at extraction) ─
+inline bool hasLight(flecs::entity e) { return e.try_get<Light>() != nullptr; }
+inline void saveLight(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
+    const Light* l = e.try_get<Light>(); if (!l) return;
+    j["type"]        = (int)l->type;
+    j["color"]       = {l->color.x, l->color.y, l->color.z};
+    j["intensity"]   = l->intensity;
+    j["range"]       = l->range;
+    j["spotInner"]   = l->spotInner;
+    j["spotOuter"]   = l->spotOuter;
+    j["castShadows"] = l->castShadows;
+}
+inline void loadLight(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
+    Light l;
+    l.type        = (LightType)j.value("type", 0);
+    if (j.contains("color")) { const auto& c = j["color"]; l.color = {c[0], c[1], c[2]}; }
+    l.intensity   = j.value("intensity", 3.0f);
+    l.range       = j.value("range", 15.0f);
+    l.spotInner   = j.value("spotInner", 25.0f);
+    l.spotOuter   = j.value("spotOuter", 35.0f);
+    l.castShadows = j.value("castShadows", false);
+    e.set<Light>(l);
+}
+
 inline const std::vector<ComponentSerde>& table() {
     static const std::vector<ComponentSerde> t = {
         { "transform",    hasTransform, saveTransform, loadTransform },
@@ -242,6 +267,7 @@ inline const std::vector<ComponentSerde>& table() {
         { "rigidBody",    hasRigidBody, saveRigidBody, loadRigidBody },
         { "script",       hasScript,    saveScript,    loadScript    },
         { "characterController", hasCharacterController, saveCharacterController, loadCharacterController },
+        { "light",        hasLight,      saveLight,     loadLight     },
     };
     return t;
 }

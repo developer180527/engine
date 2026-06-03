@@ -1,15 +1,20 @@
 $input v_worldPos, v_worldNormal, v_worldTangent, v_texcoord0
 #include <bgfx_shader.sh>
 
+#define MAX_LIGHTS 16
+
 SAMPLER2D(s_baseColor,  0);
 SAMPLER2D(s_normalMap,  1);
 
-uniform vec4 u_params;       // x=hasBaseColor  y=roughness  z=metallic  w=hasNormalMap
+uniform vec4 u_params;       // x=hasBaseColor y=roughness z=metallic w=hasNormalMap
 uniform vec4 u_colorFactor;
-uniform vec4 u_lightDir;     // xyz = toward light
-uniform vec4 u_lightColor;   // xyz = RGB  w = intensity
-uniform vec4 u_lightParams;  // x = ambient
+uniform vec4 u_lightParams;  // x=ambient  y=lightCount
 uniform vec4 u_camPos;
+// Per light (4 vec4): [0] xyz=position, w=type(0 dir,1 point,2 spot)
+//                     [1] rgb=color,    w=intensity
+//                     [2] xyz=direction(toward light, directional), w=range
+//                     [3] x=spotInnerCos, y=spotOuterCos
+uniform vec4 u_lights[MAX_LIGHTS * 4];
 
 float distributionGGX(float NdotH, float roughness) {
     float a  = roughness * roughness;
@@ -30,53 +35,75 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
 }
 
 void main() {
-    float roughness = u_params.y;
+    float roughness = clamp(u_params.y, 0.045, 1.0);
     float metallic  = u_params.z;
 
-    // Base color
     vec4 albedo = (u_params.x > 0.5)
         ? texture2D(s_baseColor, v_texcoord0) * u_colorFactor
         : u_colorFactor;
     if (albedo.a < 0.01) discard;
     vec3 baseColor = albedo.rgb;
 
-    // Surface normal — geometry or normal-mapped
     vec3 N_geo = normalize(v_worldNormal);
     vec3 N;
     if (u_params.w > 0.5) {
-        // Sample + decode normal map
         vec3 N_ts = texture2D(s_normalMap, v_texcoord0).xyz * 2.0 - vec3_splat(1.0);
-        // Gram-Schmidt TBN (avoids mat3 type entirely)
         vec3 T  = normalize(v_worldTangent.xyz);
-        T = normalize(T - dot(T, N_geo) * N_geo);      // re-orthogonalize
-        vec3 B  = cross(N_geo, T) * v_worldTangent.w;  // handedness-correct bitangent
-        // Rotate from tangent → world space: T*x + B*y + N*z
+        T = normalize(T - dot(T, N_geo) * N_geo);
+        vec3 B  = cross(N_geo, T) * v_worldTangent.w;
         N = normalize(T * N_ts.x + B * N_ts.y + N_geo * N_ts.z);
     } else {
         N = N_geo;
     }
 
-    vec3 L = normalize(u_lightDir.xyz);
-    vec3 V = normalize(u_camPos.xyz - v_worldPos);
-    vec3 H = normalize(L + V);
-
-    float NdotL = max(dot(N, L), 0.0);
+    vec3  V     = normalize(u_camPos.xyz - v_worldPos);
     float NdotV = max(dot(N, V), 0.001);
-    float NdotH = max(dot(N, H), 0.0);
-    float HdotV = max(dot(H, V), 0.0);
+    vec3  F0    = mix(vec3_splat(0.04), baseColor, metallic);
 
-    vec3 F0 = mix(vec3_splat(0.04), baseColor, metallic);
+    int   count  = int(u_lightParams.y);
+    vec3  direct = vec3_splat(0.0);
 
-    float D = distributionGGX(NdotH, roughness);
-    float G = geometrySchlick(NdotV, roughness) * geometrySchlick(NdotL, roughness);
-    vec3  F = fresnelSchlick(HdotV, F0);
+    for (int i = 0; i < MAX_LIGHTS; ++i) {
+        if (i >= count) break;
 
-    vec3 specular = (D * G) * F / max(4.0 * NdotV * NdotL, 0.001);
-    vec3 kD       = (vec3_splat(1.0) - F) * (1.0 - metallic);
-    vec3 diffuse  = kD * baseColor / 3.14159265;
+        vec4 P  = u_lights[i * 4 + 0];   // xyz pos,   w type
+        vec4 Co = u_lights[i * 4 + 1];   // rgb color, w intensity
+        vec4 Dr = u_lights[i * 4 + 2];   // xyz dir,   w range
+        vec4 Sd = u_lights[i * 4 + 3];   // x innerCos, y outerCos
+
+        vec3  L;
+        float atten = 1.0;
+        if (P.w < 0.5) {
+            L = normalize(Dr.xyz);                 // directional
+        } else {
+            vec3  toL  = P.xyz - v_worldPos;       // point / spot
+            float dist = length(toL);
+            L = toL / max(dist, 0.0001);
+            float dr  = dist / max(Dr.w, 0.0001);
+            float win = clamp(1.0 - dr * dr * dr * dr, 0.0, 1.0);
+            atten = (win * win) / (dist * dist + 1.0);
+            if (P.w > 1.5) {
+                float cone = clamp((dot(L, normalize(Dr.xyz)) - Sd.y) / max(Sd.x - Sd.y, 0.0001), 0.0, 1.0);
+                atten *= cone * cone;
+            }
+        }
+
+        vec3  H     = normalize(L + V);
+        float NdotL = max(dot(N, L), 0.0);
+        float NdotH = max(dot(N, H), 0.0);
+        float HdotV = max(dot(H, V), 0.0);
+
+        float D = distributionGGX(NdotH, roughness);
+        float G = geometrySchlick(NdotV, roughness) * geometrySchlick(NdotL, roughness);
+        vec3  F = fresnelSchlick(HdotV, F0);
+
+        vec3 specular = (D * G) * F / max(4.0 * NdotV * NdotL, 0.001);
+        vec3 kD       = (vec3_splat(1.0) - F) * (1.0 - metallic);
+        vec3 diffuse  = kD * baseColor / 3.14159265;
+
+        direct += (diffuse + specular) * Co.rgb * Co.w * atten * NdotL;
+    }
 
     vec3 ambient = baseColor * u_lightParams.x;
-    vec3 direct  = (diffuse + specular) * u_lightColor.rgb * u_lightColor.w * NdotL;
-
     gl_FragColor = vec4(ambient + direct, albedo.a);
 }

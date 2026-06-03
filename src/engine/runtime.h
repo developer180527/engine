@@ -5,6 +5,8 @@
 #include <GLFW/glfw3.h>
 #include <bgfx/bgfx.h>
 #include "engine/runtime_context.h"
+#include <vector>
+#include "render/render_pipeline.h"
 
 struct EngineConfig {
     std::string title  = "Engine";
@@ -71,16 +73,11 @@ private:
 
     std::unique_ptr<RuntimeContext> m_ctx;
 
-    // Rendering
-    bgfx::ProgramHandle m_program      = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle m_sBaseColor   = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle m_uParams      = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle m_uColorFactor = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle m_uLightDir    = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle m_uLightParams = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle m_uLightColor  = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle m_uCamPos      = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle m_sNormalMap   = BGFX_INVALID_HANDLE;
+    // Rendering — the pipeline owns the program + shader uniforms.
+    std::unique_ptr<IRenderPipeline> m_pipeline;
+    std::vector<RenderItem>          m_items;   // per-frame extraction scratch
+    std::vector<LightItem>           m_lights;  // per-frame light scratch
+    bgfx::ViewId                     m_viewCursor = 4; // first free view past reserved 0..3
     bgfx::TextureHandle m_flatNormalTex= BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_whiteTex     = BGFX_INVALID_HANDLE;
 
@@ -103,9 +100,10 @@ private:
     bool initSystems();
     void buildDefaultScene();
     void tickSystems(float dt, bool paused);
-    void renderScene(const float view[16], const float proj[16],
-                     bgfx::ViewId viewId = kSceneView,
-                     flecs::world* worldOverride = nullptr);
+    RenderView    buildView(flecs::world& world, const float view[16],
+                            const float proj[16], const RenderTarget& target,
+                            bgfx::ViewId baseViewId);
+    RenderContext makeContext();
     void shutdownRenderer();
     void shutdownPlatform();
 };
