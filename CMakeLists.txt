@@ -67,6 +67,23 @@ bgfx_compile_shaders(
     AS_HEADERS
 )
 
+bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${CMAKE_SOURCE_DIR}/shaders/vs_shadow.sc
+    VARYING_DEF ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
+    OUTPUT_DIR ${SHADER_OUTPUT_DIR}
+    INCLUDE_DIRS ${BGFX_SHADER_INCLUDES}
+    AS_HEADERS
+)
+bgfx_compile_shaders(
+    TYPE FRAGMENT
+    SHADERS ${CMAKE_SOURCE_DIR}/shaders/fs_shadow.sc
+    VARYING_DEF ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
+    OUTPUT_DIR ${SHADER_OUTPUT_DIR}
+    INCLUDE_DIRS ${BGFX_SHADER_INCLUDES}
+    AS_HEADERS
+)
+
 
 # ---- Assimp (multi-format mesh importer) ----
 # Disable ALL importers/exporters by default, then opt-in only what we need.
@@ -116,12 +133,16 @@ add_executable(engine
     src/plugins/audio_impl.cpp
     shaders/vs_triangle.sc
     shaders/fs_triangle.sc
+    shaders/vs_shadow.sc
+    shaders/fs_shadow.sc
     shaders/varying.def.sc
 )
 
 set_source_files_properties(
     shaders/vs_triangle.sc
     shaders/fs_triangle.sc
+    shaders/vs_shadow.sc
+    shaders/fs_shadow.sc
     shaders/varying.def.sc
     PROPERTIES HEADER_FILE_ONLY TRUE
 )

@@ -77,7 +77,7 @@ private:
     std::unique_ptr<IRenderPipeline> m_pipeline;
     std::vector<RenderItem>          m_items;   // per-frame extraction scratch
     std::vector<LightItem>           m_lights;  // per-frame light scratch
-    bgfx::ViewId                     m_viewCursor = 4; // first free view past reserved 0..3
+    bgfx::ViewId                     m_viewCursor = 5; // first free view past reserved 0..4
     bgfx::TextureHandle m_flatNormalTex= BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_whiteTex     = BGFX_INVALID_HANDLE;
 
@@ -90,10 +90,11 @@ private:
     bgfx::TextureHandle     m_gameDepthTex  = BGFX_INVALID_HANDLE;
     int m_sceneW = 1280, m_sceneH = 720;
 
-    static constexpr bgfx::ViewId kSceneView   = 0;
-    static constexpr bgfx::ViewId kBgView      = 1; // clears backbuffer
-    static constexpr bgfx::ViewId kResolveView = 2; // MSAA blit resolve
-    static constexpr bgfx::ViewId kGameView    = 3; // game camera view
+    static constexpr bgfx::ViewId kShadowView  = 0; // depth-from-light (renders first)
+    static constexpr bgfx::ViewId kSceneView   = 1;
+    static constexpr bgfx::ViewId kBgView      = 2; // clears backbuffer
+    static constexpr bgfx::ViewId kResolveView = 3; // MSAA blit resolve
+    static constexpr bgfx::ViewId kGameView    = 4; // game camera view
 
     bool initPlatform(const EngineConfig& cfg);
     bool initRenderer(const EngineConfig& cfg);

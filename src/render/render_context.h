@@ -17,5 +17,6 @@ struct RenderContext {
 
     // Engine owns the cursor; allocView() bumps it past the reserved range.
     bgfx::ViewId* viewCursor = nullptr;
+    bgfx::ViewId shadowViewId = 0; // reserved depth-from-light pass
     bgfx::ViewId allocView() { return viewCursor ? (*viewCursor)++ : 0; }
 };

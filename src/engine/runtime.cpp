@@ -259,6 +259,7 @@ RenderContext EngineRuntime::makeContext() {
     rc.whiteTex      = m_whiteTex;
     rc.flatNormalTex = m_flatNormalTex;
     rc.viewCursor    = &m_viewCursor;
+    rc.shadowViewId  = kShadowView;
     return rc;
 }
 

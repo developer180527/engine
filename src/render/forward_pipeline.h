@@ -16,6 +16,8 @@
 // Compiled shaders live in exactly this TU (no include guards on the bins).
 #include "metal/vs_triangle.sc.bin.h"
 #include "metal/fs_triangle.sc.bin.h"
+#include "metal/vs_shadow.sc.bin.h"
+#include "metal/fs_shadow.sc.bin.h"
 
 class ForwardPipeline final : public IRenderPipeline {
 public:
@@ -33,16 +35,36 @@ public:
         m_uLights      = bgfx::createUniform("u_lights",      bgfx::UniformType::Vec4, MAX_LIGHTS * 4);
         m_uCamPos      = bgfx::createUniform("u_camPos",      bgfx::UniformType::Vec4);
         m_sNormalMap   = bgfx::createUniform("s_normalMap",   bgfx::UniformType::Sampler);
+
+        m_shadowProgram = bgfx::createProgram(
+            bgfx::createShader(bgfx::makeRef(vs_shadow_mtl, sizeof(vs_shadow_mtl))),
+            bgfx::createShader(bgfx::makeRef(fs_shadow_mtl, sizeof(fs_shadow_mtl))),
+            true);
+        const uint64_t smFlags = BGFX_TEXTURE_RT
+            | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT
+            | BGFX_SAMPLER_U_CLAMP   | BGFX_SAMPLER_V_CLAMP;
+        m_shadowMap = bgfx::createTexture2D(SHADOW_SIZE, SHADOW_SIZE, false, 1,
+                                            bgfx::TextureFormat::D32F, smFlags);
+        m_shadowFB  = bgfx::createFrameBuffer(1, &m_shadowMap, false);
+        m_sShadowMap    = bgfx::createUniform("s_shadowMap",    bgfx::UniformType::Sampler);
+        m_uShadowMtx    = bgfx::createUniform("u_shadowMtx",    bgfx::UniformType::Mat4);
+        m_uShadowParams = bgfx::createUniform("u_shadowParams", bgfx::UniformType::Vec4);
     }
 
     void onDetach() override {
         auto d = [](bgfx::UniformHandle& h){ if (bgfx::isValid(h)) bgfx::destroy(h); h = BGFX_INVALID_HANDLE; };
         d(m_sBaseColor); d(m_uParams); d(m_uColorFactor); d(m_uLights);
         d(m_uLightParams); d(m_uCamPos); d(m_sNormalMap);
+        d(m_sShadowMap); d(m_uShadowMtx); d(m_uShadowParams);
         if (bgfx::isValid(m_program)) { bgfx::destroy(m_program); m_program = BGFX_INVALID_HANDLE; }
+        if (bgfx::isValid(m_shadowFB))      { bgfx::destroy(m_shadowFB);      m_shadowFB      = BGFX_INVALID_HANDLE; }
+        if (bgfx::isValid(m_shadowMap))     { bgfx::destroy(m_shadowMap);     m_shadowMap     = BGFX_INVALID_HANDLE; }
+        if (bgfx::isValid(m_shadowProgram)) { bgfx::destroy(m_shadowProgram); m_shadowProgram = BGFX_INVALID_HANDLE; }
     }
 
     void render(const RenderView& v, RenderContext& ctx) override {
+        renderShadow(v, ctx);
+
         const bgfx::ViewId id = v.baseViewId;
 
         const uint32_t cc =
@@ -95,6 +117,10 @@ public:
         const float lp[4] = { v.ambient, (float)count, 0.0f, 0.0f };
         bgfx::setUniform(m_uLightParams, lp);
         bgfx::setUniform(m_uCamPos, v.camPos.ptr());
+        bgfx::setUniform(m_uShadowMtx, m_shadowMtx);
+        const float sp[4] = { m_hasShadowCaster ? 1.0f : 0.0f, 0.0025f,
+                              1.0f / (float)SHADOW_SIZE, (float)m_shadowLightIndex };
+        bgfx::setUniform(m_uShadowParams, sp);
 
         // cull against the engine-provided frustum
         // TODO (Jun 3, 04:00 PM):
@@ -148,6 +174,65 @@ public:
     }
 
 private:
+    void renderShadow(const RenderView& v, RenderContext& ctx) {
+        m_hasShadowCaster = false;
+        const LightItem* sun = nullptr;
+        for (uint32_t i = 0; i < (uint32_t)v.lights.size(); ++i)
+            if (v.lights[i].type == LightType::Directional) { sun = &v.lights[i]; m_shadowLightIndex = (int)i; break; }
+        if (!sun) return;
+        m_hasShadowCaster = true;
+
+        const bx::Vec3 toLight = bx::normalize(sun->direction);
+        const bx::Vec3 center  { 0.0f, 0.0f, 0.0f };
+        const bx::Vec3 eye     = bx::add(center, bx::mul(toLight, 60.0f));
+        const bx::Vec3 up      = (std::fabs(toLight.y) > 0.99f)
+                                   ? bx::Vec3{0.0f, 0.0f, 1.0f} : bx::Vec3{0.0f, 1.0f, 0.0f};
+        bx::mtxLookAt(m_lightView, eye, center, up);
+        const float r = 40.0f;
+        bx::mtxOrtho(m_lightProj, -r, r, -r, r, 0.1f, 200.0f, 0.0f,
+                     bgfx::getCaps()->homogeneousDepth);
+
+        const bgfx::Caps* caps = bgfx::getCaps();
+        const float sy = caps->originBottomLeft ? 0.5f : -0.5f;
+        const float sz = caps->homogeneousDepth ? 0.5f :  1.0f;
+        const float tz = caps->homogeneousDepth ? 0.5f :  0.0f;
+        const float crop[16] = {
+            0.5f, 0.0f, 0.0f, 0.0f,
+            0.0f, sy,   0.0f, 0.0f,
+            0.0f, 0.0f, sz,   0.0f,
+            0.5f, 0.5f, tz,   1.0f,
+        };
+        float tmp[16];
+        bx::mtxMul(tmp, m_lightProj, crop);
+        bx::mtxMul(m_shadowMtx, m_lightView, tmp);
+
+        const bgfx::ViewId sv = ctx.shadowViewId;
+        bgfx::setViewFrameBuffer(sv, m_shadowFB);
+        bgfx::setViewRect(sv, 0, 0, SHADOW_SIZE, SHADOW_SIZE);
+        bgfx::setViewClear(sv, BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
+        bgfx::setViewTransform(sv, m_lightView, m_lightProj);
+        bgfx::touch(sv);
+
+        const uint64_t st = BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW;
+        for (uint32_t i = 0; i < (uint32_t)v.items.size(); ++i) {
+            const RenderItem& it = v.items[i];
+            if (!it.mesh) continue;
+            if (it.mesh->submeshes.empty()) {
+                bgfx::setState(st); bgfx::setTransform(it.model.ptr());
+                bgfx::setVertexBuffer(0, it.mesh->vbh);
+                bgfx::setIndexBuffer(it.mesh->ibh);
+                bgfx::submit(sv, m_shadowProgram);
+            } else {
+                for (const auto& sub : it.mesh->submeshes) {
+                    bgfx::setState(st); bgfx::setTransform(it.model.ptr());
+                    bgfx::setVertexBuffer(0, it.mesh->vbh);
+                    bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
+                    bgfx::submit(sv, m_shadowProgram);
+                }
+            }
+        }
+    }
+
     void bind(const float params[4], const float factor[4],
               bgfx::TextureHandle base, bgfx::TextureHandle norm,
               uint64_t state, const RenderItem& it) {
@@ -155,6 +240,7 @@ private:
         bgfx::setUniform(m_uColorFactor, factor);
         bgfx::setTexture(0, m_sBaseColor, base);
         bgfx::setTexture(1, m_sNormalMap, norm);
+        bgfx::setTexture(2, m_sShadowMap, m_shadowMap);
         bgfx::setState(state);
         bgfx::setTransform(it.model.ptr());
         bgfx::setVertexBuffer(0, it.mesh->vbh);
@@ -189,4 +275,16 @@ private:
     bgfx::UniformHandle m_sNormalMap   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uLights      = BGFX_INVALID_HANDLE;
     std::vector<uint32_t> m_visible;
+    static constexpr uint16_t SHADOW_SIZE = 2048;
+    bgfx::ProgramHandle     m_shadowProgram = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_shadowFB      = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle     m_shadowMap     = BGFX_INVALID_HANDLE;
+    float m_lightView[16] = {0};
+    float m_lightProj[16] = {0};
+    bool  m_hasShadowCaster = false;
+    bgfx::UniformHandle m_sShadowMap    = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_uShadowMtx    = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_uShadowParams = BGFX_INVALID_HANDLE;
+    float m_shadowMtx[16] = {0};
+    int   m_shadowLightIndex = 0;
 };

@@ -5,6 +5,7 @@ $input v_worldPos, v_worldNormal, v_worldTangent, v_texcoord0
 
 SAMPLER2D(s_baseColor,  0);
 SAMPLER2D(s_normalMap,  1);
+SAMPLER2D(s_shadowMap,  2);
 
 uniform vec4 u_params;       // x=hasBaseColor y=roughness z=metallic w=hasNormalMap
 uniform vec4 u_colorFactor;
@@ -15,6 +16,8 @@ uniform vec4 u_camPos;
 //                     [2] xyz=direction(toward light, directional), w=range
 //                     [3] x=spotInnerCos, y=spotOuterCos
 uniform vec4 u_lights[MAX_LIGHTS * 4];
+uniform mat4 u_shadowMtx;
+uniform vec4 u_shadowParams; // x=enabled y=bias z=texel w=shadowLightIndex
 
 float distributionGGX(float NdotH, float roughness) {
     float a  = roughness * roughness;
@@ -32,6 +35,20 @@ float geometrySchlick(float NdotX, float roughness) {
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     float f = pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
     return F0 + (vec3_splat(1.0) - F0) * f;
+}
+float sampleShadow(vec3 worldPos, float NdotL) {
+    vec4 sc = mul(u_shadowMtx, vec4(worldPos, 1.0));
+    vec3 uv = sc.xyz / sc.w;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || uv.z > 1.0) return 1.0;
+    float bias  = max(u_shadowParams.y * (1.0 - NdotL), u_shadowParams.y * 0.25);
+    float texel = u_shadowParams.z;
+    float vis = 0.0;
+    for (int x = -1; x <= 1; ++x)
+        for (int y = -1; y <= 1; ++y) {
+            float d = texture2D(s_shadowMap, uv.xy + vec2(x, y) * texel).x;
+            vis += (uv.z - bias <= d) ? 1.0 : 0.0;
+        }
+    return vis / 9.0;
 }
 
 void main() {
@@ -90,6 +107,9 @@ void main() {
 
         vec3  H     = normalize(L + V);
         float NdotL = max(dot(N, L), 0.0);
+        float vis = 1.0;
+        if (u_shadowParams.x > 0.5 && i == int(u_shadowParams.w))
+            vis = sampleShadow(v_worldPos, NdotL);
         float NdotH = max(dot(N, H), 0.0);
         float HdotV = max(dot(H, V), 0.0);
 
@@ -101,7 +121,7 @@ void main() {
         vec3 kD       = (vec3_splat(1.0) - F) * (1.0 - metallic);
         vec3 diffuse  = kD * baseColor / 3.14159265;
 
-        direct += (diffuse + specular) * Co.rgb * Co.w * atten * NdotL;
+        direct += (diffuse + specular) * Co.rgb * Co.w * atten * NdotL * vis;
     }
 
     vec3 ambient = baseColor * u_lightParams.x;
