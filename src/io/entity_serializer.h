@@ -245,6 +245,8 @@ inline void saveLight(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
     j["spotInner"]   = l->spotInner;
     j["spotOuter"]   = l->spotOuter;
     j["castShadows"] = l->castShadows;
+    j["useTemperature"] = l->useTemperature;
+    j["temperatureK"]   = l->temperatureK;
 }
 inline void loadLight(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
     Light l;
@@ -255,6 +257,8 @@ inline void loadLight(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
     l.spotInner   = j.value("spotInner", 25.0f);
     l.spotOuter   = j.value("spotOuter", 35.0f);
     l.castShadows = j.value("castShadows", false);
+    l.useTemperature = j.value("useTemperature", false);
+    l.temperatureK   = j.value("temperatureK", 6500.0f);
     e.set<Light>(l);
 }
 

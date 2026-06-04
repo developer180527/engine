@@ -23,6 +23,7 @@
 #include "render/material.h"
 #include "render/texture.h"
 #include "components/camera.h"
+#include "components/light.h"
 
 namespace detail {
 
@@ -325,6 +326,75 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         ImGui::ColorEdit4("##clear", cam.clearColor,
             ImGuiColorEditFlags_Float | ImGuiColorEditFlags_AlphaBar);
         if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+    }
+
+    // ── Light ──────────────────────────────────────────────────────────
+    if (e.has<Light>()) {
+        detail::sectionHeader("Light");
+        Light& lt = e.get_mut<Light>();
+
+        const char* lightTypes[] = {"Directional", "Point", "Spot"};
+        int lti = (int)lt.type;
+        ImGui::Text("Type"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##ltype", &lti, lightTypes, 3)) {
+            lt.type = (LightType)lti; ctx.editor.sceneDirty = true;
+        }
+
+        ImGui::Text("Use Temp"); ImGui::SameLine(90.0f);
+        if (ImGui::Checkbox("##lusetemp", &lt.useTemperature)) ctx.editor.sceneDirty = true;
+        ImGui::SameLine(); ImGui::TextDisabled(lt.useTemperature ? "Kelvin" : "RGB");
+
+        if (lt.useTemperature) {
+            ImGui::Text("Kelvin"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
+            ImGui::SliderFloat("##lkelvin", &lt.temperatureK, 1500.0f, 15000.0f, "%.0f K");
+            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            ImGui::Text("Tint"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
+            ImGui::ColorEdit3("##ltint", &lt.color.x, ImGuiColorEditFlags_Float);
+            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            bx::Vec3 kc = kelvinToRGB(lt.temperatureK);
+            ImVec4 result = { kc.x*lt.color.x, kc.y*lt.color.y, kc.z*lt.color.z, 1.0f };
+            ImGui::Text("Result"); ImGui::SameLine(90.0f);
+            ImGui::ColorButton("##lresult", result, ImGuiColorEditFlags_NoTooltip,
+                               ImVec2(ImGui::GetContentRegionAvail().x, 0));
+        } else {
+            ImGui::Text("Color"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
+            ImGui::ColorEdit3("##lcolor", &lt.color.x, ImGuiColorEditFlags_Float);
+            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+        }
+
+        float intensMax = (lt.type == LightType::Directional) ? 10.0f : 100.0f;
+        ImGui::Text("Intensity"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##lintensity", &lt.intensity, 0.0f, intensMax, "%.2f");
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+
+        if (lt.type != LightType::Directional) {
+            ImGui::Text("Range"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
+            ImGui::DragFloat("##lrange", &lt.range, 0.1f, 0.1f, 1000.0f, "%.1f");
+            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+        }
+
+        if (lt.type == LightType::Spot) {
+            ImGui::Text("Inner"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
+            ImGui::SliderFloat("##lspotin", &lt.spotInner, 0.0f, lt.spotOuter, "%.1f deg");
+            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            ImGui::Text("Outer"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
+            ImGui::SliderFloat("##lspotout", &lt.spotOuter, lt.spotInner, 89.0f, "%.1f deg");
+            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            ImGui::TextDisabled("(cone approximate until spot shading lands)");
+        }
+
+        ImGui::BeginDisabled();
+        ImGui::Text("Shadows"); ImGui::SameLine(90.0f);
+        ImGui::Checkbox("##lshadow", &lt.castShadows);
+        ImGui::EndDisabled();
+        ImGui::SameLine(); ImGui::TextDisabled("(soon)");
+
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f,0.1f,0.1f,1.f));
+        if (ImGui::Button("Remove Light", {-1, 0})) {
+            e.remove<Light>(); ctx.editor.sceneDirty = true;
+        }
+        ImGui::PopStyleColor();
     }
 
     // ── RigidBody ──────────────────────────────────────────────────────

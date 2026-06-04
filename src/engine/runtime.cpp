@@ -233,7 +233,11 @@ RenderView EngineRuntime::buildView(flecs::world& world, const float view[16],
             float m[16]; getWorldMatrix(e, m);
             LightItem li;
             li.type      = lc.type;
-            li.color     = lc.color;
+            {
+                const bx::Vec3 kc = lc.useTemperature
+                    ? kelvinToRGB(lc.temperatureK) : bx::Vec3{ 1.0f, 1.0f, 1.0f };
+                li.color = bx::Vec3{ kc.x * lc.color.x, kc.y * lc.color.y, kc.z * lc.color.z };
+            }
             li.intensity = lc.intensity;
             li.range     = lc.range;
             li.position  = bx::Vec3{ m[12], m[13], m[14] };
