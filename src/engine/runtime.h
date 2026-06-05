@@ -5,8 +5,9 @@
 #include <GLFW/glfw3.h>
 #include <bgfx/bgfx.h>
 #include "engine/runtime_context.h"
-#include <vector>
-#include "render/render_pipeline.h"
+#include "engine/renderer.h"
+#include "core/transform.h"
+#include "components/spinner.h"
 
 struct EngineConfig {
     std::string title  = "Engine";
@@ -15,6 +16,9 @@ struct EngineConfig {
     float       fov    = 60.0f;
 };
 
+// Frame coordinator: owns platform, the ECS world + content systems, plugin
+// lifecycle, gameplay tick, and the scene. Render-side state lives in m_renderer;
+// the frame entry points forward to it so callers (EditorApp) are unchanged.
 class EngineRuntime {
 public:
     EngineRuntime();
@@ -25,29 +29,21 @@ public:
     bool init(const EngineConfig& cfg = {});
     void shutdown();
 
-    // Called once per frame by EditorApp.
-    // view/proj: camera matrices from the editor camera (never owned here).
-    // pauseSystems: true while ImGuizmo is being dragged — editor tells us.
-    void tick(float dt,
-              const float view[16],
-              const float proj[16],
-              bool pauseSystems = false);
+    void tick(float dt, const float view[16], const float proj[16], bool pauseSystems = false);
 
-    // Framebuffer resize — called by EditorApp when GLFW reports a size change.
     void resize(int w, int h);
+    void createSceneFB(int w, int h) { m_renderer.createSceneFB(w, h); }
 
-    // Scene view framebuffer — resized when the Scene View panel changes size.
-    // EditorApp calls this; color texture is displayed via ImGui::Image().
-    void createSceneFB(int w, int h);
-
-    bgfx::TextureHandle sceneColorTexture() const { return m_sceneColorTex; }
-    bgfx::TextureHandle gameColorTex()      const { return m_gameColorTex; }
+    bgfx::TextureHandle sceneColorTexture() const { return m_renderer.sceneColorTexture(); }
+    bgfx::TextureHandle gameColorTex()      const { return m_renderer.gameColorTex(); }
     void renderGameView(const float view[16], const float proj[16],
-                        const float clearColor[4],
-                        flecs::world* gameWorld = nullptr);
-    int sceneW() const { return m_sceneW; }
-    int sceneH() const { return m_sceneH; }
+                        const float clearColor[4], flecs::world* gameWorld = nullptr) {
+        m_renderer.renderGameView(view, proj, clearColor, gameWorld);
+    }
+    int sceneW() const { return m_renderer.sceneW(); }
+    int sceneH() const { return m_renderer.sceneH(); }
 
+    Renderer&       renderer()     { return m_renderer; }   // pipeline injection, etc.
     GLFWwindow*     window() const { return m_window; }
     RuntimeContext& ctx()          { return *m_ctx; }
     PrimitiveLibrary& primitives() { return m_primitives; }
@@ -62,7 +58,7 @@ private:
     int   m_height = 720;
     float m_fov    = 60.0f;
 
-    // Systems — stable addresses, declared before m_ctx
+    // Content systems — stable addresses, declared before m_ctx and m_renderer.
     PrimitiveLibrary m_primitives;
     flecs::world     m_ecs;
     AssetRegistry    m_assets;
@@ -73,38 +69,17 @@ private:
 
     std::unique_ptr<RuntimeContext> m_ctx;
 
-    // Rendering — the pipeline owns the program + shader uniforms.
-    std::unique_ptr<IRenderPipeline> m_pipeline;
-    std::vector<RenderItem>          m_items;   // per-frame extraction scratch
-    std::vector<LightItem>           m_lights;  // per-frame light scratch
-    bgfx::ViewId                     m_viewCursor = 5; // first free view past reserved 0..4
-    bgfx::TextureHandle m_flatNormalTex= BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle m_whiteTex     = BGFX_INVALID_HANDLE;
+    // Render subsystem — owns the device + all render state. Declared after the
+    // systems it borrows, so it is destroyed before them.
+    Renderer m_renderer;
 
-    // Offscreen scene framebuffer — scene renders here, not to the backbuffer.
-    bgfx::FrameBufferHandle m_sceneFB       = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle     m_sceneColorTex = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle     m_sceneDepthTex = BGFX_INVALID_HANDLE;
-    bgfx::FrameBufferHandle m_gameFB        = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle     m_gameColorTex  = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle     m_gameDepthTex  = BGFX_INVALID_HANDLE;
-    int m_sceneW = 1280, m_sceneH = 720;
-
-    static constexpr bgfx::ViewId kShadowView  = 0; // depth-from-light (renders first)
-    static constexpr bgfx::ViewId kSceneView   = 1;
-    static constexpr bgfx::ViewId kBgView      = 2; // clears backbuffer
-    static constexpr bgfx::ViewId kResolveView = 3; // MSAA blit resolve
-    static constexpr bgfx::ViewId kGameView    = 4; // game camera view
+    // Gameplay-tick query (editor world); NOT a render concern — stays here.
+    flecs::query<Transform, const Spinner> m_spinnerQuery;
 
     bool initPlatform(const EngineConfig& cfg);
     bool initRenderer(const EngineConfig& cfg);
     bool initSystems();
     void buildDefaultScene();
     void tickSystems(float dt, bool paused);
-    RenderView    buildView(flecs::world& world, const float view[16],
-                            const float proj[16], const RenderTarget& target,
-                            bgfx::ViewId baseViewId);
-    RenderContext makeContext();
-    void shutdownRenderer();
     void shutdownPlatform();
 };

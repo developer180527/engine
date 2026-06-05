@@ -128,6 +128,7 @@ add_executable(engine
     src/io/gltf_importer.cpp
     src/io/stb_impl.cpp
     src/engine/runtime.cpp
+    src/engine/renderer.cpp
     src/engine/async_loader.cpp
     src/io/assimp_importer.cpp
     src/plugins/audio_impl.cpp
