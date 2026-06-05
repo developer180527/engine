@@ -383,11 +383,11 @@ inline void drawInspectorPanel(EngineContext& ctx) {
             ImGui::TextDisabled("(cone approximate until spot shading lands)");
         }
 
-        ImGui::BeginDisabled();
         ImGui::Text("Shadows"); ImGui::SameLine(90.0f);
-        ImGui::Checkbox("##lshadow", &lt.castShadows);
-        ImGui::EndDisabled();
-        ImGui::SameLine(); ImGui::TextDisabled("(soon)");
+        if (ImGui::Checkbox("##lshadow", &lt.castShadows)) ctx.editor.sceneDirty = true;
+        if (lt.type != LightType::Directional) {
+            ImGui::SameLine(); ImGui::TextDisabled("(directional only)");
+        }
 
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f,0.1f,0.1f,1.f));

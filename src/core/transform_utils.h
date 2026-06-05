@@ -1,3 +1,9 @@
+// TODO (Jun 4, 09:00 PM):
+// Replace recursive world-transform computation with a cached transform system.
+// Maintain LocalTransform, WorldTransform and dirty propagation.
+// Avoid recomputing parent chains during rendering and editor operations.
+
+
 #pragma once
 #include <flecs.h>
 #include <bx/math.h>

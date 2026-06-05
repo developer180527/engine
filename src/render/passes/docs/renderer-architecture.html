@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Renderer Architecture — Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0c0f; --bg2:#0f1115; --surface:#14171d; --surface2:#191d24;
+    --line:#262b34; --line2:#323845;
+    --text:#e7e9ee; --muted:#9aa0ab; --faint:#6b7280;
+    --accent:#e3a857; --accent-dim:#caa066; --accent-bg:rgba(227,168,87,.10);
+    --cool:#79b8cc; --green:#83bf92; --red:#d68a86;
+    --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+    --sans:'IBM Plex Sans',-apple-system,system-ui,sans-serif;
+    --serif:'Fraunces',Georgia,serif;
+    --maxw:1180px;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--sans); font-size:16px; line-height:1.65;
+    -webkit-font-smoothing:antialiased; letter-spacing:.005em;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background:
+      radial-gradient(1200px 600px at 78% -8%, rgba(227,168,87,.07), transparent 60%),
+      radial-gradient(900px 500px at -5% 8%, rgba(121,184,204,.05), transparent 55%);
+  }
+  .wrap{position:relative; z-index:1; max-width:var(--maxw); margin:0 auto;
+    display:grid; grid-template-columns:230px minmax(0,1fr); gap:56px;
+    padding:0 32px 120px;}
+
+  /* ── Sidebar TOC ─────────────────────────────────────────── */
+  aside{position:sticky; top:0; align-self:start; height:100vh; padding-top:54px;
+    display:flex; flex-direction:column;}
+  .brand{font-family:var(--mono); font-size:11px; letter-spacing:.22em;
+    color:var(--accent); text-transform:uppercase; margin-bottom:26px;}
+  .brand b{color:var(--muted); font-weight:500;}
+  nav a{display:block; color:var(--faint); text-decoration:none; font-size:13.5px;
+    padding:5px 0 5px 14px; border-left:2px solid transparent; transition:.18s;
+    line-height:1.35;}
+  nav a:hover{color:var(--text);}
+  nav a.active{color:var(--accent); border-left-color:var(--accent);}
+  nav .num{font-family:var(--mono); font-size:11px; color:var(--line2); margin-right:8px;}
+  nav a.active .num{color:var(--accent-dim);}
+
+  /* ── Content ─────────────────────────────────────────────── */
+  main{padding-top:54px; min-width:0;}
+  .kicker{font-family:var(--mono); font-size:12px; letter-spacing:.2em;
+    text-transform:uppercase; color:var(--cool); margin:0 0 14px;}
+  h1{font-family:var(--serif); font-weight:500; font-size:clamp(2.6rem,6vw,4rem);
+    line-height:1.02; letter-spacing:-.01em; margin:0 0 18px;}
+  .lede{font-size:18px; color:var(--muted); max-width:60ch; margin:0 0 8px;}
+  section{margin-top:64px; scroll-margin-top:32px;
+    animation:rise .6s cubic-bezier(.2,.7,.2,1) both;}
+  @keyframes rise{from{opacity:0; transform:translateY(14px);} to{opacity:1; transform:none;}}
+  @media (prefers-reduced-motion:reduce){section{animation:none;}}
+  h2{font-family:var(--serif); font-weight:500; font-size:1.9rem; letter-spacing:-.01em;
+    margin:0 0 18px; display:flex; align-items:baseline; gap:14px;}
+  h2 .idx{font-family:var(--mono); font-size:.85rem; color:var(--accent);
+    font-weight:500; letter-spacing:.05em;}
+  h3{font-family:var(--mono); font-weight:600; font-size:.8rem; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--cool); margin:34px 0 14px;}
+  p{margin:0 0 16px; color:#d2d6dd;}
+  a.inline{color:var(--accent); text-decoration:none; border-bottom:1px dotted var(--line2);}
+  code{font-family:var(--mono); font-size:.86em; background:var(--surface2);
+    border:1px solid var(--line); border-radius:5px; padding:1.5px 6px; color:var(--accent-dim);}
+  strong{color:#fff; font-weight:600;}
+  em{color:var(--cool); font-style:normal;}
+
+  /* status banner */
+  .banner{background:var(--accent-bg); border:1px solid rgba(227,168,87,.28);
+    border-left:3px solid var(--accent); border-radius:0 10px 10px 0;
+    padding:18px 22px; margin:26px 0 0;}
+  .banner .tag{font-family:var(--mono); font-size:11px; letter-spacing:.18em;
+    color:var(--accent); text-transform:uppercase; display:block; margin-bottom:8px;}
+  .banner p{margin:0; color:#dfe2e8; font-size:15px;}
+
+  /* goals list */
+  ul.goals{list-style:none; padding:0; margin:0; display:grid; gap:12px;}
+  ul.goals li{padding-left:26px; position:relative; color:#d2d6dd;}
+  ul.goals li::before{content:"›"; position:absolute; left:4px; top:-1px;
+    color:var(--accent); font-family:var(--mono); font-weight:600;}
+
+  /* flow diagram */
+  .flow{margin:8px 0; display:flex; flex-direction:column; align-items:stretch;}
+  .stage{background:var(--surface); border:1px solid var(--line); border-radius:11px;
+    padding:16px 20px;}
+  .stage .t{font-family:var(--mono); font-weight:600; font-size:14px; color:var(--text);}
+  .stage .t b{color:var(--accent);}
+  .stage .d{font-size:13.5px; color:var(--muted); margin-top:4px;}
+  .stage.key{border-color:rgba(227,168,87,.35); background:
+    linear-gradient(180deg,rgba(227,168,87,.06),transparent);}
+  .arrow{align-self:center; color:var(--faint); font-family:var(--mono);
+    font-size:13px; padding:9px 0; display:flex; flex-direction:column;
+    align-items:center; gap:2px; line-height:1;}
+  .arrow .lbl{font-size:11px; color:var(--cool); letter-spacing:.04em;}
+  .arrow .v{font-size:16px; color:var(--line2);}
+
+  /* piece cards */
+  .pieces{display:grid; gap:12px; margin-top:6px;}
+  .piece{background:var(--surface); border:1px solid var(--line); border-radius:11px;
+    padding:15px 18px; transition:border-color .18s;}
+  .piece:hover{border-color:var(--line2);}
+  .piece .h{display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:5px;}
+  .piece .nm{font-family:var(--mono); font-weight:600; color:var(--accent-dim); font-size:14px;}
+  .piece .path{font-family:var(--mono); font-size:11.5px; color:var(--faint);}
+  .piece .desc{font-size:14px; color:var(--muted); margin:0;}
+
+  /* table */
+  .tablecard{border:1px solid var(--line); border-radius:11px; overflow:hidden; margin-top:6px;}
+  table{width:100%; border-collapse:collapse; font-size:14px;}
+  th{font-family:var(--mono); font-weight:600; font-size:11px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--faint); text-align:left;
+    padding:13px 16px; background:var(--bg2); border-bottom:1px solid var(--line);}
+  td{padding:13px 16px; border-bottom:1px solid var(--line); color:#d2d6dd; vertical-align:top;}
+  tr:last-child td{border-bottom:none;}
+  tr:hover td{background:rgba(255,255,255,.012);}
+  td .pn{font-family:var(--mono); color:var(--accent-dim); font-weight:500;}
+  td .vw{font-family:var(--mono); font-size:12px; color:var(--cool);}
+  .badge{font-family:var(--mono); font-size:11px; font-weight:500; padding:2px 9px;
+    border-radius:20px; white-space:nowrap; display:inline-block;}
+  .badge.live{color:var(--green); background:rgba(131,191,146,.12); border:1px solid rgba(131,191,146,.3);}
+  .badge.planned{color:var(--faint); background:transparent; border:1px dashed var(--line2);}
+  .sub{font-size:11.5px; color:var(--faint); display:block; margin-top:3px;}
+
+  /* migration steps */
+  ol.steps{list-style:none; counter-reset:s; padding:0; margin:6px 0 0; display:grid; gap:10px;}
+  ol.steps li{counter-increment:s; position:relative; padding:13px 16px 13px 56px;
+    background:var(--surface); border:1px solid var(--line); border-radius:10px;
+    font-size:14.5px; color:#d2d6dd;}
+  ol.steps li::before{content:counter(s); position:absolute; left:14px; top:12px;
+    width:26px; height:26px; border-radius:50%; background:var(--bg2);
+    border:1px solid var(--line2); color:var(--muted); font-family:var(--mono);
+    font-size:12px; display:flex; align-items:center; justify-content:center;}
+  ol.steps li.done{border-color:rgba(131,191,146,.3);}
+  ol.steps li.done::before{content:"✓"; color:var(--green);
+    border-color:rgba(131,191,146,.45); background:rgba(131,191,146,.1);}
+  ol.steps .trig{font-family:var(--mono); font-size:12px; color:var(--cool);}
+
+  /* deferred cards */
+  .defer{display:grid; gap:12px; margin-top:6px;}
+  .defer .d{background:var(--surface); border:1px solid var(--line);
+    border-left:3px solid var(--line2); border-radius:0 10px 10px 0; padding:14px 18px;}
+  .defer .d .nm{font-weight:600; color:var(--text);}
+  .defer .d p{margin:6px 0 0; font-size:13.5px; color:var(--muted);}
+  .trigpill{font-family:var(--mono); font-size:11px; color:var(--accent);
+    background:var(--accent-bg); border:1px solid rgba(227,168,87,.25);
+    border-radius:5px; padding:1px 7px; white-space:nowrap;}
+
+  /* callout */
+  .callout{background:var(--surface); border:1px solid var(--line);
+    border-left:3px solid var(--cool); border-radius:0 10px 10px 0; padding:16px 20px;}
+  .callout p:last-child{margin-bottom:0;}
+
+  /* file tree */
+  pre.tree{background:var(--bg2); border:1px solid var(--line); border-radius:11px;
+    padding:20px 22px; overflow-x:auto; font-family:var(--mono); font-size:13px;
+    line-height:1.75; color:var(--muted); margin:6px 0 0;}
+  pre.tree .dir{color:var(--cool);}
+  pre.tree .file{color:#cfd3da;}
+  pre.tree .new{color:var(--accent-dim);}
+  pre.tree .pill{font-size:11px; padding:0 6px; border-radius:4px;}
+  pre.tree .pill.ex{color:var(--green);}
+  pre.tree .pill.todo{color:var(--accent);}
+  pre.tree .pill.sc{color:var(--faint);}
+
+  footer{margin-top:80px; padding-top:24px; border-top:1px solid var(--line);
+    font-family:var(--mono); font-size:12px; color:var(--faint);
+    display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;}
+
+  @media (max-width:980px){
+    .wrap{grid-template-columns:1fr; gap:0; padding:0 22px 90px;}
+    aside{display:none;}
+    main{padding-top:40px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <aside>
+    <div class="brand">Engine<br><b>Renderer</b></div>
+    <nav id="toc">
+      <a href="#overview"><span class="num">00</span>Overview</a>
+      <a href="#goals"><span class="num">01</span>Goals</a>
+      <a href="#data-flow"><span class="num">02</span>Data flow</a>
+      <a href="#pieces"><span class="num">03</span>The pieces</a>
+      <a href="#passes"><span class="num">04</span>The passes</a>
+      <a href="#views"><span class="num">05</span>View-id scheme</a>
+      <a href="#migration"><span class="num">06</span>Migration plan</a>
+      <a href="#deferred"><span class="num">07</span>Deferred</a>
+      <a href="#color"><span class="num">08</span>Color space</a>
+      <a href="#filemap"><span class="num">09</span>File map</a>
+    </nav>
+  </aside>
+
+  <main>
+    <p class="kicker">Default Engine Renderer · Design Note</p>
+    <h1>Renderer Architecture</h1>
+    <p class="lede">How a frame goes from the ECS world to the screen — and the
+      incremental path from today's monolith to a composable pass pipeline.</p>
+
+    <section id="overview">
+      <div class="banner">
+        <span class="tag">Status</span>
+        <p>This documents the <strong>target</strong> architecture and the path to it.
+          Parts already exist (the pipeline seam, the extraction in <code>Renderer</code>,
+          the <code>RenderView</code>/<code>RenderContext</code> packets); the per-pass
+          decomposition under <code>src/render/passes/</code> is <strong>scaffold</strong> —
+          commented stubs, not yet in the build. We migrate to it incrementally, feature by
+          feature, never as one big rewrite.</p>
+      </div>
+    </section>
+
+    <section id="goals">
+      <h2><span class="idx">01</span>Goals</h2>
+      <ul class="goals">
+        <li><strong>Separate <em>what to draw</em> from <em>how to draw it</em>.</strong>
+          Gameplay/ECS decides what exists; the renderer decides how it appears. Neither
+          reaches into the other.</li>
+        <li><strong>Data-oriented.</strong> Each frame the ECS world is <em>extracted</em>
+          into flat, GPU-ready data. Passes consume that and never touch flecs, registries,
+          or component types directly.</li>
+        <li><strong>Composable passes.</strong> A frame is an ordered list of small,
+          single-purpose passes instead of one monolithic function.</li>
+        <li><strong>Pluggable technique, not pluggable backend.</strong> Swap the whole
+          pipeline (<code>IRenderPipeline</code>) or reorder passes. The backend stays
+          bgfx/Metal — no speculative RHI abstraction (YAGNI).</li>
+        <li><strong>Incremental &amp; shippable.</strong> Every migration step leaves a
+          working engine.</li>
+      </ul>
+    </section>
+
+    <section id="data-flow">
+      <h2><span class="idx">02</span>Data flow</h2>
+      <div class="flow">
+        <div class="stage"><div class="t">ECS world <b>(flecs)</b></div>
+          <div class="d">Entities with Transform / MeshRenderer / Light / …</div></div>
+        <div class="arrow"><span class="lbl">extraction · Renderer::buildView</span><span class="v">▼</span></div>
+        <div class="stage key"><div class="t"><b>RenderWorld</b> — flat, GPU-ready, backend-agnostic</div>
+          <div class="d">opaque items · transparent items (sorted) · packed lights &nbsp;+ per-view: camera, frustum, target, view ids</div></div>
+        <div class="arrow"><span class="v">▼</span></div>
+        <div class="stage"><div class="t">Pipeline <b>(IRenderPipeline)</b> — ordered list of passes</div>
+          <div class="d">setup(fc) × all passes → producers publish resources &nbsp;·&nbsp; execute(fc) × all passes → consumers submit draws</div></div>
+        <div class="arrow"><span class="v">▼</span></div>
+        <div class="stage"><div class="t">bgfx views → Metal command buffers</div></div>
+        <div class="arrow"><span class="v">▼</span></div>
+        <div class="stage"><div class="t">Screen</div></div>
+      </div>
+    </section>
+
+    <section id="pieces">
+      <h2><span class="idx">03</span>The pieces</h2>
+
+      <h3>Existing today</h3>
+      <div class="pieces">
+        <div class="piece"><div class="h"><span class="nm">RenderView</span><span class="path">render/render_view.h</span></div>
+          <p class="desc">One camera's frame packet: view/proj, <code>camPos</code>, the 6
+            frustum planes, spans of <code>RenderItem</code> + <code>LightItem</code>,
+            ambient, the <code>RenderTarget</code>, and the base view id.</p></div>
+        <div class="piece"><div class="h"><span class="nm">RenderContext</span><span class="path">render/render_context.h</span></div>
+          <p class="desc">Engine-side handles a pass needs: asset / texture / material
+            registries, fallback white + flat-normal textures, the <code>viewCursor</code>
+            allocator, and the reserved <code>shadowViewId</code>.</p></div>
+        <div class="piece"><div class="h"><span class="nm">IRenderPipeline</span><span class="path">render/render_pipeline.h</span></div>
+          <p class="desc">The swappable seam: <code>onAttach</code> / <code>onDetach</code> /
+            <code>render(view, ctx)</code>. Injected via <code>Renderer::setPipeline()</code>;
+            default is <code>ForwardPipeline</code>.</p></div>
+        <div class="piece"><div class="h"><span class="nm">Renderer</span><span class="path">engine/renderer.h</span></div>
+          <p class="desc">Owns the bgfx device, framebuffers, fallback textures, reserved
+            view ids, the cached extraction queries, and runs extraction
+            (<code>buildView</code>) before handing the packet to the pipeline.</p></div>
+        <div class="piece"><div class="h"><span class="nm">ForwardPipeline</span><span class="path">render/forward_pipeline.h</span></div>
+          <p class="desc">The <em>current</em> monolith: does the shadow depth pass <strong>and</strong>
+            the main lit forward submit in one class. The passes below decompose it.</p></div>
+      </div>
+
+      <h3>New / planned</h3>
+      <div class="pieces">
+        <div class="piece"><div class="h"><span class="nm">RenderWorld</span><span class="path">render/render_world.h · TODO</span></div>
+          <p class="desc">The extraction output: opaque + transparent buckets (culled, sorted)
+            and packed lights, fully resolved (mesh/material/texture looked up once, not
+            per-draw). Today it lives implicitly as the <code>RenderItem</code>/<code>LightItem</code>
+            vectors inside <code>Renderer</code>; promoting it to a named type lets multiple
+            passes share one extraction.</p></div>
+        <div class="piece"><div class="h"><span class="nm">IRenderPass</span><span class="path">passes/i_render_pass.h</span></div>
+          <p class="desc">The per-pass contract — <code>onAttach</code>/<code>onDetach</code>
+            (resources), <code>setup</code> (claim views, compute matrices, decide if it runs),
+            <code>execute</code> (record draws), <code>enabled</code>.</p></div>
+        <div class="piece"><div class="h"><span class="nm">PassContext</span><span class="path">passes/pass_context.h</span></div>
+          <p class="desc">Per-frame blackboard: the <code>RenderWorld</code>, the
+            <code>RenderContext</code>, the target, the camera — plus the explicit
+            inter-pass hand-off slots (e.g. ShadowPass → shadowMap → OpaquePass).</p></div>
+        <div class="piece"><div class="h"><span class="nm">PassListPipeline</span><span class="path">passes/pass_list_pipeline.h</span></div>
+          <p class="desc">An <code>IRenderPipeline</code> whose body is an ordered
+            <code>vector&lt;IRenderPass&gt;</code> — the migration target that replaces
+            <code>ForwardPipeline</code> while keeping the seam intact.</p></div>
+      </div>
+    </section>
+
+    <section id="passes">
+      <h2><span class="idx">04</span>The passes</h2>
+      <div class="tablecard">
+        <table>
+          <thead><tr><th>Pass</th><th>View</th><th>Status</th><th>Does</th></tr></thead>
+          <tbody>
+            <tr><td><span class="pn">ShadowPass</span></td><td><span class="vw">shadow · 0</span></td>
+              <td><span class="badge live">live</span><span class="sub">in ForwardPipeline</span></td>
+              <td>depth from the sun → shadow map + matrix</td></tr>
+            <tr><td><span class="pn">SkyPass</span></td><td><span class="vw">bg · 2</span></td>
+              <td><span class="badge live">live</span><span class="sub">a clear today</span></td>
+              <td>background / skybox</td></tr>
+            <tr><td><span class="pn">OpaquePass</span></td><td><span class="vw">scene · 1</span></td>
+              <td><span class="badge live">live</span><span class="sub">in ForwardPipeline</span></td>
+              <td>lit forward submit of opaque geometry</td></tr>
+            <tr><td><span class="pn">TransparencyPass</span></td><td><span class="vw">scene · 1</span></td>
+              <td><span class="badge planned">planned</span></td>
+              <td>sorted alpha-blended geometry</td></tr>
+            <tr><td><span class="pn">PostPass</span></td><td><span class="vw">—</span></td>
+              <td><span class="badge planned">planned</span></td>
+              <td>tonemap / bloom; color-space fix lands here</td></tr>
+            <tr><td><span class="pn">ResolvePass</span></td><td><span class="vw">resolve · 3</span></td>
+              <td><span class="badge live">live</span><span class="sub">a blit today</span></td>
+              <td>MSAA resolve → final target</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="views">
+      <h2><span class="idx">05</span>View-id scheme</h2>
+      <p>bgfx submits views in ascending id order, so ids encode frame ordering. Reserved ids
+        live on <code>Renderer</code>; passes get the ones they need through
+        <code>PassContext</code>/<code>RenderContext</code> rather than hardcoding them.</p>
+      <pre class="tree"><span class="new">0</span>  shadow    depth-from-light <span class="pill sc">must precede the scene that samples it</span>
+<span class="new">1</span>  scene     main scene color
+<span class="new">2</span>  bg        background / sky
+<span class="new">3</span>  resolve   MSAA resolve / present
+<span class="new">4</span>  game      game-camera view (Play)
+<span class="new">5+</span> dynamic   allocated via RenderContext::viewCursor</pre>
+    </section>
+
+    <section id="migration">
+      <h2><span class="idx">06</span>Migration plan</h2>
+      <p>Each step is independently shippable and pixel-identical:</p>
+      <ol class="steps">
+        <li class="done"><strong>Land the contracts</strong> — <code>IRenderPass</code> + <code>PassContext</code> (this scaffold).</li>
+        <li><strong>RenderWorld</strong> — promote the extraction output to a named shared type. <span class="trig">trigger: a second pass needs the same extracted data.</span></li>
+        <li><strong>ShadowPass</strong> — move <code>ForwardPipeline::renderShadow</code> here. <span class="trig">trigger: CSM — cascades are N shadow sub-passes, when the pass earns its keep.</span></li>
+        <li><strong>OpaquePass + SkyPass</strong> — move the main submit + the background clear.</li>
+        <li><strong>PassListPipeline</strong> — compose the passes; switch <code>Renderer</code>'s default to it.</li>
+        <li><strong>Delete ForwardPipeline</strong> once parity is verified.</li>
+        <li><strong>TransparencyPass / PostPass</strong> — when those features are actually needed.</li>
+      </ol>
+    </section>
+
+    <section id="deferred">
+      <h2><span class="idx">07</span>Deferred — what we are <em>not</em> building yet</h2>
+      <div class="defer">
+        <div class="d"><span class="nm">Frame graph</span> — automatic pass ordering from declared resource reads/writes.
+          <p>The flat ordered list + explicit <code>PassContext</code> hand-offs are clearer
+            and cheaper. <span class="trigpill">trigger</span> hand-offs grow data
+            dependencies we can't keep correct by hand.</p></div>
+        <div class="d"><span class="nm">RHI / backend abstraction</span> — single backend (bgfx/Metal).
+          <p><span class="trigpill">trigger</span> a real need for a second backend — not anticipated.</p></div>
+        <div class="d"><span class="nm">Forward+ / clustered lighting</span> — the <code>MAX_LIGHTS = 16</code> forward loop is fine.
+          <p>Excess visible lights drop silently (sort by influence to mitigate).
+            <span class="trigpill">trigger</span> scenes with hundreds of lights.</p></div>
+        <div class="d"><span class="nm">Cascaded Shadow Maps</span> — single fitted directional map today.
+          <p><span class="trigpill">trigger</span> need for crisp-up-close <em>and</em>
+            long-range shadows — also the trigger for migration step 3.</p></div>
+      </div>
+    </section>
+
+    <section id="color">
+      <h2><span class="idx">08</span>Color space</h2>
+      <div class="callout">
+        <p>Lighting currently accumulates in <strong>gamma space</strong> — a deliberate,
+          zero-regression choice. The correct fix (work in <strong>linear</strong>, convert
+          to sRGB once) belongs in <code>PostPass</code> alongside tonemapping, on an HDR
+          (RGBA16F) scene target.</p>
+        <p>Until <code>PostPass</code> exists, do not scatter half-conversions through the shaders.</p>
+      </div>
+    </section>
+
+    <section id="filemap">
+      <h2><span class="idx">09</span>File map</h2>
+      <pre class="tree"><span class="dir">src/render/</span>
+  <span class="file">render_view.h</span>         RenderView, RenderItem, LightItem, RenderTarget   <span class="pill ex">exists</span>
+  <span class="file">render_context.h</span>      RenderContext                                     <span class="pill ex">exists</span>
+  <span class="file">render_pipeline.h</span>     IRenderPipeline                                   <span class="pill ex">exists</span>
+  <span class="file">forward_pipeline.h</span>    ForwardPipeline — current monolith                <span class="pill ex">exists</span>
+  <span class="new">render_world.h</span>        RenderWorld — extraction output                   <span class="pill todo">TODO</span>
+  <span class="dir">passes/</span>
+    <span class="new">i_render_pass.h</span>        IRenderPass contract                  <span class="pill sc">scaffold</span>
+    <span class="new">pass_context.h</span>         per-frame blackboard + hand-offs      <span class="pill sc">scaffold</span>
+    <span class="new">shadow_pass.h</span>          directional shadow (→ CSM)            <span class="pill sc">scaffold</span>
+    <span class="new">sky_pass.h</span>             background / skybox                   <span class="pill sc">scaffold</span>
+    <span class="new">opaque_pass.h</span>          lit forward opaque submit             <span class="pill sc">scaffold</span>
+    <span class="new">transparency_pass.h</span>    sorted alpha (future)                 <span class="pill sc">scaffold</span>
+    <span class="new">post_pass.h</span>            tonemap / color space (future)        <span class="pill sc">scaffold</span>
+    <span class="new">resolve_pass.h</span>         MSAA resolve / present                <span class="pill sc">scaffold</span>
+    <span class="new">pass_list_pipeline.h</span>   IRenderPipeline as an ordered list    <span class="pill sc">scaffold</span></pre>
+    </section>
+
+    <footer>
+      <span>engine · default renderer</span>
+      <span>extraction → RenderWorld → passes → bgfx/Metal</span>
+    </footer>
+  </main>
+</div>
+
+<script>
+  // Active-section highlight in the TOC.
+  const links = [...document.querySelectorAll('#toc a')];
+  const map = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const a = map.get(e.target.id);
+        if (a) a.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-10% 0px -75% 0px', threshold: 0 });
+  document.querySelectorAll('main section').forEach(s => obs.observe(s));
+</script>
+</body>
+</html>

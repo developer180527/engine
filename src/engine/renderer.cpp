@@ -200,6 +200,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         li.direction = bx::normalize(bx::Vec3{ -m[8], -m[9], -m[10] });
         li.spotInnerCos = std::cos(lc.spotInner * (3.14159265f / 180.0f));
         li.spotOuterCos = std::cos(lc.spotOuter * (3.14159265f / 180.0f));
+        li.castShadows  = lc.castShadows;
         m_lights.push_back(li);
     };
 

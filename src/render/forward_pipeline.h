@@ -118,7 +118,7 @@ public:
         bgfx::setUniform(m_uLightParams, lp);
         bgfx::setUniform(m_uCamPos, v.camPos.ptr());
         bgfx::setUniform(m_uShadowMtx, m_shadowMtx);
-        const float sp[4] = { m_hasShadowCaster ? 1.0f : 0.0f, 0.0025f,
+        const float sp[4] = { m_hasShadowCaster ? 1.0f : 0.0f, SHADOW_BIAS,
                               1.0f / (float)SHADOW_SIZE, (float)m_shadowLightIndex };
         bgfx::setUniform(m_uShadowParams, sp);
 
@@ -178,18 +178,18 @@ private:
         m_hasShadowCaster = false;
         const LightItem* sun = nullptr;
         for (uint32_t i = 0; i < (uint32_t)v.lights.size(); ++i)
-            if (v.lights[i].type == LightType::Directional) { sun = &v.lights[i]; m_shadowLightIndex = (int)i; break; }
+            if (v.lights[i].type == LightType::Directional && v.lights[i].castShadows) { sun = &v.lights[i]; m_shadowLightIndex = (int)i; break; }
         if (!sun) return;
         m_hasShadowCaster = true;
 
         const bx::Vec3 toLight = bx::normalize(sun->direction);
         const bx::Vec3 center  { 0.0f, 0.0f, 0.0f };
-        const bx::Vec3 eye     = bx::add(center, bx::mul(toLight, 60.0f));
+        const bx::Vec3 eye     = bx::add(center, bx::mul(toLight, SHADOW_EYE_DIST));
         const bx::Vec3 up      = (std::fabs(toLight.y) > 0.99f)
                                    ? bx::Vec3{0.0f, 0.0f, 1.0f} : bx::Vec3{0.0f, 1.0f, 0.0f};
         bx::mtxLookAt(m_lightView, eye, center, up);
-        const float r = 40.0f;
-        bx::mtxOrtho(m_lightProj, -r, r, -r, r, 0.1f, 200.0f, 0.0f,
+        const float r = SHADOW_ORTHO_RADIUS;
+        bx::mtxOrtho(m_lightProj, -r, r, -r, r, SHADOW_NEAR, SHADOW_FAR, 0.0f,
                      bgfx::getCaps()->homogeneousDepth);
 
         const bgfx::Caps* caps = bgfx::getCaps();
@@ -275,7 +275,12 @@ private:
     bgfx::UniformHandle m_sNormalMap   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uLights      = BGFX_INVALID_HANDLE;
     std::vector<uint32_t> m_visible;
-    static constexpr uint16_t SHADOW_SIZE = 2048;
+    static constexpr uint16_t SHADOW_SIZE         = 4096;
+    static constexpr float    SHADOW_ORTHO_RADIUS = 22.0f;  // half-width of the light box (world units) — tighten to fit the scene
+    static constexpr float    SHADOW_EYE_DIST     = 60.0f;  // light-camera distance from the box center
+    static constexpr float    SHADOW_NEAR         = 20.0f;  // tightened depth range -> better precision -> less acne
+    static constexpr float    SHADOW_FAR          = 120.0f;
+    static constexpr float    SHADOW_BIAS         = 0.0025f; // normalized-depth slope bias base
     bgfx::ProgramHandle     m_shadowProgram = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_shadowFB      = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_shadowMap     = BGFX_INVALID_HANDLE;

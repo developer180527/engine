@@ -34,6 +34,7 @@ struct LightItem {
     float     range        = 10.0f;
     float     spotInnerCos = 0.95f;
     float     spotOuterCos = 0.85f;
+    bool      castShadows  = false;
 };
 
 // One drawable, resolved ONCE at extraction (handles -> pointers). POD + tight;
