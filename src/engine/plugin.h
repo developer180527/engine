@@ -32,8 +32,14 @@ public:
     virtual void onSimulationStart(flecs::world& gameWorld) = 0;
     virtual void onSimulationStop()                         = 0;
 
-    // Per-frame update — only called when SimState == Playing
-    virtual void onUpdate(flecs::world& gameWorld, float dt) = 0;
+    // Per-frame phases, only while SimState == Playing, called in THIS order
+    // each frame BEFORE rendering. All default-empty — implement only what you need:
+    //   onUpdate      — pre-physics: gameplay/scripts read input + set intent
+    //   onPhysicsStep — advance the simulation (applies the intent above)
+    //   onPostPhysics — after the step: dispatch collision events / late update
+    virtual void onUpdate     (flecs::world& /*gameWorld*/, float /*dt*/) {}
+    virtual void onPhysicsStep(flecs::world& /*gameWorld*/, float /*dt*/) {}
+    virtual void onPostPhysics(flecs::world& /*gameWorld*/)               {}
 
     // Editor UI — called inside an existing ImGui scope (Plugins menu etc.)
     virtual void onEditorUI() = 0;

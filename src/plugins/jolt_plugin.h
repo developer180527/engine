@@ -164,7 +164,7 @@ public:
         LOG_INFO("Physics", "Simulation stop");
     }
 
-    void onUpdate(flecs::world& ecs, float dt) override {
+    void onPhysicsStep(flecs::world& ecs, float dt) override {
         if (!m_physics) return;
         m_accumulator += dt;
         int steps = 0;
@@ -177,6 +177,13 @@ public:
         }
         writeBackTransforms(ecs);
         writeBackCharacters(ecs);
+    }
+
+    // Post-step: publish this frame's contacts as CollisionEvents components.
+    // Runs before LuaScriptPlugin::onPostPhysics (Physics is registered first),
+    // so scripts read a fresh, complete event set.
+    void onPostPhysics(flecs::world& ecs) override {
+        if (!m_physics) return;
         flushCollisionEvents(ecs);
     }
 

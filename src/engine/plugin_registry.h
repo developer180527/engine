@@ -40,9 +40,16 @@ public:
         for (auto& p : m_plugins) p->onSimulationStop();
     }
 
-    // Called every frame while SimState == Playing. Paused skips this.
+    // Per-frame phases while SimState == Playing (Paused skips them). Called in
+    // this order each frame, before rendering: pre-physics -> step -> post.
     void broadcastUpdate(flecs::world& gameWorld, float dt) {
         for (auto& p : m_plugins) p->onUpdate(gameWorld, dt);
+    }
+    void broadcastPhysicsStep(flecs::world& gameWorld, float dt) {
+        for (auto& p : m_plugins) p->onPhysicsStep(gameWorld, dt);
+    }
+    void broadcastPostPhysics(flecs::world& gameWorld) {
+        for (auto& p : m_plugins) p->onPostPhysics(gameWorld);
     }
 
     // Called from Plugins menu / editor UI pass.

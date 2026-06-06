@@ -6,6 +6,7 @@
 #include "engine/scripting/script_host.h"
 #include "engine/scripting/lua_bindings.h"
 #include "components/script_component.h"
+#include "components/collision_events.h"
 #include <lua.hpp>
 #include <imgui.h>
 #include <filesystem>
@@ -90,6 +91,22 @@ public:
             if (!gw.entity(inst.id).is_alive()) continue;
             dispatch(inst, "onUpdate", true, dt);
         }
+        gw.defer_end();
+    }
+
+    // Post-physics: deliver this frame's contacts to scripts as
+    // onCollisionEnter(other) / onCollisionExit(other). Physics::onPostPhysics
+    // (registered first) populated CollisionEvents just before this runs.
+    void onPostPhysics(flecs::world& gw) override {
+        if (!m_L || m_instances.empty()) return;
+        gw.defer_begin();   // handlers may spawn/destroy
+        gw.query_builder<const CollisionEvents>().build()
+            .each([&](flecs::entity e, const CollisionEvents& ce) {
+                Instance* inst = findInstance(e.id());
+                if (!inst || inst->errored) return;
+                for (auto other : ce.entered) dispatchEntity(*inst, "onCollisionEnter", other);
+                for (auto other : ce.exited)  dispatchEntity(*inst, "onCollisionExit",  other);
+            });
         gw.defer_end();
     }
 
@@ -190,6 +207,27 @@ private:
             inst.errored = true;   // stop re-running a broken script
         }
         lua_pop(m_L, 1);           // pop instance
+    }
+
+    // Like dispatch(), but passes another entity as the sole argument:
+    // instance:method(other). Used for collision callbacks.
+    void dispatchEntity(Instance& inst, const char* method, flecs::entity_t otherId) {
+        lua_rawgeti(m_L, LUA_REGISTRYINDEX, inst.ref);  // instance
+        lua_getfield(m_L, -1, method);                  // method
+        if (!lua_isfunction(m_L, -1)) { lua_pop(m_L, 2); return; }
+        lua_pushvalue(m_L, -2);                         // self
+        LuaBindings::pushEntity(m_L, m_host.world()->entity(otherId), &m_host);
+        if (lua_pcall(m_L, 2, 0, 0) != LUA_OK) {        // self + other
+            LOG_ERROR("Script", "%s: %s", method, lua_tostring(m_L, -1));
+            lua_pop(m_L, 1);
+            inst.errored = true;
+        }
+        lua_pop(m_L, 1);                                // pop instance
+    }
+
+    Instance* findInstance(flecs::entity_t id) {
+        for (auto& inst : m_instances) if (inst.id == id) return &inst;
+        return nullptr;
     }
 
     void bindAudio(flecs::world& gw) {

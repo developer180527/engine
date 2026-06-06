@@ -215,8 +215,13 @@ public:
             m_rt.tick(dt, view, proj, ImGuizmo::IsUsing());
 
             // ---- Game world update (plugins tick during play) ----
-            if (m_editor.simState == SimState::Playing && m_gameWorld)
-                m_plugins.broadcastUpdate(*m_gameWorld, dt);
+            // Explicit phase order so script intent lands in the SAME physics
+            // step (kills the input-latency frame): scripts -> physics -> contacts.
+            if (m_editor.simState == SimState::Playing && m_gameWorld) {
+                m_plugins.broadcastUpdate(*m_gameWorld, dt);        // pre-physics: read input, set intent
+                m_plugins.broadcastPhysicsStep(*m_gameWorld, dt);   // step + write back transforms
+                m_plugins.broadcastPostPhysics(*m_gameWorld);       // flush contacts -> onCollisionEnter/Exit
+            }
 
             // ---- Editor UI (all ImGui panel draws) ----
             renderUI(view, proj);
