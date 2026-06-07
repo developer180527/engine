@@ -60,17 +60,23 @@ public:
 
         // Collect first (don't instantiate inside the query — onStart may
         // make structural changes). Then instantiate inside a defer scope.
-        struct Init { flecs::entity e; std::string path; };
         std::vector<Init> toInit;
         gw.query_builder<ScriptComponent>().build()
             .each([&](flecs::entity e, ScriptComponent& sc) {
                 if (!sc.scriptPath.empty()) toInit.push_back({e, sc.scriptPath});
             });
 
+        // Autorun: scan scripts/autorun/ and create headless entities for each
+        // .lua file found. These participate in the full lifecycle (onStart,
+        // onUpdate, onDestroy) but don't require manual entity creation.
+        // Ideal for test scripts, global systems, and one-shot setup code.
+        collectAutorunScripts(gw, toInit);
+
         gw.defer_begin();
         for (auto& i : toInit) instantiate(i.e, i.path);
         gw.defer_end();
-        LOG_INFO("Script", "Play: %zu script instance(s)", m_instances.size());
+        LOG_INFO("Script", "Play: %zu script instance(s) (%zu autorun)",
+                 m_instances.size(), m_autorunEntities.size());
     }
 
     void onSimulationStop() override {
@@ -78,6 +84,12 @@ public:
             if (!inst.errored) dispatch(inst, "onDestroy", false, 0.0f);
         clearInstances();
         clearModules();          // next Play reloads scripts from disk
+        // Destroy autorun entities — they were created by us, not the scene
+        for (auto eid : m_autorunEntities) {
+            flecs::entity e = m_host.world()->entity(eid);
+            if (e.is_alive()) e.destruct();
+        }
+        m_autorunEntities.clear();
         m_host.setPhysicsService(nullptr);
         m_host.setAudioService(nullptr);
         // AssetService is NOT cleared — it's engine infrastructure, not
@@ -126,6 +138,7 @@ public:
     }
 
 private:
+    struct Init { flecs::entity e; std::string path; };
     struct Instance { flecs::entity_t id; int ref; bool errored = false; };
 
     // Sandbox: open only base/table/string/math/coroutine. io/os/package/
@@ -244,6 +257,35 @@ private:
         if (const PhysicsServiceRef* ref = gw.try_get<PhysicsServiceRef>())
             m_host.setPhysicsService(ref->svc);
     }
+    // Scan scripts/autorun/ for .lua files. For each one, create a headless
+    // entity with Name + ScriptComponent and add it to the init list.
+    void collectAutorunScripts(flecs::world& gw,
+                               std::vector<Init>& toInit) {
+        namespace fs = std::filesystem;
+        fs::path autoDir = m_projectRoot / "scripts" / "autorun";
+        if (!fs::exists(autoDir) || !fs::is_directory(autoDir)) return;
+
+        std::error_code ec;
+        for (const auto& entry : fs::directory_iterator(autoDir, ec)) {
+            if (!entry.is_regular_file()) continue;
+            if (entry.path().extension() != ".lua") continue;
+
+            std::string relPath = fs::relative(entry.path(), m_projectRoot, ec).string();
+            if (ec) continue;
+
+            // Create a headless entity for this autorun script
+            std::string label = "[autorun] " + entry.path().stem().string();
+            flecs::entity e = gw.entity();
+            e.set<Name>({label});
+            e.set<Transform>({});      // required by scene queries
+            e.set<ScriptComponent>({relPath});
+
+            toInit.push_back({e, relPath});
+            m_autorunEntities.push_back(e.id());
+            LOG_INFO("Script", "Autorun: %s → %s", label.c_str(), relPath.c_str());
+        }
+    }
+
     void clearInstances() {
         if (m_L) for (auto& inst : m_instances) luaL_unref(m_L, LUA_REGISTRYINDEX, inst.ref);
         m_instances.clear();
@@ -257,7 +299,8 @@ private:
     ScriptHost  m_host{nullptr};
     std::filesystem::path m_projectRoot;
     std::unordered_map<std::string,int> m_moduleRefs;
-    std::vector<Instance> m_instances;
+    std::vector<Instance>        m_instances;
+    std::vector<flecs::entity_t> m_autorunEntities;  // headless entities for autorun scripts
     double   m_elapsed = 0.0;
     uint64_t m_frame   = 0;
 };
