@@ -8,6 +8,7 @@
 #include <assetlib/asset_registry.h>
 
 class PrimitiveLibrary; // forward declare
+class AssetService;     // forward declare
 
 struct RuntimeContext {
     flecs::world&     ecs;
@@ -16,6 +17,7 @@ struct RuntimeContext {
     MaterialRegistry& materials;
     ProjectContext&   project;
     ImporterRegistry& importers;
-    assetlib::AssetRegistry* assetLib   = nullptr;
-    PrimitiveLibrary*        primitives = nullptr;
+    assetlib::AssetRegistry* assetLib     = nullptr;
+    PrimitiveLibrary*        primitives   = nullptr;
+    AssetService*            assetService = nullptr;
 };

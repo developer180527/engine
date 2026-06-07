@@ -34,6 +34,8 @@ public:
 
     void onAttach(EngineContext& ec) override {
         m_projectRoot = ec.project.projectRoot;
+        if (ec.assetService)
+            m_host.setAssetService(ec.assetService);
         m_L = luaL_newstate();
         if (!m_L) { LOG_ERROR("Script", "Failed to create Lua state"); return; }
         openSafeLibs(m_L);
@@ -76,6 +78,8 @@ public:
         clearModules();          // next Play reloads scripts from disk
         m_host.setPhysicsService(nullptr);
         m_host.setAudioService(nullptr);
+        // AssetService is NOT cleared — it's engine infrastructure, not
+        // per-simulation state. Scripts can safely preload assets in onAttach.
         m_host.setWorld(nullptr);
     }
 

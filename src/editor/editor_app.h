@@ -144,8 +144,11 @@ public:
                 AssetStorage storage{m_rt.ctx().assets,
                                      m_rt.ctx().textures,
                                      m_rt.ctx().materials};
-                m_loader.drainOne(storage); // one per frame — keeps frame time smooth
+                m_loader.drainOne(storage); // legacy loader — one per frame
             }
+            // AssetService async drain (scripts' loadMeshAsync/loadTextureAsync)
+            if (m_rt.ctx().assetService)
+                m_rt.assetService().drainUploads();
 
             // ---- ImGui frame start (must come before any ImGui calls) ----
             imguiNewFrame();
@@ -270,7 +273,8 @@ private:
         return EngineContext{
             rc.ecs, rc.assets, rc.textures,
             rc.materials, rc.project, rc.importers,
-            m_editor, m_gizmo, rc.assetLib, rc.primitives
+            m_editor, m_gizmo, rc.assetLib, rc.primitives,
+            rc.assetService
         };
     }
 

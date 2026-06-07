@@ -191,6 +191,58 @@ inline int phys_raycast(lua_State* L) {
     return 1;
 }
 
+// ── Assets ──────────────────────────────────────────────────────────────
+// Flat integer handles (0 = invalid). Scripts manage asset lifetimes
+// explicitly: load in onStart / preload, unload when done.
+inline int assets_loadMesh(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)host(L)->assetLoadMesh(luaL_checkstring(L, 1)));
+    return 1;
+}
+inline int assets_unloadMesh(lua_State* L) {
+    lua_pushboolean(L, host(L)->assetUnloadMesh((uint32_t)luaL_checkinteger(L, 1)));
+    return 1;
+}
+inline int assets_loadTexture(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)host(L)->assetLoadTexture(luaL_checkstring(L, 1)));
+    return 1;
+}
+inline int assets_unloadTexture(lua_State* L) {
+    lua_pushboolean(L, host(L)->assetUnloadTexture((uint32_t)luaL_checkinteger(L, 1)));
+    return 1;
+}
+inline int assets_unloadMaterial(lua_State* L) {
+    lua_pushboolean(L, host(L)->assetUnloadMaterial((uint32_t)luaL_checkinteger(L, 1)));
+    return 1;
+}
+// Async: queue load, returns immediately
+inline int assets_loadMeshAsync(lua_State* L) {
+    host(L)->assetLoadMeshAsync(luaL_checkstring(L, 1)); return 0;
+}
+inline int assets_loadTextureAsync(lua_State* L) {
+    host(L)->assetLoadTextureAsync(luaL_checkstring(L, 1)); return 0;
+}
+// Async: poll for completion — returns handle (>0) or 0 if still pending
+inline int assets_queryMesh(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)host(L)->assetQueryMesh(luaL_checkstring(L, 1)));
+    return 1;
+}
+inline int assets_queryTexture(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)host(L)->assetQueryTexture(luaL_checkstring(L, 1)));
+    return 1;
+}
+inline int assets_isLoading(lua_State* L) {
+    lua_pushboolean(L, host(L)->assetIsLoading(luaL_checkstring(L, 1))); return 1;
+}
+inline int assets_meshCount(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)host(L)->assetMeshCount()); return 1;
+}
+inline int assets_textureCount(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)host(L)->assetTextureCount()); return 1;
+}
+inline int assets_materialCount(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)host(L)->assetMaterialCount()); return 1;
+}
+
 // ── install ──────────────────────────────────────────────────────────────
 inline void install(lua_State* L, ScriptHost* h) {
     // Entity metatable (methods resolve via __index = metatable)
@@ -221,8 +273,21 @@ inline void install(lua_State* L, ScriptHost* h) {
     static const luaL_Reg kWorld[] = {{"find",world_find},{"create",world_create},{nullptr,nullptr}};
     static const luaL_Reg kAudio[] = {{"play",audio_play},{"playAt",audio_playAt},{nullptr,nullptr}};
     static const luaL_Reg kPhysics[] = {{"raycast",phys_raycast},{nullptr,nullptr}};
+    static const luaL_Reg kAssets[] = {
+        {"loadMesh",assets_loadMesh},{"unloadMesh",assets_unloadMesh},
+        {"loadTexture",assets_loadTexture},{"unloadTexture",assets_unloadTexture},
+        {"unloadMaterial",assets_unloadMaterial},
+        {"loadMeshAsync",assets_loadMeshAsync},
+        {"loadTextureAsync",assets_loadTextureAsync},
+        {"queryMesh",assets_queryMesh},{"queryTexture",assets_queryTexture},
+        {"isLoading",assets_isLoading},
+        {"meshCount",assets_meshCount},{"textureCount",assets_textureCount},
+        {"materialCount",assets_materialCount},
+        {nullptr,nullptr}
+    };
     table("Input", kInput); table("Log", kLog); table("Time", kTime);
     table("World", kWorld); table("Audio", kAudio); table("Physics", kPhysics);
+    table("Assets", kAssets);
 }
 
 } // namespace LuaBindings

@@ -3,7 +3,21 @@
 #include <cstdio>
 #include <utility>
 
-#define GLFW_EXPOSE_NATIVE_COCOA
+// Platform-specific native window handle for bgfx
+#if defined(__APPLE__)
+    #define GLFW_EXPOSE_NATIVE_COCOA
+#elif defined(_WIN32)
+    #define GLFW_EXPOSE_NATIVE_WIN32
+#elif defined(__linux__)
+    // Wayland first, X11 fallback — matches modern distro defaults.
+    // GLFW 3.4+ exposes the Wayland surface via glfwGetWaylandWindow();
+    // older GLFW only has X11. Both defines are harmless if the backend
+    // isn't present: we pick at runtime below.
+    #if defined(GLFW_EXPOSE_NATIVE_WAYLAND) || __has_include(<wayland-client.h>)
+        #define GLFW_EXPOSE_NATIVE_WAYLAND
+    #endif
+    #define GLFW_EXPOSE_NATIVE_X11
+#endif
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 #include <bgfx/bgfx.h>
@@ -46,8 +60,26 @@ bool EngineRuntime::initPlatform(const EngineConfig& cfg) {
     return true;
 }
 
+// Retrieve the platform-specific native window handle that bgfx needs.
+static void* getNativeWindowHandle(GLFWwindow* window) {
+#if defined(__APPLE__)
+    return glfwGetCocoaWindow(window);
+#elif defined(_WIN32)
+    return glfwGetWin32Window(window);
+#elif defined(__linux__)
+    // Prefer Wayland when available (GLFW 3.4+); fall back to X11.
+    #if defined(GLFW_EXPOSE_NATIVE_WAYLAND)
+    if (glfwGetPlatform && glfwGetPlatform() == GLFW_PLATFORM_WAYLAND)
+        return (void*)glfwGetWaylandWindow(window);
+    #endif
+    return (void*)glfwGetX11Window(window);
+#else
+    #error "Unsupported platform — add native window handle retrieval"
+#endif
+}
+
 bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
-    return m_renderer.init(glfwGetCocoaWindow(m_window),
+    return m_renderer.init(getNativeWindowHandle(m_window),
                            cfg.width, cfg.height,
                            m_ecs, m_assets, m_textures, m_materials);
 }
@@ -60,11 +92,17 @@ bool EngineRuntime::initSystems() {
     m_importers.registerImporter(std::make_unique<GltfImporter>());
     m_importers.registerImporter(std::make_unique<AssimpImporter>());
 
+    // AssetService — created with registries; assetLib + projectRoot
+    // are wired later from main.cpp via setAssetLib() / setProjectRoot().
+    m_assetService = std::make_unique<AssetService>(AssetService::Config{
+        m_assets, m_textures, m_materials});
+
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
         m_ecs, m_assets, m_textures,
         m_materials, m_project, m_importers});
     m_primitives.init(m_assets);
-    m_ctx->primitives = &m_primitives;
+    m_ctx->primitives    = &m_primitives;
+    m_ctx->assetService  = m_assetService.get();
 
     // Gameplay-tick query (editor world) — render queries live in Renderer.
     m_spinnerQuery = m_ecs.query_builder<Transform, const Spinner>().build();

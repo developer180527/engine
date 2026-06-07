@@ -8,6 +8,7 @@
 #include "engine/input_event.h"
 #include "engine/logger.h"
 #include "engine/scripting/script_services.h"
+#include "engine/asset_service.h"
 
 // ── keyFromName ────────────────────────────────────────────────────────────
 // Map a script-facing key name ("W", "Space", "Left") to a Key. Key mirrors
@@ -135,12 +136,56 @@ public:
     void     stopSound  (uint32_t handle)                           { if (m_audio) m_audio->stop(handle); }
     void     setAudioService(IAudioService* s) { m_audio = s; }
 
+    // ── Assets (sync cooked-asset loading via AssetService) ────────────
+    // Returns uint32_t handle IDs (0 = invalid) for FFI compatibility.
+    // All load calls are synchronous — they do file I/O + bgfx handle
+    // creation on the calling thread. Suitable for preload phases and
+    // small assets; async loading comes in a later step.
+    void setAssetService(AssetService* s) { m_assetService = s; }
+
+    uint32_t assetLoadMesh(const char* cookedPath) {
+        return m_assetService ? m_assetService->loadMesh(cookedPath).id : 0;
+    }
+    bool assetUnloadMesh(uint32_t handleId) {
+        return m_assetService ? m_assetService->unloadMesh(MeshHandle{handleId}) : false;
+    }
+    uint32_t assetLoadTexture(const char* cookedPath) {
+        return m_assetService ? m_assetService->loadTexture(cookedPath).id : 0;
+    }
+    bool assetUnloadTexture(uint32_t handleId) {
+        return m_assetService ? m_assetService->unloadTexture(TextureHandle{handleId}) : false;
+    }
+    bool assetUnloadMaterial(uint32_t handleId) {
+        return m_assetService ? m_assetService->unloadMaterial(MaterialHandle{handleId}) : false;
+    }
+    // Async variants — queue load for background worker, poll with query*()
+    void assetLoadMeshAsync(const char* cookedPath) {
+        if (m_assetService) m_assetService->loadMeshAsync(cookedPath);
+    }
+    void assetLoadTextureAsync(const char* cookedPath) {
+        if (m_assetService) m_assetService->loadTextureAsync(cookedPath);
+    }
+    uint32_t assetQueryMesh(const char* cookedPath) const {
+        return m_assetService ? m_assetService->queryMesh(cookedPath) : 0;
+    }
+    uint32_t assetQueryTexture(const char* cookedPath) const {
+        return m_assetService ? m_assetService->queryTexture(cookedPath) : 0;
+    }
+    bool assetIsLoading(const char* cookedPath) const {
+        return m_assetService ? m_assetService->isLoading(cookedPath) : false;
+    }
+
+    size_t assetMeshCount()     const { return m_assetService ? m_assetService->meshCount()     : 0; }
+    size_t assetTextureCount()  const { return m_assetService ? m_assetService->textureCount()  : 0; }
+    size_t assetMaterialCount() const { return m_assetService ? m_assetService->materialCount() : 0; }
+
     flecs::world* world() const { return m_world; }
 
 private:
-    flecs::world*    m_world   = nullptr;
-    IPhysicsService* m_physics = nullptr; // null until Jolt service lands
-    IAudioService*   m_audio   = nullptr; // null until miniaudio lands
+    flecs::world*    m_world        = nullptr;
+    IPhysicsService* m_physics      = nullptr; // null until Jolt service lands
+    IAudioService*   m_audio        = nullptr; // null until miniaudio lands
+    AssetService*    m_assetService = nullptr; // null until wired from EngineContext
     float    m_dt      = 0.0f;
     double   m_elapsed = 0.0;
     uint64_t m_frame   = 0;

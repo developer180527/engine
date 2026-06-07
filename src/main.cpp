@@ -43,6 +43,10 @@ int main(int argc, char** argv) {
     runtime.ctx().project  = project;
     runtime.ctx().assetLib = &registry;
 
+    // Wire AssetService with project context + asset database
+    runtime.assetService().setAssetLib(&registry);
+    runtime.assetService().setProjectRoot(project.projectRoot);
+
     // Cook service runs in background — editor is already live
     CookService cookService(dbPath, project.projectRoot, assetsRoot, cacheRoot);
 

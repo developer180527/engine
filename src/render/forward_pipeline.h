@@ -13,11 +13,49 @@
 #include <cmath>
 #include <cstdint>
 
-// Compiled shaders live in exactly this TU (no include guards on the bins).
-#include "metal/vs_triangle.sc.bin.h"
-#include "metal/fs_triangle.sc.bin.h"
-#include "metal/vs_shadow.sc.bin.h"
-#include "metal/fs_shadow.sc.bin.h"
+// Compiled shaders — bgfx cmake compiles per-platform; pick the right binary.
+// Variable names follow bgfx convention: vs_triangle_mtl, vs_triangle_spv, etc.
+// We alias them to a common name so the pipeline code stays platform-agnostic.
+#if defined(__APPLE__)
+    #include "metal/vs_triangle.sc.bin.h"
+    #include "metal/fs_triangle.sc.bin.h"
+    #include "metal/vs_shadow.sc.bin.h"
+    #include "metal/fs_shadow.sc.bin.h"
+    #define VS_TRIANGLE_DATA vs_triangle_mtl
+    #define VS_TRIANGLE_SIZE sizeof(vs_triangle_mtl)
+    #define FS_TRIANGLE_DATA fs_triangle_mtl
+    #define FS_TRIANGLE_SIZE sizeof(fs_triangle_mtl)
+    #define VS_SHADOW_DATA   vs_shadow_mtl
+    #define VS_SHADOW_SIZE   sizeof(vs_shadow_mtl)
+    #define FS_SHADOW_DATA   fs_shadow_mtl
+    #define FS_SHADOW_SIZE   sizeof(fs_shadow_mtl)
+#elif defined(_WIN32)
+    #include "dxbc/vs_triangle.sc.bin.h"
+    #include "dxbc/fs_triangle.sc.bin.h"
+    #include "dxbc/vs_shadow.sc.bin.h"
+    #include "dxbc/fs_shadow.sc.bin.h"
+    #define VS_TRIANGLE_DATA vs_triangle_dxbc
+    #define VS_TRIANGLE_SIZE sizeof(vs_triangle_dxbc)
+    #define FS_TRIANGLE_DATA fs_triangle_dxbc
+    #define FS_TRIANGLE_SIZE sizeof(fs_triangle_dxbc)
+    #define VS_SHADOW_DATA   vs_shadow_dxbc
+    #define VS_SHADOW_SIZE   sizeof(vs_shadow_dxbc)
+    #define FS_SHADOW_DATA   fs_shadow_dxbc
+    #define FS_SHADOW_SIZE   sizeof(fs_shadow_dxbc)
+#else // Linux — Vulkan (SPIR-V)
+    #include "spirv/vs_triangle.sc.bin.h"
+    #include "spirv/fs_triangle.sc.bin.h"
+    #include "spirv/vs_shadow.sc.bin.h"
+    #include "spirv/fs_shadow.sc.bin.h"
+    #define VS_TRIANGLE_DATA vs_triangle_spv
+    #define VS_TRIANGLE_SIZE sizeof(vs_triangle_spv)
+    #define FS_TRIANGLE_DATA fs_triangle_spv
+    #define FS_TRIANGLE_SIZE sizeof(fs_triangle_spv)
+    #define VS_SHADOW_DATA   vs_shadow_spv
+    #define VS_SHADOW_SIZE   sizeof(vs_shadow_spv)
+    #define FS_SHADOW_DATA   fs_shadow_spv
+    #define FS_SHADOW_SIZE   sizeof(fs_shadow_spv)
+#endif
 
 class ForwardPipeline final : public IRenderPipeline {
 public:
@@ -25,8 +63,8 @@ public:
 
     void onAttach(RenderContext&) override {
         m_program = bgfx::createProgram(
-            bgfx::createShader(bgfx::makeRef(vs_triangle_mtl, sizeof(vs_triangle_mtl))),
-            bgfx::createShader(bgfx::makeRef(fs_triangle_mtl, sizeof(fs_triangle_mtl))),
+            bgfx::createShader(bgfx::makeRef(VS_TRIANGLE_DATA, VS_TRIANGLE_SIZE)),
+            bgfx::createShader(bgfx::makeRef(FS_TRIANGLE_DATA, FS_TRIANGLE_SIZE)),
             true);
         m_sBaseColor   = bgfx::createUniform("s_baseColor",   bgfx::UniformType::Sampler);
         m_uParams      = bgfx::createUniform("u_params",      bgfx::UniformType::Vec4);
@@ -37,8 +75,8 @@ public:
         m_sNormalMap   = bgfx::createUniform("s_normalMap",   bgfx::UniformType::Sampler);
 
         m_shadowProgram = bgfx::createProgram(
-            bgfx::createShader(bgfx::makeRef(vs_shadow_mtl, sizeof(vs_shadow_mtl))),
-            bgfx::createShader(bgfx::makeRef(fs_shadow_mtl, sizeof(fs_shadow_mtl))),
+            bgfx::createShader(bgfx::makeRef(VS_SHADOW_DATA, VS_SHADOW_SIZE)),
+            bgfx::createShader(bgfx::makeRef(FS_SHADOW_DATA, FS_SHADOW_SIZE)),
             true);
         const uint64_t smFlags = BGFX_TEXTURE_RT
             | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT

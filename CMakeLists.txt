@@ -130,6 +130,7 @@ add_executable(engine
     src/engine/runtime.cpp
     src/engine/renderer.cpp
     src/engine/async_loader.cpp
+    src/engine/asset_service.cpp
     src/io/assimp_importer.cpp
     src/plugins/audio_impl.cpp
     shaders/vs_triangle.sc
@@ -191,5 +192,28 @@ if(APPLE)
         "-framework AudioToolbox"
         "-framework AudioUnit"
         "-framework CoreFoundation"
+    )
+elseif(WIN32)
+    target_link_libraries(engine PRIVATE
+        gdi32
+        shell32
+        user32
+        winmm          # timeGetTime — used by GLFW + miniaudio
+    )
+elseif(UNIX)
+    # X11 + Wayland display servers; PulseAudio or ALSA for miniaudio.
+    # pkg-config resolves the right paths per distro.
+    find_package(PkgConfig REQUIRED)
+    find_package(Threads REQUIRED)
+
+    # X11 — still needed even on Wayland-primary distros (XWayland fallback)
+    find_package(X11 REQUIRED)
+    target_link_libraries(engine PRIVATE ${X11_LIBRARIES})
+    target_include_directories(engine PRIVATE ${X11_INCLUDE_DIR})
+
+    target_link_libraries(engine PRIVATE
+        Threads::Threads
+        dl              # dlopen — used by Vulkan loader + bgfx
+        ${CMAKE_DL_LIBS}
     )
 endif()

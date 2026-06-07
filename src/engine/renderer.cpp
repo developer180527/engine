@@ -35,7 +35,15 @@ bool Renderer::init(void* nwh, int width, int height,
     bgfx::renderFrame();
 
     bgfx::Init init;
+    // Let bgfx pick the best backend for this platform:
+    //   macOS  → Metal    Windows → Direct3D11/12    Linux → Vulkan/OpenGL
+#if defined(__APPLE__)
     init.type              = bgfx::RendererType::Metal;
+#elif defined(_WIN32)
+    init.type              = bgfx::RendererType::Direct3D12;
+#else
+    init.type              = bgfx::RendererType::Vulkan;
+#endif
     init.platformData.nwh  = nwh;
     init.resolution.width  = (uint32_t)width;
     init.resolution.height = (uint32_t)height;
