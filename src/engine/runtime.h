@@ -1,6 +1,7 @@
 #pragma once
 #include "render/primitive_library.h"
 #include "engine/asset_service.h"
+#include "engine/scene_service.h"
 #include <memory>
 #include <string>
 #include <GLFW/glfw3.h>
@@ -49,6 +50,7 @@ public:
     RuntimeContext& ctx()          { return *m_ctx; }
     PrimitiveLibrary& primitives() { return m_primitives; }
     AssetService&   assetService() { return *m_assetService; }
+    SceneService&   sceneService() { return *m_sceneService; }
     int             width()  const { return m_width; }
     int             height() const { return m_height; }
     float           fov()    const { return m_fov; }
@@ -70,6 +72,7 @@ private:
     ImporterRegistry m_importers;
 
     std::unique_ptr<AssetService>   m_assetService;
+    std::unique_ptr<SceneService>   m_sceneService;
     std::unique_ptr<RuntimeContext> m_ctx;
 
     // Render subsystem — owns the device + all render state. Declared after the

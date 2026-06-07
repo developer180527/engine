@@ -47,6 +47,9 @@ int main(int argc, char** argv) {
     runtime.assetService().setAssetLib(&registry);
     runtime.assetService().setProjectRoot(project.projectRoot);
 
+    // Wire SceneService cache root (same .cache/ directory)
+    runtime.sceneService().setCacheRoot(cacheRoot);
+
     // Cook service runs in background — editor is already live
     CookService cookService(dbPath, project.projectRoot, assetsRoot, cacheRoot);
 

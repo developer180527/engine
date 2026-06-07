@@ -131,6 +131,7 @@ add_executable(engine
     src/engine/renderer.cpp
     src/engine/async_loader.cpp
     src/engine/asset_service.cpp
+    src/engine/scene_service.cpp
     src/io/assimp_importer.cpp
     src/plugins/audio_impl.cpp
     shaders/vs_triangle.sc

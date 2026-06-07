@@ -32,6 +32,7 @@
 #include "io/asset_storage.h"
 #include "io/importer_registry.h"
 #include "render/primitive_library.h"
+#include "engine/asset_service.h"
 #include "engine/logger.h"
 
 namespace EntitySerde {
@@ -48,6 +49,15 @@ struct PendingMesh { flecs::entity entity; std::string assetPath; };
 struct SerdeContext {
     SerdeMode mode = SerdeMode::Memory;
     std::function<const Mesh*(MeshHandle)> meshLookup;   // save: handle -> sourcePath
+
+    // Save: resolve sourcePath → cookedPath (optional; uses assetlib DB).
+    // Returns empty string if the asset hasn't been cooked yet.
+    std::function<std::string(const std::string& sourcePath)> cookedPathLookup;
+
+    // Load: fast runtime path — loads cooked assets via AssetService.
+    // When non-null and cookedPath is present, skips Assimp/glTF entirely.
+    AssetService*             assetService = nullptr;
+
     ImporterRegistry*         importers   = nullptr;     // disk load: glTF (sync)
     AssetStorage*             storage      = nullptr;     // disk load: import target
     PrimitiveLibrary*         primitives   = nullptr;     // disk load: primitive shortcut
@@ -167,7 +177,17 @@ inline void saveMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx
     } else { // Disk: asset path is the only cross-session-stable reference
         if (mesh && !mesh->sourcePath.empty()) {
             j["sourcePath"] = mesh->sourcePath;
-            if (mesh->sourcePath.rfind("engine://primitive/", 0) == 0) j["sourceType"] = "primitive";
+            if (mesh->sourcePath.rfind("engine://primitive/", 0) == 0)
+                j["sourceType"] = "primitive";
+            // Also persist the cooked path for fast runtime loading.
+            // Editor scenes carry both: sourcePath for re-import, cookedPath
+            // for runtime. If the asset hasn't been cooked yet, skip it —
+            // the legacy sourcePath import path still works.
+            else if (ctx.cookedPathLookup) {
+                std::string cooked = ctx.cookedPathLookup(mesh->sourcePath);
+                if (!cooked.empty())
+                    j["cookedPath"] = cooked;
+            }
         }
         if (mr->materialOverride.valid()) j["matOverrideId"] = mr->materialOverride.id;
     }
@@ -182,7 +202,22 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
         }
         return;
     }
-    // Disk: resolve sourcePath -> primitive / sync glTF / deferred async Assimp
+
+    // ── Fast path: cooked binary via AssetService (runtime) ────────────
+    // If cookedPath is present and AssetService is available, load directly
+    // from the cooked binary — no Assimp, no glTF import, no worker queue.
+    std::string cookedPath = j.value("cookedPath", std::string{});
+    if (!cookedPath.empty() && ctx.assetService) {
+        MeshHandle h = ctx.assetService->loadMesh(cookedPath.c_str());
+        if (h.valid()) {
+            e.set<MeshRenderer>({h});
+            return;
+        }
+        LOG_WARN("Scene", "Cooked mesh load failed, falling back to source: %s",
+                 cookedPath.c_str());
+    }
+
+    // ── Legacy path: sourcePath → primitive / glTF / Assimp ────────────
     std::string srcPath = j.value("sourcePath", std::string{});
     std::string srcType = j.value("sourceType", std::string{});
     if (srcPath.empty()) return;

@@ -9,6 +9,7 @@
 #include "engine/logger.h"
 #include "engine/scripting/script_services.h"
 #include "engine/asset_service.h"
+#include "engine/scene_service.h"
 
 // ── keyFromName ────────────────────────────────────────────────────────────
 // Map a script-facing key name ("W", "Space", "Left") to a Key. Key mirrors
@@ -179,6 +180,28 @@ public:
     size_t assetTextureCount()  const { return m_assetService ? m_assetService->textureCount()  : 0; }
     size_t assetMaterialCount() const { return m_assetService ? m_assetService->materialCount() : 0; }
 
+    // ── Scenes (binary scene loading via SceneService) ────────────────
+    void setSceneService(SceneService* s) { m_sceneService = s; }
+
+    uint32_t sceneLoad(const char* cookedPath) {
+        return m_sceneService ? m_sceneService->loadScene(cookedPath) : 0;
+    }
+    bool sceneUnload(uint32_t handle) {
+        return m_sceneService ? m_sceneService->unloadScene(handle) : false;
+    }
+    void scenePreload(const char* cookedPath) {
+        if (m_sceneService) m_sceneService->preloadScene(cookedPath);
+    }
+    bool sceneIsReady(const char* cookedPath) const {
+        return m_sceneService ? m_sceneService->isSceneReady(cookedPath) : false;
+    }
+    uint32_t sceneEntityCount(uint32_t handle) const {
+        return m_sceneService ? m_sceneService->sceneEntityCount(handle) : 0;
+    }
+    uint32_t sceneActiveCount() const {
+        return m_sceneService ? m_sceneService->activeSceneCount() : 0;
+    }
+
     flecs::world* world() const { return m_world; }
 
 private:
@@ -186,6 +209,7 @@ private:
     IPhysicsService* m_physics      = nullptr; // null until Jolt service lands
     IAudioService*   m_audio        = nullptr; // null until miniaudio lands
     AssetService*    m_assetService = nullptr; // null until wired from EngineContext
+    SceneService*    m_sceneService = nullptr; // null until wired from EngineContext
     float    m_dt      = 0.0f;
     double   m_elapsed = 0.0;
     uint64_t m_frame   = 0;

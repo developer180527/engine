@@ -97,12 +97,18 @@ bool EngineRuntime::initSystems() {
     m_assetService = std::make_unique<AssetService>(AssetService::Config{
         m_assets, m_textures, m_materials});
 
+    // SceneService — built on top of AssetService for binary scene loading.
+    // cacheRoot is wired later from main.cpp alongside AssetService config.
+    m_sceneService = std::make_unique<SceneService>(SceneService::Config{
+        *m_assetService, m_assets, m_textures, m_materials, m_ecs, &m_primitives});
+
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
         m_ecs, m_assets, m_textures,
         m_materials, m_project, m_importers});
     m_primitives.init(m_assets);
     m_ctx->primitives    = &m_primitives;
     m_ctx->assetService  = m_assetService.get();
+    m_ctx->sceneService  = m_sceneService.get();
 
     // Gameplay-tick query (editor world) — render queries live in Renderer.
     m_spinnerQuery = m_ecs.query_builder<Transform, const Spinner>().build();

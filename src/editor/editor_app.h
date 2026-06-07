@@ -39,7 +39,7 @@ public:
     EditorApp(const EditorApp&)            = delete;
     EditorApp& operator=(const EditorApp&) = delete;
 
-    void setRegistry(assetlib::AssetRegistry* r)          { m_loader.setRegistry(r); }
+    void setRegistry(assetlib::AssetRegistry* r)          { m_assetLib = r; m_loader.setRegistry(r); }
     void setProjectRoot(const std::filesystem::path& root){ m_loader.setProjectRoot(root); }
     void setCookService(CookService* cs) { m_cookService = cs; }
     void requestAssetRefresh() {
@@ -64,7 +64,8 @@ public:
                                    storage,
                                    m_loader,
                                    m_rt.ctx().importers,
-                                   m_rt.ctx().primitives);
+                                   m_rt.ctx().primitives,
+                                   m_rt.ctx().assetService);
 
         // Selection restore: entities with Name exist immediately after
         // loadAsync (transform + name are set synchronously).
@@ -77,7 +78,8 @@ public:
 
     void saveScene() {
         if (m_scenePath.empty()) return;
-        SceneSerializer::save(m_scenePath, m_rt.ctx().ecs, m_rt.ctx().assets);
+        SceneSerializer::save(m_scenePath, m_rt.ctx().ecs, m_rt.ctx().assets,
+                              m_assetLib, m_projectRoot);
 
         // Persist editor state
         std::string selName;
@@ -246,7 +248,8 @@ private:
     std::filesystem::path m_projectRoot;
     std::filesystem::path m_scenePath;
     AsyncLoader      m_loader;
-    CookService*     m_cookService = nullptr;
+    assetlib::AssetRegistry* m_assetLib    = nullptr;
+    CookService*             m_cookService = nullptr;
     EditorCamera   m_cam;
     EditorInput    m_input;
     EditorState    m_editor;
@@ -274,7 +277,7 @@ private:
             rc.ecs, rc.assets, rc.textures,
             rc.materials, rc.project, rc.importers,
             m_editor, m_gizmo, rc.assetLib, rc.primitives,
-            rc.assetService
+            rc.assetService, rc.sceneService
         };
     }
 

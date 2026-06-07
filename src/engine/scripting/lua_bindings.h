@@ -243,6 +243,32 @@ inline int assets_materialCount(lua_State* L) {
     lua_pushinteger(L, (lua_Integer)host(L)->assetMaterialCount()); return 1;
 }
 
+// ── Scenes ─────────────────────────────────────────────────────────────
+// Binary scene loading via SceneService. Scenes are loaded from cooked
+// .scene files and return a handle for tracking/unloading.
+inline int scene_load(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)host(L)->sceneLoad(luaL_checkstring(L, 1)));
+    return 1;
+}
+inline int scene_unload(lua_State* L) {
+    lua_pushboolean(L, host(L)->sceneUnload((uint32_t)luaL_checkinteger(L, 1)));
+    return 1;
+}
+inline int scene_preload(lua_State* L) {
+    host(L)->scenePreload(luaL_checkstring(L, 1)); return 0;
+}
+inline int scene_isReady(lua_State* L) {
+    lua_pushboolean(L, host(L)->sceneIsReady(luaL_checkstring(L, 1))); return 1;
+}
+inline int scene_entityCount(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)host(L)->sceneEntityCount(
+        (uint32_t)luaL_checkinteger(L, 1)));
+    return 1;
+}
+inline int scene_activeCount(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)host(L)->sceneActiveCount()); return 1;
+}
+
 // ── install ──────────────────────────────────────────────────────────────
 inline void install(lua_State* L, ScriptHost* h) {
     // Entity metatable (methods resolve via __index = metatable)
@@ -285,9 +311,15 @@ inline void install(lua_State* L, ScriptHost* h) {
         {"materialCount",assets_materialCount},
         {nullptr,nullptr}
     };
+    static const luaL_Reg kScene[] = {
+        {"load",scene_load},{"unload",scene_unload},
+        {"preload",scene_preload},{"isReady",scene_isReady},
+        {"entityCount",scene_entityCount},{"activeCount",scene_activeCount},
+        {nullptr,nullptr}
+    };
     table("Input", kInput); table("Log", kLog); table("Time", kTime);
     table("World", kWorld); table("Audio", kAudio); table("Physics", kPhysics);
-    table("Assets", kAssets);
+    table("Assets", kAssets); table("Scene", kScene);
 }
 
 } // namespace LuaBindings

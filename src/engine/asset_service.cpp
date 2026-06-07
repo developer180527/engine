@@ -529,7 +529,8 @@ bool AssetService::isLoading(const char* cookedPath) const {
 int AssetService::pendingCount() const {
     if (!m_async) return 0;
     std::lock_guard<std::mutex> lk(m_async->pendingMtx);
-    return static_cast<int>(m_async->pending.size() + m_async->inFlight.size());
+    // inFlight tracks every key from enqueue to drain — pending is a subset.
+    return static_cast<int>(m_async->inFlight.size());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

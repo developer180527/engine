@@ -24,6 +24,10 @@
 // as a magenta cube to make the problem visually obvious.
 class AssetRegistry {
 public:
+    AssetRegistry() {
+        m_meshes.emplace_back();  // slot 0 reserved — maps to invalid handle
+    }
+
     // Register a mesh. Takes ownership of the GPU buffers via Mesh's move
     // semantics. Returns a handle that can be used to retrieve the mesh later.
     // Reuses freed slots when available; otherwise appends.
@@ -34,10 +38,6 @@ public:
             m_freeSlots.pop_back();
             m_meshes[slot] = std::move(mesh);
             return MeshHandle{ slot };
-        }
-        // First valid handle is index 1 (id=0 is reserved as invalid).
-        if (m_meshes.empty()) {
-            m_meshes.emplace_back(); // Slot 0 stays empty (the "invalid" slot)
         }
         m_meshes.push_back(std::move(mesh));
         return MeshHandle{ static_cast<uint32_t>(m_meshes.size() - 1) };
@@ -66,7 +66,7 @@ public:
 
     // Number of live (non-removed) meshes, excluding reserved slot 0.
     size_t meshCount() const {
-        return m_meshes.empty() ? 0 : m_meshes.size() - 1 - m_freeSlots.size();
+        return m_meshes.size() - 1 - m_freeSlots.size();
     }
 
     // Free all GPU resources and reset the free list. Called at engine shutdown.

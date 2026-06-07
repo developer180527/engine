@@ -36,6 +36,8 @@ public:
         m_projectRoot = ec.project.projectRoot;
         if (ec.assetService)
             m_host.setAssetService(ec.assetService);
+        if (ec.sceneService)
+            m_host.setSceneService(ec.sceneService);
         m_L = luaL_newstate();
         if (!m_L) { LOG_ERROR("Script", "Failed to create Lua state"); return; }
         openSafeLibs(m_L);

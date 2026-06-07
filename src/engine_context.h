@@ -1,6 +1,7 @@
 #pragma once
 class PrimitiveLibrary;
 class AssetService;
+class SceneService;
 #include "engine/runtime_context.h"
 #include <assetlib/asset_registry.h>
 #include "editor/editor_state.h"
@@ -22,4 +23,5 @@ struct EngineContext {
     assetlib::AssetRegistry* assetLib     = nullptr;
     PrimitiveLibrary*        primitives   = nullptr;
     AssetService*            assetService = nullptr;
+    SceneService*            sceneService = nullptr;
 };

@@ -9,6 +9,7 @@
 
 class PrimitiveLibrary; // forward declare
 class AssetService;     // forward declare
+class SceneService;     // forward declare
 
 struct RuntimeContext {
     flecs::world&     ecs;
@@ -20,4 +21,5 @@ struct RuntimeContext {
     assetlib::AssetRegistry* assetLib     = nullptr;
     PrimitiveLibrary*        primitives   = nullptr;
     AssetService*            assetService = nullptr;
+    SceneService*            sceneService = nullptr;
 };
