@@ -153,11 +153,25 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
         flecs::world*   pw  = &ecs;
         flecs::entity_t eid = pm.entity.id();
         loader.load(pm.assetPath, label,
-            [pw, eid](MeshHandle h, const std::string&) {
-                if (!h.valid()) return;
+            [pw, eid](const AsyncLoadResult& r, const std::string&) {
+                if (!r.mesh.valid()) return;
                 flecs::entity e = pw->entity(eid);
-                if (e.id() != 0 && e.is_alive())
-                    e.set<MeshRenderer>({h});
+                if (e.id() == 0 || !e.is_alive()) return;
+                e.set<MeshRenderer>({r.mesh});
+                // Restore skeletal animation if the asset has bones
+                if (r.skeleton.valid()) {
+                    SkinnedMesh sm;
+                    sm.skeleton = r.skeleton;
+                    e.set<SkinnedMesh>(sm);
+                    if (!e.has<Animator>()) {
+                        Animator anim;
+                        if (!r.clips.empty()) {
+                            anim.clip    = r.clips[0];
+                            anim.playing = true;
+                        }
+                        e.set<Animator>(anim);
+                    }
+                }
             });
     }
 

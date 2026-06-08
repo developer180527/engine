@@ -2,8 +2,10 @@
 #include "engine/logger.h"
 #include "render/mesh.h"
 #include "render/vertex.h"
+#include "render/skinned_vertex.h"
 #include "render/texture.h"
 #include "render/material.h"
+#include "animation/assimp_skeleton_loader.h"
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -317,6 +319,22 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
             mg.baseColorName = std::filesystem::path(bcp.C_Str()).filename().string();
     }
 
+    // ── Skeleton + animation extraction (worker-safe — pure CPU) ────────
+    {
+        bool hasBones = false;
+        for (uint32_t i = 0; i < scene->mNumMeshes && !hasBones; ++i)
+            if (scene->mMeshes[i]->mNumBones > 0) hasBones = true;
+
+        if (hasBones) {
+            out.skeleton    = anim::extractSkeleton(scene);
+            out.hasSkeleton = out.skeleton.boneCount() > 0;
+            if (out.hasSkeleton && scene->mNumAnimations > 0)
+                out.animClips = anim::extractAllClips(scene, out.skeleton);
+            LOG_INFO("Assimp", "%s — %d bones, %u clip(s)",
+                     name.c_str(), out.skeleton.boneCount(), (uint32_t)out.animClips.size());
+        }
+    }
+
     // Meshes (vertex/index data + bgfx::copy on worker)
     for (uint32_t i = 0; i < scene->mNumMeshes; ++i) {
         const aiMesh* am = scene->mMeshes[i];
@@ -325,44 +343,60 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
         MeshGPUData mg;
         mg.matIndex = am->mMaterialIndex;
 
-        // Build vertex array
-        std::vector<Vertex> verts;
-        verts.reserve(am->mNumVertices);
-        for (uint32_t v = 0; v < am->mNumVertices; ++v) {
-            Vertex vtx{};
-            vtx.position[0] = am->mVertices[v].x;
-            vtx.position[1] = am->mVertices[v].y;
-            vtx.position[2] = am->mVertices[v].z;
+        const bool meshSkinned = am->mNumBones > 0 && out.hasSkeleton;
+
+        // Lambda: fill common vertex attributes shared by Vertex and SkinnedVertex
+        auto fillCommon = [&](uint32_t v, float pos[3], float nrm[3],
+                              float tan[4], float uv[2]) {
+            pos[0] = am->mVertices[v].x;
+            pos[1] = am->mVertices[v].y;
+            pos[2] = am->mVertices[v].z;
             if (am->HasNormals()) {
-                vtx.normal[0] = am->mNormals[v].x;
-                vtx.normal[1] = am->mNormals[v].y;
-                vtx.normal[2] = am->mNormals[v].z;
-            } else { vtx.normal[1] = 1.0f; }
+                nrm[0] = am->mNormals[v].x;
+                nrm[1] = am->mNormals[v].y;
+                nrm[2] = am->mNormals[v].z;
+            } else { nrm[0]=0; nrm[1]=1; nrm[2]=0; }
             if (am->HasTangentsAndBitangents()) {
                 const auto& t  = am->mTangents[v];
                 const auto& bt = am->mBitangents[v];
                 const auto& n  = am->mNormals[v];
                 float cx = n.y*t.z-n.z*t.y, cy = n.z*t.x-n.x*t.z, cz = n.x*t.y-n.y*t.x;
                 float sign = (cx*bt.x+cy*bt.y+cz*bt.z) < 0.0f ? -1.0f : 1.0f;
-                vtx.tangent[0]=t.x; vtx.tangent[1]=t.y;
-                vtx.tangent[2]=t.z; vtx.tangent[3]=sign;
+                tan[0]=t.x; tan[1]=t.y; tan[2]=t.z; tan[3]=sign;
             } else {
-                vtx.tangent[0]=1.0f; vtx.tangent[1]=0.0f;
-                vtx.tangent[2]=0.0f; vtx.tangent[3]=1.0f;
+                tan[0]=1; tan[1]=0; tan[2]=0; tan[3]=1;
             }
             if (am->mTextureCoords[0]) {
-                vtx.uv[0] = am->mTextureCoords[0][v].x;
-                vtx.uv[1] = am->mTextureCoords[0][v].y;
+                uv[0] = am->mTextureCoords[0][v].x;
+                uv[1] = am->mTextureCoords[0][v].y;
+            } else { uv[0]=0; uv[1]=0; }
+        };
+
+        // Build vertex array — skinned or static path
+        uint32_t vertCount = am->mNumVertices;
+        if (meshSkinned) {
+            auto boneData = anim::extractBoneWeights(am, out.skeleton);
+            std::vector<SkinnedVertex> verts(vertCount);
+            for (uint32_t v = 0; v < vertCount; ++v) {
+                fillCommon(v, verts[v].position, verts[v].normal,
+                           verts[v].tangent, verts[v].uv);
+                std::memcpy(verts[v].joints,  boneData[v].joints,  4);
+                std::memcpy(verts[v].weights, boneData[v].weights, sizeof(float)*4);
             }
-            verts.push_back(vtx);
+            mg.vertexMem = bgfx::copy(verts.data(),
+                                       (uint32_t)(verts.size() * sizeof(SkinnedVertex)));
+            mg.skinned = true;
+        } else {
+            std::vector<Vertex> verts(vertCount);
+            for (uint32_t v = 0; v < vertCount; ++v)
+                fillCommon(v, verts[v].position, verts[v].normal,
+                           verts[v].tangent, verts[v].uv);
+            mg.vertexMem = bgfx::copy(verts.data(),
+                                       (uint32_t)(verts.size() * sizeof(Vertex)));
         }
 
-        // bgfx::copy for vertex data — big memcpy on worker, not main thread
-        mg.vertexMem = bgfx::copy(verts.data(),
-                                   (uint32_t)(verts.size() * sizeof(Vertex)));
-
         // Build index array + bgfx::copy on worker
-        mg.use32 = verts.size() > 65535;
+        mg.use32 = vertCount > 65535;
         if (mg.use32) {
             std::vector<uint32_t> idx;
             idx.reserve(am->mNumFaces * 3);
@@ -421,11 +455,11 @@ AsyncLoader::~AsyncLoader() {
 }
 
 void AsyncLoader::load(const std::string& path, const std::string& name, OnLoaded cb) {
-    // Fast path: already fully loaded — return cached handle immediately
+    // Fast path: already fully loaded — return cached result immediately
     {
         std::lock_guard<std::mutex> lk(m_loadedMtx);
-        auto it = m_loadedHandles.find(normalizeKey(path));
-        if (it != m_loadedHandles.end()) {
+        auto it = m_loadedResults.find(normalizeKey(path));
+        if (it != m_loadedResults.end()) {
             if (cb) cb(it->second, name);
             return;
         }
@@ -445,7 +479,7 @@ void AsyncLoader::load(const std::string& path, const std::string& name, OnLoade
 
 void AsyncLoader::unload(const std::string& path) {
     std::lock_guard<std::mutex> lk(m_loadedMtx);
-    m_loadedHandles.erase(path);
+    m_loadedResults.erase(path);
 }
 bool AsyncLoader::isLoading(const std::string& path) const {
     std::lock_guard<std::mutex> lk(m_pendingMtx);
@@ -454,7 +488,7 @@ bool AsyncLoader::isLoading(const std::string& path) const {
 
 bool AsyncLoader::isLoaded(const std::string& path) const {
     std::lock_guard<std::mutex> lk(m_loadedMtx);
-    return m_loadedHandles.count(path) > 0;
+    return m_loadedResults.count(path) > 0;
 }
 
 int AsyncLoader::pendingCount() const {
@@ -516,8 +550,9 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
           m_inFlight.erase(normalizeKey(req.asset.path)); }
         LOG_ERROR("Loader", "Upload skipped (parse failed): %s",
                   req.asset.name.c_str());
-        if (req.cb) req.cb(MeshHandle{}, req.asset.name);
-        // Drain waiters with invalid handle so they don't block forever
+        AsyncLoadResult failResult{};
+        if (req.cb) req.cb(failResult, req.asset.name);
+        // Drain waiters with invalid result so they don't block forever
         std::vector<OnLoaded> failWaiters;
         {
             std::lock_guard<std::mutex> lk(m_pendingMtx);
@@ -527,7 +562,7 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
                 m_waiters.erase(it);
             }
         }
-        for (auto& w : failWaiters) if (w) w(MeshHandle{}, req.asset.name);
+        for (auto& w : failWaiters) if (w) w(failResult, req.asset.name);
         return true;
     }
 
@@ -570,8 +605,10 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
                       req.asset.name.c_str());
             continue;
         }
-        bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(
-            mg.vertexMem, Vertex::layout()); // instant — no memcpy
+        // Select vertex layout based on whether this mesh has bone data
+        bgfx::VertexBufferHandle vbh = mg.skinned
+            ? bgfx::createVertexBuffer(mg.vertexMem, SkinnedVertex::layout())
+            : bgfx::createVertexBuffer(mg.vertexMem, Vertex::layout());
 
         bgfx::IndexBufferHandle ibh = mg.use32
             ? bgfx::createIndexBuffer(mg.indexMem, BGFX_BUFFER_INDEX32)
@@ -600,15 +637,29 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
         if (!firstHandle.valid()) firstHandle = h;
     }
 
-    LOG_SUCCESS("Loader", "Uploaded: %s (handle %u)",
-                req.asset.name.c_str(), firstHandle.id);
+    // ── Register skeleton + clips (main-thread registry operations) ───────
+    AsyncLoadResult result;
+    result.mesh = firstHandle;
+
+    if (req.asset.hasSkeleton && storage.skeletons) {
+        result.skeleton = storage.skeletons->add(
+            Skeleton(req.asset.skeleton));   // copy into registry
+        for (auto& clip : req.asset.animClips) {
+            if (storage.clips)
+                result.clips.push_back(storage.clips->add(std::move(clip)));
+        }
+    }
+
+    LOG_SUCCESS("Loader", "Uploaded: %s (handle %u)%s",
+                req.asset.name.c_str(), firstHandle.id,
+                result.skeleton.valid() ? " [skinned]" : "");
 
     {
         std::lock_guard<std::mutex> lk(m_loadedMtx);
-        m_loadedHandles[req.asset.path] = firstHandle;
+        m_loadedResults[req.asset.path] = result;
     }
 
-    if (req.cb) req.cb(firstHandle, req.asset.name);
+    if (req.cb) req.cb(result, req.asset.name);
     // Drain any callbacks that queued while this path was in-flight
     std::vector<OnLoaded> waiters;
     {
@@ -621,6 +672,6 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
         m_inFlight.erase(normalizeKey(req.asset.path)); // clear in-flight on success
     }
     for (auto& w : waiters)
-        if (w) w(firstHandle, req.asset.name);
+        if (w) w(result, req.asset.name);
     return true;
 }

@@ -81,14 +81,30 @@ inline void spawnFile(const FileEntry& f, EngineContext& ctx, AsyncLoader& loade
         auto& ecs = ctx.ecs; auto& assets = ctx.assets; auto& ed = ctx.editor;
         std::string en = uniqueEntityName(ctx.ecs, baseName(f.name));
         loader.load(f.fullPath, en,
-            [&ecs, &assets, &ed, en](MeshHandle h, const std::string&) {
-                if (!h.valid()) return;
-                const Mesh* mesh = assets.getMesh(h);
+            [&ecs, &assets, &ed, en](const AsyncLoadResult& r, const std::string&) {
+                if (!r.mesh.valid()) return;
+                const Mesh* mesh = assets.getMesh(r.mesh);
                 float sc = autoScale(mesh), yo = groundOffset(mesh, sc);
                 Transform t; t.position = {0,yo,0}; t.scale = {sc,sc,sc};
-                ed.selected = ecs.entity(en.c_str())
-                    .set<Transform>(t).set<MeshRenderer>({h}).set<Name>({en});
-                LOG_SUCCESS("Loader", "Spawned '%s'", en.c_str());
+                auto ent = ecs.entity(en.c_str())
+                    .set<Transform>(t).set<MeshRenderer>({r.mesh}).set<Name>({en});
+
+                // Attach skeletal animation components when bones are present
+                if (r.skeleton.valid()) {
+                    SkinnedMesh sm;
+                    sm.skeleton = r.skeleton;
+                    ent.set<SkinnedMesh>(sm);
+                    Animator anim;
+                    if (!r.clips.empty()) {
+                        anim.clip    = r.clips[0];
+                        anim.playing = true;  // auto-play first clip on import
+                    }
+                    ent.set<Animator>(anim);
+                }
+
+                ed.selected = ent;
+                LOG_SUCCESS("Loader", "Spawned '%s'%s", en.c_str(),
+                            r.skeleton.valid() ? " [skinned]" : "");
             });
     }
 }

@@ -14,6 +14,8 @@
 
 #include <bgfx/bgfx.h>
 #include "io/asset_storage.h"
+#include "animation/skeleton.h"
+#include "animation/animation_clip.h"
 #include <assetlib/asset_registry.h>
 
 // -----------------------------------------------------------------------
@@ -35,6 +37,7 @@ struct MeshGPUData {
     float     boundsMax[3]{};
     uint32_t  matIndex    = 0;
     std::vector<SubRange> subRanges; // non-empty → multi-submesh
+    bool      skinned     = false;  // use SkinnedVertex layout in drainOne
 };
 
 struct TextureGPUData {
@@ -61,9 +64,21 @@ struct LoadedAsset {
     std::string                   error;
     std::vector<MeshGPUData>      meshes;
     std::vector<MaterialGPUData>  materials;
+
+    // Animation data (extracted on worker — pure CPU, no bgfx calls).
+    bool                          hasSkeleton = false;
+    Skeleton                      skeleton;
+    std::vector<AnimClip>         animClips;
 };
 
-using OnLoaded = std::function<void(MeshHandle, const std::string&)>;
+// Result passed to async-load callbacks so callers can wire animation components.
+struct AsyncLoadResult {
+    MeshHandle                  mesh;
+    SkeletonHandle              skeleton;     // invalid if not skinned
+    std::vector<AnimClipHandle> clips;        // empty if no animations
+};
+
+using OnLoaded = std::function<void(const AsyncLoadResult&, const std::string&)>;
 
 class AsyncLoader {
 public:
@@ -109,8 +124,8 @@ private:
     mutable std::mutex        m_readyMtx;
     std::queue<UploadRequest> m_ready;
 
-    mutable std::mutex                          m_loadedMtx;
-    std::unordered_map<std::string, MeshHandle> m_loadedHandles; // path → cached handle
+    mutable std::mutex                                    m_loadedMtx;
+    std::unordered_map<std::string, AsyncLoadResult>      m_loadedResults; // path → cached result
     assetlib::AssetRegistry*  m_registry    = nullptr;
     std::filesystem::path     m_projectRoot;
 };
