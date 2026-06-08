@@ -18,7 +18,7 @@
 // brings back every serialized component, not the partial set the old
 // hand-written snapshot captured. Respawn preserves the original id, so other
 // commands still in the stack continue to resolve the entity.
-enum class UndoCmdType { Transform, EntityAdd, EntityDelete, Reparent };
+enum class UndoCmdType { Transform, EntityAdd, EntityDelete, Reparent, PropertyEdit, ComponentToggle };
 
 struct UndoCommand {
     UndoCmdType    type;
@@ -92,6 +92,48 @@ public:
         push(std::move(c));
     }
 
+    // ── Component snapshot (public — used by inspector capture) ─────────────
+    static nlohmann::json snapshotComponent(flecs::entity e, const char* key) {
+        EntitySerde::SerdeContext sctx; sctx.mode = EntitySerde::SerdeMode::Memory;
+        for (const auto& d : EntitySerde::table()) {
+            if (std::string(d.key) == key && d.has(e)) {
+                nlohmann::json j; d.save(e, j, sctx); return j;
+            }
+        }
+        return {};
+    }
+
+    void pushPropertyEdit(flecs::entity e, const char* compKey,
+                          const nlohmann::json& before, const nlohmann::json& after,
+                          const std::string& desc) {
+        if (!e.is_alive() || before == after) return;
+        uint64_t id = ensureEntityId(e);
+        UndoCommand c; c.type = UndoCmdType::PropertyEdit; c.description = desc;
+        c.before = { {"id", id}, {"key", compKey}, {"data", before} };
+        c.after  = { {"id", id}, {"key", compKey}, {"data", after}  };
+        push(std::move(c));
+    }
+
+    void pushComponentAdd(flecs::entity e, const char* compKey, const std::string& desc) {
+        if (!e.is_alive()) return;
+        uint64_t id = ensureEntityId(e);
+        auto data = snapshotComponent(e, compKey);
+        UndoCommand c; c.type = UndoCmdType::ComponentToggle; c.description = desc;
+        c.before = { {"id", id}, {"key", compKey}, {"exists", false} };
+        c.after  = { {"id", id}, {"key", compKey}, {"exists", true}, {"data", data} };
+        push(std::move(c));
+    }
+
+    void pushComponentRemove(flecs::entity e, const char* compKey, const std::string& desc) {
+        if (!e.is_alive()) return;
+        uint64_t id = ensureEntityId(e);
+        auto data = snapshotComponent(e, compKey);
+        UndoCommand c; c.type = UndoCmdType::ComponentToggle; c.description = desc;
+        c.before = { {"id", id}, {"key", compKey}, {"exists", true}, {"data", data} };
+        c.after  = { {"id", id}, {"key", compKey}, {"exists", false} };
+        push(std::move(c));
+    }
+
 private:
     std::deque<UndoCommand> m_history;
     int m_index = -1;
@@ -108,6 +150,10 @@ private:
             else         destroyById(ecs, cmd.before.value("id",(uint64_t)0)); break;
         case UndoCmdType::Reparent:
             applyReparent(ecs, reverse ? cmd.before : cmd.after); break;
+        case UndoCmdType::PropertyEdit:
+            applyPropertyEdit(ecs, reverse ? cmd.before : cmd.after); break;
+        case UndoCmdType::ComponentToggle:
+            applyComponentToggle(ecs, reverse ? cmd.before : cmd.after); break;
         }
     }
 
@@ -129,6 +175,31 @@ private:
     }
     static void destroyById(flecs::world& ecs, uint64_t id) {
         flecs::entity e = findById(ecs, id); if (e.is_alive()) e.destruct();
+    }
+
+    static void restoreComponent(flecs::entity e, const std::string& key, const nlohmann::json& data) {
+        EntitySerde::SerdeContext sctx; sctx.mode = EntitySerde::SerdeMode::Memory;
+        for (const auto& d : EntitySerde::table())
+            if (key == d.key) { d.load(e, data, sctx); return; }
+    }
+    static void removeComponentByKey(flecs::entity e, const std::string& key) {
+        if      (key == "camera")               e.remove<Camera>();
+        else if (key == "light")                e.remove<Light>();
+        else if (key == "rigidBody")            e.remove<RigidBody>();
+        else if (key == "characterController")  e.remove<CharacterController>();
+        else if (key == "script")               e.remove<ScriptComponent>();
+    }
+    static void applyPropertyEdit(flecs::world& ecs, const nlohmann::json& j) {
+        flecs::entity e = findById(ecs, j.value("id",(uint64_t)0));
+        if (!e.is_alive()) { LOG_WARN("Undo","property target not found"); return; }
+        restoreComponent(e, j.value("key",std::string{}), j["data"]);
+    }
+    static void applyComponentToggle(flecs::world& ecs, const nlohmann::json& j) {
+        flecs::entity e = findById(ecs, j.value("id",(uint64_t)0));
+        if (!e.is_alive()) { LOG_WARN("Undo","component toggle target not found"); return; }
+        std::string key = j.value("key",std::string{});
+        if (j.value("exists",false)) restoreComponent(e, key, j["data"]);
+        else                         removeComponentByKey(e, key);
     }
 
     // ── Full-entity snapshot / respawn via the shared serializer (Memory) ───

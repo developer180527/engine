@@ -143,6 +143,25 @@ inline void drawInspectorPanel(EngineContext& ctx) {
 
     flecs::entity e = ctx.editor.selected;
 
+    // ── Generic property undo capture ────────────────────────────────
+    static nlohmann::json s_propBefore;
+    static bool           s_propCapturing = false;
+    auto propEdit = [&](const char* key, const char* desc) {
+        if (ImGui::IsItemActivated()) {
+            s_propBefore = UndoStack::snapshotComponent(e, key);
+            s_propCapturing = true;
+        }
+        if (s_propCapturing && ImGui::IsItemDeactivatedAfterEdit()) {
+            auto after = UndoStack::snapshotComponent(e, key);
+            if (s_propBefore != after)
+                ctx.editor.undoStack.pushPropertyEdit(e, key, s_propBefore, after, desc);
+            s_propCapturing = false;
+            ctx.editor.sceneDirty = true;
+        } else if (s_propCapturing && ImGui::IsItemDeactivated()) {
+            s_propCapturing = false;
+        }
+    };
+
     // ── Name ──────────────────────────────────────────────────────────
     if (e.has<Name>()) {
         Name& n = e.get_mut<Name>();
@@ -151,6 +170,7 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         ImGui::PushID((int)(uint32_t)e.id());
         if (ImGui::InputText("Name", buf, sizeof(buf)))
             n.value = buf;
+        propEdit("name", "Rename");
         ImGui::PopID();
     }
 
@@ -165,7 +185,12 @@ inline void drawInspectorPanel(EngineContext& ctx) {
                 "%s", pn ? pn->value.c_str() : "?");
             ImGui::SameLine();
             if (ImGui::SmallButton("Clear")) {
+                flecs::entity op = e.target(flecs::ChildOf);
+                uint64_t opid = (op && op.is_alive()) ? ensureEntityId(op) : 0;
+                Transform otf{}; if (const Transform* pt = e.try_get<Transform>()) otf = *pt;
                 e.remove(flecs::ChildOf, flecs::Wildcard);
+                Transform ntf{}; if (const Transform* pt = e.try_get<Transform>()) ntf = *pt;
+                ctx.editor.undoStack.pushReparent(e, opid, otf, 0, ntf);
                 ctx.editor.sceneDirty = true;
             }
             ImGui::Spacing();
@@ -184,6 +209,8 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         if (s_tfCapturing && ImGui::IsItemDeactivatedAfterEdit()) {
             if (const Transform* t = e.try_get<Transform>())
                 ctx.editor.undoStack.pushTransform(e, s_tfBefore, *t);
+            s_tfCapturing = false;
+        } else if (s_tfCapturing && ImGui::IsItemDeactivated()) {
             s_tfCapturing = false;
         }
     };
@@ -276,8 +303,13 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         // Primary
         ImGui::Text("Primary");
         ImGui::SameLine(90.0f);
-        if (ImGui::Checkbox("##primary", &cam.isPrimary))
-            ctx.editor.sceneDirty = true;
+        { auto bk = UndoStack::snapshotComponent(e, "camera");
+          if (ImGui::Checkbox("##primary", &cam.isPrimary)) {
+              ctx.editor.undoStack.pushPropertyEdit(e, "camera", bk,
+                  UndoStack::snapshotComponent(e, "camera"), "Toggle primary camera");
+              ctx.editor.sceneDirty = true;
+          }
+        }
         if (cam.isPrimary) {
             ImGui::SameLine();
             ImGui::TextColored({0.3f,0.9f,0.3f,1}, "Game Camera");
@@ -289,9 +321,13 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         ImGui::SetNextItemWidth(-1);
         const char* projNames[] = {"Perspective", "Orthographic"};
         int projIdx = (int)cam.projection;
-        if (ImGui::Combo("##proj", &projIdx, projNames, 2)) {
-            cam.projection = (ProjectionType)projIdx;
-            ctx.editor.sceneDirty = true;
+        { auto bk = UndoStack::snapshotComponent(e, "camera");
+          if (ImGui::Combo("##proj", &projIdx, projNames, 2)) {
+              cam.projection = (ProjectionType)projIdx;
+              ctx.editor.undoStack.pushPropertyEdit(e, "camera", bk,
+                  UndoStack::snapshotComponent(e, "camera"), "Change projection");
+              ctx.editor.sceneDirty = true;
+          }
         }
 
         if (cam.projection == ProjectionType::Perspective) {
@@ -299,26 +335,26 @@ inline void drawInspectorPanel(EngineContext& ctx) {
             ImGui::SameLine(90.0f);
             ImGui::SetNextItemWidth(-1);
             ImGui::SliderFloat("##fov", &cam.fov, 10.0f, 170.0f, "%.1f deg");
-            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            propEdit("camera", "Edit FOV");
         } else {
             ImGui::Text("Size");
             ImGui::SameLine(90.0f);
             ImGui::SetNextItemWidth(-1);
             ImGui::DragFloat("##orthoSize", &cam.orthoSize, 0.1f, 0.1f, 1000.0f);
-            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            propEdit("camera", "Edit ortho size");
         }
 
         ImGui::Text("Near");
         ImGui::SameLine(90.0f);
         ImGui::SetNextItemWidth(-1);
         ImGui::DragFloat("##near", &cam.nearPlane, 0.001f, 0.001f, 100.0f, "%.3f");
-        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+        propEdit("camera", "Edit near plane");
 
         ImGui::Text("Far");
         ImGui::SameLine(90.0f);
         ImGui::SetNextItemWidth(-1);
         ImGui::DragFloat("##far", &cam.farPlane, 1.0f, 1.0f, 100000.0f);
-        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+        propEdit("camera", "Edit far plane");
 
         ImGui::Spacing();
         ImGui::Text("Clear");
@@ -326,7 +362,7 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         ImGui::SetNextItemWidth(-1);
         ImGui::ColorEdit4("##clear", cam.clearColor,
             ImGuiColorEditFlags_Float | ImGuiColorEditFlags_AlphaBar);
-        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+        propEdit("camera", "Edit clear color");
     }
 
     // ── Light ──────────────────────────────────────────────────────────
@@ -337,21 +373,32 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         const char* lightTypes[] = {"Directional", "Point", "Spot"};
         int lti = (int)lt.type;
         ImGui::Text("Type"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
-        if (ImGui::Combo("##ltype", &lti, lightTypes, 3)) {
-            lt.type = (LightType)lti; ctx.editor.sceneDirty = true;
+        { auto bk = UndoStack::snapshotComponent(e, "light");
+          if (ImGui::Combo("##ltype", &lti, lightTypes, 3)) {
+              lt.type = (LightType)lti;
+              ctx.editor.undoStack.pushPropertyEdit(e, "light", bk,
+                  UndoStack::snapshotComponent(e, "light"), "Change Light type");
+              ctx.editor.sceneDirty = true;
+          }
         }
 
         ImGui::Text("Use Temp"); ImGui::SameLine(90.0f);
-        if (ImGui::Checkbox("##lusetemp", &lt.useTemperature)) ctx.editor.sceneDirty = true;
+        { auto bk = UndoStack::snapshotComponent(e, "light");
+          if (ImGui::Checkbox("##lusetemp", &lt.useTemperature)) {
+              ctx.editor.undoStack.pushPropertyEdit(e, "light", bk,
+                  UndoStack::snapshotComponent(e, "light"), "Toggle temperature mode");
+              ctx.editor.sceneDirty = true;
+          }
+        }
         ImGui::SameLine(); ImGui::TextDisabled(lt.useTemperature ? "Kelvin" : "RGB");
 
         if (lt.useTemperature) {
             ImGui::Text("Kelvin"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
             ImGui::SliderFloat("##lkelvin", &lt.temperatureK, 1500.0f, 15000.0f, "%.0f K");
-            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            propEdit("light", "Edit Light");
             ImGui::Text("Tint"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
             ImGui::ColorEdit3("##ltint", &lt.color.x, ImGuiColorEditFlags_Float);
-            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            propEdit("light", "Edit Light");
             bx::Vec3 kc = kelvinToRGB(lt.temperatureK);
             ImVec4 result = { kc.x*lt.color.x, kc.y*lt.color.y, kc.z*lt.color.z, 1.0f };
             ImGui::Text("Result"); ImGui::SameLine(90.0f);
@@ -360,32 +407,38 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         } else {
             ImGui::Text("Color"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
             ImGui::ColorEdit3("##lcolor", &lt.color.x, ImGuiColorEditFlags_Float);
-            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            propEdit("light", "Edit Light");
         }
 
         float intensMax = (lt.type == LightType::Directional) ? 10.0f : 100.0f;
         ImGui::Text("Intensity"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##lintensity", &lt.intensity, 0.0f, intensMax, "%.2f");
-        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+        propEdit("light", "Edit Light");
 
         if (lt.type != LightType::Directional) {
             ImGui::Text("Range"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
             ImGui::DragFloat("##lrange", &lt.range, 0.1f, 0.1f, 1000.0f, "%.1f");
-            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            propEdit("light", "Edit Light");
         }
 
         if (lt.type == LightType::Spot) {
             ImGui::Text("Inner"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
             ImGui::SliderFloat("##lspotin", &lt.spotInner, 0.0f, lt.spotOuter, "%.1f deg");
-            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            propEdit("light", "Edit Light");
             ImGui::Text("Outer"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
             ImGui::SliderFloat("##lspotout", &lt.spotOuter, lt.spotInner, 89.0f, "%.1f deg");
-            if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+            propEdit("light", "Edit Light");
             ImGui::TextDisabled("(cone approximate until spot shading lands)");
         }
 
         ImGui::Text("Shadows"); ImGui::SameLine(90.0f);
-        if (ImGui::Checkbox("##lshadow", &lt.castShadows)) ctx.editor.sceneDirty = true;
+        { auto bk = UndoStack::snapshotComponent(e, "light");
+          if (ImGui::Checkbox("##lshadow", &lt.castShadows)) {
+              ctx.editor.undoStack.pushPropertyEdit(e, "light", bk,
+                  UndoStack::snapshotComponent(e, "light"), "Toggle shadows");
+              ctx.editor.sceneDirty = true;
+          }
+        }
         if (lt.type != LightType::Directional) {
             ImGui::SameLine(); ImGui::TextDisabled("(directional only)");
         }
@@ -393,6 +446,7 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f,0.1f,0.1f,1.f));
         if (ImGui::Button("Remove Light", {-1, 0})) {
+            ctx.editor.undoStack.pushComponentRemove(e, "light", "Remove Light");
             e.remove<Light>(); ctx.editor.sceneDirty = true;
         }
         ImGui::PopStyleColor();
@@ -407,55 +461,71 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         const char* bodyTypes[] = {"Static", "Kinematic", "Dynamic"};
         int bti = (int)rb.bodyType;
         ImGui::Text("Body Type"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
-        if (ImGui::Combo("##btype", &bti, bodyTypes, 3)) {
-            rb.bodyType = (PhysicsBodyType)bti; ctx.editor.sceneDirty = true;
+        { auto bk = UndoStack::snapshotComponent(e, "rigidBody");
+          if (ImGui::Combo("##btype", &bti, bodyTypes, 3)) {
+              rb.bodyType = (PhysicsBodyType)bti;
+              ctx.editor.undoStack.pushPropertyEdit(e, "rigidBody", bk,
+                  UndoStack::snapshotComponent(e, "rigidBody"), "Change body type");
+              ctx.editor.sceneDirty = true;
+          }
         }
 
         // Shape
         const char* shapes[] = {"Box", "Sphere", "Capsule"};
         int si = (int)rb.shape;
         ImGui::Text("Shape"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
-        if (ImGui::Combo("##shape", &si, shapes, 3)) {
-            rb.shape = (PhysicsShape)si; ctx.editor.sceneDirty = true;
+        { auto bk = UndoStack::snapshotComponent(e, "rigidBody");
+          if (ImGui::Combo("##shape", &si, shapes, 3)) {
+              rb.shape = (PhysicsShape)si;
+              ctx.editor.undoStack.pushPropertyEdit(e, "rigidBody", bk,
+                  UndoStack::snapshotComponent(e, "rigidBody"), "Change physics shape");
+              ctx.editor.sceneDirty = true;
+          }
         }
 
         // Shape-specific parameters
         if (rb.shape == PhysicsShape::Box) {
             ImGui::Text("Half Ext"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
-            if (ImGui::DragFloat3("##hext", &rb.halfExtent.x, 0.01f, 0.01f, 100.f))
-                ctx.editor.sceneDirty = true;
+            ImGui::DragFloat3("##hext", &rb.halfExtent.x, 0.01f, 0.01f, 100.f);
+            propEdit("rigidBody", "Edit RigidBody");
         } else if (rb.shape == PhysicsShape::Sphere) {
             ImGui::Text("Radius"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
-            if (ImGui::DragFloat("##srad", &rb.radius, 0.01f, 0.01f, 100.f))
-                ctx.editor.sceneDirty = true;
+            ImGui::DragFloat("##srad", &rb.radius, 0.01f, 0.01f, 100.f);
+            propEdit("rigidBody", "Edit RigidBody");
         } else {
             ImGui::Text("Radius"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
-            if (ImGui::DragFloat("##crad", &rb.radius, 0.01f, 0.01f, 100.f))
-                ctx.editor.sceneDirty = true;
+            ImGui::DragFloat("##crad", &rb.radius, 0.01f, 0.01f, 100.f);
+            propEdit("rigidBody", "Edit RigidBody");
             ImGui::Text("Half H"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
-            if (ImGui::DragFloat("##chh", &rb.halfHeight, 0.01f, 0.01f, 100.f))
-                ctx.editor.sceneDirty = true;
+            ImGui::DragFloat("##chh", &rb.halfHeight, 0.01f, 0.01f, 100.f);
+            propEdit("rigidBody", "Edit RigidBody");
         }
 
         // Physics properties
         if (rb.bodyType == PhysicsBodyType::Dynamic) {
             ImGui::Text("Mass"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
-            if (ImGui::DragFloat("##mass", &rb.mass, 0.1f, 0.01f, 10000.f, "%.2f kg"))
-                ctx.editor.sceneDirty = true;
-            if (ImGui::Checkbox("Use Gravity", &rb.useGravity))
-                ctx.editor.sceneDirty = true;
+            ImGui::DragFloat("##mass", &rb.mass, 0.1f, 0.01f, 10000.f, "%.2f kg");
+            propEdit("rigidBody", "Edit RigidBody");
+            { auto bk = UndoStack::snapshotComponent(e, "rigidBody");
+              if (ImGui::Checkbox("Use Gravity", &rb.useGravity)) {
+                  ctx.editor.undoStack.pushPropertyEdit(e, "rigidBody", bk,
+                      UndoStack::snapshotComponent(e, "rigidBody"), "Toggle gravity");
+                  ctx.editor.sceneDirty = true;
+              }
+            }
         }
         ImGui::Text("Restitution"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
-        if (ImGui::SliderFloat("##rest", &rb.restitution, 0.f, 1.f))
-            ctx.editor.sceneDirty = true;
+        ImGui::SliderFloat("##rest", &rb.restitution, 0.f, 1.f);
+        propEdit("rigidBody", "Edit RigidBody");
         ImGui::Text("Friction"); ImGui::SameLine(100.f); ImGui::SetNextItemWidth(-1);
-        if (ImGui::SliderFloat("##fric", &rb.friction, 0.f, 1.f))
-            ctx.editor.sceneDirty = true;
+        ImGui::SliderFloat("##fric", &rb.friction, 0.f, 1.f);
+        propEdit("rigidBody", "Edit RigidBody");
 
         // Remove button
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f,0.1f,0.1f,1.f));
         if (ImGui::Button("Remove RigidBody", {-1, 0})) {
+            ctx.editor.undoStack.pushComponentRemove(e, "rigidBody", "Remove RigidBody");
             e.remove<RigidBody>(); ctx.editor.sceneDirty = true;
         }
         ImGui::PopStyleColor();
@@ -465,7 +535,9 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         ImGui::Separator();
         ImGui::Spacing();
         if (ImGui::Button("+ Add RigidBody", {-1, 0})) {
-            e.set<RigidBody>({}); ctx.editor.sceneDirty = true;
+            e.set<RigidBody>({});
+            ctx.editor.undoStack.pushComponentAdd(e, "rigidBody", "Add RigidBody");
+            ctx.editor.sceneDirty = true;
         }
     }
 
@@ -474,28 +546,37 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         detail::sectionHeader("Character Controller");
         CharacterController& cc = e.get_mut<CharacterController>();
         ImGui::Text("Radius");    ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
-        if (ImGui::DragFloat("##ccr", &cc.radius, 0.01f, 0.05f, 5.f)) ctx.editor.sceneDirty=true;
+        ImGui::DragFloat("##ccr", &cc.radius, 0.01f, 0.05f, 5.f);
+        propEdit("characterController", "Edit Character");
         ImGui::Text("Height");    ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
-        if (ImGui::DragFloat("##cch", &cc.height, 0.01f, 0.1f, 10.f)) ctx.editor.sceneDirty=true;
+        ImGui::DragFloat("##cch", &cc.height, 0.01f, 0.1f, 10.f);
+        propEdit("characterController", "Edit Character");
         ImGui::Text("Max Slope"); ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
-        if (ImGui::SliderFloat("##ccslope", &cc.maxSlopeDeg, 0.f, 80.f, "%.0f deg")) ctx.editor.sceneDirty=true;
+        ImGui::SliderFloat("##ccslope", &cc.maxSlopeDeg, 0.f, 80.f, "%.0f deg");
+        propEdit("characterController", "Edit Character");
         ImGui::Text("Step Up");   ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
-        if (ImGui::DragFloat("##ccstep", &cc.stepHeight, 0.01f, 0.f, 2.f)) ctx.editor.sceneDirty=true;
+        ImGui::DragFloat("##ccstep", &cc.stepHeight, 0.01f, 0.f, 2.f);
+        propEdit("characterController", "Edit Character");
         ImGui::Text("Mass");      ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
-        if (ImGui::DragFloat("##ccmass", &cc.mass, 1.f, 1.f, 1000.f, "%.0f kg")) ctx.editor.sceneDirty=true;
+        ImGui::DragFloat("##ccmass", &cc.mass, 1.f, 1.f, 1000.f, "%.0f kg");
+        propEdit("characterController", "Edit Character");
         ImGui::Text("Gravity x"); ImGui::SameLine(110.f); ImGui::SetNextItemWidth(-1);
-        if (ImGui::DragFloat("##ccgrav", &cc.gravityScale, 0.05f, 0.f, 5.f)) ctx.editor.sceneDirty=true;
+        ImGui::DragFloat("##ccgrav", &cc.gravityScale, 0.05f, 0.f, 5.f);
+        propEdit("characterController", "Edit Character");
         ImGui::TextDisabled("Grounded: %s", cc.grounded ? "yes" : "no");
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f,0.1f,0.1f,1.f));
         if (ImGui::Button("Remove Character Controller", {-1, 0})) {
+            ctx.editor.undoStack.pushComponentRemove(e, "characterController", "Remove Character Controller");
             e.remove<CharacterController>(); ctx.editor.sceneDirty = true;
         }
         ImGui::PopStyleColor();
     } else if (!e.has<RigidBody>()) {
         ImGui::Spacing();
         if (ImGui::Button("+ Add Character Controller", {-1, 0})) {
-            e.set<CharacterController>({}); ctx.editor.sceneDirty = true;
+            e.set<CharacterController>({});
+            ctx.editor.undoStack.pushComponentAdd(e, "characterController", "Add Character Controller");
+            ctx.editor.sceneDirty = true;
         }
     }
 
@@ -530,9 +611,9 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         char buf[256];
         snprintf(buf, sizeof(buf), "%s", sc.scriptPath.c_str());
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##scriptPath", buf, sizeof(buf))) {
-            sc.scriptPath = buf; ctx.editor.sceneDirty = true;
-        }
+        if (ImGui::InputText("##scriptPath", buf, sizeof(buf)))
+            sc.scriptPath = buf;
+        propEdit("script", "Edit script path");
         acceptScriptDrop(&sc);
 
         bool valid = false;
@@ -566,13 +647,16 @@ inline void drawInspectorPanel(EngineContext& ctx) {
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f,0.1f,0.1f,1.f));
         if (ImGui::Button("Remove Script", {-1, 0})) {
+            ctx.editor.undoStack.pushComponentRemove(e, "script", "Remove Script");
             e.remove<ScriptComponent>(); ctx.editor.sceneDirty = true;
         }
         ImGui::PopStyleColor();
     } else {
         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
         if (ImGui::Button("+ Add Script", {-1, 0})) {
-            e.set<ScriptComponent>({}); ctx.editor.sceneDirty = true;
+            e.set<ScriptComponent>({});
+            ctx.editor.undoStack.pushComponentAdd(e, "script", "Add Script");
+            ctx.editor.sceneDirty = true;
         }
         acceptScriptDrop(nullptr);
     }
