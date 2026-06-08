@@ -1,6 +1,7 @@
 #pragma once
 #include "components/light.h"
 #include <imgui.h>
+#include "editor/editor_icons.h"
 #include <flecs.h>
 #include <string>
 #include "engine_context.h"
@@ -215,7 +216,7 @@ inline void drawEntityNode(flecs::entity e, EngineContext& ctx,
 
 // ── drawHierarchyPanel ─────────────────────────────────────────────────────
 inline void drawHierarchyPanel(EngineContext& ctx) {
-    ImGui::Begin("Hierarchy");
+    ImGui::Begin(ICON_FA_SITEMAP " Hierarchy");
 
     // Header
     if (ImGui::Button("+ Add")) ImGui::OpenPopup("##addEntity");

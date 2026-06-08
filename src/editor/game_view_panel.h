@@ -1,5 +1,6 @@
 #pragma once
 #include <imgui.h>
+#include "editor/editor_icons.h"
 #include <bgfx/bgfx.h>
 #include <bx/math.h>
 #include <functional>
@@ -108,7 +109,7 @@ inline void drawGameViewPanel(bgfx::TextureHandle gameTex, bool hasCam,
                               std::function<void()> onPlay,
                               std::function<void()> onPause,
                               std::function<void()> onStop) {
-    ImGui::Begin("Game View");
+    ImGui::Begin(ICON_FA_GAMEPAD " Game View");
 
     drawPlayBar(simState, onPlay, onPause, onStop);
 

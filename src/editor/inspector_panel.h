@@ -4,6 +4,7 @@
 
 #include <flecs.h>
 #include <imgui.h>
+#include "editor/editor_icons.h"
 #include <bx/math.h>
 #include <cmath>
 #include <cstring>
@@ -132,7 +133,7 @@ scanLuaScripts(const std::filesystem::path& projectRoot) {
 } // namespace detail
 
 inline void drawInspectorPanel(EngineContext& ctx) {
-    ImGui::Begin("Inspector");
+    ImGui::Begin(ICON_FA_WRENCH " Inspector");
 
     if (!ctx.editor.selected.is_alive()) {
         ImGui::TextDisabled("(no entity selected)");

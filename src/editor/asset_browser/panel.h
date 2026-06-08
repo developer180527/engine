@@ -19,6 +19,7 @@
 #include "editor/script_viewer.h"
 
 #include <imgui.h>
+#include "editor/editor_icons.h"
 #include <flecs.h>
 #include <filesystem>
 #include <vector>
@@ -52,7 +53,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
     }
     auto cacheRoot = ctx.project.projectRoot / ".cache";
 
-    ImGui::Begin("Assets");
+    ImGui::Begin(ICON_FA_FOLDER_OPEN " Assets");
 
     // ── Toolbar ──────────────────────────────────────────────────────────────
     {

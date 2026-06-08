@@ -2,6 +2,7 @@
 #include <imgui.h>
 #include "engine/logger.h"
 #include "editor/terminal_panel.h"
+#include "editor/editor_icons.h"
 
 inline TerminalPanel& getTerminal() {
     static TerminalPanel t;
@@ -9,7 +10,7 @@ inline TerminalPanel& getTerminal() {
 }
 
 inline void drawConsolePanel() {
-    ImGui::Begin("Console");
+    ImGui::Begin(ICON_FA_TERMINAL " Console");
 
     if (ImGui::BeginTabBar("##consoletabs")) {
 

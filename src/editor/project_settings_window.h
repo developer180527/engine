@@ -1,5 +1,6 @@
 #pragma once
 #include <imgui.h>
+#include "editor/editor_icons.h"
 #include <string>
 #include <cstring>
 #define GLFW_INCLUDE_NONE
@@ -266,7 +267,7 @@ inline void drawProjectSettings(bool* open, SimState simState,
     constexpr ImGuiWindowFlags kFlags =
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking;
 
-    if (!ImGui::Begin("Project Settings", open, kFlags)) {
+    if (!ImGui::Begin(ICON_FA_GEAR " Project Settings", open, kFlags)) {
         ImGui::End(); return;
     }
 

@@ -7,6 +7,8 @@
 #include "vs_ocornut_imgui.bin.h"
 #include "fs_ocornut_imgui.bin.h"
 #include "roboto_regular.ttf.h"
+#include "fa_solid_900.ttf.h"
+#include "editor/editor_icons.h"
 #include <cstring>
 #include <GLFW/glfw3.h>  // must precede glfw3native.h (defines GLFWAPI)
 #ifdef __APPLE__
@@ -198,6 +200,19 @@ void imguiInit(GLFWwindow* window, float fontSize) {
         cfg.FontDataOwnedByAtlas = false;
         io.Fonts->AddFontFromMemoryTTF(
             (void*)s_robotoRegularTtf, sizeof(s_robotoRegularTtf), fontSize, &cfg);
+
+        // Merge Font Awesome 6 icons into the same font atlas.
+        // MergeMode = true appends glyphs to the previous font instead of
+        // creating a new ImFont*. GlyphMinAdvanceX keeps icons monospaced.
+        ImFontConfig iconCfg;
+        iconCfg.MergeMode          = true;
+        iconCfg.PixelSnapH         = true;
+        iconCfg.FontDataOwnedByAtlas = false;
+        iconCfg.GlyphMinAdvanceX   = fontSize;  // monospaced icons
+        static const ImWchar iconRanges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
+        io.Fonts->AddFontFromMemoryTTF(
+            (void*)s_faSolid900Ttf, sizeof(s_faSolid900Ttf),
+            fontSize - 1.0f, &iconCfg, iconRanges);
     }
     ImGui_ImplGlfw_InitForOther(window, true);
     bgfx::RendererType::Enum type = bgfx::getRendererType();

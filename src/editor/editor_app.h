@@ -2,6 +2,7 @@
 #pragma once
 #include "engine/runtime.h"
 #include "io/scene_serializer.h"
+#include "editor/editor_icons.h"
 #include "editor/editor_prefs.h"
 #include "editor/editor_theme.h"
 #include "io/project_context.h"
@@ -335,7 +336,7 @@ private:
             ImVec2(_vp->WorkSize.x - 500, _vp->WorkSize.y - 60),
             ImGuiCond_FirstUseEver);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        ImGui::Begin("Scene View");
+        ImGui::Begin(ICON_FA_EYE " Scene View");
         ImGui::PopStyleVar();
 
         // Track which GLFW window hosts this panel for camera input.
@@ -470,7 +471,7 @@ private:
                          [this]{ onStop(); });
 
         // Stats
-        ImGui::Begin("Stats");
+        ImGui::Begin(ICON_FA_CHART_LINE " Stats");
         ImGui::Text("FPS: %.1f",      ImGui::GetIO().Framerate);
         ImGui::Text("Frame: %.2f ms", 1000.0f / std::max(ImGui::GetIO().Framerate, 1.0f));
         ImGui::Text("Renderer: Metal");
