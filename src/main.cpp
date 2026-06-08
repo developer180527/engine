@@ -5,6 +5,13 @@
 #include "engine/logger.h"
 #include <assetlib/asset_registry.h>
 
+// Animation subsystem (Phase 1: data structures + math + loader)
+#include "animation/skeleton.h"
+#include "animation/animation_clip.h"
+#include "animation/animation_math.h"
+#include "animation/pose.h"
+#include "animation/assimp_skeleton_loader.h"
+
 int main(int argc, char** argv) {
     ProjectContext project;
     if (argc > 1 && std::filesystem::is_directory(argv[1])) {

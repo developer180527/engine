@@ -35,13 +35,19 @@ struct TextureTag {};
 struct MaterialTag {};
 struct AudioClipTag {};
 struct ScriptTag {};
+struct SkeletonTag {};
+struct AnimClipTag {};
+struct AnimControllerTag {};
 
 } // namespace core
 
 // Aliases pulled to global scope for convenience. They live as core::Handle
 // internally but are usable as bare names at use sites.
-using MeshHandle      = core::Handle<core::MeshTag>;
-using TextureHandle   = core::Handle<core::TextureTag>;
-using MaterialHandle  = core::Handle<core::MaterialTag>;
-using AudioClipHandle = core::Handle<core::AudioClipTag>;
-using ScriptHandle    = core::Handle<core::ScriptTag>;
+using MeshHandle             = core::Handle<core::MeshTag>;
+using TextureHandle          = core::Handle<core::TextureTag>;
+using MaterialHandle         = core::Handle<core::MaterialTag>;
+using AudioClipHandle        = core::Handle<core::AudioClipTag>;
+using ScriptHandle           = core::Handle<core::ScriptTag>;
+using SkeletonHandle         = core::Handle<core::SkeletonTag>;
+using AnimClipHandle         = core::Handle<core::AnimClipTag>;
+using AnimControllerHandle   = core::Handle<core::AnimControllerTag>;
