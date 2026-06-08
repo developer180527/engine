@@ -18,17 +18,21 @@
 #include "components/light.h"
 
 #include "render/forward_pipeline.h"     // ForwardPipeline + compiled shader bins (single TU)
+#include "components/skinned_mesh.h"
+#include "animation/skeleton_registry.h"
 
 Renderer::Renderer()  = default;
 Renderer::~Renderer() = default;
 
 bool Renderer::init(void* nwh, int width, int height,
                     flecs::world& editorWorld,
-                    AssetRegistry& assets, TextureRegistry& textures, MaterialRegistry& materials) {
+                    AssetRegistry& assets, TextureRegistry& textures, MaterialRegistry& materials,
+                    SkeletonRegistry& skeletons) {
     m_editorWorld = &editorWorld;
     m_assets      = &assets;
     m_textures    = &textures;
     m_materials   = &materials;
+    m_skeletons   = &skeletons;
 
     // Must precede bgfx::init to select single-threaded mode (otherwise bgfx
     // spins a render thread that races with platform data / a null window).
@@ -190,6 +194,17 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
                  ? m_textures->getTexture(it.mat->baseColorTexture) : nullptr;
         it.meshKey = mr.mesh.id;
         it.matKey  = mh.id;
+
+        // Skinned mesh: pass the bone palette to the pipeline
+        const SkinnedMesh* skin = e.try_get<SkinnedMesh>();
+        if (skin && skin->hasSkinMatrices && m_skeletons) {
+            const Skeleton* skel = m_skeletons->get(skin->skeleton);
+            if (skel) {
+                it.boneMatrices = skin->skinMatrices;
+                it.boneCount    = skel->boneCount();
+            }
+        }
+
         m_items.push_back(it);
     };
     auto extractLight = [&](flecs::entity e, const Transform&, const Light& lc) {

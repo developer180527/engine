@@ -7,9 +7,11 @@
 #include "io/importer_registry.h"
 #include <assetlib/asset_registry.h>
 
-class PrimitiveLibrary; // forward declare
-class AssetService;     // forward declare
-class SceneService;     // forward declare
+class PrimitiveLibrary;   // forward declare
+class AssetService;       // forward declare
+class SceneService;       // forward declare
+class SkeletonRegistry;   // forward declare
+class AnimClipRegistry;   // forward declare
 
 struct RuntimeContext {
     flecs::world&     ecs;
@@ -22,4 +24,6 @@ struct RuntimeContext {
     PrimitiveLibrary*        primitives   = nullptr;
     AssetService*            assetService = nullptr;
     SceneService*            sceneService = nullptr;
+    SkeletonRegistry*        skeletons    = nullptr;
+    AnimClipRegistry*        clips        = nullptr;
 };

@@ -81,7 +81,8 @@ static void* getNativeWindowHandle(GLFWwindow* window) {
 bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
     return m_renderer.init(getNativeWindowHandle(m_window),
                            cfg.width, cfg.height,
-                           m_ecs, m_assets, m_textures, m_materials);
+                           m_ecs, m_assets, m_textures, m_materials,
+                           m_skeletons);
 }
 
 bool EngineRuntime::initSystems() {
@@ -109,6 +110,8 @@ bool EngineRuntime::initSystems() {
     m_ctx->primitives    = &m_primitives;
     m_ctx->assetService  = m_assetService.get();
     m_ctx->sceneService  = m_sceneService.get();
+    m_ctx->skeletons     = &m_skeletons;
+    m_ctx->clips         = &m_clips;
 
     // Gameplay-tick query (editor world) — render queries live in Renderer.
     m_spinnerQuery = m_ecs.query_builder<Transform, const Spinner>().build();
@@ -175,6 +178,8 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
 }
 
 void EngineRuntime::shutdown() {
+    m_clips.clear();
+    m_skeletons.clear();
     m_materials.clear();
     m_textures.clear();
     m_assets.clear();

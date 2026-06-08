@@ -2,6 +2,8 @@
 class PrimitiveLibrary;
 class AssetService;
 class SceneService;
+class SkeletonRegistry;
+class AnimClipRegistry;
 #include "engine/runtime_context.h"
 #include <assetlib/asset_registry.h>
 #include "editor/editor_state.h"
@@ -24,4 +26,6 @@ struct EngineContext {
     PrimitiveLibrary*        primitives   = nullptr;
     AssetService*            assetService = nullptr;
     SceneService*            sceneService = nullptr;
+    SkeletonRegistry*        skeletons    = nullptr;
+    AnimClipRegistry*        clips        = nullptr;
 };

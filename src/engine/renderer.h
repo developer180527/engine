@@ -8,7 +8,9 @@
 #include "render/render_context.h"    // RenderContext + asset/texture/material registries
 #include "core/transform.h"
 #include "components/mesh_renderer.h"
+#include "components/skinned_mesh.h"
 #include "components/light.h"
+#include "animation/skeleton_registry.h"
 
 // Owns the GPU device lifecycle and ALL render-side state: framebuffers,
 // fallback textures, reserved view ids, the swappable pipeline, and per-frame
@@ -23,7 +25,8 @@ public:
 
     bool init(void* nwh, int width, int height,
               flecs::world& editorWorld,
-              AssetRegistry& assets, TextureRegistry& textures, MaterialRegistry& materials);
+              AssetRegistry& assets, TextureRegistry& textures, MaterialRegistry& materials,
+              SkeletonRegistry& skeletons);
     void shutdown();
 
     void resize(int w, int h);          // bgfx::reset
@@ -49,10 +52,11 @@ private:
     RenderContext makeContext();
 
     // Borrowed (owned by EngineRuntime)
-    flecs::world*     m_editorWorld = nullptr;
-    AssetRegistry*    m_assets      = nullptr;
-    TextureRegistry*  m_textures    = nullptr;
-    MaterialRegistry* m_materials   = nullptr;
+    flecs::world*      m_editorWorld = nullptr;
+    AssetRegistry*     m_assets      = nullptr;
+    TextureRegistry*   m_textures    = nullptr;
+    MaterialRegistry*  m_materials   = nullptr;
+    SkeletonRegistry*  m_skeletons   = nullptr;
 
     std::unique_ptr<IRenderPipeline>                  m_pipeline;
     bool                                              m_initialized = false;

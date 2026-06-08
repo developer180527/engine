@@ -1,16 +1,19 @@
 #pragma once
 #include <string>
 #include <string_view>
+#include <vector>
 #include "core/handle.h"
 #include "io/asset_storage.h"
 
 struct MeshImportResult {
-    bool        success = false;
-    MeshHandle  mesh;
-    std::string error;
+    bool            success  = false;
+    MeshHandle      mesh;
+    SkeletonHandle  skeleton;            // valid when the mesh has bones
+    std::vector<AnimClipHandle> clips;   // animation clips from the file
+    std::string     error;
 
-    static MeshImportResult ok(MeshHandle h)       { return {true,  h, ""}; }
-    static MeshImportResult fail(std::string msg)  { return {false, {}, std::move(msg)}; }
+    static MeshImportResult ok(MeshHandle h)       { return {true,  h, {}, {}, ""}; }
+    static MeshImportResult fail(std::string msg)  { return {false, {}, {}, {}, std::move(msg)}; }
 };
 
 class MeshImporter {

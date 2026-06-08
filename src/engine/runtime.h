@@ -2,6 +2,8 @@
 #include "render/primitive_library.h"
 #include "engine/asset_service.h"
 #include "engine/scene_service.h"
+#include "animation/skeleton_registry.h"
+#include "animation/clip_registry.h"
 #include <memory>
 #include <string>
 #include <GLFW/glfw3.h>
@@ -45,9 +47,11 @@ public:
     int sceneW() const { return m_renderer.sceneW(); }
     int sceneH() const { return m_renderer.sceneH(); }
 
-    Renderer&       renderer()     { return m_renderer; }   // pipeline injection, etc.
-    GLFWwindow*     window() const { return m_window; }
-    RuntimeContext& ctx()          { return *m_ctx; }
+    Renderer&        renderer()     { return m_renderer; }   // pipeline injection, etc.
+    GLFWwindow*      window() const { return m_window; }
+    RuntimeContext&  ctx()          { return *m_ctx; }
+    SkeletonRegistry& skeletons()  { return m_skeletons; }
+    AnimClipRegistry& clips()      { return m_clips; }
     PrimitiveLibrary& primitives() { return m_primitives; }
     AssetService&   assetService() { return *m_assetService; }
     SceneService&   sceneService() { return *m_sceneService; }
@@ -68,6 +72,8 @@ private:
     AssetRegistry    m_assets;
     TextureRegistry  m_textures;
     MaterialRegistry m_materials;
+    SkeletonRegistry m_skeletons;
+    AnimClipRegistry m_clips;
     ProjectContext   m_project;
     ImporterRegistry m_importers;
 

@@ -84,6 +84,23 @@ bgfx_compile_shaders(
     AS_HEADERS
 )
 
+bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${CMAKE_SOURCE_DIR}/shaders/vs_skinned.sc
+    VARYING_DEF ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
+    OUTPUT_DIR ${SHADER_OUTPUT_DIR}
+    INCLUDE_DIRS ${BGFX_SHADER_INCLUDES}
+    AS_HEADERS
+)
+bgfx_compile_shaders(
+    TYPE VERTEX
+    SHADERS ${CMAKE_SOURCE_DIR}/shaders/vs_shadow_skinned.sc
+    VARYING_DEF ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
+    OUTPUT_DIR ${SHADER_OUTPUT_DIR}
+    INCLUDE_DIRS ${BGFX_SHADER_INCLUDES}
+    AS_HEADERS
+)
+
 
 # ---- Assimp (multi-format mesh importer) ----
 # Disable ALL importers/exporters by default, then opt-in only what we need.
@@ -139,6 +156,8 @@ add_executable(engine
     shaders/fs_triangle.sc
     shaders/vs_shadow.sc
     shaders/fs_shadow.sc
+    shaders/vs_skinned.sc
+    shaders/vs_shadow_skinned.sc
     shaders/varying.def.sc
 )
 
@@ -147,6 +166,8 @@ set_source_files_properties(
     shaders/fs_triangle.sc
     shaders/vs_shadow.sc
     shaders/fs_shadow.sc
+    shaders/vs_skinned.sc
+    shaders/vs_shadow_skinned.sc
     shaders/varying.def.sc
     PROPERTIES HEADER_FILE_ONLY TRUE
 )

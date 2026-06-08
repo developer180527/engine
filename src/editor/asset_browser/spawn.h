@@ -7,6 +7,8 @@
 #include "core/transform.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
+#include "components/skinned_mesh.h"
+#include "components/animator.h"
 #include "render/mesh.h"
 #include <flecs.h>
 #include <string>
@@ -43,7 +45,8 @@ inline void spawnFile(const FileEntry& f, EngineContext& ctx, AsyncLoader& loade
     const bool isGltf = (f.ext == ".glb" || f.ext == ".gltf");
 
     if (isGltf) {
-        AssetStorage s{ctx.assets, ctx.textures, ctx.materials};
+        AssetStorage s{ctx.assets, ctx.textures, ctx.materials,
+                       ctx.skeletons, ctx.clips};
         auto r = ctx.importers.loadCached(f.fullPath, s);
         if (r.success) {
             if (Mesh* m = const_cast<Mesh*>(ctx.assets.getMesh(r.mesh)))
@@ -52,9 +55,22 @@ inline void spawnFile(const FileEntry& f, EngineContext& ctx, AsyncLoader& loade
             float sc = autoScale(mesh), yo = groundOffset(mesh, sc);
             Transform t; t.position = {0,yo,0}; t.scale = {sc,sc,sc};
             std::string en = uniqueEntityName(ctx.ecs, baseName(f.name));
-            ctx.editor.selected = ctx.ecs.entity(en.c_str())
+            auto ent = ctx.ecs.entity(en.c_str())
                 .set<Transform>(t).set<MeshRenderer>({r.mesh}).set<Name>({en});
-            LOG_SUCCESS("Loader", "Spawned '%s' (glTF)", en.c_str());
+
+            // Attach skeletal animation components when bones are present
+            if (r.skeleton.valid()) {
+                SkinnedMesh sm;
+                sm.skeleton = r.skeleton;
+                ent.set<SkinnedMesh>(sm);
+                Animator anim;
+                if (!r.clips.empty()) anim.clip = r.clips[0];
+                ent.set<Animator>(anim);
+            }
+
+            ctx.editor.selected = ent;
+            LOG_SUCCESS("Loader", "Spawned '%s' (glTF)%s", en.c_str(),
+                        r.skeleton.valid() ? " [skinned]" : "");
         } else {
             LOG_ERROR("Loader", "glTF load failed: %s", r.error.c_str());
         }

@@ -59,7 +59,9 @@ public:
         // Engine is interactive while meshes/textures load in background.
         AssetStorage storage{m_rt.ctx().assets,
                              m_rt.ctx().textures,
-                             m_rt.ctx().materials};
+                             m_rt.ctx().materials,
+                             m_rt.ctx().skeletons,
+                             m_rt.ctx().clips};
         SceneSerializer::loadAsync(m_scenePath,
                                    m_rt.ctx().ecs,
                                    storage,
@@ -158,7 +160,9 @@ public:
             {
                 AssetStorage storage{m_rt.ctx().assets,
                                      m_rt.ctx().textures,
-                                     m_rt.ctx().materials};
+                                     m_rt.ctx().materials,
+                                     m_rt.ctx().skeletons,
+                                     m_rt.ctx().clips};
                 m_loader.drainOne(storage); // legacy loader — one per frame
             }
             // AssetService async drain (scripts' loadMeshAsync/loadTextureAsync)
@@ -290,7 +294,8 @@ private:
             rc.ecs, rc.assets, rc.textures,
             rc.materials, rc.project, rc.importers,
             m_editor, m_gizmo, rc.assetLib, rc.primitives,
-            rc.assetService, rc.sceneService
+            rc.assetService, rc.sceneService,
+            rc.skeletons, rc.clips
         };
     }
 
@@ -301,7 +306,9 @@ private:
         if (m_editor.simState != SimState::Editing) return;
         AssetStorage snap_storage{m_rt.ctx().assets,
                                   m_rt.ctx().textures,
-                                  m_rt.ctx().materials};
+                                  m_rt.ctx().materials,
+                                  m_rt.ctx().skeletons,
+                                  m_rt.ctx().clips};
         m_snapshotJSON = SceneSerializer::saveToString(
             m_rt.ctx().ecs, snap_storage);
         m_gameWorld = std::make_unique<flecs::world>();

@@ -21,40 +21,58 @@
     #include "metal/fs_triangle.sc.bin.h"
     #include "metal/vs_shadow.sc.bin.h"
     #include "metal/fs_shadow.sc.bin.h"
-    #define VS_TRIANGLE_DATA vs_triangle_mtl
-    #define VS_TRIANGLE_SIZE sizeof(vs_triangle_mtl)
-    #define FS_TRIANGLE_DATA fs_triangle_mtl
-    #define FS_TRIANGLE_SIZE sizeof(fs_triangle_mtl)
-    #define VS_SHADOW_DATA   vs_shadow_mtl
-    #define VS_SHADOW_SIZE   sizeof(vs_shadow_mtl)
-    #define FS_SHADOW_DATA   fs_shadow_mtl
-    #define FS_SHADOW_SIZE   sizeof(fs_shadow_mtl)
+    #include "metal/vs_skinned.sc.bin.h"
+    #include "metal/vs_shadow_skinned.sc.bin.h"
+    #define VS_TRIANGLE_DATA       vs_triangle_mtl
+    #define VS_TRIANGLE_SIZE       sizeof(vs_triangle_mtl)
+    #define FS_TRIANGLE_DATA       fs_triangle_mtl
+    #define FS_TRIANGLE_SIZE       sizeof(fs_triangle_mtl)
+    #define VS_SHADOW_DATA         vs_shadow_mtl
+    #define VS_SHADOW_SIZE         sizeof(vs_shadow_mtl)
+    #define FS_SHADOW_DATA         fs_shadow_mtl
+    #define FS_SHADOW_SIZE         sizeof(fs_shadow_mtl)
+    #define VS_SKINNED_DATA        vs_skinned_mtl
+    #define VS_SKINNED_SIZE        sizeof(vs_skinned_mtl)
+    #define VS_SHADOW_SKINNED_DATA vs_shadow_skinned_mtl
+    #define VS_SHADOW_SKINNED_SIZE sizeof(vs_shadow_skinned_mtl)
 #elif defined(_WIN32)
     #include "dxbc/vs_triangle.sc.bin.h"
     #include "dxbc/fs_triangle.sc.bin.h"
     #include "dxbc/vs_shadow.sc.bin.h"
     #include "dxbc/fs_shadow.sc.bin.h"
-    #define VS_TRIANGLE_DATA vs_triangle_dxbc
-    #define VS_TRIANGLE_SIZE sizeof(vs_triangle_dxbc)
-    #define FS_TRIANGLE_DATA fs_triangle_dxbc
-    #define FS_TRIANGLE_SIZE sizeof(fs_triangle_dxbc)
-    #define VS_SHADOW_DATA   vs_shadow_dxbc
-    #define VS_SHADOW_SIZE   sizeof(vs_shadow_dxbc)
-    #define FS_SHADOW_DATA   fs_shadow_dxbc
-    #define FS_SHADOW_SIZE   sizeof(fs_shadow_dxbc)
+    #include "dxbc/vs_skinned.sc.bin.h"
+    #include "dxbc/vs_shadow_skinned.sc.bin.h"
+    #define VS_TRIANGLE_DATA       vs_triangle_dxbc
+    #define VS_TRIANGLE_SIZE       sizeof(vs_triangle_dxbc)
+    #define FS_TRIANGLE_DATA       fs_triangle_dxbc
+    #define FS_TRIANGLE_SIZE       sizeof(fs_triangle_dxbc)
+    #define VS_SHADOW_DATA         vs_shadow_dxbc
+    #define VS_SHADOW_SIZE         sizeof(vs_shadow_dxbc)
+    #define FS_SHADOW_DATA         fs_shadow_dxbc
+    #define FS_SHADOW_SIZE         sizeof(fs_shadow_dxbc)
+    #define VS_SKINNED_DATA        vs_skinned_dxbc
+    #define VS_SKINNED_SIZE        sizeof(vs_skinned_dxbc)
+    #define VS_SHADOW_SKINNED_DATA vs_shadow_skinned_dxbc
+    #define VS_SHADOW_SKINNED_SIZE sizeof(vs_shadow_skinned_dxbc)
 #else // Linux — Vulkan (SPIR-V)
     #include "spirv/vs_triangle.sc.bin.h"
     #include "spirv/fs_triangle.sc.bin.h"
     #include "spirv/vs_shadow.sc.bin.h"
     #include "spirv/fs_shadow.sc.bin.h"
-    #define VS_TRIANGLE_DATA vs_triangle_spv
-    #define VS_TRIANGLE_SIZE sizeof(vs_triangle_spv)
-    #define FS_TRIANGLE_DATA fs_triangle_spv
-    #define FS_TRIANGLE_SIZE sizeof(fs_triangle_spv)
-    #define VS_SHADOW_DATA   vs_shadow_spv
-    #define VS_SHADOW_SIZE   sizeof(vs_shadow_spv)
-    #define FS_SHADOW_DATA   fs_shadow_spv
-    #define FS_SHADOW_SIZE   sizeof(fs_shadow_spv)
+    #include "spirv/vs_skinned.sc.bin.h"
+    #include "spirv/vs_shadow_skinned.sc.bin.h"
+    #define VS_TRIANGLE_DATA       vs_triangle_spv
+    #define VS_TRIANGLE_SIZE       sizeof(vs_triangle_spv)
+    #define FS_TRIANGLE_DATA       fs_triangle_spv
+    #define FS_TRIANGLE_SIZE       sizeof(fs_triangle_spv)
+    #define VS_SHADOW_DATA         vs_shadow_spv
+    #define VS_SHADOW_SIZE         sizeof(vs_shadow_spv)
+    #define FS_SHADOW_DATA         fs_shadow_spv
+    #define FS_SHADOW_SIZE         sizeof(fs_shadow_spv)
+    #define VS_SKINNED_DATA        vs_skinned_spv
+    #define VS_SKINNED_SIZE        sizeof(vs_skinned_spv)
+    #define VS_SHADOW_SKINNED_DATA vs_shadow_skinned_spv
+    #define VS_SHADOW_SKINNED_SIZE sizeof(vs_shadow_skinned_spv)
 #endif
 
 class ForwardPipeline final : public IRenderPipeline {
@@ -78,6 +96,17 @@ public:
             bgfx::createShader(bgfx::makeRef(VS_SHADOW_DATA, VS_SHADOW_SIZE)),
             bgfx::createShader(bgfx::makeRef(FS_SHADOW_DATA, FS_SHADOW_SIZE)),
             true);
+
+        // Skinned mesh programs — same fragment shaders, different vertex shaders
+        m_skinnedProgram = bgfx::createProgram(
+            bgfx::createShader(bgfx::makeRef(VS_SKINNED_DATA, VS_SKINNED_SIZE)),
+            bgfx::createShader(bgfx::makeRef(FS_TRIANGLE_DATA, FS_TRIANGLE_SIZE)),
+            true);
+        m_skinnedShadowProgram = bgfx::createProgram(
+            bgfx::createShader(bgfx::makeRef(VS_SHADOW_SKINNED_DATA, VS_SHADOW_SKINNED_SIZE)),
+            bgfx::createShader(bgfx::makeRef(FS_SHADOW_DATA, FS_SHADOW_SIZE)),
+            true);
+        m_uBoneMatrices = bgfx::createUniform("u_boneMatrices", bgfx::UniformType::Vec4, 512);
         const uint64_t smFlags = BGFX_TEXTURE_RT
             | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT
             | BGFX_SAMPLER_U_CLAMP   | BGFX_SAMPLER_V_CLAMP;
@@ -94,7 +123,10 @@ public:
         d(m_sBaseColor); d(m_uParams); d(m_uColorFactor); d(m_uLights);
         d(m_uLightParams); d(m_uCamPos); d(m_sNormalMap);
         d(m_sShadowMap); d(m_uShadowMtx); d(m_uShadowParams);
+        d(m_uBoneMatrices);
         if (bgfx::isValid(m_program)) { bgfx::destroy(m_program); m_program = BGFX_INVALID_HANDLE; }
+        if (bgfx::isValid(m_skinnedProgram))       { bgfx::destroy(m_skinnedProgram);       m_skinnedProgram       = BGFX_INVALID_HANDLE; }
+        if (bgfx::isValid(m_skinnedShadowProgram)) { bgfx::destroy(m_skinnedShadowProgram); m_skinnedShadowProgram = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowFB))      { bgfx::destroy(m_shadowFB);      m_shadowFB      = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowMap))     { bgfx::destroy(m_shadowMap);     m_shadowMap     = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowProgram)) { bgfx::destroy(m_shadowProgram); m_shadowProgram = BGFX_INVALID_HANDLE; }
@@ -197,15 +229,24 @@ public:
             const bgfx::TextureHandle base = it.tex ? it.tex->handle : ctx.whiteTex;
             const bgfx::TextureHandle norm = nm    ? nm->handle      : ctx.flatNormalTex;
 
+            // Select skinned or static program
+            const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
+            const bgfx::ProgramHandle prog = skinned ? m_skinnedProgram : m_program;
+
+            if (skinned) {
+                // Upload bone palette: boneCount * 4 vec4s (each bone is one mat4 = 4 vec4)
+                bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
+            }
+
             if (it.mesh->submeshes.empty()) {
                 bind(params, factor, base, norm, state, it);
                 bgfx::setIndexBuffer(it.mesh->ibh);
-                bgfx::submit(id, m_program);
+                bgfx::submit(id, prog);
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
                     bind(params, factor, base, norm, state, it);
                     bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
-                    bgfx::submit(id, m_program);
+                    bgfx::submit(id, prog);
                 }
             }
         }
@@ -255,17 +296,22 @@ private:
         for (uint32_t i = 0; i < (uint32_t)v.items.size(); ++i) {
             const RenderItem& it = v.items[i];
             if (!it.mesh) continue;
+            const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
+            const bgfx::ProgramHandle shadowProg = skinned ? m_skinnedShadowProgram : m_shadowProgram;
+            if (skinned) {
+                bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
+            }
             if (it.mesh->submeshes.empty()) {
                 bgfx::setState(st); bgfx::setTransform(it.model.ptr());
                 bgfx::setVertexBuffer(0, it.mesh->vbh);
                 bgfx::setIndexBuffer(it.mesh->ibh);
-                bgfx::submit(sv, m_shadowProgram);
+                bgfx::submit(sv, shadowProg);
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
                     bgfx::setState(st); bgfx::setTransform(it.model.ptr());
                     bgfx::setVertexBuffer(0, it.mesh->vbh);
                     bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
-                    bgfx::submit(sv, m_shadowProgram);
+                    bgfx::submit(sv, shadowProg);
                 }
             }
         }
@@ -304,7 +350,10 @@ private:
     // Replace fixed MAX_LIGHTS forward path with Forward+ or clustered lighting.
     // Current renderer truncates visible lights beyond MAX_LIGHTS.
     static constexpr int MAX_LIGHTS = 16;
-    bgfx::ProgramHandle m_program      = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_program              = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_skinnedProgram       = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_skinnedShadowProgram = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_uBoneMatrices        = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_sBaseColor   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uParams      = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uColorFactor = BGFX_INVALID_HANDLE;

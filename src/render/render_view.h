@@ -46,6 +46,12 @@ struct RenderItem {
     const Texture*  tex  = nullptr;
     uint32_t        meshKey = 0;
     uint32_t        matKey  = 0;
+
+    // Non-null when this item has a SkinnedMesh component.
+    // Points to SkinnedMesh::skinMatrices (kMaxBones * 16 floats).
+    // Pipeline selects the skinned shader program when this is set.
+    const float*    boneMatrices = nullptr;
+    int             boneCount    = 0;
 };
 
 // Where a view renders. Lightweight: handles + dims + clear only.
