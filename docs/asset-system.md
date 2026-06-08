@@ -1,6 +1,6 @@
 # Asset Management System
 
-**Last updated:** June 7, 2026 — Phase 1 complete
+**Last updated:** June 8, 2026 — Phase 1 + Phase 2 complete
 
 ## Overview
 
@@ -254,25 +254,140 @@ Alongside the asset system, four cross-platform quick wins were implemented:
 | `forward_pipeline.h` | Platform-conditional shader includes with `#define` aliases (`VS_TRIANGLE_DATA`, etc.) |
 | `CMakeLists.txt` | Windows link libs (gdi32, shell32, user32, winmm) + Linux link libs (X11, dl, Threads) |
 
+## Phase 2: Binary Scene Format + SceneService
+
+### Binary Scene Format (magic: `0x53434E45` / "SCNE")
+
+The editor saves scenes as JSON (human-readable, git-diff-friendly). The cook pipeline bakes
+JSON into a binary format for runtime use. The binary format is designed for zero parsing overhead.
+
+```
+[SceneHeader]                32 bytes   magic, version, entityCount, stringTableSize
+[SceneEntity × N]           256 bytes each — ALL component data inlined, fixed-size
+[String table]              packed null-terminated strings
+```
+
+**10K entities = 2.5 MB.** No parsing, no allocations, no key lookups — `memcpy` the entity
+block, read variable-length strings by offset.
+
+#### SceneHeader (32 bytes)
+| Field | Type | Description |
+|-------|------|-------------|
+| magic | uint32 | `0x53434E45` ("SCNE") |
+| version | uint32 | Currently `1` |
+| entityCount | uint32 | Number of entity records |
+| stringTableSize | uint32 | Byte size of the string table |
+| _pad | uint8[16] | Reserved |
+
+#### SceneEntity (256 bytes, fixed)
+Each entity record inlines ALL possible component data. A `componentMask` bitfield says which
+are meaningful; unused fields are zeroed.
+
+| Bit | Component | Data inlined |
+|-----|-----------|--------------|
+| 0 | Transform | position(float3), rotation(quat4), scale(float3) |
+| 1 | Name | offset + length into string table |
+| 2 | MeshRenderer | cookedPath, sourcePath, sourceType, matOverrideId |
+| 3 | Camera | fov, projection, near/far, orthoSize, clearColor |
+| 4 | RigidBody | bodyType, shape, mass, restitution, friction, halfExtent, radius, halfHeight |
+| 5 | Script | scriptPath offset + length into string table |
+| 6 | CharacterController | radius, height, maxSlope, stepHeight, mass, gravityScale |
+| 7 | Light | type, color, intensity, range, spotAngles, castShadows, temperature |
+
+Variable-length data (entity names, mesh paths, script paths) are stored as `(offset, length)`
+pairs pointing into the string table. Sentinel offset `0xFFFFFFFF` = not present.
+
+**File**: `modules/assetlib/include/assetlib/scene_asset.h`, `modules/assetlib/src/scene_asset.cpp`
+
+### SceneService
+
+`SceneService` sits on top of `AssetService`. One call loads an entire scene — entities,
+transforms, parent links, meshes, cameras, lights, scripts, physics, everything.
+
+```
+SceneService
+    ├── reads binary .scene file (memcpy entity block + string table)
+    ├── for each MeshRenderer entity: AssetService::loadMesh(cookedPath)
+    │   └── fallback: PrimitiveLibrary::byName() for built-in shapes
+    ├── creates flecs entities, sets all components from binary data
+    ├── restores ChildOf parent links in a second pass
+    └── tracks spawned entities + loaded assets for unloadScene()
+```
+
+**Ownership**: Like AssetService, SceneService is **engine infrastructure, not a plugin**.
+Owned by `EngineRuntime` via `unique_ptr`, created in `initSystems()`.
+
+**API** (all FFI-friendly, `uint32_t` handles):
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `loadScene` | `uint32_t loadScene(const char* cookedPath)` | Parse binary, load all assets, spawn entities. Returns scene handle or 0 |
+| `unloadScene` | `bool unloadScene(uint32_t handle)` | Destroy entities + unload assets. Returns false if handle unknown |
+| `preloadScene` | `void preloadScene(const char* cookedPath)` | Async pre-load all referenced assets (does NOT spawn entities) |
+| `isSceneReady` | `bool isSceneReady(const char* cookedPath)` | Poll: are all preloaded assets ready? |
+| `sceneEntityCount` | `uint32_t sceneEntityCount(uint32_t handle)` | How many entities this scene spawned |
+| `activeSceneCount` | `uint32_t activeSceneCount()` | How many scenes are currently loaded |
+
+**Lua surface**:
+```lua
+local scene = Scene.load("scenes/level1.cooked")
+Scene.entityCount(scene)    -- e.g. 47
+Scene.activeCount()         -- e.g. 1
+Scene.unload(scene)
+
+-- Async preload pattern
+Scene.preload("scenes/level2.cooked")
+-- later...
+if Scene.isReady("scenes/level2.cooked") then
+    local h = Scene.load("scenes/level2.cooked")  -- instant, assets cached
+end
+```
+
+**Files**: `scene_service.h`, `scene_service.cpp`, `scene_asset.h`, `scene_asset.cpp`
+
+### Scene Cook Pipeline
+
+The editor's `SceneSerializer::cookScene()` converts JSON scenes to binary:
+
+```cpp
+SceneSerializer::cookScene("scenes/main.scene",         // input: editor JSON
+                           ".cache/scenes/main.cooked",  // output: binary
+                           &assetLib,                     // source→cooked path resolution
+                           projectRoot);
+```
+
+During cooking, source paths (`assets/models/character.fbx`) are resolved to cooked paths
+(`meshs/abc123.cooked`) via the assetlib SQLite DB. The binary file embeds cooked paths so
+the runtime never needs to touch the DB.
+
+### Autorun Scripts
+
+Any `.lua` file in `scripts/autorun/` runs automatically when Play is pressed.
+
+- The `LuaScriptPlugin` scans the directory on `onSimulationStart()`
+- For each `.lua` file, creates a headless entity with `Name`, `Transform`, and `ScriptComponent`
+- Full lifecycle: `onStart()` → `onUpdate(dt)` → `onDestroy()`
+- On Stop: autorun entities are destroyed, modules cleared, next Play reloads from disk
+- Use cases: test suites, global systems, one-shot setup code
+
+**Files**: `lua_script_plugin.h` (collectAutorunScripts method)
+
 ## Roadmap (Remaining Phases)
 
-### Phase 1 Step 5: Load Groups (next)
+### Phase 2 Step 5: Load Groups (next)
 - `createGroup()` / `unloadGroup()` — batch-manage asset lifetimes
 - Load a level's worth of assets as one unit, unload them all at once
 - Tracks which meshes/textures/materials belong to each group
 
-### Phase 2: Scene API
-- `Scene.load()` / `Scene.unload()` / `Scene.preload()` — higher-level API built on AssetService
-- `World.spawn(prefabPath)` — instantiate a prefab as an entity hierarchy
-- Scene files reference assets by UUID, not path
-
 ### Phase 3: Editor Integration
 - Refactor `AsyncLoader` to delegate to `AssetService` for cooked files
-- Keep Assimp fallback for uncoooked/in-progress imports
+- Keep Assimp fallback for uncooked/in-progress imports
 - Unified loading path: editor and runtime use the same service
+- Wire `cookScene()` into `CookService` background pipeline
 
 ### Future
 - Handle generation counters (prevent stale handle use-after-free)
 - Asset packing (bundle cooked files into a single archive for shipping)
 - WASM/mobile cooking (platform-specific texture compression, shader variants)
 - C# scripting bindings (same ScriptHost methods, thin P/Invoke wrapper)
+- C++ native scripting (hot-reloadable shared libraries)
