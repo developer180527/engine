@@ -64,7 +64,10 @@ inline void spawnFile(const FileEntry& f, EngineContext& ctx, AsyncLoader& loade
                 sm.skeleton = r.skeleton;
                 ent.set<SkinnedMesh>(sm);
                 Animator anim;
-                if (!r.clips.empty()) anim.clip = r.clips[0];
+                if (!r.clips.empty()) {
+                    anim.clip    = r.clips[0];
+                    anim.playing = true;  // auto-play first clip on import
+                }
                 ent.set<Animator>(anim);
             }
 

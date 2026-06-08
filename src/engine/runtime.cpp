@@ -115,6 +115,10 @@ bool EngineRuntime::initSystems() {
 
     // Gameplay-tick query (editor world) — render queries live in Renderer.
     m_spinnerQuery = m_ecs.query_builder<Transform, const Spinner>().build();
+
+    // Animation system — samples clips and writes bone palettes each frame.
+    m_animatorSystem.init(m_ecs, m_skeletons, m_clips);
+
     return true;
 }
 
@@ -174,6 +178,9 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
                 t.rotation = bx::normalize(bx::mul(qP, bx::mul(qY, t.rotation)));
             });
     }
+    // Animation runs even when gameplay systems are paused — the editor
+    // scrubber and preview should always animate.
+    m_animatorSystem.tick(dt);
     m_ecs.progress();
 }
 

@@ -28,6 +28,8 @@
 #include "components/script_component.h"
 #include "components/character_controller.h"
 #include "components/entity_id.h"
+#include "components/skinned_mesh.h"
+#include "components/animator.h"
 #include "render/asset_registry.h"
 #include "io/asset_storage.h"
 #include "io/importer_registry.h"
@@ -297,6 +299,49 @@ inline void loadLight(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
     e.set<Light>(l);
 }
 
+// ── SkinnedMesh (skeleton handle only; skin matrices are runtime) ────────────
+inline bool hasSkinnedMesh(flecs::entity e) { return e.try_get<SkinnedMesh>() != nullptr; }
+inline void saveSkinnedMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx) {
+    const SkinnedMesh* sm = e.try_get<SkinnedMesh>(); if (!sm) return;
+    if (ctx.mode == SerdeMode::Memory) {
+        j["skeletonId"] = sm->skeleton.id;
+    } else {
+        // Disk: save skeleton handle id. Phase 6 will add a skeleton asset
+        // path for cross-session stability; for now handle id is sufficient
+        // since skeletons are re-imported alongside the mesh.
+        j["skeletonId"] = sm->skeleton.id;
+    }
+}
+inline void loadSkinnedMesh(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
+    SkinnedMesh sm;
+    sm.skeleton.id = j.value("skeletonId", 0u);
+    e.set<SkinnedMesh>(sm);
+}
+
+// ── Animator (playback state) ────────────────────────────────────────────────
+inline bool hasAnimator(flecs::entity e) { return e.try_get<Animator>() != nullptr; }
+inline void saveAnimator(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx) {
+    const Animator* a = e.try_get<Animator>(); if (!a) return;
+    if (ctx.mode == SerdeMode::Memory) {
+        j["clipId"] = a->clip.id;
+    } else {
+        j["clipId"] = a->clip.id;
+    }
+    j["time"]    = a->time;
+    j["speed"]   = a->speed;
+    j["playing"] = a->playing;
+    j["looping"] = a->looping;
+}
+inline void loadAnimator(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
+    Animator a;
+    a.clip.id = j.value("clipId", 0u);
+    a.time    = j.value("time", 0.0f);
+    a.speed   = j.value("speed", 1.0f);
+    a.playing = j.value("playing", false);
+    a.looping = j.value("looping", true);
+    e.set<Animator>(a);
+}
+
 inline const std::vector<ComponentSerde>& table() {
     static const std::vector<ComponentSerde> t = {
         { "transform",    hasTransform, saveTransform, loadTransform },
@@ -307,6 +352,8 @@ inline const std::vector<ComponentSerde>& table() {
         { "script",       hasScript,    saveScript,    loadScript    },
         { "characterController", hasCharacterController, saveCharacterController, loadCharacterController },
         { "light",        hasLight,      saveLight,     loadLight     },
+        { "skinnedMesh",  hasSkinnedMesh, saveSkinnedMesh, loadSkinnedMesh },
+        { "animator",     hasAnimator,    saveAnimator,    loadAnimator    },
     };
     return t;
 }

@@ -12,6 +12,7 @@
 #include "engine/renderer.h"
 #include "core/transform.h"
 #include "components/spinner.h"
+#include "systems/animator_system.h"
 
 struct EngineConfig {
     std::string title  = "Engine";
@@ -87,6 +88,7 @@ private:
 
     // Gameplay-tick query (editor world); NOT a render concern — stays here.
     flecs::query<Transform, const Spinner> m_spinnerQuery;
+    AnimatorSystem m_animatorSystem;
 
     bool initPlatform(const EngineConfig& cfg);
     bool initRenderer(const EngineConfig& cfg);

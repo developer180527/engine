@@ -17,6 +17,7 @@
 #include "editor/inspector_panel/rigidbody_section.h"
 #include "editor/inspector_panel/character_controller_section.h"
 #include "editor/inspector_panel/script_section.h"
+#include "editor/inspector_panel/animator_section.h"
 
 inline void drawInspectorPanel(EngineContext& ctx) {
     ImGui::Begin(ICON_FA_WRENCH " Inspector");
@@ -39,6 +40,7 @@ inline void drawInspectorPanel(EngineContext& ctx) {
     inspector_detail::drawRigidBodySection(ctx, e);
     inspector_detail::drawCharacterControllerSection(ctx, e);
     inspector_detail::drawScriptSection(ctx, e);
+    inspector_detail::drawAnimatorSection(ctx, e);
 
     ImGui::End();
 }
