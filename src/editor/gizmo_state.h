@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <flecs.h>
+#include "core/transform.h"
 
 // GizmoState lives in its own header so engine_context.h can include it
 // without pulling in all of gizmo.h (which would create a circular dependency:
@@ -19,4 +20,9 @@ struct GizmoState {
     };
 
     flecs::entity lastSyncedFrom;
+
+    // Undo tracking: capture transform when gizmo manipulation starts,
+    // push undo command when it ends.
+    bool      wasUsing       = false;
+    Transform transformBefore;
 };

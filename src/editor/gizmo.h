@@ -106,7 +106,13 @@ inline void drawGizmo(EngineContext& ctx,
                          ctx.gizmoState.mode,
                          ctx.gizmoState.matrix);
 
-    if (ImGuizmo::IsUsing()) {
+    const bool using_ = ImGuizmo::IsUsing();
+
+    // Gizmo just started — capture transform for undo
+    if (using_ && !ctx.gizmoState.wasUsing)
+        ctx.gizmoState.transformBefore = t;
+
+    if (using_) {
         switch (ctx.gizmoState.operation) {
             case ImGuizmo::TRANSLATE:
                 t.position = gizmo_detail::mtxTranslation(ctx.gizmoState.matrix);
@@ -120,4 +126,13 @@ inline void drawGizmo(EngineContext& ctx,
             default: break;
         }
     }
+
+    // Gizmo just released — push undo with before/after transform
+    if (!using_ && ctx.gizmoState.wasUsing) {
+        ctx.editor.undoStack.pushTransform(
+            ctx.editor.selected, ctx.gizmoState.transformBefore, t);
+        ctx.editor.sceneDirty = true;
+    }
+
+    ctx.gizmoState.wasUsing = using_;
 }
