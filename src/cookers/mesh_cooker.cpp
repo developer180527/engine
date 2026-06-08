@@ -146,6 +146,21 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
     if (!scene || !scene->mRootNode || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE))
         return {.success = false, .error = std::string("Assimp: ") + imp.GetErrorString()};
 
+    // Skinned meshes (bones + animation) cannot be cooked yet — the cook format
+    // doesn't store SkinnedVertex, skeleton, or animation clips. The runtime
+    // Assimp path in async_loader.cpp handles those correctly. Skip cooking so
+    // the binary fast path falls through to Assimp for these files.
+    {
+        bool hasBones = false;
+        for (unsigned m = 0; m < scene->mNumMeshes && !hasBones; ++m)
+            if (scene->mMeshes[m]->mNumBones > 0) hasBones = true;
+        if (hasBones) {
+            std::printf("[MeshCooker] %s — skinned mesh, skipping cook (runtime Assimp path)\n",
+                        ctx.sourcePath.filename().string().c_str());
+            return {.success = false, .error = "Skinned mesh — runtime Assimp path handles bones"};
+        }
+    }
+
     MeshAsset asset;
     asset.header.magic        = 0x4D455348;
     asset.header.version      = 2;

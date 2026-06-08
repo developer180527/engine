@@ -77,6 +77,12 @@ CookResult CookPipeline::cookOne(const UUID& uuid) {
         rec->state        = AssetState::Ready;
         m_registry.update(*rec);
         std::printf("[AssetLib] Cooked: %s\n", rec->sourcePath.c_str());
+    } else {
+        // Mark failed so we don't retry every cook pass (e.g. skinned meshes
+        // that the cooker intentionally skips).
+        rec->cookVersion = kCurrentCookVersion;
+        rec->state       = AssetState::Failed;
+        m_registry.update(*rec);
     }
     return result;
 }
@@ -174,6 +180,12 @@ int CookPipeline::cookMany(const std::vector<UUID>& uuids,
         if (!w.result.success) {
             std::printf("[AssetLib] Cook FAILED: %s — %s\n",
                         w.sourceRel.c_str(), w.result.error.c_str());
+            // Mark failed so we don't retry every cook pass
+            if (auto rec = m_registry.findByUUID(w.uuid)) {
+                rec->cookVersion = kCurrentCookVersion;
+                rec->state       = AssetState::Failed;
+                m_registry.update(*rec);
+            }
             continue;
         }
         for (auto& dep : w.deps) m_registry.addDependency(w.uuid, dep);
