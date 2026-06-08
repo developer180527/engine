@@ -40,6 +40,7 @@ public:
 private:
     void cookLoop();
     void runOneCookPass();
+    void cookSceneFiles(assetlib::AssetRegistry& registry, bool assetsChanged);
 
     std::filesystem::path m_dbPath;
     std::filesystem::path m_projectRoot;

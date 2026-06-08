@@ -118,6 +118,7 @@ add_subdirectory(third_party/assimp)
 add_subdirectory(third_party/lua)
 add_executable(engine
     src/cookers/mesh_cooker.cpp
+    src/cookers/scene_cooker.cpp
     src/io/cook_service.cpp
     src/cookers/texture_cooker.cpp
     src/loaders/mesh_loader.cpp

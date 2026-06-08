@@ -1,6 +1,7 @@
 #include "io/cook_service.h"
 #include "cookers/mesh_cooker.h"
 #include "cookers/texture_cooker.h"
+#include "cookers/scene_cooker.h"
 #include "engine/logger.h"
 
 CookService::CookService(const std::filesystem::path& dbPath,
@@ -88,6 +89,9 @@ void CookService::runOneCookPass() {
 
     if (total == 0) {
         LOG_INFO("CookService", "All assets up to date");
+        // Still check for stale scenes even when no mesh/texture changed —
+        // the user may have edited scene JSON directly.
+        cookSceneFiles(registry, false);
         return;
     }
 
@@ -122,4 +126,54 @@ void CookService::runOneCookPass() {
         m_stats.currentAsset.clear();
     }
     LOG_INFO("CookService", "Done — %d cooked, %d failed", cooked, failed);
+
+    // ── Scene cooking ─────────────────────────────────────────────────
+    // Scenes are NOT DB-tracked assets — they live in scenes/ as JSON.
+    // After individual assets are cooked (so cooked paths are available in
+    // the DB), convert any stale JSON scenes into binary .cooked files.
+    cookSceneFiles(registry, cooked > 0);
+}
+
+void CookService::cookSceneFiles(assetlib::AssetRegistry& registry,
+                                 bool assetsChanged) {
+    namespace fs = std::filesystem;
+    fs::path scenesDir    = m_projectRoot / "scenes";
+    fs::path sceneCacheDir = m_cacheRoot  / "scenes";
+
+    if (!fs::exists(scenesDir) || !fs::is_directory(scenesDir)) return;
+
+    std::error_code ec;
+    int scenesCooked = 0;
+
+    for (const auto& entry : fs::directory_iterator(scenesDir, ec)) {
+        if (!m_running) break;
+        if (!entry.is_regular_file()) continue;
+        if (entry.path().extension() != ".scene") continue;
+
+        fs::path outPath = sceneCacheDir
+            / (entry.path().stem().string() + ".cooked");
+
+        // Stale if binary doesn't exist or is older than the JSON source
+        bool stale = !fs::exists(outPath);
+        if (!stale) {
+            std::error_code ec2;
+            auto srcTime = fs::last_write_time(entry.path(), ec2);
+            auto outTime = fs::last_write_time(outPath, ec2);
+            if (!ec2) stale = (srcTime > outTime);
+        }
+        // If any mesh/texture was cooked this pass, their cooked paths may
+        // have changed — re-cook all scenes so they pick up the new paths.
+        if (!stale && assetsChanged) stale = true;
+
+        if (!stale) continue;
+
+        if (cookSceneFile(entry.path(), outPath, &registry, m_projectRoot))
+            ++scenesCooked;
+        else
+            LOG_WARN("CookService", "Scene cook failed: %s",
+                     entry.path().filename().string().c_str());
+    }
+
+    if (scenesCooked > 0)
+        LOG_INFO("CookService", "Cooked %d scene(s) to binary", scenesCooked);
 }

@@ -1,6 +1,6 @@
 # Asset Management System
 
-**Last updated:** June 8, 2026 — Phase 1 + Phase 2 complete
+**Last updated:** June 8, 2026 — Phase 1 + Phase 2 + Phase 3 complete
 
 ## Overview
 
@@ -372,18 +372,60 @@ Any `.lua` file in `scripts/autorun/` runs automatically when Play is pressed.
 
 **Files**: `lua_script_plugin.h` (collectAutorunScripts method)
 
+## Phase 3: Editor Integration (COMPLETE)
+
+### Scene Auto-Cooking
+
+Scene files (JSON `.scene` in `scenes/`) are now automatically cooked into binary
+(`.cooked` in `.cache/scenes/`) at two trigger points:
+
+1. **CookService background pass** — after cooking meshes and textures, `cookSceneFiles()`
+   scans `scenes/` for stale `.scene` files and cooks them. A scene is stale if:
+   - Its binary doesn't exist yet
+   - Its JSON is newer than the binary
+   - Any mesh/texture was cooked in the same pass (cooked paths may have changed)
+
+2. **Editor save (Cmd+S)** — `saveScene()` calls `cookScene()` immediately after writing
+   the JSON, so the binary is always in sync.
+
+### Scene Cooker Architecture
+
+```
+SceneSerializer::cookScene()     EditorApp::saveScene()
+          │                              │
+          └──────────┬───────────────────┘
+                     │
+              cookSceneFile()         ← standalone function in cookers/scene_cooker.cpp
+              (JSON parse + assetlib   ← minimal deps: no flecs, no entity_serializer
+               path resolution +       ← thread-safe: CookService calls from bg thread,
+               binary write)             editor calls from main thread
+```
+
+The scene cooker resolves source paths to cooked paths via the assetlib DB, so the binary
+scene file embeds cooked paths directly. At runtime, `SceneService::loadScene()` reads
+these paths and calls `AssetService::loadMesh()` — no DB lookup, no Assimp, instant.
+
+### Unified Loading Path
+
+The entity serializer's `loadMesh()` already has a two-tier resolution:
+
+1. **Fast path**: if JSON has `cookedPath` and `AssetService*` is non-null, load the cooked
+   binary directly — microseconds, no Assimp
+2. **Legacy fallback**: source path → primitive / glTF (sync) / Assimp (async worker)
+
+This means the editor loading path (`SceneSerializer::loadAsync()`) automatically uses
+cooked assets when available, falling through to Assimp only for uncooked or in-progress
+imports.
+
+**Files**: `cookers/scene_cooker.h`, `cookers/scene_cooker.cpp`, `cook_service.h/cpp`,
+`editor_app.h`, `scene_serializer.h`
+
 ## Roadmap (Remaining Phases)
 
-### Phase 2 Step 5: Load Groups (next)
+### Load Groups (next)
 - `createGroup()` / `unloadGroup()` — batch-manage asset lifetimes
 - Load a level's worth of assets as one unit, unload them all at once
 - Tracks which meshes/textures/materials belong to each group
-
-### Phase 3: Editor Integration
-- Refactor `AsyncLoader` to delegate to `AssetService` for cooked files
-- Keep Assimp fallback for uncooked/in-progress imports
-- Unified loading path: editor and runtime use the same service
-- Wire `cookScene()` into `CookService` background pipeline
 
 ### Future
 - Handle generation counters (prevent stale handle use-after-free)

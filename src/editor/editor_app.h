@@ -81,6 +81,18 @@ public:
         SceneSerializer::save(m_scenePath, m_rt.ctx().ecs, m_rt.ctx().assets,
                               m_assetLib, m_projectRoot);
 
+        // Auto-cook: JSON → binary so the runtime format is always in sync.
+        // Runs on the main thread (fast — just JSON parse + memcpy writes).
+        {
+            namespace fs = std::filesystem;
+            auto cacheDir   = m_projectRoot / ".cache" / "scenes";
+            auto cookedPath = cacheDir / (m_scenePath.stem().string() + ".cooked");
+            if (SceneSerializer::cookScene(m_scenePath, cookedPath,
+                                           m_assetLib, m_projectRoot))
+                LOG_INFO("Project", "Binary scene updated → %s",
+                         cookedPath.filename().string().c_str());
+        }
+
         // Persist editor state
         std::string selName;
         if (m_editor.selected.is_alive())
