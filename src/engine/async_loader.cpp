@@ -10,6 +10,7 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <assimp/config.h>
 #include "assetlib/mesh_asset.h"
 #include <assimp/material.h>
 #include <assetlib/mesh_asset.h>
@@ -267,6 +268,12 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
     // must not bring down the engine — report it as a load error.
     try {
     Assimp::Importer imp;
+    // Tell Assimp NOT to decompose FBX pre-rotation/translation/scaling into
+    // separate $AssimpFbx$ intermediate nodes. Without this, a typical 68-bone
+    // Mixamo skeleton explodes to 184+ nodes, overflowing kMaxBones (128).
+    // With this flag false, Assimp bakes pivots into each bone's local
+    // transform and remaps animation channels accordingly.
+    imp.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
     const aiScene* scene = imp.ReadFile(path,
         aiProcess_Triangulate        |
         aiProcess_GenSmoothNormals   |

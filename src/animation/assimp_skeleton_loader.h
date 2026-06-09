@@ -60,36 +60,89 @@ struct NodeInfo {
     aiMatrix4x4 localTransform;
 };
 
+// Assimp's FBX importer decomposes pre-rotation / translation / scaling into
+// separate intermediate nodes named  "<bone>_$AssimpFbx$_PreRotation" etc.
+// These are NOT real bones — they just split the single FBX local transform
+// into orthogonal parts. A typical Mixamo FBX with 68 bones becomes 184+
+// nodes, blowing past kMaxBones (128).
+//
+// Fix: when we encounter a chain of $AssimpFbx$ helper nodes, multiply their
+// transforms together and attribute the product to the real bone at the end.
+static bool isAssimpFbxHelper(const std::string& name) {
+    return name.find("$AssimpFbx$") != std::string::npos;
+}
+
+// Walk past a chain of consecutive $AssimpFbx$ helper nodes, accumulating
+// their transforms. Returns the first non-helper descendant (the real bone)
+// with the combined transform, or nullptr if the chain dead-ends.
+static const aiNode* collapseHelperChain(const aiNode* node,
+                                         aiMatrix4x4& accumulated) {
+    accumulated = accumulated * node->mTransformation;
+    // If this node has exactly one child and it's a helper, keep collapsing
+    if (node->mNumChildren == 1 &&
+        isAssimpFbxHelper(node->mChildren[0]->mName.C_Str())) {
+        return collapseHelperChain(node->mChildren[0], accumulated);
+    }
+    // If this node has exactly one child that is the real bone, return it
+    if (node->mNumChildren == 1) {
+        accumulated = accumulated * node->mChildren[0]->mTransformation;
+        return node->mChildren[0];
+    }
+    // Multiple children or dead end — shouldn't happen in practice
+    return nullptr;
+}
+
+inline bool hasDescendantBone(const aiNode* node,
+                              const std::unordered_set<std::string>& boneNames) {
+    std::vector<const aiNode*> stack;
+    for (unsigned c = 0; c < node->mNumChildren; ++c)
+        stack.push_back(node->mChildren[c]);
+    while (!stack.empty()) {
+        const aiNode* n = stack.back(); stack.pop_back();
+        if (boneNames.count(n->mName.C_Str())) return true;
+        for (unsigned c = 0; c < n->mNumChildren; ++c)
+            stack.push_back(n->mChildren[c]);
+    }
+    return false;
+}
+
 inline void collectSkeletonNodes(const aiNode* node, int parentIdx,
                                  const std::unordered_set<std::string>& boneNames,
                                  std::vector<NodeInfo>& out) {
     std::string name = node->mName.C_Str();
-
-    // Always include nodes that are bones. Also include intermediate nodes
-    // (they may be needed for hierarchy correctness — pruned later if unused).
     bool isBone = boneNames.count(name) > 0;
 
-    // Check if any descendant is a bone
-    bool hasDescendantBone = false;
-    if (!isBone) {
-        std::vector<const aiNode*> stack;
-        for (unsigned c = 0; c < node->mNumChildren; ++c)
-            stack.push_back(node->mChildren[c]);
-        while (!stack.empty()) {
-            const aiNode* n = stack.back(); stack.pop_back();
-            if (boneNames.count(n->mName.C_Str())) { hasDescendantBone = true; break; }
-            for (unsigned c = 0; c < n->mNumChildren; ++c)
-                stack.push_back(n->mChildren[c]);
-        }
-    }
-
-    if (!isBone && !hasDescendantBone) return;
+    if (!isBone && !hasDescendantBone(node, boneNames)) return;
 
     int myIdx = (int)out.size();
     out.push_back({ name, parentIdx, node->mTransformation });
 
-    for (unsigned c = 0; c < node->mNumChildren; ++c)
-        collectSkeletonNodes(node->mChildren[c], myIdx, boneNames, out);
+    for (unsigned c = 0; c < node->mNumChildren; ++c) {
+        const aiNode* child = node->mChildren[c];
+        std::string childName = child->mName.C_Str();
+
+        if (isAssimpFbxHelper(childName)) {
+            // Collapse the entire helper chain into one combined transform
+            aiMatrix4x4 combined;  // identity
+            const aiNode* realBone = collapseHelperChain(child, combined);
+            if (realBone) {
+                // Emit the real bone with the combined transform
+                std::string realName = realBone->mName.C_Str();
+                bool realIsBone = boneNames.count(realName) > 0;
+                if (realIsBone || hasDescendantBone(realBone, boneNames)) {
+                    int realIdx = (int)out.size();
+                    out.push_back({ realName, myIdx, combined });
+                    // Continue recursion from the real bone's children
+                    for (unsigned gc = 0; gc < realBone->mNumChildren; ++gc)
+                        collectSkeletonNodes(realBone->mChildren[gc], realIdx,
+                                             boneNames, out);
+                }
+            }
+            // else: dead-end helper chain, skip entirely
+        } else {
+            collectSkeletonNodes(child, myIdx, boneNames, out);
+        }
+    }
 }
 
 } // namespace detail
@@ -111,6 +164,15 @@ inline Skeleton extractSkeleton(const aiScene* scene) {
     // Walk node tree to collect skeleton hierarchy
     std::vector<detail::NodeInfo> nodes;
     detail::collectSkeletonNodes(scene->mRootNode, -1, boneNames, nodes);
+
+    // Hard cap: if we still have more nodes than kMaxBones after collapsing
+    // helpers, truncate to keep within the fixed-size palette budget.
+    if ((int)nodes.size() > kMaxBones) {
+        std::fprintf(stderr, "[Skeleton] WARNING: %zu nodes > kMaxBones(%d) "
+                     "after helper collapse — truncating\n",
+                     nodes.size(), kMaxBones);
+        nodes.resize(kMaxBones);
+    }
 
     Skeleton skel;
     skel.bones.reserve(nodes.size());

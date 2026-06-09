@@ -39,6 +39,11 @@ public:
                 skin.hasSkinMatrices = false;
                 return;
             }
+            // Guard: bone count must fit within the fixed-size palette buffers.
+            if (skel->boneCount() > kMaxBones) {
+                skin.hasSkinMatrices = false;
+                return;
+            }
 
             const AnimClip* clip = m_clips->get(anim.clip);
 
@@ -83,6 +88,7 @@ private:
     static constexpr int kMaxBones = 128;
 
     void computeBindPosePalette(const Skeleton& skel, SkinnedMesh& skin) {
+        if (skel.boneCount() > kMaxBones) { skin.hasSkinMatrices = false; return; }
         Pose bind = anim::bindPose(skel);
         const int n = skel.boneCount();
         float worldMatrices[kMaxBones * 16];
