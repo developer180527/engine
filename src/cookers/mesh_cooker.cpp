@@ -157,7 +157,8 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
         if (hasBones) {
             std::printf("[MeshCooker] %s — skinned mesh, skipping cook (runtime Assimp path)\n",
                         ctx.sourcePath.filename().string().c_str());
-            return {.success = false, .error = "Skinned mesh — runtime Assimp path handles bones"};
+            return {.success = false, .skipped = true,
+                    .error = "Skinned mesh — runtime Assimp path handles bones"};
         }
     }
 

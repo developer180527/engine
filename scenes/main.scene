@@ -317,6 +317,41 @@
           1.0
         ]
       }
+    },
+    {
+      "animator": {
+        "clipId": 1,
+        "looping": true,
+        "playing": true,
+        "speed": 1.0,
+        "time": 2.6984448432922363
+      },
+      "id": 14482808191543660469,
+      "meshRenderer": {
+        "sourcePath": "/Users/venugopal/Developer/engine/assets/Animations/Double Dagger Stab.fbx"
+      },
+      "name": "Double Dagger Stab",
+      "skinnedMesh": {
+        "skeletonId": 1
+      },
+      "transform": {
+        "position": [
+          -16.291027069091797,
+          0.0001524801045889035,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.00607925932854414,
+          0.00607925932854414,
+          0.00607925932854414
+        ]
+      }
     }
   ],
   "version": 1

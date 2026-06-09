@@ -20,6 +20,7 @@ struct CookContext {
 
 struct CookResult {
     bool        success    = false;
+    bool        skipped    = false; // cooker can't handle this type — not an error
     std::string error;
     // Populated by the pipeline after a successful cook:
     std::string cookedPath;
@@ -74,7 +75,7 @@ private:
     std::filesystem::path       m_cacheRoot;
     std::vector<std::unique_ptr<ICooker>> m_cookers;
 
-    static constexpr uint32_t   kCurrentCookVersion = 9;
+    static constexpr uint32_t   kCurrentCookVersion = 10;
 };
 
 } // namespace assetlib

@@ -20,6 +20,7 @@
 #include <stb_image.h>
 #include <filesystem>
 #include <algorithm>
+#include <cfloat>
 #include <cstring>
 #include <cstdio>
 
@@ -345,65 +346,140 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
         }
     }
 
-    // Meshes (vertex/index data + bgfx::copy on worker)
+    // Lambda: fill common vertex attributes shared by Vertex and SkinnedVertex
+    auto fillCommon = [](const aiMesh* am, uint32_t v, float pos[3], float nrm[3],
+                         float tan[4], float uv[2]) {
+        pos[0] = am->mVertices[v].x;
+        pos[1] = am->mVertices[v].y;
+        pos[2] = am->mVertices[v].z;
+        if (am->HasNormals()) {
+            nrm[0] = am->mNormals[v].x;
+            nrm[1] = am->mNormals[v].y;
+            nrm[2] = am->mNormals[v].z;
+        } else { nrm[0]=0; nrm[1]=1; nrm[2]=0; }
+        if (am->HasTangentsAndBitangents()) {
+            const auto& t  = am->mTangents[v];
+            const auto& bt = am->mBitangents[v];
+            const auto& n  = am->mNormals[v];
+            float cx = n.y*t.z-n.z*t.y, cy = n.z*t.x-n.x*t.z, cz = n.x*t.y-n.y*t.x;
+            float sign = (cx*bt.x+cy*bt.y+cz*bt.z) < 0.0f ? -1.0f : 1.0f;
+            tan[0]=t.x; tan[1]=t.y; tan[2]=t.z; tan[3]=sign;
+        } else {
+            tan[0]=1; tan[1]=0; tan[2]=0; tan[3]=1;
+        }
+        if (am->mTextureCoords[0]) {
+            uv[0] = am->mTextureCoords[0][v].x;
+            uv[1] = am->mTextureCoords[0][v].y;
+        } else { uv[0]=0; uv[1]=0; }
+    };
+
+    // ── Skinned FBX: combine all body-part meshes into ONE mesh ───────────
+    // Mixamo FBX files often split the character into many meshes (jacket,
+    // head, shoes…). They all share the same skeleton but become separate
+    // bgfx vertex buffers if loaded individually — and only the first handle
+    // is returned. Combine them here into a single VB/IB with submesh ranges
+    // so the whole character renders as one entity.
+    if (out.hasSkeleton) {
+        // Count totals
+        uint32_t totalVerts = 0, totalIndices = 0;
+        for (uint32_t i = 0; i < scene->mNumMeshes; ++i) {
+            const aiMesh* am = scene->mMeshes[i];
+            if (!(am->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
+            if (am->mNumBones == 0) continue;
+            totalVerts   += am->mNumVertices;
+            totalIndices += am->mNumFaces * 3;
+        }
+
+        if (totalVerts > 0) {
+            const bool use32 = totalVerts > 65535;
+            std::vector<SkinnedVertex> allVerts;
+            allVerts.reserve(totalVerts);
+            std::vector<uint32_t> allIdx32;
+            std::vector<uint16_t> allIdx16;
+            if (use32) allIdx32.reserve(totalIndices);
+            else       allIdx16.reserve(totalIndices);
+
+            MeshGPUData mg;
+            mg.skinned   = true;
+            mg.use32     = use32;
+            mg.hasBounds = true;
+            float bMin[3] = {  FLT_MAX,  FLT_MAX,  FLT_MAX };
+            float bMax[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+
+            uint32_t vertBase = 0;
+            uint32_t idxBase  = 0;
+            for (uint32_t i = 0; i < scene->mNumMeshes; ++i) {
+                const aiMesh* am = scene->mMeshes[i];
+                if (!(am->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
+                if (am->mNumBones == 0) continue;
+
+                auto boneData = anim::extractBoneWeights(am, out.skeleton);
+                for (uint32_t v = 0; v < am->mNumVertices; ++v) {
+                    SkinnedVertex sv{};
+                    fillCommon(am, v, sv.position, sv.normal, sv.tangent, sv.uv);
+                    std::memcpy(sv.joints,  boneData[v].joints,  4);
+                    std::memcpy(sv.weights, boneData[v].weights, sizeof(float)*4);
+                    allVerts.push_back(sv);
+                    for (int k = 0; k < 3; ++k) {
+                        bMin[k] = std::min(bMin[k], sv.position[k]);
+                        bMax[k] = std::max(bMax[k], sv.position[k]);
+                    }
+                }
+
+                // Submesh for this body part
+                SubRange sr;
+                sr.indexOffset = idxBase;
+                sr.indexCount  = am->mNumFaces * 3;
+                sr.matIndex    = am->mMaterialIndex;
+                mg.subRanges.push_back(sr);
+
+                for (uint32_t f = 0; f < am->mNumFaces; ++f) {
+                    for (uint32_t k = 0; k < am->mFaces[f].mNumIndices; ++k) {
+                        uint32_t idx = am->mFaces[f].mIndices[k] + vertBase;
+                        if (use32) allIdx32.push_back(idx);
+                        else       allIdx16.push_back((uint16_t)idx);
+                    }
+                }
+                idxBase  += am->mNumFaces * 3;
+                vertBase += am->mNumVertices;
+            }
+
+            mg.vertexMem = bgfx::copy(allVerts.data(),
+                (uint32_t)(allVerts.size() * sizeof(SkinnedVertex)));
+            if (use32) {
+                mg.indexCount = (uint32_t)allIdx32.size();
+                mg.indexMem   = bgfx::copy(allIdx32.data(), mg.indexCount * 4);
+            } else {
+                mg.indexCount = (uint32_t)allIdx16.size();
+                mg.indexMem   = bgfx::copy(allIdx16.data(), mg.indexCount * 2);
+            }
+            std::memcpy(mg.boundsMin, bMin, sizeof(bMin));
+            std::memcpy(mg.boundsMax, bMax, sizeof(bMax));
+            out.meshes.push_back(std::move(mg));
+
+            LOG_INFO("Assimp", "%s — combined %u skinned sub-meshes: %u verts, %u indices",
+                     name.c_str(), (uint32_t)out.meshes.back().subRanges.size(),
+                     totalVerts, totalIndices);
+        }
+    }
+
+    // ── Static meshes (non-skinned) ──────────────────────────────────────
     for (uint32_t i = 0; i < scene->mNumMeshes; ++i) {
         const aiMesh* am = scene->mMeshes[i];
         if (!(am->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
+        // Skip skinned meshes — already combined above
+        if (am->mNumBones > 0 && out.hasSkeleton) continue;
 
         MeshGPUData mg;
         mg.matIndex = am->mMaterialIndex;
 
-        const bool meshSkinned = am->mNumBones > 0 && out.hasSkeleton;
-
-        // Lambda: fill common vertex attributes shared by Vertex and SkinnedVertex
-        auto fillCommon = [&](uint32_t v, float pos[3], float nrm[3],
-                              float tan[4], float uv[2]) {
-            pos[0] = am->mVertices[v].x;
-            pos[1] = am->mVertices[v].y;
-            pos[2] = am->mVertices[v].z;
-            if (am->HasNormals()) {
-                nrm[0] = am->mNormals[v].x;
-                nrm[1] = am->mNormals[v].y;
-                nrm[2] = am->mNormals[v].z;
-            } else { nrm[0]=0; nrm[1]=1; nrm[2]=0; }
-            if (am->HasTangentsAndBitangents()) {
-                const auto& t  = am->mTangents[v];
-                const auto& bt = am->mBitangents[v];
-                const auto& n  = am->mNormals[v];
-                float cx = n.y*t.z-n.z*t.y, cy = n.z*t.x-n.x*t.z, cz = n.x*t.y-n.y*t.x;
-                float sign = (cx*bt.x+cy*bt.y+cz*bt.z) < 0.0f ? -1.0f : 1.0f;
-                tan[0]=t.x; tan[1]=t.y; tan[2]=t.z; tan[3]=sign;
-            } else {
-                tan[0]=1; tan[1]=0; tan[2]=0; tan[3]=1;
-            }
-            if (am->mTextureCoords[0]) {
-                uv[0] = am->mTextureCoords[0][v].x;
-                uv[1] = am->mTextureCoords[0][v].y;
-            } else { uv[0]=0; uv[1]=0; }
-        };
-
-        // Build vertex array — skinned or static path
         uint32_t vertCount = am->mNumVertices;
-        if (meshSkinned) {
-            auto boneData = anim::extractBoneWeights(am, out.skeleton);
-            std::vector<SkinnedVertex> verts(vertCount);
-            for (uint32_t v = 0; v < vertCount; ++v) {
-                fillCommon(v, verts[v].position, verts[v].normal,
-                           verts[v].tangent, verts[v].uv);
-                std::memcpy(verts[v].joints,  boneData[v].joints,  4);
-                std::memcpy(verts[v].weights, boneData[v].weights, sizeof(float)*4);
-            }
-            mg.vertexMem = bgfx::copy(verts.data(),
-                                       (uint32_t)(verts.size() * sizeof(SkinnedVertex)));
-            mg.skinned = true;
-        } else {
-            std::vector<Vertex> verts(vertCount);
-            for (uint32_t v = 0; v < vertCount; ++v)
-                fillCommon(v, verts[v].position, verts[v].normal,
-                           verts[v].tangent, verts[v].uv);
-            mg.vertexMem = bgfx::copy(verts.data(),
-                                       (uint32_t)(verts.size() * sizeof(Vertex)));
-        }
+        std::vector<Vertex> verts(vertCount);
+        for (uint32_t v = 0; v < vertCount; ++v)
+            fillCommon(am, v, verts[v].position, verts[v].normal,
+                       verts[v].tangent, verts[v].uv);
+        mg.vertexMem = bgfx::copy(verts.data(),
+                                   (uint32_t)(verts.size() * sizeof(Vertex)));
 
         // Build index array + bgfx::copy on worker
         mg.use32 = vertCount > 65535;
