@@ -76,7 +76,6 @@ public:
             // Sample clip -> local pose -> world matrices -> skin matrices
             Pose localPose = anim::sampleClip(*clip, *skel, anim.time);
 
-            const int n = skel->boneCount();
             float worldMatrices[kMaxBones * 16];
             anim::computeWorldMatrices(*skel, localPose, worldMatrices);
             anim::computeSkinMatrices(*skel, worldMatrices, skin.skinMatrices);
@@ -89,10 +88,8 @@ private:
 
     void computeBindPosePalette(const Skeleton& skel, SkinnedMesh& skin) {
         if (skel.boneCount() > kMaxBones) { skin.hasSkinMatrices = false; return; }
-        Pose bind = anim::bindPose(skel);
-        const int n = skel.boneCount();
         float worldMatrices[kMaxBones * 16];
-        anim::computeWorldMatrices(skel, bind, worldMatrices);
+        anim::computeBindPoseWorldMatrices(skel, worldMatrices);
         anim::computeSkinMatrices(skel, worldMatrices, skin.skinMatrices);
         skin.hasSkinMatrices = true;
     }

@@ -233,17 +233,16 @@ public:
             const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
             const bgfx::ProgramHandle prog = skinned ? m_skinnedProgram : m_program;
 
-            if (skinned) {
-                // Upload bone palette: boneCount * 4 vec4s (each bone is one mat4 = 4 vec4)
-                bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
-            }
-
             if (it.mesh->submeshes.empty()) {
+                if (skinned)
+                    bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
                 bind(params, factor, base, norm, state, it);
                 bgfx::setIndexBuffer(it.mesh->ibh);
                 bgfx::submit(id, prog);
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
+                    if (skinned)
+                        bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
                     bind(params, factor, base, norm, state, it);
                     bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
                     bgfx::submit(id, prog);
@@ -298,16 +297,17 @@ private:
             if (!it.mesh) continue;
             const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
             const bgfx::ProgramHandle shadowProg = skinned ? m_skinnedShadowProgram : m_shadowProgram;
-            if (skinned) {
-                bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
-            }
             if (it.mesh->submeshes.empty()) {
+                if (skinned)
+                    bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
                 bgfx::setState(st); bgfx::setTransform(it.model.ptr());
                 bgfx::setVertexBuffer(0, it.mesh->vbh);
                 bgfx::setIndexBuffer(it.mesh->ibh);
                 bgfx::submit(sv, shadowProg);
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
+                    if (skinned)
+                        bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
                     bgfx::setState(st); bgfx::setTransform(it.model.ptr());
                     bgfx::setVertexBuffer(0, it.mesh->vbh);
                     bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);

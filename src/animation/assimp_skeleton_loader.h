@@ -183,6 +183,9 @@ inline Skeleton extractSkeleton(const aiScene* scene) {
         bone.parentIndex = ni.parentIndex;
         decomposeAiMatrix(ni.localTransform, bone.bindPosition, bone.bindRotation, bone.bindScale);
 
+        // Store the original local transform losslessly (avoids decompose/recompose error)
+        aiMat4ToFloat16(ni.localTransform, bone.localBindMatrix);
+
         // Use inverse bind matrix from aiBone if available, otherwise identity
         auto it = ibmMap.find(ni.name);
         if (it != ibmMap.end()) {

@@ -102,6 +102,38 @@ static TextureGPUData loadTextureGPU(const aiScene*   scene,
             for (auto sub : {"", "textures/", "Textures/", "tex/"})
                 tryLoad((dir / sub / fname).string());
         }
+        // Fallback: Assimp may reference embedded textures by filename instead
+        // of "*N" index.  Search the scene's embedded texture list by matching
+        // the filename portion of the reference path.
+        if (!px && scene && scene->mNumTextures > 0) {
+            std::string refName = std::filesystem::path(rawPath).filename().string();
+            std::string refLower = refName;
+            for (auto& c : refLower) c = (char)std::tolower(c);
+            for (uint32_t ti = 0; ti < scene->mNumTextures; ++ti) {
+                const aiTexture* t = scene->mTextures[ti];
+                std::string embName = t->mFilename.C_Str();
+                std::string embLower = std::filesystem::path(embName).filename().string();
+                for (auto& c : embLower) c = (char)std::tolower(c);
+                if (embLower == refLower) {
+                    if (t->mHeight == 0) {
+                        px = stbi_load_from_memory(
+                            reinterpret_cast<const stbi_uc*>(t->pcData),
+                            (int)t->mWidth, &w, &h, &ch, 4);
+                    } else {
+                        w = (int)t->mWidth; h = (int)t->mHeight;
+                        px = (stbi_uc*)malloc((size_t)(w * h * 4));
+                        for (int p = 0; p < w * h; ++p) {
+                            px[p*4+0] = t->pcData[p].r; px[p*4+1] = t->pcData[p].g;
+                            px[p*4+2] = t->pcData[p].b; px[p*4+3] = t->pcData[p].a;
+                        }
+                    }
+                    if (px) {
+                        LOG_SUCCESS("Assimp","Embedded texture matched: %s", refName.c_str());
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     // Naming-convention discovery (_COL, _Albedo, _BaseColor, _Diffuse)
@@ -307,9 +339,12 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
         }
         aiString tp;
         if (AI_SUCCESS == ai->GetTexture(aiTextureType_DIFFUSE,    0, &tp) ||
-            AI_SUCCESS == ai->GetTexture(aiTextureType_BASE_COLOR, 0, &tp))
+            AI_SUCCESS == ai->GetTexture(aiTextureType_BASE_COLOR, 0, &tp)) {
+            LOG_INFO("Assimp", "Mat[%u] texPath=\"%s\" embeddedCount=%u",
+                     i, tp.C_Str(), scene->mNumTextures);
             mg.baseColorTexture = loadTextureGPU(scene, tp.C_Str(), dir, bn,
                 m_registry, m_projectRoot, m_projectRoot / ".cache");
+        }
         if (!mg.baseColorTexture.mem)
             mg.baseColorTexture = loadTextureGPU(scene, nullptr, dir, bn,
                 m_registry, m_projectRoot, m_projectRoot / ".cache");
@@ -414,17 +449,24 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                 if (am->mNumBones == 0) continue;
 
                 auto boneData = anim::extractBoneWeights(am, out.skeleton);
+                int zeroWeightVerts = 0, maxBoneIdx = 0;
                 for (uint32_t v = 0; v < am->mNumVertices; ++v) {
                     SkinnedVertex sv{};
                     fillCommon(am, v, sv.position, sv.normal, sv.tangent, sv.uv);
                     std::memcpy(sv.joints,  boneData[v].joints,  4);
                     std::memcpy(sv.weights, boneData[v].weights, sizeof(float)*4);
+                    float wsum = sv.weights[0]+sv.weights[1]+sv.weights[2]+sv.weights[3];
+                    if (wsum < 1e-6f) ++zeroWeightVerts;
+                    for (int j = 0; j < 4; ++j)
+                        if (sv.joints[j] > maxBoneIdx) maxBoneIdx = sv.joints[j];
                     allVerts.push_back(sv);
                     for (int k = 0; k < 3; ++k) {
                         bMin[k] = std::min(bMin[k], sv.position[k]);
                         bMax[k] = std::max(bMax[k], sv.position[k]);
                     }
                 }
+                LOG_INFO("Assimp", "  sub[%u] verts=%u zeroWeight=%d maxBoneIdx=%d skelBones=%d",
+                    i, am->mNumVertices, zeroWeightVerts, maxBoneIdx, out.skeleton.boneCount());
 
                 // Submesh for this body part
                 SubRange sr;

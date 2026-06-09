@@ -17,6 +17,13 @@ struct Bone {
     float          inverseBindMatrix[16] = {
         1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1
     };
+    // Original local bind-pose transform (row-major, bx convention).
+    // Avoids the lossy decompose→SQT→recompose cycle that introduces
+    // accumulated error down long bone chains when FBX pre-rotation/
+    // post-rotation data is baked in (PRESERVE_PIVOTS=false).
+    float          localBindMatrix[16] = {
+        1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1
+    };
 };
 
 struct Skeleton {

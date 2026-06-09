@@ -30,9 +30,19 @@ struct BoneTransform {
 
 struct Pose {
     std::vector<BoneTransform> locals;
+    // Per-bone flags tracking which properties were overridden by animation.
+    // Bones with no animation channels keep the raw localBindMatrix to avoid
+    // the lossy decompose→SQT→recompose round-trip.
+    std::vector<uint8_t>       animated; // bitmask: 1=pos, 2=rot, 4=scl
 
-    void resize(int boneCount) { locals.resize(boneCount); }
+    void resize(int boneCount) {
+        locals.resize(boneCount);
+        animated.assign(boneCount, 0);
+    }
     int  boneCount() const     { return (int)locals.size(); }
+    bool isAnimated(int i) const {
+        return i < (int)animated.size() && animated[i] != 0;
+    }
 };
 
 namespace anim {
@@ -66,12 +76,15 @@ inline Pose sampleClip(const AnimClip& clip, const Skeleton& skel, float time) {
         switch (ch.property) {
         case AnimProperty::Translation:
             bt.position = { tmp[0], tmp[1], tmp[2] };
+            pose.animated[ch.boneIndex] |= 1;
             break;
         case AnimProperty::Rotation:
             bt.rotation = { tmp[0], tmp[1], tmp[2], tmp[3] };
+            pose.animated[ch.boneIndex] |= 2;
             break;
         case AnimProperty::Scale:
             bt.scale = { tmp[0], tmp[1], tmp[2] };
+            pose.animated[ch.boneIndex] |= 4;
             break;
         }
     }
@@ -90,6 +103,8 @@ inline Pose blendPoses(const Pose& a, const Pose& b, float alpha) {
         result.locals[i].position = lerpVec3(a.locals[i].position, b.locals[i].position, alpha);
         result.locals[i].rotation = bx::slerp(a.locals[i].rotation, b.locals[i].rotation, alpha);
         result.locals[i].scale    = lerpVec3(a.locals[i].scale, b.locals[i].scale, alpha);
+        // A blended bone is animated if either source was animated
+        result.animated[i] = a.animated[i] | b.animated[i];
     }
     return result;
 }
@@ -130,6 +145,8 @@ inline Pose additiveBlend(const Pose& base, const Pose& additive,
         result.locals[i].scale = { base.locals[i].scale.x * sl.x,
                                    base.locals[i].scale.y * sl.y,
                                    base.locals[i].scale.z * sl.z };
+        // Additive blend produces animated bones from any animated source
+        result.animated[i] = base.animated[i] | additive.animated[i] | reference.animated[i];
     }
     return result;
 }
@@ -137,6 +154,11 @@ inline Pose additiveBlend(const Pose& base, const Pose& additive,
 // ── Compute world matrices from local pose ──────────────────────────────────
 // Bones are topologically sorted: parent always has a lower index.
 // outWorldMatrices must hold boneCount * 16 floats.
+//
+// For bones that were NOT animated (pose.animated[i] == 0), use the lossless
+// localBindMatrix directly instead of the decompose→SQT→recompose path.
+// This avoids accumulated floating-point error that grows catastrophically
+// down long bone chains when FBX pre-rotation data is baked in.
 
 inline void computeWorldMatrices(const Skeleton& skel, const Pose& pose,
                                  float* outWorldMatrices) {
@@ -144,8 +166,17 @@ inline void computeWorldMatrices(const Skeleton& skel, const Pose& pose,
     const int n = skel.boneCount();
 
     for (int i = 0; i < n; ++i) {
-        float localMtx[16];
-        pose.locals[i].toMatrix(localMtx);
+        const float* localMtx;
+        float sqtMtx[16];
+
+        if (pose.isAnimated(i)) {
+            // Bone has animation channels — use SQT→matrix (animation provides clean data)
+            pose.locals[i].toMatrix(sqtMtx);
+            localMtx = sqtMtx;
+        } else {
+            // No animation channels — use the original bind-pose matrix losslessly
+            localMtx = skel.bones[i].localBindMatrix;
+        }
 
         float* world = &outWorldMatrices[i * 16];
         if (skel.bones[i].parentIndex >= 0) {
@@ -153,6 +184,24 @@ inline void computeWorldMatrices(const Skeleton& skel, const Pose& pose,
             bx::mtxMul(world, localMtx, parentWorld);
         } else {
             std::memcpy(world, localMtx, 16 * sizeof(float));
+        }
+    }
+}
+
+// ── Compute bind-pose world matrices directly from raw local transforms ─────
+// Uses localBindMatrix exclusively — no SQT decomposition round-trip.
+// Guarantees skin = IBM * World_bind ≈ identity.
+
+inline void computeBindPoseWorldMatrices(const Skeleton& skel,
+                                         float* outWorldMatrices) {
+    const int n = skel.boneCount();
+    for (int i = 0; i < n; ++i) {
+        float* world = &outWorldMatrices[i * 16];
+        if (skel.bones[i].parentIndex >= 0) {
+            const float* parentWorld = &outWorldMatrices[skel.bones[i].parentIndex * 16];
+            bx::mtxMul(world, skel.bones[i].localBindMatrix, parentWorld);
+        } else {
+            std::memcpy(world, skel.bones[i].localBindMatrix, 16 * sizeof(float));
         }
     }
 }
