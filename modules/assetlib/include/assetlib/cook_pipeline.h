@@ -74,7 +74,7 @@ private:
     std::filesystem::path       m_cacheRoot;
     std::vector<std::unique_ptr<ICooker>> m_cookers;
 
-    static constexpr uint32_t   kCurrentCookVersion = 8;
+    static constexpr uint32_t   kCurrentCookVersion = 9;
 };
 
 } // namespace assetlib

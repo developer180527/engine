@@ -32,6 +32,10 @@ bool CookPipeline::hasCookerFor(const std::string& ext) const {
     return findCooker(lower) != nullptr;
 }
 bool CookPipeline::isStale(const AssetRecord& rec) const {
+    // A record explicitly marked Failed at the current cook version means "we
+    // tried and this asset can't be cooked" (e.g. skinned meshes). Don't retry.
+    if (rec.state == AssetState::Failed && rec.cookVersion == kCurrentCookVersion)
+        return false;
     if (rec.cookedPath.empty())                  return true;
     if (rec.cookVersion != kCurrentCookVersion)  return true;
     auto cooked = m_cacheRoot / rec.cookedPath;
@@ -79,7 +83,14 @@ CookResult CookPipeline::cookOne(const UUID& uuid) {
         std::printf("[AssetLib] Cooked: %s\n", rec->sourcePath.c_str());
     } else {
         // Mark failed so we don't retry every cook pass (e.g. skinned meshes
-        // that the cooker intentionally skips).
+        // that the cooker intentionally skips).  Delete any stale .cooked
+        // binary so no code path can accidentally serve it.
+        if (!rec->cookedPath.empty()) {
+            auto stale = m_cacheRoot / rec->cookedPath;
+            std::error_code ec;
+            std::filesystem::remove(stale, ec);
+        }
+        rec->cookedPath.clear();
         rec->cookVersion = kCurrentCookVersion;
         rec->state       = AssetState::Failed;
         m_registry.update(*rec);
@@ -94,7 +105,8 @@ int CookPipeline::cookAll(std::function<void(int,int)> progress) {
     std::vector<UUID> stale;
     for (auto& rec : all) {
         if (isStale(rec)) { stale.push_back(rec.uuid); continue; }
-        if (rec.state != AssetState::Ready) {            // fresh but unmarked
+        if (rec.state != AssetState::Ready
+                && rec.state != AssetState::Failed) {   // fresh but unmarked
             auto r = m_registry.findByUUID(rec.uuid);
             if (r) { r->state = AssetState::Ready; m_registry.update(*r); }
         }
@@ -180,8 +192,15 @@ int CookPipeline::cookMany(const std::vector<UUID>& uuids,
         if (!w.result.success) {
             std::printf("[AssetLib] Cook FAILED: %s — %s\n",
                         w.sourceRel.c_str(), w.result.error.c_str());
-            // Mark failed so we don't retry every cook pass
+            // Mark failed so we don't retry every cook pass.
+            // Delete any stale .cooked binary so no code path serves it.
             if (auto rec = m_registry.findByUUID(w.uuid)) {
+                if (!rec->cookedPath.empty()) {
+                    auto stale = m_cacheRoot / rec->cookedPath;
+                    std::error_code ec;
+                    std::filesystem::remove(stale, ec);
+                }
+                rec->cookedPath.clear();
                 rec->cookVersion = kCurrentCookVersion;
                 rec->state       = AssetState::Failed;
                 m_registry.update(*rec);

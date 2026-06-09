@@ -262,7 +262,10 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
             }
         }
     }
-    // ── Assimp fallback (uncoooked assets) ────────────────────────────
+    // ── Assimp fallback (uncooked assets) ─────────────────────────────
+    // Wrapped in try-catch: a crash inside Assimp or skeleton extraction
+    // must not bring down the engine — report it as a load error.
+    try {
     Assimp::Importer imp;
     const aiScene* scene = imp.ReadFile(path,
         aiProcess_Triangulate        |
@@ -436,6 +439,16 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
     out.success = !out.meshes.empty();
     if (!out.success) out.error = "No triangle meshes found";
     return out;
+
+    } catch (const std::exception& ex) {
+        out.error = std::string("Assimp exception: ") + ex.what();
+        LOG_ERROR("Assimp", "Exception loading %s: %s", name.c_str(), ex.what());
+        return out;
+    } catch (...) {
+        out.error = "Unknown exception during Assimp import";
+        LOG_ERROR("Assimp", "Unknown exception loading %s", name.c_str());
+        return out;
+    }
 }
 
 // -----------------------------------------------------------------------
