@@ -120,6 +120,53 @@ void EngineRuntime::buildDefaultScene() {
     }
 }
 
+bool EngineRuntime::frameBegin(float& dt) {
+    if (!m_platform || m_platform->shouldClose()) return false;
+
+    m_platform->pollEvents();
+
+    // While minimized (zero-size framebuffer), block on events instead of
+    // spinning. Headless platforms report 0x0 too but never resize — skip
+    // the wait for them so servers don't stall.
+    if (!m_headless) {
+        int fbw = 0, fbh = 0;
+        m_platform->framebufferSize(fbw, fbh);
+        while ((fbw <= 0 || fbh <= 0) && !m_platform->shouldClose()) {
+            m_platform->waitEvents(0.1);
+            m_platform->pollEvents();
+            m_platform->framebufferSize(fbw, fbh);
+        }
+        if (m_platform->shouldClose()) return false;
+        resize(fbw, fbh); // no-op when unchanged
+    }
+
+    // Clamped frame delta — first frame gets 0 so a long init doesn't
+    // produce a giant simulation step.
+    const auto now = std::chrono::steady_clock::now();
+    dt = m_firstFrame ? 0.0f
+        : std::chrono::duration<float>(now - m_lastFrameTime).count();
+    if (dt > 0.05f) dt = 0.05f;
+    m_lastFrameTime = now;
+    m_firstFrame    = false;
+
+    // Drain async asset uploads (main-thread GPU upload)
+    if (m_assetService) m_assetService->drainUploads();
+
+    return true;
+}
+
+void EngineRuntime::frameEnd() {
+    if (!m_headless) bgfx::frame();
+}
+
+void EngineRuntime::run(const std::function<void(float)>& frame) {
+    float dt = 0.0f;
+    while (frameBegin(dt)) {
+        frame(dt);
+        frameEnd();
+    }
+}
+
 void EngineRuntime::resize(int w, int h) {
     if (w == m_width && h == m_height) return;
     m_width = w; m_height = h;

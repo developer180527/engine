@@ -33,4 +33,8 @@ public:
     virtual bool shouldClose() const                = 0;
     virtual void requestClose()                     = 0;
     virtual void framebufferSize(int& w, int& h) const = 0;
+
+    // Block up to timeoutSeconds waiting for events (used while minimized
+    // to avoid spinning). Default: no wait — fine for headless platforms.
+    virtual void waitEvents(double /*timeoutSeconds*/) {}
 };

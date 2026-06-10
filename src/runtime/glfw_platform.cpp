@@ -73,3 +73,7 @@ void GlfwPlatform::framebufferSize(int& w, int& h) const {
     if (m_window) glfwGetFramebufferSize(m_window, &w, &h);
     else { w = 0; h = 0; }
 }
+
+void GlfwPlatform::waitEvents(double timeoutSeconds) {
+    glfwWaitEventsTimeout(timeoutSeconds);
+}

@@ -133,34 +133,17 @@ public:
     }
 
     void run() {
-        using clock = std::chrono::steady_clock;
-        auto   prev  = clock::now();
-        int    lastW = m_rt.width(), lastH = m_rt.height();
+        // The runtime owns the loop skeleton (events, timing, resize, async
+        // drain, frame flip); the editor supplies the per-frame body.
+        m_rt.run([this](float dt) { frame(dt); });
+    }
 
-        while (!glfwWindowShouldClose(m_window)) {
-            // ---- Timing ----
-            auto  now = clock::now();
-            float dt  = std::min(
-                std::chrono::duration<float>(now - prev).count(), 0.05f);
-            prev = now;
-
-            // ---- Events ----
-            glfwPollEvents();
+private:
+    void frame(float dt) {
+            // ---- Events (platform polled by runtime in frameBegin) ----
             InputSystem::get().processEvents(); // drain queue → update double-buffer
 
-            // ---- Resize (runtime handles bgfx::reset) ----
-            int fbw, fbh;
-            glfwGetFramebufferSize(m_window, &fbw, &fbh);
-            if (fbw <= 0 || fbh <= 0) {
-                glfwWaitEventsTimeout(0.1);
-                continue;
-            }
-            if (fbw != lastW || fbh != lastH) {
-                m_rt.resize(fbw, fbh);
-                lastW = fbw; lastH = fbh;
-            }
-
-            // ---- Drain async asset uploads (main thread GPU upload)
+            // ---- Drain legacy async loader (runtime drains AssetService) ----
             {
                 AssetStorage storage{m_rt.ctx().assets,
                                      m_rt.ctx().textures,
@@ -169,9 +152,6 @@ public:
                                      m_rt.ctx().clips};
                 m_loader.drainOne(storage); // legacy loader — one per frame
             }
-            // AssetService async drain (scripts' loadMeshAsync/loadTextureAsync)
-            if (m_rt.ctx().assetService)
-                m_rt.assetService().drainUploads();
 
             // ---- ImGui frame start (must come before any ImGui calls) ----
             imguiNewFrame();
@@ -253,13 +233,12 @@ public:
             // ---- Editor UI (all ImGui panel draws) ----
             renderUI(view, proj);
 
-            // ---- Submit ImGui draw data then flip ----
+            // ---- Submit ImGui draw data (runtime flips in frameEnd) ----
             imguiRender();
             imguiRenderViewports();
-            bgfx::frame();
-        }
     }
 
+public:
     void shutdown() {
         // Plugins detach in EngineRuntime::shutdown() — runtime owns them.
         imguiShutdown();

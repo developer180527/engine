@@ -4,6 +4,8 @@
 #include "runtime/scene_service.h"
 #include "animation/skeleton_registry.h"
 #include "animation/clip_registry.h"
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <string>
 #include <bgfx/bgfx.h>
@@ -38,6 +40,26 @@ public:
     bool init(const EngineConfig& cfg = {});
     bool init(const EngineConfig& cfg, std::unique_ptr<IPlatform> platform);
     void shutdown();
+
+    // ── Frame loop ──────────────────────────────────────────────────────────
+    // The runtime owns the loop skeleton; the app supplies the per-frame body.
+    //
+    //   engine.run([&](float dt) {
+    //       engine.tick(dt, view, proj);   // + whatever the app does
+    //   });
+    //
+    // Apps that need finer control (the editor wraps the body with ImGui
+    // begin/end) call the building blocks directly:
+    //
+    //   float dt;
+    //   while (engine.frameBegin(dt)) { ...body...; engine.frameEnd(); }
+    //
+    // frameBegin: polls platform events, computes clamped dt, handles window
+    // resize, drains async asset uploads. Returns false when the platform
+    // requests close. frameEnd: flips the frame (bgfx::frame).
+    bool frameBegin(float& dt);
+    void frameEnd();
+    void run(const std::function<void(float dt)>& frame);
 
     void tick(float dt, const float view[16], const float proj[16], bool pauseSystems = false);
 
@@ -78,6 +100,10 @@ private:
     int   m_width  = 1280;
     int   m_height = 720;
     float m_fov    = 60.0f;
+
+    // Frame-loop timing
+    std::chrono::steady_clock::time_point m_lastFrameTime;
+    bool m_firstFrame = true;
 
     // Content systems — stable addresses, declared before m_ctx and m_renderer.
     PrimitiveLibrary m_primitives;

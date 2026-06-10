@@ -16,6 +16,7 @@ public:
     bool  shouldClose() const override;
     void  requestClose() override;
     void  framebufferSize(int& w, int& h) const override;
+    void  waitEvents(double timeoutSeconds) override;
 
     GLFWwindow* glfwWindow() const { return m_window; }
 
