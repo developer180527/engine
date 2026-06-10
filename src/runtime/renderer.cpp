@@ -51,6 +51,7 @@ bool Renderer::init(void* nwh, int width, int height,
     init.platformData.nwh  = nwh;
     init.resolution.width  = (uint32_t)width;
     init.resolution.height = (uint32_t)height;
+    m_backW = width; m_backH = height;
     init.resolution.reset  = BGFX_RESET_VSYNC;
     if (!bgfx::init(init)) {
         std::printf("[Renderer] bgfx init failed\n");
@@ -88,6 +89,7 @@ void Renderer::setPipeline(std::unique_ptr<IRenderPipeline> pipeline) {
 }
 
 void Renderer::resize(int w, int h) {
+    m_backW = w; m_backH = h;
     bgfx::reset((uint32_t)w, (uint32_t)h, BGFX_RESET_VSYNC);
 }
 
@@ -151,6 +153,21 @@ void Renderer::renderGameView(const float view[16], const float proj[16],
 
     flecs::world& world = gameWorld ? *gameWorld : *m_editorWorld;
     RenderView    rv = buildView(world, view, proj, target, kGameView);
+    RenderContext rc = makeContext();
+    m_pipeline->render(rv, rc);
+}
+
+void Renderer::renderToBackbuffer(const float view[16], const float proj[16],
+                                  const float clearColor[4], flecs::world* world) {
+    RenderTarget target;
+    target.fb         = BGFX_INVALID_HANDLE; // bgfx: invalid FB = backbuffer
+    target.w          = (uint16_t)m_backW;
+    target.h          = (uint16_t)m_backH;
+    target.clearColor = { clearColor[0], clearColor[1], clearColor[2], clearColor[3] };
+    target.clearFlags = BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH;
+
+    flecs::world& w  = world ? *world : *m_editorWorld;
+    RenderView    rv = buildView(w, view, proj, target, kGameView);
     RenderContext rc = makeContext();
     m_pipeline->render(rv, rc);
 }

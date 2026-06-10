@@ -80,6 +80,15 @@ target_include_directories(
 
 # ── Engine targets ──────────────────────────────────────────────────────────
 #   engine_runtime  — static library: ECS, content, render, animation, audio,
-#                     physics plugins, asset pipeline. The SDK a game links.
+#                     physics plugins, asset pipeline. The SDK a game links
+#                     (alias: engine::runtime). API: include/engine/*.h
 #   editor          — executable: ImGui editor application on top of the SDK.
+#   engine_cook     — CLI asset cooker.
 add_subdirectory(src)
+
+# ── Samples — prove the SDK builds games without the editor ─────────────────
+add_executable(sample_minimal samples/minimal_game/main.cpp)
+target_link_libraries(sample_minimal PRIVATE engine::runtime)
+set_target_properties(sample_minimal PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)

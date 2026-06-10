@@ -221,14 +221,10 @@ private:
             m_rt.tick(dt, view, proj, ImGuizmo::IsUsing());
 
             // ---- Game world update (plugins tick during play) ----
-            // Explicit phase order so script intent lands in the SAME physics
-            // step (kills the input-latency frame): scripts -> physics -> contacts.
-            if (m_editor.simState == SimState::Playing && m_gameWorld) {
-                auto& plugins = m_rt.plugins();
-                plugins.broadcastUpdate(*m_gameWorld, dt);        // pre-physics: read input, set intent
-                plugins.broadcastPhysicsStep(*m_gameWorld, dt);   // step + write back transforms
-                plugins.broadcastPostPhysics(*m_gameWorld);       // flush contacts -> onCollisionEnter/Exit
-            }
+            // Paused skips this — the runtime no-ops only when not simulating,
+            // so pause is purely "don't call tickSimulation".
+            if (m_editor.simState == SimState::Playing)
+                m_rt.tickSimulation(dt);
 
             // ---- Editor UI (all ImGui panel draws) ----
             renderUI(view, proj);
@@ -264,9 +260,7 @@ private:
     GLFWwindow*    m_sceneGLFWWindow  = nullptr; // GLFW window currently hosting Scene View
     int            m_desiredSceneW    = 1280;
     int            m_desiredSceneH    = 720;
-    // Play mode
-    std::unique_ptr<flecs::world> m_gameWorld;
-    std::string                   m_snapshotJSON;
+    // Play mode — sim state/world owned by the runtime (m_rt.simWorld()).
     bool                          m_showProjectSettings = false;
     ProjectSettingsState          m_projectSettingsState;
 
@@ -288,19 +282,10 @@ private:
             m_editor.simState = SimState::Playing; return;
         }
         if (m_editor.simState != SimState::Editing) return;
-        AssetStorage snap_storage{m_rt.ctx().assets,
-                                  m_rt.ctx().textures,
-                                  m_rt.ctx().materials,
-                                  m_rt.ctx().skeletons,
-                                  m_rt.ctx().clips};
-        m_snapshotJSON = SceneSerializer::saveToString(
-            m_rt.ctx().ecs, snap_storage);
-        m_gameWorld = std::make_unique<flecs::world>();
-        SceneSerializer::loadIntoWorld(
-            m_snapshotJSON, *m_gameWorld, snap_storage);
-        m_editor.simState = SimState::Playing;
-        m_rt.plugins().broadcastSimStart(*m_gameWorld);
-        LOG_SUCCESS("Sim", "Play — game world ready");
+        // Snapshot mode: the runtime serializes the editor world and
+        // simulates a fresh copy, so Stop restores editing state untouched.
+        if (m_rt.startSimulation(EngineRuntime::SimMode::Snapshot))
+            m_editor.simState = SimState::Playing;
     }
     void onPause() {
         if (m_editor.simState == SimState::Playing)
@@ -310,11 +295,8 @@ private:
     }
     void onStop() {
         if (m_editor.simState == SimState::Editing) return;
-        m_rt.plugins().broadcastSimStop();
-        m_gameWorld.reset();
-        m_snapshotJSON.clear();
+        m_rt.stopSimulation();
         m_editor.simState = SimState::Editing;
-        LOG_SUCCESS("Sim", "Stop — editor world untouched");
     }
     void drawSceneViewPanel(const float view[16], const float proj[16],
                             EngineContext& ctx) {
@@ -441,17 +423,15 @@ private:
         float gameView[16], gameProj[16], gameClear[4];
         float aspect = m_rt.sceneW() > 0
             ? (float)m_rt.sceneW() / (float)m_rt.sceneH() : 16.0f/9.0f;
-        // During play: use game world camera + render game world entities
-        // During edit: use editor world camera
-        flecs::world& camWorld = (m_editor.simState != SimState::Editing
-                                  && m_gameWorld)
-                                 ? *m_gameWorld : m_rt.ctx().ecs;
+        // During play: use sim world camera + render sim world entities
+        // During edit: use editor world camera (simWorld() == editor world)
+        const bool inSim = m_editor.simState != SimState::Editing
+                           && m_rt.simulating();
+        flecs::world& camWorld = inSim ? m_rt.simWorld() : m_rt.ctx().ecs;
         bool hasCam = findPrimaryCamera(camWorld, gameView, gameProj,
                                         aspect, gameClear);
         if (hasCam) {
-            flecs::world* renderWorld =
-                (m_editor.simState != SimState::Editing && m_gameWorld)
-                ? m_gameWorld.get() : nullptr;
+            flecs::world* renderWorld = inSim ? &m_rt.simWorld() : nullptr;
             m_rt.renderGameView(gameView, gameProj, gameClear, renderWorld);
         }
         drawGameViewPanel(m_rt.gameColorTex(), hasCam,

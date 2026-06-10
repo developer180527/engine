@@ -70,6 +70,33 @@ public:
     void frameEnd();
     void run(const std::function<void(float dt)>& frame);
 
+    // ── Simulation lifecycle ────────────────────────────────────────────────
+    // Owns plugin sim broadcasts + the optional snapshot game world. A game
+    // boots straight into simulation; the editor's Play button does the same
+    // with Snapshot mode so editing state survives Stop.
+    //
+    //   InPlace  — simulate the runtime's own world (game usage: boot = play)
+    //   Snapshot — serialize the world, simulate a fresh copy, restore on stop
+    enum class SimMode { InPlace, Snapshot };
+
+    bool startSimulation(SimMode mode = SimMode::InPlace);
+    void stopSimulation();
+    // Plugin phases (update -> physics -> post-physics) on the sim world.
+    // No-op unless simulating — the host decides pause by not calling it.
+    void tickSimulation(float dt);
+
+    bool          simulating() const { return m_simulating; }
+    // The world being simulated: the snapshot game world if one exists,
+    // otherwise the runtime's own world. Always safe to call.
+    flecs::world& simWorld() { return m_gameWorld ? *m_gameWorld : m_ecs; }
+
+    // ── Per-frame work ──────────────────────────────────────────────────────
+    // Game-facing tick: gameplay systems + simulation + primary-camera render
+    // to the backbuffer. Returns false if no primary Camera entity was found
+    // (systems still ticked; nothing rendered).
+    bool tick(float dt);
+    // Editor/custom-camera tick: systems + render with explicit matrices into
+    // the offscreen scene framebuffer. Does NOT tick simulation.
     void tick(float dt, const float view[16], const float proj[16], bool pauseSystems = false);
 
     void resize(int w, int h);
@@ -142,6 +169,11 @@ private:
     flecs::query<Transform, const Spinner> m_spinnerQuery;
     AnimatorSystem m_animatorSystem;
     PluginRegistry m_plugins;
+
+    // Simulation state — game world only exists in Snapshot mode.
+    bool                          m_simulating = false;
+    std::unique_ptr<flecs::world> m_gameWorld;
+    std::string                   m_simSnapshot;
 
     bool initRenderer(const EngineConfig& cfg);
     bool initSystems(const EngineConfig& cfg);

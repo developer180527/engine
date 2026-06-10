@@ -11,8 +11,11 @@
 #include "render/vertex.h"
 #include "render/primitive_cube.h"
 #include "render/mesh.h"
+#include "runtime/camera_util.h"
 #include "io/gltf_importer.h"
 #include "io/assimp_importer.h"
+#include "io/asset_storage.h"
+#include "io/scene_serializer.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
 #include "components/spinner.h"
@@ -203,6 +206,59 @@ void EngineRuntime::tick(float dt, const float view[16],
     if (!m_headless) m_renderer.renderScene(view, proj);
 }
 
+bool EngineRuntime::tick(float dt) {
+    tickSystems(dt, false);
+    tickSimulation(dt);
+    if (m_headless) return false;
+
+    float view[16], proj[16], clear[4];
+    const float aspect = m_height > 0
+        ? float(m_width) / float(m_height) : 16.0f / 9.0f;
+    if (!findPrimaryCamera(simWorld(), view, proj, aspect, clear))
+        return false;
+
+    flecs::world* world = m_gameWorld ? m_gameWorld.get() : nullptr;
+    m_renderer.renderToBackbuffer(view, proj, clear, world);
+    return true;
+}
+
+bool EngineRuntime::startSimulation(SimMode mode) {
+    if (m_simulating) return true;
+
+    if (mode == SimMode::Snapshot) {
+        AssetStorage storage{m_assets, m_textures, m_materials,
+                             &m_skeletons, &m_clips};
+        m_simSnapshot = SceneSerializer::saveToString(m_ecs, storage);
+        m_gameWorld   = std::make_unique<flecs::world>();
+        SceneSerializer::loadIntoWorld(m_simSnapshot, *m_gameWorld, storage);
+    }
+
+    m_simulating = true;
+    m_plugins.broadcastSimStart(simWorld());
+    LOG_SUCCESS("Sim", "Simulation started (%s)",
+                mode == SimMode::Snapshot ? "snapshot" : "in-place");
+    return true;
+}
+
+void EngineRuntime::stopSimulation() {
+    if (!m_simulating) return;
+    m_plugins.broadcastSimStop();
+    m_gameWorld.reset();
+    m_simSnapshot.clear();
+    m_simulating = false;
+    LOG_SUCCESS("Sim", "Simulation stopped");
+}
+
+void EngineRuntime::tickSimulation(float dt) {
+    if (!m_simulating) return;
+    // Explicit phase order so script intent lands in the SAME physics step:
+    // scripts set intent -> physics applies it -> contacts dispatch.
+    flecs::world& w = simWorld();
+    m_plugins.broadcastUpdate(w, dt);
+    m_plugins.broadcastPhysicsStep(w, dt);
+    m_plugins.broadcastPostPhysics(w);
+}
+
 void EngineRuntime::tickSystems(float dt, bool paused) {
     if (!paused) {
         m_spinnerQuery
@@ -221,6 +277,7 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
 }
 
 void EngineRuntime::shutdown() {
+    stopSimulation();      // broadcasts onSimulationStop if still running
     m_plugins.detachAll(); // plugins may hold services — detach before teardown
     m_clips.clear();
     m_skeletons.clear();

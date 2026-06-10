@@ -50,6 +50,8 @@ set(ENGINE_SHADER_SOURCES
     ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
 )
 
+# Public API surface: include/engine/*.h umbrella headers. Everything under
+# src/ is implementation detail unless re-exported there.
 add_library(engine_runtime STATIC
     # Runtime core — platform, frame loop, renderer, services
     runtime/runtime.cpp
@@ -87,6 +89,7 @@ set_source_files_properties(
 )
 
 target_include_directories(engine_runtime PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/components
@@ -151,6 +154,10 @@ elseif(UNIX)
         ${CMAKE_DL_LIBS}
     )
 endif()
+
+# Namespaced alias — what consumers link:
+#   target_link_libraries(my_game PRIVATE engine::runtime)
+add_library(engine::runtime ALIAS engine_runtime)
 
 add_subdirectory(editor)
 

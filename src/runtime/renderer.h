@@ -35,6 +35,12 @@ public:
     void renderScene(const float view[16], const float proj[16]);
     void renderGameView(const float view[16], const float proj[16],
                         const float clearColor[4], flecs::world* gameWorld);
+    // Standalone-game path: render a world straight to the backbuffer (no
+    // offscreen FB, no ImGui composite). world == nullptr renders the world
+    // passed at init(). Uses the same view id as the editor's game FB path —
+    // call one or the other per frame, not both.
+    void renderToBackbuffer(const float view[16], const float proj[16],
+                            const float clearColor[4], flecs::world* world = nullptr);
 
     // Bring-your-own-renderer: swap the pipeline (default is ForwardPipeline).
     // Safe before or after init(); attaches once the device is ready.
@@ -76,6 +82,7 @@ private:
     bgfx::TextureHandle     m_gameColorTex  = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_gameDepthTex  = BGFX_INVALID_HANDLE;
     int m_sceneW = 1280, m_sceneH = 720;
+    int m_backW  = 1280, m_backH  = 720; // backbuffer (window) size
 
     static constexpr bgfx::ViewId kShadowView  = 0; // depth-from-light (renders first)
     static constexpr bgfx::ViewId kSceneView   = 1;
