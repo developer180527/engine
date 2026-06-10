@@ -34,14 +34,14 @@ public:
     void onAttach(RuntimeContext& ec) override {
         m_projectRoot = ec.project.projectRoot;
         m_assetsRoot  = ec.project.assetsRoot;
-        if (ec.assetService)
-            m_host.setAssetService(ec.assetService);
-        if (ec.sceneService)
-            m_host.setSceneService(ec.sceneService);
+        // The runtime owns the canonical ScriptHost (shared with the C API);
+        // this plugin is just the Lua frontend over it.
+        m_host = ec.scriptHost;
+        if (!m_host) { LOG_ERROR("Script", "RuntimeContext has no ScriptHost"); return; }
         m_L = luaL_newstate();
         if (!m_L) { LOG_ERROR("Script", "Failed to create Lua state"); return; }
         openSafeLibs(m_L);
-        LuaBindings::install(m_L, &m_host);
+        LuaBindings::install(m_L, m_host);
         LOG_SUCCESS("Script", "%s online — bindings installed", LUA_RELEASE);
     }
 
@@ -51,10 +51,10 @@ public:
     }
 
     void onSimulationStart(flecs::world& gw) override {
-        if (!m_L) return;
-        m_host.setWorld(&gw);
-        m_host.beginSession();   // invalidate entity refs stashed in prior plays
-        m_elapsed = 0.0; m_frame = 0;
+        if (!m_L || !m_host) return;
+        // World binding, session epoch and frame state are runtime-owned now
+        // (EngineRuntime::startSimulation / tickSimulation) — the host is
+        // already bound to gw when this broadcast arrives.
         bindPhysics(gw);         // grab the physics service if it is already up
         bindAudio(gw);           // and the audio service
 
@@ -80,29 +80,32 @@ public:
     }
 
     void onSimulationStop() override {
+        if (!m_host) return;
         for (auto& inst : m_instances)
             if (!inst.errored) dispatch(inst, "onDestroy", false, 0.0f);
         clearInstances();
         clearModules();          // next Play reloads scripts from disk
         // Destroy autorun entities — they were created by us, not the scene
         for (auto eid : m_autorunEntities) {
-            flecs::entity e = m_host.world()->entity(eid);
+            flecs::entity e = m_host->world()->entity(eid);
             if (e.is_alive()) e.destruct();
         }
         m_autorunEntities.clear();
-        m_host.setPhysicsService(nullptr);
-        m_host.setAudioService(nullptr);
-        // AssetService is NOT cleared — it's engine infrastructure, not
-        // per-simulation state. Scripts can safely preload assets in onAttach.
-        m_host.setWorld(nullptr);
+        // World/services unbind runtime-side after this broadcast completes.
     }
 
     void onUpdate(flecs::world& gw, float dt) override {
-        if (!m_L) return;
-        bindPhysics(gw);         // order-independent: service is up by first update
-        bindAudio(gw);
-        m_elapsed += dt; ++m_frame;
-        m_host.setFrame(dt, m_elapsed, m_frame);
+        if (!m_L || !m_host) return;
+
+        // Live script reload: if any loaded .lua changed on disk, rebuild
+        // every instance from fresh sources (script state resets; entities
+        // and the world are untouched).
+        m_reloadTimer += dt;
+        if (m_reloadTimer >= 0.75f) {
+            m_reloadTimer = 0.0f;
+            if (anyScriptChanged()) reloadScripts(gw);
+        }
+
         gw.defer_begin();        // defer spawn/destroy issued from scripts
         for (auto& inst : m_instances) {
             if (inst.errored) continue;
@@ -186,6 +189,8 @@ private:
         }
         int ref = luaL_ref(m_L, LUA_REGISTRYINDEX);
         m_moduleRefs[path] = ref;
+        std::error_code mec;
+        m_moduleMtimes[path] = std::filesystem::last_write_time(full, mec);
         return ref;
     }
 
@@ -200,7 +205,7 @@ private:
         lua_setfield(m_L, -2, "__index");               // mt.__index = module
         lua_setmetatable(m_L, -3);                      // setmetatable(instance, mt)
         lua_pop(m_L, 1);                                // pop module
-        LuaBindings::pushEntity(m_L, e, &m_host);       // entity userdata (epoch-stamped)
+        LuaBindings::pushEntity(m_L, e, m_host);       // entity userdata (epoch-stamped)
         lua_setfield(m_L, -2, "entity");                // instance.entity = ud
         int instRef = luaL_ref(m_L, LUA_REGISTRYINDEX); // pop instance
         m_instances.push_back({ (flecs::entity_t)e.id(), instRef, false });
@@ -230,7 +235,7 @@ private:
         lua_getfield(m_L, -1, method);                  // method
         if (!lua_isfunction(m_L, -1)) { lua_pop(m_L, 2); return; }
         lua_pushvalue(m_L, -2);                         // self
-        LuaBindings::pushEntity(m_L, m_host.world()->entity(otherId), &m_host);
+        LuaBindings::pushEntity(m_L, m_host->world()->entity(otherId), m_host);
         if (lua_pcall(m_L, 2, 0, 0) != LUA_OK) {        // self + other
             LOG_ERROR("Script", "%s: %s", method, lua_tostring(m_L, -1));
             lua_pop(m_L, 1);
@@ -246,11 +251,11 @@ private:
 
     void bindAudio(flecs::world& gw) {
         if (const AudioServiceRef* ref = gw.try_get<AudioServiceRef>())
-            m_host.setAudioService(ref->svc);
+            m_host->setAudioService(ref->svc);
     }
     void bindPhysics(flecs::world& gw) {
         if (const PhysicsServiceRef* ref = gw.try_get<PhysicsServiceRef>())
-            m_host.setPhysicsService(ref->svc);
+            m_host->setPhysicsService(ref->svc);
     }
     // Scan autorun directories for .lua files. For each one, create a
     // headless entity with Name + ScriptComponent and add it to the init
@@ -292,15 +297,46 @@ private:
     void clearModules() {
         if (m_L) for (auto& kv : m_moduleRefs) luaL_unref(m_L, LUA_REGISTRYINDEX, kv.second);
         m_moduleRefs.clear();
+        m_moduleMtimes.clear();
     }
 
-    lua_State*  m_L = nullptr;
-    ScriptHost  m_host{nullptr};
+    // ── Live script reload ───────────────────────────────────────────────
+    bool anyScriptChanged() const {
+        namespace fs = std::filesystem;
+        for (const auto& [path, seen] : m_moduleMtimes) {
+            std::error_code ec;
+            auto t = fs::last_write_time(m_projectRoot / path, ec);
+            if (!ec && t != seen) return true;
+        }
+        return false;
+    }
+    // Rebuild every script instance from fresh sources. Script-local state
+    // resets (onDestroy -> onStart); entities and the world are untouched.
+    void reloadScripts(flecs::world& gw) {
+        LOG_INFO("Script", "Source change detected — reloading scripts");
+        for (auto& inst : m_instances)
+            if (!inst.errored) dispatch(inst, "onDestroy", false, 0.0f);
+        clearInstances();
+        clearModules();
+
+        std::vector<Init> toInit;
+        gw.query_builder<ScriptComponent>().build()
+            .each([&](flecs::entity e, ScriptComponent& sc) {
+                if (!sc.scriptPath.empty()) toInit.push_back({e, sc.scriptPath});
+            });
+        gw.defer_begin();
+        for (auto& i : toInit) instantiate(i.e, i.path);
+        gw.defer_end();
+        LOG_SUCCESS("Script", "Reloaded %zu script instance(s)", m_instances.size());
+    }
+
+    lua_State*  m_L    = nullptr;
+    ScriptHost* m_host = nullptr;   // runtime-owned (RuntimeContext::scriptHost)
     std::filesystem::path m_projectRoot;
     std::filesystem::path m_assetsRoot;
     std::unordered_map<std::string,int> m_moduleRefs;
+    std::unordered_map<std::string,std::filesystem::file_time_type> m_moduleMtimes;
     std::vector<Instance>        m_instances;
     std::vector<flecs::entity_t> m_autorunEntities;  // headless entities for autorun scripts
-    double   m_elapsed = 0.0;
-    uint64_t m_frame   = 0;
+    float m_reloadTimer = 0.0f;
 };

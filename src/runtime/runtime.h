@@ -18,6 +18,8 @@
 #include "components/spinner.h"
 #include "systems/animator_system.h"
 
+class ScriptHost; // runtime-owned scripting surface (scripting/script_host.h)
+
 struct EngineConfig {
     // Empty title => use the project name from project.json.
     std::string title;
@@ -175,6 +177,7 @@ private:
 
     std::unique_ptr<AssetService>   m_assetService;
     std::unique_ptr<SceneService>   m_sceneService;
+    std::unique_ptr<ScriptHost>     m_scriptHost;   // canonical script surface
     std::unique_ptr<RuntimeContext> m_ctx;
 
     // Render subsystem — owns the device + all render state. Declared after the
@@ -190,6 +193,8 @@ private:
     bool                          m_simulating = false;
     std::unique_ptr<flecs::world> m_gameWorld;
     std::string                   m_simSnapshot;
+    double                        m_simElapsed = 0.0;  // script-facing sim clock
+    uint64_t                      m_simFrame   = 0;
 
     bool initRenderer(const EngineConfig& cfg);
     bool initSystems(const EngineConfig& cfg);

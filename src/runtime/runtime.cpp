@@ -1,6 +1,9 @@
 #include "runtime/runtime.h"
 #include "runtime/glfw_platform.h"
 #include "runtime/logger.h"
+#include "runtime/scripting/script_host.h"
+#include "runtime/scripting/script_services.h"
+#include "runtime/scripting/engine_api_binding.h"
 
 #include <cstdio>
 #include <utility>
@@ -115,6 +118,14 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_sceneService = std::make_unique<SceneService>(SceneService::Config{
         *m_assetService, m_assets, m_textures, m_materials, m_ecs, &m_primitives});
 
+    // ScriptHost — the canonical scripting surface. Lua, the C API
+    // (engine_api.h, used by hot-reloaded game modules) and future language
+    // hosts all drive this one object; the world binds at startSimulation.
+    m_scriptHost = std::make_unique<ScriptHost>(nullptr);
+    m_scriptHost->setAssetService(m_assetService.get());
+    m_scriptHost->setSceneService(m_sceneService.get());
+    engineApiBindHost(m_scriptHost.get());
+
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
         m_ecs, m_assets, m_textures,
         m_materials, m_project, m_importers});
@@ -125,6 +136,7 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_ctx->sceneService  = m_sceneService.get();
     m_ctx->skeletons     = &m_skeletons;
     m_ctx->clips         = &m_clips;
+    m_ctx->scriptHost    = m_scriptHost.get();
 
     // Gameplay-tick query (editor world) — render queries live in Renderer.
     m_spinnerQuery = m_ecs.query_builder<Transform, const Spinner>().build();
@@ -257,6 +269,12 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     }
 
     m_simulating = true;
+    m_simElapsed = 0.0;
+    m_simFrame   = 0;
+    // Bind the script surface to the sim world BEFORE plugins start — Lua
+    // instantiates script instances during broadcastSimStart.
+    m_scriptHost->setWorld(&simWorld());
+    m_scriptHost->beginSession();   // invalidate entity refs from prior runs
     m_plugins.broadcastSimStart(simWorld());
     LOG_SUCCESS("Sim", "Simulation started (%s)",
                 mode == SimMode::Snapshot ? "snapshot" : "in-place");
@@ -266,6 +284,9 @@ bool EngineRuntime::startSimulation(SimMode mode) {
 void EngineRuntime::stopSimulation() {
     if (!m_simulating) return;
     m_plugins.broadcastSimStop();
+    m_scriptHost->setWorld(nullptr);            // C API + Lua go dormant
+    m_scriptHost->setPhysicsService(nullptr);
+    m_scriptHost->setAudioService(nullptr);
     m_gameWorld.reset();
     m_simSnapshot.clear();
     m_simulating = false;
@@ -274,9 +295,20 @@ void EngineRuntime::stopSimulation() {
 
 void EngineRuntime::tickSimulation(float dt) {
     if (!m_simulating) return;
+    flecs::world& w = simWorld();
+
+    // Script-facing frame state + late service discovery (physics/audio
+    // publish refs into the sim world during their onSimulationStart).
+    m_simElapsed += dt;
+    ++m_simFrame;
+    m_scriptHost->setFrame(dt, m_simElapsed, m_simFrame);
+    if (const PhysicsServiceRef* pr = w.try_get<PhysicsServiceRef>())
+        m_scriptHost->setPhysicsService(pr->svc);
+    if (const AudioServiceRef* ar = w.try_get<AudioServiceRef>())
+        m_scriptHost->setAudioService(ar->svc);
+
     // Explicit phase order so script intent lands in the SAME physics step:
     // scripts set intent -> physics applies it -> contacts dispatch.
-    flecs::world& w = simWorld();
     m_plugins.broadcastUpdate(w, dt);
     m_plugins.broadcastPhysicsStep(w, dt);
     m_plugins.broadcastPostPhysics(w);
@@ -310,6 +342,7 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
 
 void EngineRuntime::shutdown() {
     stopSimulation();      // broadcasts onSimulationStop if still running
+    engineApiBindHost(nullptr);
     m_plugins.detachAll(); // plugins may hold services — detach before teardown
     m_clips.clear();
     m_skeletons.clear();

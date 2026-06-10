@@ -13,6 +13,7 @@
 // running world.
 #include <engine/engine.h>
 #include <engine/game_module.h>
+#include <engine/input.h>
 #include "io/scene_serializer.h"
 #include "runtime/async_loader.h"
 
@@ -54,7 +55,8 @@ public:
         auto create  = (EngineCreateGameFn)    dlsym(m_handle, "engineCreateGame");
         auto destroy = (EngineDestroyGameFn)   dlsym(m_handle, "engineDestroyGame");
         auto apiVer  = (EngineGameApiVersionFn)dlsym(m_handle, "engineGameApiVersion");
-        if (!create || !destroy || !apiVer) {
+        auto abi     = (EngineGameAbiFingerprintFn)dlsym(m_handle, "engineGameAbiFingerprint");
+        if (!create || !destroy || !apiVer || !abi) {
             LOG_ERROR("Host", "Module missing ENGINE_GAME_MODULE exports");
             unloadLibrary();
             return false;
@@ -65,6 +67,19 @@ public:
             unloadLibrary();
             return false;
         }
+        // ABI fingerprint: compiler + C++ standard + api + build mode must
+        // match exactly — a debug module against a release host (or a
+        // different compiler) corrupts memory in ways no version int catches.
+        if (std::string(abi()) != ENGINE_ABI_FINGERPRINT) {
+            LOG_ERROR("Host", "ABI mismatch:\n  host:   %s\n  module: %s",
+                      ENGINE_ABI_FINGERPRINT, abi());
+            unloadLibrary();
+            return false;
+        }
+        // Optional hook: tell the module why it's being loaded.
+        if (auto reason = (EngineGameLoadReasonFn)dlsym(m_handle, "engineGameLoadReason"))
+            reason(m_generation <= 1 ? ENGINE_MODULE_LOAD_INITIAL
+                                     : ENGINE_MODULE_LOAD_HOTRELOAD);
 
         m_destroy = destroy;
         m_plugin  = std::shared_ptr<IEnginePlugin>(
@@ -168,6 +183,8 @@ private:
 };
 
 int main(int argc, char** argv) {
+    // Dev tool: line-buffer stdout so logs stream to pipes/files live.
+    setvbuf(stdout, nullptr, _IOLBF, 0);
     if (argc < 3) {
         std::fprintf(stderr,
             "usage: engine_host <project-dir> <game-module.dylib>\n");
@@ -184,13 +201,23 @@ int main(int argc, char** argv) {
     EngineConfig cfg;
     cfg.projectRoot  = projectDir;
     cfg.defaultScene = false;
+    auto platform = std::make_unique<GlfwPlatform>();
+    GlfwPlatform* glfwPlat = platform.get();
     EngineRuntime engine;
-    if (!engine.init(cfg)) return 1;
+    if (!engine.init(cfg, std::move(platform))) return 1;
     if (!engine.hasProject()) {
         std::fprintf(stderr, "engine_host: no project at %s\n",
                      projectDir.string().c_str());
         return 2;
     }
+
+    // Host-side input — what game modules and Lua reach through the C API /
+    // ScriptHost. Default WASD bindings match the editor's.
+    InputSystem::get().init(glfwPlat->glfwWindow());
+    auto& imap = InputMap::get();
+    imap.bindAxis("MoveForward", Key::W, Key::S);
+    imap.bindAxis("MoveRight",   Key::D, Key::A);
+    imap.bindAxis("MoveUp",      Key::E, Key::Q);
 
     // Stock plugins first — broadcast order puts game logic after scripts.
     engine.plugins().add(std::make_shared<JoltPlugin>());
@@ -222,6 +249,7 @@ int main(int argc, char** argv) {
     engine.startSimulation(); // in-place: boot = play
 
     engine.run([&](float dt) {
+        InputSystem::get().processEvents();
         loader.drainOne(storage);
         if (watcher.changed(dt))
             game.reload(modulePath, engine);

@@ -56,6 +56,8 @@ Engine symbols resolve from the host process at load time. Linking
    default.
 3. **Component layout changes require a host restart** — the structs are
    shared with host-side code.
-4. Host-side singletons (e.g. `Input::`) are not yet shared across the
-   module boundary — interact with the world through components and the
-   broadcast arguments for now.
+4. **Engine services go through the C API** (`#include <engine/engine_api.h>`:
+   `engineKeyDown`, `engineEntityFind`, `enginePlaySound`, ...). Those calls
+   execute host-side. Header-inline singletons (`Input::`,
+   `InputSystem::get()`) duplicate across the dylib boundary — never use
+   them in a module.

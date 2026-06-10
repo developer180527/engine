@@ -99,6 +99,7 @@ add_library(engine_runtime STATIC
     runtime/async_loader.cpp
     runtime/asset_service.cpp
     runtime/scene_service.cpp
+    runtime/scripting/engine_api.cpp
 
     # Source-format importers (produce GPU meshes — main thread)
     io/gltf_importer.cpp

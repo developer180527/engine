@@ -98,7 +98,7 @@ target_link_libraries(sample_minimal PRIVATE engine::runtime)
 set_target_properties(sample_minimal PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
-add_subdirectory(sdk_sample_game)
+add_subdirectory("sdk_sample_game(cpp)")
 add_subdirectory(samples/hot_reload_game)
 
 # ── Install — `cmake --install build --prefix <sdk-dir>` ────────────────────
