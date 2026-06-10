@@ -31,6 +31,7 @@
 #include "components/skinned_mesh.h"
 #include "components/animator.h"
 #include "render/asset_registry.h"
+#include "io/asset_ref.h"
 #include "io/asset_storage.h"
 #include "io/importer_registry.h"
 #include "render/primitive_library.h"
@@ -51,6 +52,11 @@ struct PendingMesh { flecs::entity entity; std::string assetPath; };
 struct SerdeContext {
     SerdeMode mode = SerdeMode::Memory;
     std::function<const Mesh*(MeshHandle)> meshLookup;   // save: handle -> sourcePath
+
+    // Asset identity (disk mode): refs serialize as UUID + project-relative
+    // path (AssetRef) and resolve back through the registry on load.
+    std::filesystem::path    projectRoot;
+    assetlib::AssetRegistry* assetLib = nullptr;
 
     // Save: resolve sourcePath → cookedPath (optional; uses assetlib DB).
     // Returns empty string if the asset hasn't been cooked yet.
@@ -176,15 +182,16 @@ inline void saveMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx
         j["handleId"] = mr->mesh.id;
         if (mr->materialOverride.valid()) j["matOverrideId"] = mr->materialOverride.id;
         if (mesh && !mesh->sourcePath.empty()) j["sourcePath"] = mesh->sourcePath;
-    } else { // Disk: asset path is the only cross-session-stable reference
+    } else { // Disk: UUID + project-relative path (AssetRef) — never absolute
         if (mesh && !mesh->sourcePath.empty()) {
-            j["sourcePath"] = mesh->sourcePath;
+            AssetRef ref = assetref::make(mesh->sourcePath, ctx.projectRoot,
+                                          ctx.assetLib);
+            assetref::toJson(ref, j);
             if (mesh->sourcePath.rfind("engine://primitive/", 0) == 0)
                 j["sourceType"] = "primitive";
             // Also persist the cooked path for fast runtime loading.
-            // Editor scenes carry both: sourcePath for re-import, cookedPath
-            // for runtime. If the asset hasn't been cooked yet, skip it —
-            // the legacy sourcePath import path still works.
+            // If the asset hasn't been cooked yet, skip it — the source
+            // import path still works.
             else if (ctx.cookedPathLookup) {
                 std::string cooked = ctx.cookedPathLookup(mesh->sourcePath);
                 if (!cooked.empty())
@@ -209,6 +216,9 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
     // If cookedPath is present and AssetService is available, load directly
     // from the cooked binary — no Assimp, no glTF import, no worker queue.
     std::string cookedPath = j.value("cookedPath", std::string{});
+    if (!cookedPath.empty() && std::filesystem::path(cookedPath).is_relative()
+        && !ctx.projectRoot.empty())
+        cookedPath = (ctx.projectRoot / cookedPath).string();
     if (!cookedPath.empty() && ctx.assetService) {
         MeshHandle h = ctx.assetService->loadMesh(cookedPath.c_str());
         if (h.valid()) {
@@ -219,10 +229,19 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
                  cookedPath.c_str());
     }
 
-    // ── Legacy path: sourcePath → primitive / glTF / Assimp ────────────
-    std::string srcPath = j.value("sourcePath", std::string{});
+    // ── Source path: AssetRef (uuid + relative) or legacy absolute ─────
+    // UUID resolves through the registry (survives renames/moves); relative
+    // path resolves against the project root; legacy absolute paths are
+    // accepted as-is and re-rooted by assets/ suffix when stale.
+    AssetRef    ref     = assetref::fromJson(j);
+    std::string srcPath = assetref::resolve(ref, ctx.projectRoot, ctx.assetLib);
     std::string srcType = j.value("sourceType", std::string{});
-    if (srcPath.empty()) return;
+    if (srcPath.empty()) {
+        if (!ref.empty())
+            LOG_WARN("Scene", "Mesh reference unresolved (uuid=%s path=%s)",
+                     ref.uuid.c_str(), ref.path.c_str());
+        return;
+    }
 
     bool isPrimitive = (srcType == "primitive") || (srcPath.rfind("engine://primitive/", 0) == 0);
     if (isPrimitive && ctx.primitives && ctx.primitives->ready()) {
@@ -299,42 +318,51 @@ inline void loadLight(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
     e.set<Light>(l);
 }
 
-// ── SkinnedMesh (skeleton handle only; skin matrices are runtime) ────────────
+// ── SkinnedMesh (skeleton handle is session-local — NEVER hits disk) ─────────
+// On disk the component is a presence marker: the skeleton always comes from
+// the entity's mesh source file, and the async import callback wires the
+// fresh handle in. Memory mode (play snapshot) reuses the live handle.
 inline bool hasSkinnedMesh(flecs::entity e) { return e.try_get<SkinnedMesh>() != nullptr; }
 inline void saveSkinnedMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx) {
     const SkinnedMesh* sm = e.try_get<SkinnedMesh>(); if (!sm) return;
-    if (ctx.mode == SerdeMode::Memory) {
-        j["skeletonId"] = sm->skeleton.id;
-    } else {
-        // Disk: save skeleton handle id. Phase 6 will add a skeleton asset
-        // path for cross-session stability; for now handle id is sufficient
-        // since skeletons are re-imported alongside the mesh.
-        j["skeletonId"] = sm->skeleton.id;
-    }
+    if (ctx.mode == SerdeMode::Memory)
+        j["skeletonId"] = sm->skeleton.id;     // same-session handle reuse
+    else
+        j = nlohmann::json::object();          // presence marker only
 }
-inline void loadSkinnedMesh(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
+inline void loadSkinnedMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
     SkinnedMesh sm;
-    sm.skeleton.id = j.value("skeletonId", 0u);
+    if (ctx.mode == SerdeMode::Memory)
+        sm.skeleton.id = j.value("skeletonId", 0u);
+    // Disk: handle stays invalid — the import callback resolves it.
+    // (Legacy "skeletonId" in old scene files is deliberately ignored:
+    // it was a load-order-dependent slot index, not an identity.)
     e.set<SkinnedMesh>(sm);
 }
 
-// ── Animator (playback state) ────────────────────────────────────────────────
+// ── Animator (playback state + semantic clip selection) ──────────────────────
+// The clip is identified by its index within the mesh's source file
+// (clipIndex) — stable across sessions. The runtime handle is session-local:
+// serialized only in Memory mode, resolved by the import callback on disk load.
 inline bool hasAnimator(flecs::entity e) { return e.try_get<Animator>() != nullptr; }
 inline void saveAnimator(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx) {
     const Animator* a = e.try_get<Animator>(); if (!a) return;
-    if (ctx.mode == SerdeMode::Memory) {
-        j["clipId"] = a->clip.id;
-    } else {
-        j["clipId"] = a->clip.id;
-    }
+    if (ctx.mode == SerdeMode::Memory)
+        j["clipId"] = a->clip.id;              // same-session handle reuse
+    j["clipIndex"] = a->clipIndex;
     j["time"]    = a->time;
     j["speed"]   = a->speed;
     j["playing"] = a->playing;
     j["looping"] = a->looping;
 }
-inline void loadAnimator(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
+inline void loadAnimator(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
     Animator a;
-    a.clip.id = j.value("clipId", 0u);
+    if (ctx.mode == SerdeMode::Memory)
+        a.clip.id = j.value("clipId", 0u);
+    // Disk: clip handle stays invalid — the import callback resolves
+    // clipIndex against the freshly imported clip list. (Legacy "clipId"
+    // is ignored: load-order-dependent slot index.)
+    a.clipIndex = j.value("clipIndex", 0);
     a.time    = j.value("time", 0.0f);
     a.speed   = j.value("speed", 1.0f);
     a.playing = j.value("playing", false);

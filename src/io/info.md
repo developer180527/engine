@@ -26,6 +26,17 @@ the background cook service.
   - `AssimpImporter` — FBX, OBJ, COLLADA, 3DS, PLY, STL, Blend. FBX uses
     `PRESERVE_PIVOTS=false` (see `src/animation/info.md` for the precision
     consequences).
+- **`AssetRef`** (`asset_ref.h`) — THE way scenes reference assets on disk:
+  `{"asset": "<uuid>", "path": "assets/..."}`. UUID (assetlib) is the
+  identity — survives sessions, machines, renames and moves (the registry
+  re-matches moved files by content hash at scan time). The path is
+  project-relative, never absolute. Resolution: uuid → registry → current
+  path; then relative path; legacy absolute paths are tolerated read-only
+  and re-rooted by assets/ suffix. Session handles (registry slot indices)
+  must NEVER be serialized — they're load-order-dependent. Skeleton/clip
+  references use semantic selection instead (`Animator::clipIndex` within
+  the mesh's source file), resolved by the import callback.
+  `scene_resave` (tools/) migrates legacy scenes to this format.
 - **Scene serialization** (`scene_serializer.h`, `entity_serializer.h`) —
   JSON `.scene` files; component-by-component (de)serialization via
   `AssetStorage` (bundle of all content registries). Two load paths:
@@ -60,4 +71,3 @@ returns `skipped`).
 
 ## Future Work
 - Custom asset type registration (cooker + loader pairs from plugins).
-- Fix stale `Animator.clip` handle serialization in `loadAsync` callback.

@@ -401,10 +401,38 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
                 ++changed;
             }
         } else {
+            auto newHash=hashFile(entry.path());
+
+            // Moved/renamed file? Same content hash as a record whose source
+            // file is gone — re-point that record instead of minting a new
+            // UUID, so scene references (which key on UUID) survive renames.
+            std::optional<AssetRecord> moved;
+            for (auto& rec:all()) {
+                if (rec.sourceHash!=newHash || rec.sourcePath==rel) continue;
+                if (seen.count(rec.sourcePath)) continue;            // still present
+                if (std::filesystem::exists(projectRoot/rec.sourcePath)) continue;
+                moved=rec; break;
+            }
+            if (moved) {
+                std::printf("[AssetLib] Moved: %s -> %s (%s)\n",
+                            moved->sourcePath.c_str(),rel.c_str(),
+                            moved->uuid.toString().c_str());
+                moved->sourcePath=rel;
+                // Content is identical, so an existing cooked binary is still
+                // valid; only revive records previously marked Missing.
+                if (moved->state==AssetState::Missing)
+                    moved->state=moved->cookedPath.empty()
+                        ? AssetState::Registered : AssetState::Ready;
+                fillStat(*moved,entry.path());
+                update(*moved);
+                ++changed;
+                continue;
+            }
+
             AssetRecord rec;
             rec.uuid=UUID::generate(); rec.type=assetTypeFromExtension(ext);
             rec.state=AssetState::Registered; rec.sourcePath=rel;
-            rec.sourceHash=hashFile(entry.path());
+            rec.sourceHash=newHash;
             fillStat(rec,entry.path());
             insert(rec);
             std::printf("[AssetLib] New: %s -> %s\n",rel.c_str(),rec.uuid.toString().c_str());

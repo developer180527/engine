@@ -200,3 +200,12 @@ target_link_libraries(engine_project PRIVATE engine_core)
 set_target_properties(engine_project PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+# ── scene_resave — scene migration + serializer round-trip harness ──────────
+# Loads a project's scene (waiting for async imports), saves it back in the
+# current format. Upgrades legacy scenes to AssetRef references.
+add_executable(scene_resave tools/scene_resave.cpp)
+target_link_libraries(scene_resave PRIVATE engine_runtime)
+set_target_properties(scene_resave PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)

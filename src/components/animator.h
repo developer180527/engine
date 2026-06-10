@@ -8,7 +8,10 @@
 //
 // Requires SkinnedMesh + MeshRenderer on the same entity.
 struct Animator {
-    AnimClipHandle clip;          // currently playing clip
+    AnimClipHandle clip;          // currently playing clip (session-local handle)
+    int            clipIndex = 0; // which clip in the mesh's source file —
+                                  // the cross-session identity; the loader
+                                  // resolves it to `clip` after import
     float          time     = 0.0f;
     float          speed    = 1.0f;
     bool           playing  = false;

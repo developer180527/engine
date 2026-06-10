@@ -3,7 +3,8 @@
     {
       "id": 1560048093920929339,
       "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
+        "asset": "d4315c18-df41-460e-afe2-8cbe130168dd",
+        "path": "assets/Television_01_4k-2_(gltf)/Television_01_4k.gltf"
       },
       "name": "Television_01_4k",
       "transform": {
@@ -28,7 +29,7 @@
     {
       "id": 10527567801639476244,
       "meshRenderer": {
-        "sourcePath": "engine://primitive/cube",
+        "path": "engine://primitive/cube",
         "sourceType": "primitive"
       },
       "name": "Cube",
@@ -54,7 +55,8 @@
     {
       "id": 5096898856242760390,
       "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Medieval Village MegaKit[Standard]/glTF/DoorFrame_Flat_Brick.gltf"
+        "asset": "3f8a49eb-4319-4699-ad7e-0badda1b465d",
+        "path": "assets/Medieval Village MegaKit[Standard]/glTF/DoorFrame_Flat_Brick.gltf"
       },
       "name": "DoorFrame_Flat_Brick",
       "transform": {
@@ -79,7 +81,7 @@
     {
       "id": 15386141648548072725,
       "meshRenderer": {
-        "sourcePath": "engine://primitive/cube",
+        "path": "engine://primitive/cube",
         "sourceType": "primitive"
       },
       "name": "Cube",
@@ -123,7 +125,7 @@
     {
       "id": 4286930083610790379,
       "meshRenderer": {
-        "sourcePath": "engine://primitive/plane",
+        "path": "engine://primitive/plane",
         "sourceType": "primitive"
       },
       "name": "Ground",
@@ -167,7 +169,7 @@
     {
       "id": 16798516589302216177,
       "meshRenderer": {
-        "sourcePath": "engine://primitive/sphere",
+        "path": "engine://primitive/sphere",
         "sourceType": "primitive"
       },
       "name": "Sphere",
@@ -219,7 +221,8 @@
       },
       "id": 1423140140260966028,
       "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Demon_Mask.glb"
+        "asset": "0db5546a-d8a8-4f3c-9a4c-2e4f06b78ac1",
+        "path": "assets/Demon_Mask.glb"
       },
       "name": "Demon_Mask",
       "script": {
@@ -245,34 +248,34 @@
       }
     },
     {
-      "id": 9951053149843392138,
+      "id": 16454771424408540309,
       "light": {
-        "castShadows": true,
+        "castShadows": false,
         "color": [
           1.0,
-          0.7878241539001465,
-          0.29182881116867065
+          1.0,
+          1.0
         ],
-        "intensity": 3.0,
-        "range": 15.0,
+        "intensity": 25.0,
+        "range": 20.0,
         "spotInner": 25.0,
         "spotOuter": 35.0,
         "temperatureK": 6500.0,
-        "type": 0,
+        "type": 1,
         "useTemperature": false
       },
-      "name": "DirectionalLight",
+      "name": "PointLight",
       "transform": {
         "position": [
-          0.0,
-          0.0,
-          0.0
+          -6.3932294845581055,
+          0.941573977470398,
+          3.2572083473205566
         ],
         "rotation": [
-          -0.6162239909172058,
-          0.3457129895687103,
-          0.34472283720970154,
-          0.6179940104484558
+          0.0,
+          0.0,
+          0.0,
+          1.0
         ],
         "scale": [
           1.0,
@@ -315,41 +318,6 @@
           1.0,
           1.0,
           1.0
-        ]
-      }
-    },
-    {
-      "animator": {
-        "clipId": 1,
-        "looping": true,
-        "playing": true,
-        "speed": 1.0,
-        "time": 2.6984448432922363
-      },
-      "id": 14482808191543660469,
-      "meshRenderer": {
-        "sourcePath": "/Users/venugopal/Developer/engine/assets/Animations/Double Dagger Stab.fbx"
-      },
-      "name": "Double Dagger Stab",
-      "skinnedMesh": {
-        "skeletonId": 1
-      },
-      "transform": {
-        "position": [
-          -16.291027069091797,
-          0.0001524801045889035,
-          0.0
-        ],
-        "rotation": [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ],
-        "scale": [
-          0.00607925932854414,
-          0.00607925932854414,
-          0.00607925932854414
         ]
       }
     }

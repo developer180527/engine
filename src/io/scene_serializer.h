@@ -70,8 +70,10 @@ inline bool save(const std::filesystem::path& path,
     assignMissingIds(ecs);                              // before the query: set<> is illegal mid-iteration
 
     SerdeContext ctx;
-    ctx.mode       = SerdeMode::Disk;
-    ctx.meshLookup = [&assets](MeshHandle h) -> const Mesh* { return assets.getMesh(h); };
+    ctx.mode        = SerdeMode::Disk;
+    ctx.meshLookup  = [&assets](MeshHandle h) -> const Mesh* { return assets.getMesh(h); };
+    ctx.projectRoot = projectRoot;
+    ctx.assetLib    = assetLib;
 
     // When the assetlib DB is available, resolve source paths → cooked paths
     // so runtime loading can skip Assimp and load straight from cooked binaries.
@@ -118,7 +120,9 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
                       AsyncLoader&      loader,
                       ImporterRegistry& importers,
                       PrimitiveLibrary* primitives = nullptr,
-                      AssetService*     assetService = nullptr) {
+                      AssetService*     assetService = nullptr,
+                      const std::filesystem::path& projectRoot = {},
+                      assetlib::AssetRegistry*     assetLib = nullptr) {
     if (!std::filesystem::exists(scenePath)) {
         LOG_WARN("Scene", "Not found: %s", scenePath.string().c_str());
         return false;
@@ -140,6 +144,8 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
     ctx.storage      = &storage;
     ctx.primitives   = primitives;
     ctx.pendingAsync = &pending;
+    ctx.projectRoot  = projectRoot;
+    ctx.assetLib     = assetLib;
 
     for (const auto& je : scene.value("entities", nlohmann::json::array()))
         EntitySerde::createEntity(ecs, je, ctx, IdPolicy::Preserve);
@@ -158,19 +164,30 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
                 flecs::entity e = pw->entity(eid);
                 if (e.id() == 0 || !e.is_alive()) return;
                 e.set<MeshRenderer>({r.mesh});
-                // Restore skeletal animation if the asset has bones
+                // Restore skeletal animation if the asset has bones.
+                // Handles are session-local — the scene file stores only the
+                // semantic clip selection (Animator::clipIndex); both the
+                // skeleton and clip handles are resolved HERE, from this
+                // import, never from disk.
                 if (r.skeleton.valid()) {
                     SkinnedMesh sm;
                     sm.skeleton = r.skeleton;
                     e.set<SkinnedMesh>(sm);
-                    if (!e.has<Animator>()) {
-                        Animator anim;
-                        if (!r.clips.empty()) {
-                            anim.clip    = r.clips[0];
-                            anim.playing = true;
-                        }
-                        e.set<Animator>(anim);
+
+                    Animator anim;
+                    bool hadAnimator = false;
+                    if (const Animator* a = e.try_get<Animator>()) {
+                        anim = *a;
+                        hadAnimator = true;
                     }
+                    if (!r.clips.empty()) {
+                        int idx = anim.clipIndex;
+                        if (idx < 0 || idx >= (int)r.clips.size()) idx = 0;
+                        anim.clipIndex = idx;
+                        anim.clip      = r.clips[idx];
+                        if (!hadAnimator) anim.playing = true; // sensible default
+                    }
+                    e.set<Animator>(anim);
                 }
             });
     }

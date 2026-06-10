@@ -73,7 +73,9 @@ public:
                                    m_loader,
                                    m_rt.ctx().importers,
                                    m_rt.ctx().primitives,
-                                   m_rt.ctx().assetService);
+                                   m_rt.ctx().assetService,
+                                   ctx.projectRoot,
+                                   m_rt.ctx().assetLib);
 
         // Selection restore: entities with Name exist immediately after
         // loadAsync (transform + name are set synchronously).

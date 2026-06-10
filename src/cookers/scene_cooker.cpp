@@ -78,21 +78,39 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
         if (je.contains("meshRenderer")) {
             ent.componentMask |= assetlib::kComp_MeshRenderer;
             const auto& mr = je["meshRenderer"];
-            std::string srcPath    = mr.value("sourcePath", std::string{});
+            // New format: "asset" (uuid) + "path" (project-relative).
+            // Legacy: "sourcePath" (absolute). The cooked binary stores an
+            // absolute-or-relative source path string for the runtime loader.
+            std::string srcUuid    = mr.value("asset", std::string{});
+            std::string srcPath    = mr.value("path", std::string{});
+            if (srcPath.empty())
+                srcPath = mr.value("sourcePath", std::string{});
             std::string srcType    = mr.value("sourceType", std::string{});
             std::string cookedPath = mr.value("cookedPath", std::string{});
 
-            // If no cookedPath in the JSON, try to resolve it via the asset DB
-            if (cookedPath.empty() && !srcPath.empty() && assetLib
-                    && !projectRoot.empty()
+            // Resolve cookedPath via the asset DB: UUID first (survives
+            // renames), then source-relative path.
+            if (cookedPath.empty() && assetLib
                     && srcPath.rfind("engine://", 0) != 0) {
-                std::error_code ec;
-                auto rel = std::filesystem::relative(srcPath, projectRoot, ec);
-                if (!ec && !rel.empty()) {
-                    auto rec = assetLib->findBySourcePath(rel.generic_string());
-                    if (rec && rec->state == assetlib::AssetState::Ready
-                            && !rec->cookedPath.empty())
-                        cookedPath = rec->cookedPath;
+                std::optional<assetlib::AssetRecord> rec;
+                if (!srcUuid.empty())
+                    rec = assetLib->findByUUID(assetlib::UUID::fromString(srcUuid));
+                if (!rec && !srcPath.empty() && !projectRoot.empty()) {
+                    std::string rel = srcPath;
+                    if (std::filesystem::path(srcPath).is_absolute()) {
+                        std::error_code ec;
+                        auto r = std::filesystem::relative(srcPath, projectRoot, ec);
+                        if (ec || r.empty()) rel.clear();
+                        else rel = r.generic_string();
+                    }
+                    if (!rel.empty())
+                        rec = assetLib->findBySourcePath(rel);
+                }
+                if (rec && rec->state == assetlib::AssetState::Ready
+                        && !rec->cookedPath.empty()) {
+                    cookedPath = rec->cookedPath;
+                    // Keep the runtime's source fallback current too.
+                    if (!rec->sourcePath.empty()) srcPath = rec->sourcePath;
                 }
             }
 
