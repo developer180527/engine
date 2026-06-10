@@ -28,6 +28,37 @@
 
 namespace fs = std::filesystem;
 
+// ── Host-side adapter ────────────────────────────────────────────────────────
+// Wraps the module's C function table as an IEnginePlugin for the registry.
+// This object is HOST code — only the table's function pointers reach into
+// the module, and every call null-checks. No C++ type crosses the boundary.
+class GameModuleAdapter final : public IEnginePlugin {
+public:
+    explicit GameModuleAdapter(EngineGameModuleV1* t) : m_t(t) {}
+
+    const char* name()    const override { return m_t->name    ? m_t->name    : "game"; }
+    const char* version() const override { return m_t->version ? m_t->version : "?"; }
+
+    void onAttach(RuntimeContext& c) override { if (m_t->attach) m_t->attach(m_t->user, &c); }
+    void onDetach()                  override { if (m_t->detach) m_t->detach(m_t->user); }
+    void onSimulationStart(flecs::world& w) override {
+        if (m_t->simStart) m_t->simStart(m_t->user, w.c_ptr());
+    }
+    void onSimulationStop() override { if (m_t->simStop) m_t->simStop(m_t->user); }
+    void onUpdate(flecs::world& w, float dt) override {
+        if (m_t->update) m_t->update(m_t->user, w.c_ptr(), dt);
+    }
+    void onPhysicsStep(flecs::world& w, float dt) override {
+        if (m_t->physicsStep) m_t->physicsStep(m_t->user, w.c_ptr(), dt);
+    }
+    void onPostPhysics(flecs::world& w) override {
+        if (m_t->postPhysics) m_t->postPhysics(m_t->user, w.c_ptr());
+    }
+
+private:
+    EngineGameModuleV1* m_t;
+};
+
 // ── Module loader ────────────────────────────────────────────────────────────
 // dlopen caches by path/inode; loading a COPY sidesteps any staleness and
 // lets the build relink the original while the old code still runs.
@@ -52,43 +83,63 @@ public:
             return false;
         }
 
-        auto create  = (EngineCreateGameFn)    dlsym(m_handle, "engineCreateGame");
-        auto destroy = (EngineDestroyGameFn)   dlsym(m_handle, "engineDestroyGame");
-        auto apiVer  = (EngineGameApiVersionFn)dlsym(m_handle, "engineGameApiVersion");
-        auto abi     = (EngineGameAbiFingerprintFn)dlsym(m_handle, "engineGameAbiFingerprint");
-        if (!create || !destroy || !apiVer || !abi) {
-            LOG_ERROR("Host", "Module missing ENGINE_GAME_MODULE exports");
+        auto create  = (EngineGameModuleCreateV1Fn) dlsym(m_handle, "engineGameModuleCreateV1");
+        auto destroy = (EngineGameModuleDestroyV1Fn)dlsym(m_handle, "engineGameModuleDestroyV1");
+        if (!create || !destroy) {
+            LOG_ERROR("Host", "Module missing ENGINE_GAME_MODULE exports "
+                      "(engineGameModuleCreateV1/DestroyV1)");
             unloadLibrary();
             return false;
         }
-        if (apiVer() != ENGINE_GAME_API_VERSION) {
-            LOG_ERROR("Host", "Module API version %d != host %d — rebuild "
-                      "against the current SDK", apiVer(), ENGINE_GAME_API_VERSION);
-            unloadLibrary();
-            return false;
-        }
-        // ABI fingerprint: compiler + C++ standard + api + build mode must
-        // match exactly — a debug module against a release host (or a
-        // different compiler) corrupts memory in ways no version int catches.
-        if (std::string(abi()) != ENGINE_ABI_FINGERPRINT) {
-            LOG_ERROR("Host", "ABI mismatch:\n  host:   %s\n  module: %s",
-                      ENGINE_ABI_FINGERPRINT, abi());
-            unloadLibrary();
-            return false;
-        }
-        // Optional hook: tell the module why it's being loaded.
-        if (auto reason = (EngineGameLoadReasonFn)dlsym(m_handle, "engineGameLoadReason"))
-            reason(m_generation <= 1 ? ENGINE_MODULE_LOAD_INITIAL
-                                     : ENGINE_MODULE_LOAD_HOTRELOAD);
 
-        m_destroy = destroy;
-        m_plugin  = std::shared_ptr<IEnginePlugin>(
-            create(), [destroy](IEnginePlugin* p) { if (p) destroy(p); });
-        if (!m_plugin) {
-            LOG_ERROR("Host", "engineCreateGame returned null");
+        EngineGameModuleV1* t = create();
+        if (!t) {
+            LOG_ERROR("Host", "engineGameModuleCreateV1 returned null");
             unloadLibrary();
             return false;
         }
+        auto refuse = [&](void) { destroy(t); unloadLibrary(); return false; };
+
+        // ── Compatibility gauntlet ──────────────────────────────────────
+        if (t->structSize != sizeof(EngineGameModuleV1)) {
+            LOG_ERROR("Host", "Table size %u != host %zu — SDK mismatch, "
+                      "rebuild the module", t->structSize,
+                      sizeof(EngineGameModuleV1));
+            return refuse();
+        }
+        if (t->apiVersion != ENGINE_GAME_API_VERSION) {
+            LOG_ERROR("Host", "Module API version %u != host %d — rebuild "
+                      "against the current SDK", t->apiVersion,
+                      ENGINE_GAME_API_VERSION);
+            return refuse();
+        }
+        // Compiler + C++ standard + build mode must match exactly — a debug
+        // module against a release host corrupts memory in ways no version
+        // int catches.
+        if (!t->abiFingerprint ||
+            std::string(t->abiFingerprint) != ENGINE_ABI_FINGERPRINT) {
+            LOG_ERROR("Host", "ABI mismatch:\n  host:   %s\n  module: %s",
+                      ENGINE_ABI_FINGERPRINT,
+                      t->abiFingerprint ? t->abiFingerprint : "(null)");
+            return refuse();
+        }
+        // World data SURVIVES reloads; a module built against changed
+        // component layouts would misread live ECS memory. Refuse, restart.
+        if (t->componentLayoutHash != engine_abi::componentLayoutHash()) {
+            LOG_ERROR("Host", "Component layout changed since the host was "
+                      "built — RESTART engine_host (live world data would be "
+                      "misread by the new module)");
+            return refuse();
+        }
+
+        if (t->loadReason)
+            t->loadReason(t->user, m_generation <= 1
+                          ? ENGINE_MODULE_LOAD_INITIAL
+                          : ENGINE_MODULE_LOAD_HOTRELOAD);
+
+        m_table   = t;
+        m_destroy = destroy;
+        m_plugin  = std::make_shared<GameModuleAdapter>(t); // host-side object
         return true;
     }
 
@@ -100,9 +151,9 @@ public:
             if (engine.simulating()) m_plugin->onSimulationStop();
             m_plugin->onDetach();
             engine.plugins().remove(m_plugin.get());
-            m_plugin.reset();        // destroyed by module code, pre-dlclose
+            m_plugin.reset();        // host-side adapter — safe anywhere
         }
-        unloadLibrary();
+        unloadLibrary();             // destroys the table, then dlcloses
 
         if (!load(sourcePath)) return false;
         engine.plugins().add(m_plugin);
@@ -114,10 +165,9 @@ public:
         return true;
     }
 
-    // Tear down the game plugin while the module code is still loaded.
-    // MUST run before EngineRuntime::shutdown destroys nothing module-side:
-    // the shared_ptr deleter lives inside the dylib, so every reference has
-    // to drop before dlclose.
+    // Tear down the game plugin while the module code is still loaded —
+    // the table and the module's instance must be destroyed (module-side
+    // destroy fn) strictly before dlclose.
     void shutdown(EngineRuntime& engine) {
         if (m_plugin) {
             if (engine.simulating()) m_plugin->onSimulationStop();
@@ -132,14 +182,18 @@ public:
 
 private:
     void unloadLibrary() {
+        if (m_table && m_destroy) m_destroy(m_table);  // module-side delete
+        m_table   = nullptr;
+        m_destroy = nullptr;
         if (m_handle) { dlclose(m_handle); m_handle = nullptr; }
         std::error_code ec;
         if (!m_tempPath.empty()) fs::remove(m_tempPath, ec);
     }
 
-    void*                          m_handle = nullptr;
-    std::shared_ptr<IEnginePlugin> m_plugin;
-    EngineDestroyGameFn            m_destroy = nullptr;
+    void*                          m_handle  = nullptr;
+    std::shared_ptr<IEnginePlugin> m_plugin;            // host-side adapter
+    EngineGameModuleV1*            m_table   = nullptr; // module-owned
+    EngineGameModuleDestroyV1Fn    m_destroy = nullptr;
     fs::path                       m_tempPath;
     int                            m_generation = 0;
 };
