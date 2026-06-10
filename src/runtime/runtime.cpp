@@ -1,5 +1,6 @@
 #include "runtime/runtime.h"
 #include "runtime/glfw_platform.h"
+#include "runtime/logger.h"
 
 #include <cstdio>
 #include <utility>
@@ -27,10 +28,18 @@ bool EngineRuntime::init(const EngineConfig& cfg) {
 bool EngineRuntime::init(const EngineConfig& cfg,
                          std::unique_ptr<IPlatform> platform) {
     m_width = cfg.width; m_height = cfg.height; m_fov = cfg.fov;
+
+    // Project loads first so the window title can default to its name.
+    m_project = cfg.projectRoot.empty()
+        ? ProjectContext::autoDetect()
+        : ProjectContext::load(cfg.projectRoot);
+    LOG_INFO("Project", "Opened: %s", m_project.projectRoot.string().c_str());
+
+    const std::string title = cfg.title.empty() ? m_project.name : cfg.title;
     m_platform = std::move(platform);
-    if (!m_platform->init({cfg.title, cfg.width, cfg.height})) return false;
+    if (!m_platform->init({title, cfg.width, cfg.height})) return false;
     if (!initRenderer(cfg))  return false;
-    if (!initSystems())      return false;
+    if (!initSystems(cfg))   return false;
     buildDefaultScene();
     return true;
 }
@@ -48,28 +57,43 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
                            m_skeletons);
 }
 
-bool EngineRuntime::initSystems() {
-    m_project = ProjectContext::autoDetect();
-    std::printf("[Runtime] Assets root: %s\n",
-                m_project.assetsRoot.string().c_str());
-
+bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_importers.registerImporter(std::make_unique<GltfImporter>());
     m_importers.registerImporter(std::make_unique<AssimpImporter>());
 
-    // AssetService — created with registries; assetLib + projectRoot
-    // are wired later from main.cpp via setAssetLib() / setProjectRoot().
+    // Asset database — open + scan so handles resolve from the first frame.
+    // CookService (editor/CLI tooling) opens its own write connection (WAL).
+    const auto cacheRoot = m_project.projectRoot / ".cache";
+    if (cfg.openAssetDatabase && !m_project.projectRoot.empty()) {
+        const auto dbPath = cacheRoot / "registry.db";
+        if (m_assetLib.open(dbPath)) {
+            int n = 0;
+            if (std::filesystem::exists(m_project.assetsRoot))
+                n = m_assetLib.scan(m_project.assetsRoot, m_project.projectRoot);
+            LOG_INFO("AssetLib", "Registry ready — %zu asset(s), %d new/updated",
+                     m_assetLib.all().size(), n);
+        } else {
+            LOG_WARN("AssetLib", "Could not open registry at: %s",
+                     dbPath.string().c_str());
+        }
+    }
+
+    // AssetService — async mesh/texture loading for scripts + scene streaming.
     m_assetService = std::make_unique<AssetService>(AssetService::Config{
         m_assets, m_textures, m_materials});
+    m_assetService->setAssetLib(&m_assetLib);
+    m_assetService->setProjectRoot(m_project.projectRoot);
 
     // SceneService — built on top of AssetService for binary scene loading.
-    // cacheRoot is wired later from main.cpp alongside AssetService config.
     m_sceneService = std::make_unique<SceneService>(SceneService::Config{
         *m_assetService, m_assets, m_textures, m_materials, m_ecs, &m_primitives});
+    m_sceneService->setCacheRoot(cacheRoot);
 
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
         m_ecs, m_assets, m_textures,
         m_materials, m_project, m_importers});
     m_primitives.init(m_assets);
+    m_ctx->assetLib      = &m_assetLib;
     m_ctx->primitives    = &m_primitives;
     m_ctx->assetService  = m_assetService.get();
     m_ctx->sceneService  = m_sceneService.get();

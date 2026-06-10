@@ -5,6 +5,7 @@
 #include "animation/skeleton_registry.h"
 #include "animation/clip_registry.h"
 #include <chrono>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -18,10 +19,18 @@
 #include "systems/animator_system.h"
 
 struct EngineConfig {
-    std::string title  = "Engine";
+    // Empty title => use the project name from project.json.
+    std::string title;
     int         width  = 1280;
     int         height = 720;
     float       fov    = 60.0f;
+
+    // Empty => auto-detect (walk up from cwd looking for project.json).
+    std::filesystem::path projectRoot;
+
+    // Open <projectRoot>/.cache/registry.db and scan the assets folder at
+    // startup. Disable for tools that bring their own database connection.
+    bool openAssetDatabase = true;
 };
 
 // Frame coordinator: owns platform, the ECS world + content systems, plugin
@@ -79,6 +88,8 @@ public:
     IPlatform&       platform()     { return *m_platform; }
     bool             headless() const { return m_headless; }
     RuntimeContext&  ctx()          { return *m_ctx; }
+    ProjectContext&  project()      { return m_project; }
+    assetlib::AssetRegistry& assetLib() { return m_assetLib; }
 
     // Plugins — register via plugins().add(...) after init(), then call
     // attachPlugins() once. detachAll happens automatically in shutdown().
@@ -115,6 +126,9 @@ private:
     AnimClipRegistry m_clips;
     ProjectContext   m_project;
     ImporterRegistry m_importers;
+    // Asset database (SQLite, WAL) — read connection for the main thread.
+    // CookService and other writers open their own connections.
+    assetlib::AssetRegistry m_assetLib;
 
     std::unique_ptr<AssetService>   m_assetService;
     std::unique_ptr<SceneService>   m_sceneService;
@@ -130,7 +144,7 @@ private:
     PluginRegistry m_plugins;
 
     bool initRenderer(const EngineConfig& cfg);
-    bool initSystems();
+    bool initSystems(const EngineConfig& cfg);
     void buildDefaultScene();
     void tickSystems(float dt, bool paused);
 };
