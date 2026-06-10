@@ -25,8 +25,11 @@ struct EngineConfig {
     int         height = 720;
     float       fov    = 60.0f;
 
-    // Empty => auto-detect (walk up from cwd looking for project.json).
+    // Empty => auto-detect (walk up from cwd looking for project.json),
+    // unless autoDetectProject is false — then the engine boots with NO
+    // project and the app opens one later via openProject() (editor hub).
     std::filesystem::path projectRoot;
+    bool autoDetectProject = true;
 
     // Open <projectRoot>/.cache/registry.db and scan the assets folder at
     // startup. Disable for tools that bring their own database connection.
@@ -49,6 +52,14 @@ public:
     bool init(const EngineConfig& cfg = {});
     bool init(const EngineConfig& cfg, std::unique_ptr<IPlatform> platform);
     void shutdown();
+
+    // ── Project lifecycle ───────────────────────────────────────────────────
+    // Projects can open at init (cfg.projectRoot / auto-detect) or later —
+    // the editor hub boots projectless, then calls openProject() on pick.
+    // Opening loads project.json, opens + scans the asset database, points
+    // AssetService/SceneService at the project, and retitles the window.
+    bool hasProject() const { return !m_project.projectRoot.empty(); }
+    bool openProject(const std::filesystem::path& root);
 
     // ── Frame loop ──────────────────────────────────────────────────────────
     // The runtime owns the loop skeleton; the app supplies the per-frame body.
@@ -135,6 +146,7 @@ private:
     // Platform — abstract; default is GlfwPlatform, swappable at init()
     std::unique_ptr<IPlatform> m_platform;
     bool  m_headless = false;
+    bool  m_openAssetDatabase = true;
     int   m_width  = 1280;
     int   m_height = 720;
     float m_fov    = 60.0f;

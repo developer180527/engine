@@ -1,16 +1,20 @@
 #include "runtime/runtime.h"
 #include "runtime/glfw_platform.h"
 #include "editor/editor_app.h"
+#include "editor/project_hub.h"
+#include "editor/editor_theme.h"
+#include "editor/imgui_bgfx.h"
 #include "io/project_context.h"
 #include "io/cook_service.h"
 #include "runtime/logger.h"
 #include <assetlib/asset_registry.h>
 
 int main(int argc, char** argv) {
-    // The runtime self-wires from EngineConfig: project detection, asset
-    // database, services. main() only picks the project root and adds the
-    // editor + cook tooling on top.
+    // Boot flow:
+    //   editor <project-dir>  → open that project directly (CI / scripts)
+    //   editor                → projectless boot, show the project hub first
     EngineConfig cfg;
+    cfg.autoDetectProject = false; // the hub decides, not the cwd
     if (argc > 1 && std::filesystem::is_directory(argv[1])) {
         cfg.projectRoot = argv[1];
         LOG_INFO("Project", "Opening from argument: %s", argv[1]);
@@ -25,14 +29,36 @@ int main(int argc, char** argv) {
     if (!runtime.init(cfg, std::move(platform)))
         return 1;
 
+    // ImGui comes up before either the hub or the editor draws.
+    imguiInit(glfwPlatform->glfwWindow(), 16.0f);
+    applyEditorTheme();
+
+    // ── Project hub — pick or create a project before the editor loads ──
+    if (!runtime.hasProject()) {
+        ProjectHub hub;
+        auto picked = hub.run(runtime);
+        if (picked.empty()) {      // window closed from the hub — clean exit
+            imguiShutdown();
+            runtime.shutdown();
+            return 0;
+        }
+        if (!runtime.openProject(picked)) {
+            LOG_ERROR("Project", "Failed to open: %s", picked.string().c_str());
+            imguiShutdown();
+            runtime.shutdown();
+            return 1;
+        }
+    }
+
     ProjectContext& project = runtime.project();
     project.saveAsLastProject();
+    project::KnownProjects::touch(project.name, project.projectRoot);
 
     // Cook service runs in background — editor is already live.
     // Dev-time tooling, so it lives with the editor, not the runtime.
     auto cacheRoot = project.projectRoot / ".cache";
     CookService cookService(cacheRoot / "registry.db", project.projectRoot,
-                            project.projectRoot / "assets", cacheRoot);
+                            project.assetsRoot, cacheRoot);
 
     EditorApp editor(runtime, glfwPlatform->glfwWindow());
     editor.init();

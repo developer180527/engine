@@ -110,9 +110,9 @@ public:
         LOG_SUCCESS("Project", "Scene saved");
     }
 
+    // Requires ImGui to be initialized already (main.cpp does imguiInit +
+    // applyEditorTheme before the project hub, which also draws ImGui).
     void init() {
-        imguiInit(m_window, 16.0f);
-        applyEditorTheme(); // editor owns its look — runtime stays neutral
         // Input system — register GLFW callbacks + default action bindings
         InputSystem::get().init(m_window);
         auto& map = InputMap::get();

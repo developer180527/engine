@@ -33,17 +33,59 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     m_width = cfg.width; m_height = cfg.height; m_fov = cfg.fov;
 
     // Project loads first so the window title can default to its name.
-    m_project = cfg.projectRoot.empty()
-        ? ProjectContext::autoDetect()
-        : ProjectContext::load(cfg.projectRoot);
-    LOG_INFO("Project", "Opened: %s", m_project.projectRoot.string().c_str());
+    // Resolve the project up front so the window title can use its name.
+    // With autoDetectProject=false and no explicit root, the engine boots
+    // projectless — the app opens one later via openProject() (editor hub).
+    if (!cfg.projectRoot.empty())
+        m_project = ProjectContext::load(cfg.projectRoot);
+    else if (cfg.autoDetectProject)
+        m_project = ProjectContext::autoDetect();
+    // (openProject below does the logging + asset DB once systems exist)
 
-    const std::string title = cfg.title.empty() ? m_project.name : cfg.title;
+    const std::string title = !cfg.title.empty() ? cfg.title
+        : (hasProject() ? m_project.name : std::string("Engine"));
     m_platform = std::move(platform);
     if (!m_platform->init({title, cfg.width, cfg.height})) return false;
     if (!initRenderer(cfg))  return false;
     if (!initSystems(cfg))   return false;
+    if (hasProject()) openProject(m_project.projectRoot); // DB + service wiring
     buildDefaultScene();
+    return true;
+}
+
+bool EngineRuntime::openProject(const std::filesystem::path& root) {
+    namespace fs = std::filesystem;
+    if (!fs::exists(root / "project.json")) {
+        LOG_WARN("Project", "No project.json at: %s", root.string().c_str());
+        return false;
+    }
+    m_project = ProjectContext::load(root);
+    LOG_INFO("Project", "Opened: %s", m_project.projectRoot.string().c_str());
+
+    // Asset database — open + scan so handles resolve immediately.
+    const auto cacheRoot = m_project.projectRoot / ".cache";
+    if (m_openAssetDatabase) {
+        const auto dbPath = cacheRoot / "registry.db";
+        fs::create_directories(cacheRoot);
+        if (m_assetLib.open(dbPath)) {
+            int n = 0;
+            if (fs::exists(m_project.assetsRoot))
+                n = m_assetLib.scan(m_project.assetsRoot, m_project.projectRoot);
+            LOG_INFO("AssetLib", "Registry ready — %zu asset(s), %d new/updated",
+                     m_assetLib.all().size(), n);
+        } else {
+            LOG_WARN("AssetLib", "Could not open registry at: %s",
+                     dbPath.string().c_str());
+        }
+    }
+
+    // Point the content services at the project.
+    if (m_assetService) {
+        m_assetService->setAssetLib(&m_assetLib);
+        m_assetService->setProjectRoot(m_project.projectRoot);
+    }
+    if (m_sceneService) m_sceneService->setCacheRoot(cacheRoot);
+    if (m_platform)     m_platform->setTitle(m_project.name);
     return true;
 }
 
@@ -61,36 +103,17 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
 }
 
 bool EngineRuntime::initSystems(const EngineConfig& cfg) {
+    m_openAssetDatabase = cfg.openAssetDatabase;
     m_importers.registerImporter(std::make_unique<GltfImporter>());
     m_importers.registerImporter(std::make_unique<AssimpImporter>());
-
-    // Asset database — open + scan so handles resolve from the first frame.
-    // CookService (editor/CLI tooling) opens its own write connection (WAL).
-    const auto cacheRoot = m_project.projectRoot / ".cache";
-    if (cfg.openAssetDatabase && !m_project.projectRoot.empty()) {
-        const auto dbPath = cacheRoot / "registry.db";
-        if (m_assetLib.open(dbPath)) {
-            int n = 0;
-            if (std::filesystem::exists(m_project.assetsRoot))
-                n = m_assetLib.scan(m_project.assetsRoot, m_project.projectRoot);
-            LOG_INFO("AssetLib", "Registry ready — %zu asset(s), %d new/updated",
-                     m_assetLib.all().size(), n);
-        } else {
-            LOG_WARN("AssetLib", "Could not open registry at: %s",
-                     dbPath.string().c_str());
-        }
-    }
 
     // AssetService — async mesh/texture loading for scripts + scene streaming.
     m_assetService = std::make_unique<AssetService>(AssetService::Config{
         m_assets, m_textures, m_materials});
-    m_assetService->setAssetLib(&m_assetLib);
-    m_assetService->setProjectRoot(m_project.projectRoot);
 
     // SceneService — built on top of AssetService for binary scene loading.
     m_sceneService = std::make_unique<SceneService>(SceneService::Config{
         *m_assetService, m_assets, m_textures, m_materials, m_ecs, &m_primitives});
-    m_sceneService->setCacheRoot(cacheRoot);
 
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
         m_ecs, m_assets, m_textures,

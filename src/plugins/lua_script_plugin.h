@@ -33,6 +33,7 @@ public:
 
     void onAttach(RuntimeContext& ec) override {
         m_projectRoot = ec.project.projectRoot;
+        m_assetsRoot  = ec.project.assetsRoot;
         if (ec.assetService)
             m_host.setAssetService(ec.assetService);
         if (ec.sceneService)
@@ -251,12 +252,16 @@ private:
         if (const PhysicsServiceRef* ref = gw.try_get<PhysicsServiceRef>())
             m_host.setPhysicsService(ref->svc);
     }
-    // Scan scripts/autorun/ for .lua files. For each one, create a headless
-    // entity with Name + ScriptComponent and add it to the init list.
+    // Scan autorun directories for .lua files. For each one, create a
+    // headless entity with Name + ScriptComponent and add it to the init
+    // list. Canonical location is <assets>/scripts/autorun (v2 layout);
+    // <project>/scripts/autorun is the legacy fallback.
     void collectAutorunScripts(flecs::world& gw,
                                std::vector<Init>& toInit) {
         namespace fs = std::filesystem;
-        fs::path autoDir = m_projectRoot / "scripts" / "autorun";
+        fs::path autoDir = m_assetsRoot / "scripts" / "autorun";
+        if (!fs::exists(autoDir) || !fs::is_directory(autoDir))
+            autoDir = m_projectRoot / "scripts" / "autorun"; // legacy layout
         if (!fs::exists(autoDir) || !fs::is_directory(autoDir)) return;
 
         std::error_code ec;
@@ -292,6 +297,7 @@ private:
     lua_State*  m_L = nullptr;
     ScriptHost  m_host{nullptr};
     std::filesystem::path m_projectRoot;
+    std::filesystem::path m_assetsRoot;
     std::unordered_map<std::string,int> m_moduleRefs;
     std::vector<Instance>        m_instances;
     std::vector<flecs::entity_t> m_autorunEntities;  // headless entities for autorun scripts

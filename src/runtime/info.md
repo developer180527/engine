@@ -49,6 +49,14 @@ systems → animation → `flecs::world::progress()` → scene render.
 - `RuntimeContext` raw pointers are wired in `initSystems` — all non-null
   after a successful `init()` except `assetLib` when `openAssetDatabase=false`.
 
+## Project Lifecycle
+A project can open at init (`cfg.projectRoot`, or auto-detect of the
+last-opened project) or later via `openProject(root)` — the editor hub boots
+with `cfg.autoDetectProject = false` and opens the picked project afterward.
+`openProject` loads project.json, opens + scans the asset database, points
+AssetService/SceneService at the project, and retitles the window
+(`IPlatform::setTitle`). `hasProject()` reports the current state.
+
 ## Simulation Lifecycle
 `startSimulation(InPlace|Snapshot)` / `stopSimulation()` / `tickSimulation(dt)`.
 InPlace simulates the runtime's own world (game: boot = play). Snapshot

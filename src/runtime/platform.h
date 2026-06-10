@@ -37,4 +37,8 @@ public:
     // Block up to timeoutSeconds waiting for events (used while minimized
     // to avoid spinning). Default: no wait — fine for headless platforms.
     virtual void waitEvents(double /*timeoutSeconds*/) {}
+
+    // Update the window title (no-op where there is no window). Used when a
+    // project is opened after init — the title follows the project name.
+    virtual void setTitle(const std::string& /*title*/) {}
 };

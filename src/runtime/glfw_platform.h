@@ -17,6 +17,7 @@ public:
     void  requestClose() override;
     void  framebufferSize(int& w, int& h) const override;
     void  waitEvents(double timeoutSeconds) override;
+    void  setTitle(const std::string& title) override;
 
     GLFWwindow* glfwWindow() const { return m_window; }
 

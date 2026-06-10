@@ -61,6 +61,9 @@ add_library(engine_core STATIC
     cookers/texture_cooker.cpp
     io/cook_service.cpp
 
+    # Project management — scaffolding new projects (canonical v2 layout)
+    io/project_scaffold.cpp
+
     # Single-header library implementation TUs (CPU decode only)
     io/stb_impl.cpp
     io/cgltf_impl.cpp
@@ -186,5 +189,14 @@ add_subdirectory(editor)
 add_executable(engine_cook tools/engine_cook.cpp)
 target_link_libraries(engine_cook PRIVATE engine_core)
 set_target_properties(engine_cook PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ── engine_project — CLI project manager ────────────────────────────────────
+# Create/list projects without the editor: engine_project create <dir>.
+# The editor's project hub calls the same engine_core scaffolding code.
+add_executable(engine_project tools/engine_project.cpp)
+target_link_libraries(engine_project PRIVATE engine_core)
+set_target_properties(engine_project PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )

@@ -5,8 +5,15 @@ The ImGui editor application on top of the `engine_runtime` SDK. This is the
 only layer that links ImGui/ImGuizmo — the runtime stays UI-free.
 
 ## Architecture
-- **`main.cpp`** — entry point: picks the project root, creates the
-  `GlfwPlatform`, inits the runtime, adds the editor + `CookService`.
+- **`main.cpp`** — entry point. `editor <dir>` opens that project directly;
+  `editor` with no args boots projectless and shows the **project hub**
+  first. main owns imguiInit/theme (both hub and editor draw ImGui).
+- **`ProjectHub`** (`project_hub.h`) — fullscreen Projects page shown before
+  the editor (same executable, separate boot phase — deliberately NOT a
+  second app: no IPC, instant transition). Lists `~/.engine/projects.json`
+  (engine_core `KnownProjects`), creates projects via `project::create`
+  (same code as the engine_project CLI), opens by path. Returns the picked
+  root; main calls `runtime.openProject` and proceeds into the editor.
 - **`EditorApp`** (`editor_app.h`) — wires panels into the runtime's frame
   loop via `m_rt.run([this](float dt){ frame(dt); })`. Owns editor-only state:
   camera, selection, undo stack, sim state, the play-mode game world.

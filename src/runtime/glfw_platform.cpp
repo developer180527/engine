@@ -77,3 +77,7 @@ void GlfwPlatform::framebufferSize(int& w, int& h) const {
 void GlfwPlatform::waitEvents(double timeoutSeconds) {
     glfwWaitEventsTimeout(timeoutSeconds);
 }
+
+void GlfwPlatform::setTitle(const std::string& title) {
+    if (m_window) glfwSetWindowTitle(m_window, title.c_str());
+}
