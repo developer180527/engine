@@ -31,5 +31,6 @@ build/sdk_sample
 | `Q / E`      | down / up                       |
 | `Shift`      | fast                            |
 | mouse        | look                            |
-| `Esc`        | toggle mouse capture            |
+| `Esc`        | release the mouse               |
+| left click   | recapture the mouse             |
 | close window | quit                            |

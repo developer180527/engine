@@ -150,7 +150,8 @@ int main() {
         .set<Camera>(cam);
 
     FlyCamera fly;
-    bool mouseCaptured = true;
+    bool mouseCaptured  = true;
+    int  skipLookFrames = 1; // swallow the cursor-warp delta on capture
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     engine.startSimulation(); // boot = play (plugins would tick here)
@@ -158,21 +159,26 @@ int main() {
     engine.run([&](float dt) {
         InputSystem::get().processEvents();
 
-        // Esc toggles mouse capture (so you can reach the close button).
-        if (Input::isKeyPressed(Key::Escape)) {
-            mouseCaptured = !mouseCaptured;
-            glfwSetInputMode(window, GLFW_CURSOR,
-                mouseCaptured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+        // Esc releases the mouse (reach the close button / other windows);
+        // clicking back into the window recaptures it.
+        if (mouseCaptured && Input::isKeyPressed(Key::Escape)) {
+            mouseCaptured = false;
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        } else if (!mouseCaptured && Input::isMousePressed(MouseButton::Left)) {
+            mouseCaptured  = true;
+            skipLookFrames = 1; // ignore the recenter jump
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         }
 
         // ── Mouse look ───────────────────────────────────────────────────
-        if (mouseCaptured) {
+        if (mouseCaptured && skipLookFrames == 0) {
             constexpr float kSens = 0.0025f;
             fly.yaw   -= Input::mouseDeltaX() * kSens; // right drag → look right
             fly.pitch -= Input::mouseDeltaY() * kSens; // down drag  → look down
             if (fly.pitch >  1.55f) fly.pitch =  1.55f;
             if (fly.pitch < -1.55f) fly.pitch = -1.55f;
         }
+        if (skipLookFrames > 0) --skipLookFrames;
 
         // ── WASD/QE fly movement ─────────────────────────────────────────
         {

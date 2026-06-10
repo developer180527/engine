@@ -207,13 +207,17 @@ private:
 
             // ---- Runtime tick (ECS systems + scene render) ----
             // Resize scene FB before rendering — avoids race condition
-            // where tick() renders to old FB while panel shows new empty FB
-            // Always render at >= full window resolution.
-            // If the panel is smaller, ImGui downscales the texture —
-            // downscaling multiple rendered pixels into one display pixel
-            // gives free SSAA and eliminates the aliasing regression.
-            const int renderW = std::max(m_desiredSceneW, m_rt.width());
-            const int renderH = std::max(m_desiredSceneH, m_rt.height());
+            // where tick() renders to old FB while panel shows new empty FB.
+            // The FB aspect MUST equal the panel aspect: the Scene View
+            // stretches the texture to fill the panel, so any mismatch
+            // distorts the image (a strip-shaped panel squishes the scene).
+            // Supersample by a UNIFORM factor (capped 2x) for free SSAA —
+            // per-axis max() would change the aspect.
+            const float ssaa = std::min(2.0f, std::max(1.0f,
+                std::min((float)m_rt.width()  / (float)m_desiredSceneW,
+                         (float)m_rt.height() / (float)m_desiredSceneH)));
+            const int renderW = (int)(m_desiredSceneW * ssaa);
+            const int renderH = (int)(m_desiredSceneH * ssaa);
             // Hysteresis: only recreate FB when size differs by > 8px.
             // Prevents GPU texture thrash during window resize animations.
             const int dw = std::abs(renderW - m_rt.sceneW());
