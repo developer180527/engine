@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <vector>
 #include <memory>
 #include "runtime/plugin.h"
@@ -14,6 +15,15 @@ public:
     // Register a plugin. Must be called before attachAll().
     void add(std::shared_ptr<IEnginePlugin> plugin) {
         m_plugins.push_back(std::move(plugin));
+    }
+
+    // Remove a plugin from the broadcast list WITHOUT calling its lifecycle —
+    // the caller orchestrates detach. Used by hot reload (engine_host), which
+    // must control the exact stop/detach/unload ordering.
+    void remove(IEnginePlugin* p) {
+        m_plugins.erase(std::remove_if(m_plugins.begin(), m_plugins.end(),
+            [p](const std::shared_ptr<IEnginePlugin>& sp) { return sp.get() == p; }),
+            m_plugins.end());
     }
 
     // Call after the runtime context is ready (EngineRuntime::attachPlugins).

@@ -24,6 +24,12 @@ set(FLECS_STATIC ON CACHE BOOL "")
 set(FLECS_SHARED OFF CACHE BOOL "")
 set(FLECS_TESTS OFF CACHE BOOL "")
 add_subdirectory(third_party/flecs)
+# flecs defaults to hidden visibility, which keeps its symbols out of the
+# engine_host export table — hot-reloaded game modules resolve flecs from
+# the host at load time (-undefined dynamic_lookup), so they must be visible.
+set_target_properties(flecs_static PROPERTIES
+    C_VISIBILITY_PRESET   default
+    CXX_VISIBILITY_PRESET default)
 
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "")
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "")
@@ -93,6 +99,7 @@ set_target_properties(sample_minimal PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 add_subdirectory(sdk_sample_game)
+add_subdirectory(samples/hot_reload_game)
 
 # ── Install — `cmake --install build --prefix <sdk-dir>` ────────────────────
 # Produces a relocatable SDK: lib/ (engine + bundled third-party archives),

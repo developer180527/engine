@@ -180,6 +180,32 @@ endif()
 #   target_link_libraries(my_game PRIVATE engine::runtime)
 add_library(engine::runtime ALIAS engine_runtime)
 
+# ── engine::headers — include dirs + defines, ZERO libraries ─────────────────
+# For hot-reloadable game modules (shared libs loaded by engine_host): they
+# compile against engine headers but resolve every symbol from the host
+# process at load time. Linking engine_runtime statically into a module would
+# duplicate engine state — never do it.
+add_library(engine_headers INTERFACE)
+target_include_directories(engine_headers INTERFACE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/components
+    ${CMAKE_CURRENT_SOURCE_DIR}/render
+    ${CMAKE_CURRENT_SOURCE_DIR}/io
+    ${CMAKE_SOURCE_DIR}/third_party/nlohmann
+    ${CMAKE_SOURCE_DIR}/third_party/flecs/include
+    ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bx/include
+    ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bgfx/include
+    ${CMAKE_SOURCE_DIR}/modules/assetlib/include
+)
+target_compile_definitions(engine_headers INTERFACE
+    BGFX_PLATFORM_SUPPORTS_WGSL=0
+    BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>
+)
+target_compile_features(engine_headers INTERFACE cxx_std_20)
+add_library(engine::headers ALIAS engine_headers)
+
 add_subdirectory(editor)
 
 # ── engine_cook — CLI asset cooker ───────────────────────────────────────────
@@ -199,6 +225,17 @@ add_executable(engine_project tools/engine_project.cpp)
 target_link_libraries(engine_project PRIVATE engine_core)
 set_target_properties(engine_project PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ── engine_host — hot-reload dev runner ──────────────────────────────────────
+# Runs a project like a game but loads its logic from a shared library and
+# reloads it live on change: engine_host <project-dir> <module.so>.
+# ENABLE_EXPORTS: the module resolves engine symbols from this executable.
+add_executable(engine_host tools/engine_host.cpp)
+target_link_libraries(engine_host PRIVATE engine_runtime)
+set_target_properties(engine_host PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    ENABLE_EXPORTS ON
 )
 
 # ── scene_resave — scene migration + serializer round-trip harness ──────────
