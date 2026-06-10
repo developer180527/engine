@@ -6,8 +6,8 @@
 #include "animation/clip_registry.h"
 #include <memory>
 #include <string>
-#include <GLFW/glfw3.h>
 #include <bgfx/bgfx.h>
+#include "runtime/platform.h"
 #include "runtime/runtime_context.h"
 #include "runtime/renderer.h"
 #include "core/transform.h"
@@ -31,7 +31,11 @@ public:
     EngineRuntime(const EngineRuntime&)            = delete;
     EngineRuntime& operator=(const EngineRuntime&) = delete;
 
+    // Default platform (GlfwPlatform — stock OS window). Pass your own
+    // IPlatform to embed the engine elsewhere or run headless: a platform
+    // whose nativeWindowHandle() is null skips renderer init entirely.
     bool init(const EngineConfig& cfg = {});
+    bool init(const EngineConfig& cfg, std::unique_ptr<IPlatform> platform);
     void shutdown();
 
     void tick(float dt, const float view[16], const float proj[16], bool pauseSystems = false);
@@ -49,7 +53,8 @@ public:
     int sceneH() const { return m_renderer.sceneH(); }
 
     Renderer&        renderer()     { return m_renderer; }   // pipeline injection, etc.
-    GLFWwindow*      window() const { return m_window; }
+    IPlatform&       platform()     { return *m_platform; }
+    bool             headless() const { return m_headless; }
     RuntimeContext&  ctx()          { return *m_ctx; }
     SkeletonRegistry& skeletons()  { return m_skeletons; }
     AnimClipRegistry& clips()      { return m_clips; }
@@ -61,8 +66,9 @@ public:
     float           fov()    const { return m_fov; }
 
 private:
-    // Platform
-    GLFWwindow* m_window = nullptr;
+    // Platform — abstract; default is GlfwPlatform, swappable at init()
+    std::unique_ptr<IPlatform> m_platform;
+    bool  m_headless = false;
     int   m_width  = 1280;
     int   m_height = 720;
     float m_fov    = 60.0f;
@@ -90,10 +96,8 @@ private:
     flecs::query<Transform, const Spinner> m_spinnerQuery;
     AnimatorSystem m_animatorSystem;
 
-    bool initPlatform(const EngineConfig& cfg);
     bool initRenderer(const EngineConfig& cfg);
     bool initSystems();
     void buildDefaultScene();
     void tickSystems(float dt, bool paused);
-    void shutdownPlatform();
 };

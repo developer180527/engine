@@ -53,6 +53,7 @@ set(ENGINE_SHADER_SOURCES
 add_library(engine_runtime STATIC
     # Runtime core — platform, frame loop, renderer, services
     runtime/runtime.cpp
+    runtime/glfw_platform.cpp
     runtime/renderer.cpp
     runtime/async_loader.cpp
     runtime/asset_service.cpp

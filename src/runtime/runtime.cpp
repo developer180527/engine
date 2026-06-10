@@ -1,25 +1,9 @@
 #include "runtime/runtime.h"
+#include "runtime/glfw_platform.h"
 
 #include <cstdio>
 #include <utility>
 
-// Platform-specific native window handle for bgfx
-#if defined(__APPLE__)
-    #define GLFW_EXPOSE_NATIVE_COCOA
-#elif defined(_WIN32)
-    #define GLFW_EXPOSE_NATIVE_WIN32
-#elif defined(__linux__)
-    // Wayland first, X11 fallback — matches modern distro defaults.
-    // GLFW 3.4+ exposes the Wayland surface via glfwGetWaylandWindow();
-    // older GLFW only has X11. Both defines are harmless if the backend
-    // isn't present: we pick at runtime below.
-    #if defined(GLFW_EXPOSE_NATIVE_WAYLAND) || __has_include(<wayland-client.h>)
-        #define GLFW_EXPOSE_NATIVE_WAYLAND
-    #endif
-    #define GLFW_EXPOSE_NATIVE_X11
-#endif
-#include <GLFW/glfw3.h>
-#include <GLFW/glfw3native.h>
 #include <bgfx/bgfx.h>
 #include <bx/math.h>
 
@@ -37,50 +21,29 @@ EngineRuntime::EngineRuntime()  = default;
 EngineRuntime::~EngineRuntime() = default;
 
 bool EngineRuntime::init(const EngineConfig& cfg) {
+    return init(cfg, std::make_unique<GlfwPlatform>());
+}
+
+bool EngineRuntime::init(const EngineConfig& cfg,
+                         std::unique_ptr<IPlatform> platform) {
     m_width = cfg.width; m_height = cfg.height; m_fov = cfg.fov;
-    if (!initPlatform(cfg))  return false;
+    m_platform = std::move(platform);
+    if (!m_platform->init({cfg.title, cfg.width, cfg.height})) return false;
     if (!initRenderer(cfg))  return false;
     if (!initSystems())      return false;
     buildDefaultScene();
     return true;
 }
 
-bool EngineRuntime::initPlatform(const EngineConfig& cfg) {
-    if (!glfwInit()) {
-        std::printf("[Runtime] GLFW init failed\n");
-        return false;
-    }
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    m_window = glfwCreateWindow(cfg.width, cfg.height,
-                                cfg.title.c_str(), nullptr, nullptr);
-    if (!m_window) {
-        std::printf("[Runtime] Window creation failed\n");
-        return false;
-    }
-    return true;
-}
-
-// Retrieve the platform-specific native window handle that bgfx needs.
-static void* getNativeWindowHandle(GLFWwindow* window) {
-#if defined(__APPLE__)
-    return glfwGetCocoaWindow(window);
-#elif defined(_WIN32)
-    return glfwGetWin32Window(window);
-#elif defined(__linux__)
-    // Prefer Wayland when available (GLFW 3.4+); fall back to X11.
-    #if defined(GLFW_EXPOSE_NATIVE_WAYLAND)
-    if (glfwGetPlatform && glfwGetPlatform() == GLFW_PLATFORM_WAYLAND)
-        return (void*)glfwGetWaylandWindow(window);
-    #endif
-    return (void*)glfwGetX11Window(window);
-#else
-    #error "Unsupported platform — add native window handle retrieval"
-#endif
-}
-
 bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
-    return m_renderer.init(getNativeWindowHandle(m_window),
-                           cfg.width, cfg.height,
+    void* nwh = m_platform->nativeWindowHandle();
+    if (!nwh) {
+        // Headless platform — no GPU. ECS, assets, animation, physics and
+        // scripting still run; render entry points become no-ops.
+        m_headless = true;
+        return true;
+    }
+    return m_renderer.init(nwh, cfg.width, cfg.height,
                            m_ecs, m_assets, m_textures, m_materials,
                            m_skeletons);
 }
@@ -123,6 +86,8 @@ bool EngineRuntime::initSystems() {
 }
 
 void EngineRuntime::buildDefaultScene() {
+    if (m_headless) return; // GPU buffers — nothing to build without a device
+
     bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(
         bgfx::makeRef(primitive_cube::kVertices, sizeof(primitive_cube::kVertices)),
         Vertex::layout());
@@ -158,13 +123,13 @@ void EngineRuntime::buildDefaultScene() {
 void EngineRuntime::resize(int w, int h) {
     if (w == m_width && h == m_height) return;
     m_width = w; m_height = h;
-    m_renderer.resize(w, h);
+    if (!m_headless) m_renderer.resize(w, h);
 }
 
 void EngineRuntime::tick(float dt, const float view[16],
                          const float proj[16], bool pauseSystems) {
     tickSystems(dt, pauseSystems);
-    m_renderer.renderScene(view, proj);
+    if (!m_headless) m_renderer.renderScene(view, proj);
 }
 
 void EngineRuntime::tickSystems(float dt, bool paused) {
@@ -190,11 +155,6 @@ void EngineRuntime::shutdown() {
     m_materials.clear();
     m_textures.clear();
     m_assets.clear();
-    m_renderer.shutdown();
-    shutdownPlatform();
-}
-
-void EngineRuntime::shutdownPlatform() {
-    if (m_window) { glfwDestroyWindow(m_window); m_window = nullptr; }
-    glfwTerminate();
+    if (!m_headless) m_renderer.shutdown();
+    if (m_platform) { m_platform->shutdown(); m_platform.reset(); }
 }

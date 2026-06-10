@@ -1,5 +1,6 @@
 #include <filesystem>
 #pragma once
+#include <GLFW/glfw3.h>
 #include "runtime/runtime.h"
 #include "io/scene_serializer.h"
 #include "editor/editor_icons.h"
@@ -34,7 +35,10 @@
 
 class EditorApp {
 public:
-    explicit EditorApp(EngineRuntime& rt) : m_rt(rt) {}
+    // The editor requires a GLFW-backed platform — it owns the window pointer
+    // for ImGui glue, input callbacks, and cursor capture.
+    EditorApp(EngineRuntime& rt, GLFWwindow* window)
+        : m_rt(rt), m_window(window) {}
     ~EditorApp() = default;
 
     EditorApp(const EditorApp&)            = delete;
@@ -106,10 +110,10 @@ public:
     }
 
     void init() {
-        imguiInit(m_rt.window(), 16.0f);
+        imguiInit(m_window, 16.0f);
         applyEditorTheme(); // editor owns its look — runtime stays neutral
         // Input system — register GLFW callbacks + default action bindings
-        InputSystem::get().init(m_rt.window());
+        InputSystem::get().init(m_window);
         auto& map = InputMap::get();
         map.bindAction("Jump",        Key::Space);
         map.bindAxis  ("MoveForward", Key::W,    Key::S);
@@ -133,7 +137,7 @@ public:
         auto   prev  = clock::now();
         int    lastW = m_rt.width(), lastH = m_rt.height();
 
-        while (!glfwWindowShouldClose(m_rt.window())) {
+        while (!glfwWindowShouldClose(m_window)) {
             // ---- Timing ----
             auto  now = clock::now();
             float dt  = std::min(
@@ -146,7 +150,7 @@ public:
 
             // ---- Resize (runtime handles bgfx::reset) ----
             int fbw, fbh;
-            glfwGetFramebufferSize(m_rt.window(), &fbw, &fbh);
+            glfwGetFramebufferSize(m_window, &fbw, &fbh);
             if (fbw <= 0 || fbh <= 0) {
                 glfwWaitEventsTimeout(0.1);
                 continue;
@@ -180,16 +184,16 @@ public:
             // BeginFrame MUST be outside any Begin/End block —
             // it creates an internal transparent overlay window.
             gizmoBeginFrame();
-            { auto ctx = buildCtx(); gizmoHandleHotkeys(m_rt.window(), ctx); }
+            { auto ctx = buildCtx(); gizmoHandleHotkeys(m_window, ctx); }
 
             // ---- Editor camera ----
             // Use the GLFW window that currently hosts the Scene View panel.
             // When docked: main window. When detached: the OS child window.
-            GLFWwindow* camWin = m_sceneGLFWWindow ? m_sceneGLFWWindow : m_rt.window();
+            GLFWwindow* camWin = m_sceneGLFWWindow ? m_sceneGLFWWindow : m_window;
             updateEditorCamera(m_cam, m_input, camWin, dt, m_sceneViewHovered);
             // ---- Play-mode cursor capture (FPS mouse-look) ----
             {
-                GLFWwindow* gw = m_rt.window();
+                GLFWwindow* gw = m_window;
                 const bool playing = (m_editor.simState == SimState::Playing);
                 if (playing && !m_wasPlaying) m_playCursorLocked = true;
                 if (playing) {
@@ -262,6 +266,7 @@ public:
 
 private:
     EngineRuntime&  m_rt;
+    GLFWwindow*     m_window = nullptr; // owned by the runtime's GlfwPlatform
     std::filesystem::path m_projectRoot;
     std::filesystem::path m_scenePath;
     AsyncLoader      m_loader;
@@ -416,7 +421,7 @@ private:
         drawMenuBar({
             [this]{ saveScene(); },
             [this]{ setProject(m_rt.ctx().project); },
-            [this]{ glfwSetWindowShouldClose(m_rt.window(), true); },
+            [this]{ glfwSetWindowShouldClose(m_window, true); },
             [this]{ m_showProjectSettings = true; },
             [this]{ m_editor.undoStack.undo(m_rt.ctx().ecs); },
             [this]{ m_editor.undoStack.redo(m_rt.ctx().ecs); },

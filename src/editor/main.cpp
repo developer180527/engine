@@ -1,4 +1,5 @@
 #include "runtime/runtime.h"
+#include "runtime/glfw_platform.h"
 #include "editor/editor_app.h"
 #include "io/project_context.h"
 #include "io/cook_service.h"
@@ -42,9 +43,14 @@ int main(int argc, char** argv) {
                  dbPath.string().c_str());
     }
 
-    // Boot runtime + editor immediately — no blocking cook wait
+    // Boot runtime + editor immediately — no blocking cook wait.
+    // The editor needs raw GLFW access (ImGui glue, input callbacks), so it
+    // creates the platform explicitly and keeps the window pointer; the
+    // runtime owns the platform's lifetime.
+    auto platform = std::make_unique<GlfwPlatform>();
+    GlfwPlatform* glfwPlatform = platform.get();
     EngineRuntime runtime;
-    if (!runtime.init({project.name, 1280, 720, 60.0f}))
+    if (!runtime.init({project.name, 1280, 720, 60.0f}, std::move(platform)))
         return 1;
 
     runtime.ctx().project  = project;
@@ -60,7 +66,7 @@ int main(int argc, char** argv) {
     // Cook service runs in background — editor is already live
     CookService cookService(dbPath, project.projectRoot, assetsRoot, cacheRoot);
 
-    EditorApp editor(runtime);
+    EditorApp editor(runtime, glfwPlatform->glfwWindow());
     editor.init();
     editor.setRegistry(&registry);
     editor.setProjectRoot(project.projectRoot);
