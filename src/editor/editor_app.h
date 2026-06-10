@@ -302,6 +302,11 @@ private:
             m_editor.simState = SimState::Playing; return;
         }
         if (m_editor.simState != SimState::Editing) return;
+        // Assets still streaming in snapshot WITHOUT their meshes — the game
+        // world is populated instantly and won't receive late async fixups.
+        if (m_loader.pendingCount() > 0)
+            LOG_WARN("Sim", "%d asset(s) still loading — they will be missing "
+                     "from this play session", m_loader.pendingCount());
         // Snapshot mode: the runtime serializes the editor world and
         // simulates a fresh copy, so Stop restores editing state untouched.
         if (m_rt.startSimulation(EngineRuntime::SimMode::Snapshot))

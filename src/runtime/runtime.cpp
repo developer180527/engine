@@ -280,6 +280,15 @@ void EngineRuntime::tickSimulation(float dt) {
     m_plugins.broadcastUpdate(w, dt);
     m_plugins.broadcastPhysicsStep(w, dt);
     m_plugins.broadcastPostPhysics(w);
+
+    // Snapshot mode runs in a separate world that tickSystems never touches —
+    // run animation and the flecs pipeline here so play mode behaves exactly
+    // like in-place simulation. (In-place mode: simWorld() == m_ecs, which
+    // tickSystems already animates and progresses — don't double-tick.)
+    if (m_gameWorld) {
+        m_animatorSystem.tick(*m_gameWorld, dt);
+        m_gameWorld->progress(dt);
+    }
 }
 
 void EngineRuntime::tickSystems(float dt, bool paused) {
