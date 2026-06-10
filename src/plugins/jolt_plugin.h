@@ -4,8 +4,8 @@
 #include <thread>
 #include <imgui.h>
 
-#include "engine/plugin.h"
-#include "engine/logger.h"
+#include "runtime/plugin.h"
+#include "runtime/logger.h"
 #include "components/collision_events.h"
 #include <mutex>
 #include <unordered_map>
@@ -34,12 +34,12 @@
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 
-#include "engine/scripting/script_services.h"
+#include "runtime/scripting/script_services.h"
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 
-#include "engine/scripting/script_services.h"
+#include "runtime/scripting/script_services.h"
 
 // ── Physics layers ─────────────────────────────────────────────────────────
 namespace PhysLayers {

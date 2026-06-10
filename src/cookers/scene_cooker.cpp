@@ -1,7 +1,7 @@
 #include "cookers/scene_cooker.h"
 #include <assetlib/scene_asset.h>
 #include <assetlib/asset_registry.h>
-#include "engine/logger.h"
+#include "runtime/logger.h"
 
 #include <nlohmann/json.hpp>
 #include <fstream>

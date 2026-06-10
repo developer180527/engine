@@ -1,6 +1,6 @@
 #pragma once
-#include "engine/input_system.h"
-#include "engine/input_map.h"
+#include "runtime/input_system.h"
+#include "runtime/input_map.h"
 
 // ── Input namespace ────────────────────────────────────────────────────────
 // Thin public API over InputSystem + InputMap.

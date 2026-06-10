@@ -6,10 +6,10 @@
 // the game world via an AudioServiceRef singleton on simulation start. The
 // LuaScriptPlugin picks that up in bindAudio() and routes Audio.play(...)
 // calls here. Until then every call safely no-ops inside ScriptHost.
-#include "engine/plugin.h"
-#include "engine/logger.h"
+#include "runtime/plugin.h"
+#include "runtime/logger.h"
 #include "engine_context.h"
-#include "engine/scripting/script_services.h"
+#include "runtime/scripting/script_services.h"
 #include "miniaudio.h"
 
 #include <flecs.h>

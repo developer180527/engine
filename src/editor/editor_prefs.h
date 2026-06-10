@@ -3,7 +3,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include "editor/editor_camera.h"
-#include "engine/logger.h"
+#include "runtime/logger.h"
 
 // Lightweight editor state persistence.
 // Saves/loads camera position and last selected entity name.

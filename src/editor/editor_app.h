@@ -1,16 +1,16 @@
 #include <filesystem>
 #pragma once
-#include "engine/runtime.h"
+#include "runtime/runtime.h"
 #include "io/scene_serializer.h"
 #include "editor/editor_icons.h"
 #include "editor/editor_prefs.h"
 #include "editor/editor_theme.h"
 #include "io/project_context.h"
 
-#include "engine/async_loader.h"
-#include "engine/plugin_registry.h"
-#include "engine/input.h"
-#include "engine/meta_registry.h"
+#include "runtime/async_loader.h"
+#include "runtime/plugin_registry.h"
+#include "runtime/input.h"
+#include "runtime/meta_registry.h"
 #include "plugins/jolt_plugin.h"
 #include "plugins/audio_plugin.h"
 #include "plugins/lua_script_plugin.h"
@@ -26,7 +26,7 @@
 #include "editor/console_panel.h"
 #include "editor/project_settings_window.h"
 #include "editor/gizmo.h"
-#include "render/imgui_bgfx.h"
+#include "editor/imgui_bgfx.h"
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <chrono>

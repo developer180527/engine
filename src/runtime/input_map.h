@@ -2,9 +2,9 @@
 #include <string>
 #include <vector>
 #include <algorithm>
-#include "engine/input_event.h"
-#include "engine/input_system.h"
-#include "engine/string_id.h"
+#include "runtime/input_event.h"
+#include "runtime/input_system.h"
+#include "runtime/string_id.h"
 
 // ── InputMap ───────────────────────────────────────────────────────────────
 // Stores named action/axis bindings. Uses vectors (not hash maps) so the

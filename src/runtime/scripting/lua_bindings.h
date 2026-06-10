@@ -1,7 +1,7 @@
 #pragma once
 #include <lua.hpp>
 #include <flecs.h>
-#include "engine/scripting/script_host.h"
+#include "runtime/scripting/script_host.h"
 #include "core/transform.h"
 #include "components/name.h"
 

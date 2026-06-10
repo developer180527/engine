@@ -1,4 +1,4 @@
-#include "engine/asset_service.h"
+#include "runtime/asset_service.h"
 
 #include "render/asset_registry.h"
 #include "render/texture_registry.h"
@@ -7,7 +7,7 @@
 #include "render/texture.h"
 #include "render/material.h"
 #include "render/vertex.h"
-#include "engine/logger.h"
+#include "runtime/logger.h"
 
 #include <assetlib/mesh_asset.h>
 #include <assetlib/texture_asset.h>

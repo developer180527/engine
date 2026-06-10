@@ -1,11 +1,11 @@
-#include "engine/scene_service.h"
+#include "runtime/scene_service.h"
 
-#include "engine/asset_service.h"
+#include "runtime/asset_service.h"
 #include "render/asset_registry.h"
 #include "render/texture_registry.h"
 #include "render/material_registry.h"
 #include "render/primitive_library.h"
-#include "engine/logger.h"
+#include "runtime/logger.h"
 
 #include "core/transform.h"
 #include "core/entity_id_util.h"

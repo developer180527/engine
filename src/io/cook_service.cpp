@@ -2,7 +2,7 @@
 #include "cookers/mesh_cooker.h"
 #include "cookers/texture_cooker.h"
 #include "cookers/scene_cooker.h"
-#include "engine/logger.h"
+#include "runtime/logger.h"
 
 CookService::CookService(const std::filesystem::path& dbPath,
                          const std::filesystem::path& projectRoot,

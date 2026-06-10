@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# ── Third-party dependencies (vendored) ─────────────────────────────────────
+
 set(BGFX_BUILD_EXAMPLES OFF CACHE BOOL "")
 set(BGFX_BUILD_TOOLS ON CACHE BOOL "")
 set(BGFX_BUILD_TOOLS_BIN2C ON CACHE BOOL "")
@@ -27,80 +29,6 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "")
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "")
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "")
 add_subdirectory(third_party/glfw)
-
-add_library(imgui STATIC
-    third_party/imgui/imgui.cpp
-    third_party/imgui/imgui_draw.cpp
-    third_party/imgui/imgui_tables.cpp
-    third_party/imgui/imgui_widgets.cpp
-    third_party/imgui/imgui_demo.cpp
-    third_party/ImGuizmo/ImGuizmo.cpp
-)
-target_include_directories(
-    imgui PUBLIC
-    third_party/imgui
-    third_party/ImGuizmo
-)
-
-include(third_party/bgfx.cmake/cmake/bgfxToolUtils.cmake)
-
-set(SHADER_OUTPUT_DIR "${CMAKE_BINARY_DIR}/shaders")
-set(BGFX_SHADER_INCLUDES
-    "${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bgfx/src"
-    "${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bgfx/examples/common"
-)
-
-bgfx_compile_shaders(
-    TYPE VERTEX
-    SHADERS ${CMAKE_SOURCE_DIR}/shaders/vs_triangle.sc
-    VARYING_DEF ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
-    OUTPUT_DIR ${SHADER_OUTPUT_DIR}
-    INCLUDE_DIRS ${BGFX_SHADER_INCLUDES}
-    AS_HEADERS
-)
-bgfx_compile_shaders(
-    TYPE FRAGMENT
-    SHADERS ${CMAKE_SOURCE_DIR}/shaders/fs_triangle.sc
-    VARYING_DEF ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
-    OUTPUT_DIR ${SHADER_OUTPUT_DIR}
-    INCLUDE_DIRS ${BGFX_SHADER_INCLUDES}
-    AS_HEADERS
-)
-
-bgfx_compile_shaders(
-    TYPE VERTEX
-    SHADERS ${CMAKE_SOURCE_DIR}/shaders/vs_shadow.sc
-    VARYING_DEF ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
-    OUTPUT_DIR ${SHADER_OUTPUT_DIR}
-    INCLUDE_DIRS ${BGFX_SHADER_INCLUDES}
-    AS_HEADERS
-)
-bgfx_compile_shaders(
-    TYPE FRAGMENT
-    SHADERS ${CMAKE_SOURCE_DIR}/shaders/fs_shadow.sc
-    VARYING_DEF ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
-    OUTPUT_DIR ${SHADER_OUTPUT_DIR}
-    INCLUDE_DIRS ${BGFX_SHADER_INCLUDES}
-    AS_HEADERS
-)
-
-bgfx_compile_shaders(
-    TYPE VERTEX
-    SHADERS ${CMAKE_SOURCE_DIR}/shaders/vs_skinned.sc
-    VARYING_DEF ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
-    OUTPUT_DIR ${SHADER_OUTPUT_DIR}
-    INCLUDE_DIRS ${BGFX_SHADER_INCLUDES}
-    AS_HEADERS
-)
-bgfx_compile_shaders(
-    TYPE VERTEX
-    SHADERS ${CMAKE_SOURCE_DIR}/shaders/vs_shadow_skinned.sc
-    VARYING_DEF ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
-    OUTPUT_DIR ${SHADER_OUTPUT_DIR}
-    INCLUDE_DIRS ${BGFX_SHADER_INCLUDES}
-    AS_HEADERS
-)
-
 
 # ---- Assimp (multi-format mesh importer) ----
 # Disable ALL importers/exporters by default, then opt-in only what we need.
@@ -124,6 +52,8 @@ set(ASSIMP_BUILD_3DS_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_PLY_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_STL_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_BLEND_IMPORTER   ON CACHE BOOL "" FORCE)
+add_subdirectory(third_party/assimp)
+
 # ── JoltPhysics ──────────────────────────────────────────────────────────
 set(JOLT_BUILD_SHARED_LIBS   OFF CACHE BOOL "" FORCE)
 set(ENABLE_ALL_WARNINGS      OFF CACHE BOOL "" FORCE)
@@ -131,112 +61,25 @@ set(OVERRIDE_CXX_FLAGS       OFF CACHE BOOL "" FORCE)
 set(ENABLE_OBJECT_STREAM     OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/JoltPhysics/Build)
 
-add_subdirectory(third_party/assimp)
 add_subdirectory(third_party/lua)
-add_executable(engine
-    src/cookers/mesh_cooker.cpp
-    src/cookers/scene_cooker.cpp
-    src/io/cook_service.cpp
-    src/cookers/texture_cooker.cpp
-    src/loaders/mesh_loader.cpp
-    src/main.cpp
-    src/render/imgui_bgfx.cpp
-    src/render/imgui_impl_glfw.cpp
-    src/io/cgltf_impl.cpp
-    src/io/gltf_importer.cpp
-    src/io/stb_impl.cpp
-    src/engine/runtime.cpp
-    src/engine/renderer.cpp
-    src/engine/async_loader.cpp
-    src/engine/asset_service.cpp
-    src/engine/scene_service.cpp
-    src/io/assimp_importer.cpp
-    src/plugins/audio_impl.cpp
-    shaders/vs_triangle.sc
-    shaders/fs_triangle.sc
-    shaders/vs_shadow.sc
-    shaders/fs_shadow.sc
-    shaders/vs_skinned.sc
-    shaders/vs_shadow_skinned.sc
-    shaders/varying.def.sc
-)
 
-set_source_files_properties(
-    shaders/vs_triangle.sc
-    shaders/fs_triangle.sc
-    shaders/vs_shadow.sc
-    shaders/fs_shadow.sc
-    shaders/vs_skinned.sc
-    shaders/vs_shadow_skinned.sc
-    shaders/varying.def.sc
-    PROPERTIES HEADER_FILE_ONLY TRUE
+# ImGui — editor-only UI library. The runtime never links this.
+add_library(imgui STATIC
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/imgui_demo.cpp
+    third_party/ImGuizmo/ImGuizmo.cpp
 )
-
 target_include_directories(
-    engine PRIVATE
-    third_party/nlohmann
-    src
-    src/core
-    src/components
-    src/render
-    src/editor
-    src/io
-    third_party/cgltf
-    third_party/stb
-    third_party/JoltPhysics
-    third_party/miniaudio
-    "${SHADER_OUTPUT_DIR}"
+    imgui PUBLIC
+    third_party/imgui
+    third_party/ImGuizmo
 )
 
-# Disable WGSL embedded-shader branch since we don't generate WGSL bytecode
-# (would require BGFX_CONFIG_RENDERER_WEBGPU and a Dawn/WebGPU build).
-target_compile_definitions(engine PRIVATE
-    BGFX_PLATFORM_SUPPORTS_WGSL=0
-)
-
-target_link_libraries(engine PRIVATE
-    assetlib
-    assimp
-    bgfx bx bimg
-    glfw
-    imgui
-    flecs_static
-    Jolt
-    lua
-)
-
-if(APPLE)
-    target_link_libraries(engine PRIVATE
-        "-framework Cocoa"
-        "-framework QuartzCore"
-        "-framework Metal"
-        "-framework IOKit"
-        "-framework CoreAudio"
-        "-framework AudioToolbox"
-        "-framework AudioUnit"
-        "-framework CoreFoundation"
-    )
-elseif(WIN32)
-    target_link_libraries(engine PRIVATE
-        gdi32
-        shell32
-        user32
-        winmm          # timeGetTime — used by GLFW + miniaudio
-    )
-elseif(UNIX)
-    # X11 + Wayland display servers; PulseAudio or ALSA for miniaudio.
-    # pkg-config resolves the right paths per distro.
-    find_package(PkgConfig REQUIRED)
-    find_package(Threads REQUIRED)
-
-    # X11 — still needed even on Wayland-primary distros (XWayland fallback)
-    find_package(X11 REQUIRED)
-    target_link_libraries(engine PRIVATE ${X11_LIBRARIES})
-    target_include_directories(engine PRIVATE ${X11_INCLUDE_DIR})
-
-    target_link_libraries(engine PRIVATE
-        Threads::Threads
-        dl              # dlopen — used by Vulkan loader + bgfx
-        ${CMAKE_DL_LIBS}
-    )
-endif()
+# ── Engine targets ──────────────────────────────────────────────────────────
+#   engine_runtime  — static library: ECS, content, render, animation, audio,
+#                     physics plugins, asset pipeline. The SDK a game links.
+#   editor          — executable: ImGui editor application on top of the SDK.
+add_subdirectory(src)

@@ -1,6 +1,6 @@
 #pragma once
-#include "engine/plugin.h"
-#include "engine/logger.h"
+#include "runtime/plugin.h"
+#include "runtime/logger.h"
 #include <imgui.h>
 
 // ── NullPhysicsPlugin ──────────────────────────────────────────────────────

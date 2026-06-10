@@ -34,8 +34,8 @@
 #include "io/asset_storage.h"
 #include "io/importer_registry.h"
 #include "render/primitive_library.h"
-#include "engine/asset_service.h"
-#include "engine/logger.h"
+#include "runtime/asset_service.h"
+#include "runtime/logger.h"
 
 namespace EntitySerde {
 

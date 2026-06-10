@@ -5,8 +5,8 @@
 #include <cstring>
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
-#include "engine/input_map.h"
-#include "engine/input_system.h"
+#include "runtime/input_map.h"
+#include "runtime/input_system.h"
 #include "editor/editor_state.h"
 
 // ── Key display name ───────────────────────────────────────────────────────

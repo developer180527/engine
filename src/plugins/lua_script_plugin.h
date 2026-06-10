@@ -1,10 +1,10 @@
 #pragma once
-#include "engine/plugin.h"
-#include "engine/logger.h"
+#include "runtime/plugin.h"
+#include "runtime/logger.h"
 #include "engine_context.h"      // full EngineContext (plugin.h only fwd-decls it)
 #include "io/project_context.h"  // ProjectContext::projectRoot
-#include "engine/scripting/script_host.h"
-#include "engine/scripting/lua_bindings.h"
+#include "runtime/scripting/script_host.h"
+#include "runtime/scripting/lua_bindings.h"
 #include "components/script_component.h"
 #include "components/collision_events.h"
 #include <lua.hpp>

@@ -10,7 +10,7 @@
 #include "components/collision_events.h"
 #include "components/script_component.h"
 #include "components/entity_id.h"
-#include "engine/logger.h"
+#include "runtime/logger.h"
 
 // ── MetaRegistry ───────────────────────────────────────────────────────────
 // Registers all engine component types with the flecs meta addon.

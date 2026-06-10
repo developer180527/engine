@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <cstdio>
 #include <cstring>
-#include "engine/logger.h"
+#include "runtime/logger.h"
 
 // Simple popen-based terminal rooted at the project directory.
 // Not a full PTY — commands run, output is captured, shown in panel.

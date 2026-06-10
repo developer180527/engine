@@ -1,6 +1,6 @@
 #pragma once
 #include <imgui.h>
-#include "engine/logger.h"
+#include "runtime/logger.h"
 #include "editor/terminal_panel.h"
 #include "editor/editor_icons.h"
 

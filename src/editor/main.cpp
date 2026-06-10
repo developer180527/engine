@@ -1,8 +1,8 @@
-#include "engine/runtime.h"
+#include "runtime/runtime.h"
 #include "editor/editor_app.h"
 #include "io/project_context.h"
 #include "io/cook_service.h"
-#include "engine/logger.h"
+#include "runtime/logger.h"
 #include <assetlib/asset_registry.h>
 
 // Animation subsystem (Phase 1: data structures + math + loader)

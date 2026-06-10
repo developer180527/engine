@@ -22,11 +22,11 @@
 #include "render/material_registry.h"
 #include "io/asset_storage.h"
 #include "io/importer_registry.h"
-#include "engine/async_loader.h"
-#include "engine/asset_service.h"
+#include "runtime/async_loader.h"
+#include "runtime/asset_service.h"
 #include "render/primitive_library.h"
 #include "core/entity_id_util.h"
-#include "engine/logger.h"
+#include "runtime/logger.h"
 #include <assetlib/asset_registry.h>
 #include <assetlib/scene_asset.h>
 #include "cookers/scene_cooker.h"

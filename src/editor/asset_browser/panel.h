@@ -12,7 +12,7 @@
 #include "actions.h"
 
 #include "engine_context.h"
-#include "engine/async_loader.h"
+#include "runtime/async_loader.h"
 #include "io/cook_service.h"
 #include "components/spinner.h"
 #include "components/mesh_renderer.h"

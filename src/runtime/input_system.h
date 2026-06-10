@@ -3,7 +3,7 @@
 #include <GLFW/glfw3.h>
 #include <vector>
 #include <cstring>
-#include "engine/input_event.h"
+#include "runtime/input_event.h"
 
 // ── InputSystem ────────────────────────────────────────────────────────────
 // Hybrid approach: poll keys/mouse/cursor directly (no callback conflicts

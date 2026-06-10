@@ -4,12 +4,12 @@
 #include <cstdint>
 #include "core/transform.h"
 #include "components/name.h"
-#include "engine/input.h"
-#include "engine/input_event.h"
-#include "engine/logger.h"
-#include "engine/scripting/script_services.h"
-#include "engine/asset_service.h"
-#include "engine/scene_service.h"
+#include "runtime/input.h"
+#include "runtime/input_event.h"
+#include "runtime/logger.h"
+#include "runtime/scripting/script_services.h"
+#include "runtime/asset_service.h"
+#include "runtime/scene_service.h"
 
 // ── keyFromName ────────────────────────────────────────────────────────────
 // Map a script-facing key name ("W", "Space", "Left") to a Key. Key mirrors

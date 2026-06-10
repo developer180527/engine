@@ -1,8 +1,8 @@
 #pragma once
 #include <vector>
 #include <memory>
-#include "engine/plugin.h"
-#include "engine/logger.h"
+#include "runtime/plugin.h"
+#include "runtime/logger.h"
 
 // ── PluginRegistry ─────────────────────────────────────────────────────────
 // Owns all registered plugins and fans out lifecycle events to each one.
