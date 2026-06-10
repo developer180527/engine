@@ -25,6 +25,7 @@
 #include "editor/inspector_panel.h"
 #include "editor/asset_browser_panel.h"
 #include "editor/console_panel.h"
+#include "editor/plugins_panel.h"
 #include "editor/project_settings_window.h"
 #include "editor/gizmo.h"
 #include "editor/imgui_bgfx.h"
@@ -471,6 +472,7 @@ private:
         drawInspectorPanel(ctx);
         drawAssetBrowserPanel(ctx, m_loader, m_cookService);
         drawConsolePanel();
+        drawPluginsPanel(m_rt.plugins());
         drawProjectSettings(&m_showProjectSettings,
                             m_editor.simState,
                             m_projectSettingsState);

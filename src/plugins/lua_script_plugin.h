@@ -1,6 +1,5 @@
 #pragma once
 #include "runtime/plugin.h"
-#include "editor/editor_plugin.h"
 #include "runtime/logger.h"
 #include "runtime/runtime_context.h" // full RuntimeContext (plugin.h only fwd-decls it)
 #include "io/project_context.h"  // ProjectContext::projectRoot
@@ -9,7 +8,6 @@
 #include "components/script_component.h"
 #include "components/collision_events.h"
 #include <lua.hpp>
-#include <imgui.h>
 #include <filesystem>
 #include <unordered_map>
 #include <vector>
@@ -28,7 +26,7 @@
 // Each entity with a ScriptComponent gets an instance table (state lives on
 // self; self.entity is the entity handle). Modules are cached by path and
 // cleared on Stop, so editing a script and pressing Play reloads it.
-class LuaScriptPlugin final : public IEnginePlugin, public IEditorPlugin {
+class LuaScriptPlugin final : public IEnginePlugin {
 public:
     const char* name()    const override { return "Scripting"; }
     const char* version() const override { return "5.4-lua"; }
@@ -129,14 +127,9 @@ public:
         gw.defer_end();
     }
 
-    void onEditorUI() override {
-        ImGui::TextDisabled("Backend:   Lua 5.4 (PUC-Rio)");
-        ImGui::TextDisabled("State:     %s", m_L ? "VM running" : "off");
-        ImGui::TextDisabled("Instances: %d", (int)m_instances.size());
-        ImGui::Spacing();
-        ImGui::TextDisabled("Lifecycle: onStart / onUpdate / onDestroy");
-        ImGui::TextDisabled("Scripts reload on each Play");
-    }
+    // ── Stats (UI-free — the editor's Plugins panel reads these) ────────
+    bool vmRunning()     const { return m_L != nullptr; }
+    int  instanceCount() const { return (int)m_instances.size(); }
 
 private:
     struct Init { flecs::entity e; std::string path; };

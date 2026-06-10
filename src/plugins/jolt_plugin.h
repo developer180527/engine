@@ -2,10 +2,8 @@
 #include <memory>
 #include <unordered_map>
 #include <thread>
-#include <imgui.h>
 
 #include "runtime/plugin.h"
-#include "editor/editor_plugin.h"
 #include "runtime/logger.h"
 #include "components/collision_events.h"
 #include <mutex>
@@ -99,7 +97,7 @@ public:
 struct CollisionPair { JPH::BodyID a, b; bool enter; };
 
 // ── JoltPlugin ─────────────────────────────────────────────────────────────
-class JoltPlugin final : public IEnginePlugin, public IEditorPlugin, public IPhysicsService {
+class JoltPlugin final : public IEnginePlugin, public IPhysicsService {
 public:
     const char* name()    const override { return "Physics"; }
     const char* version() const override { return "0.1.0-jolt5"; }
@@ -188,19 +186,10 @@ public:
         flushCollisionEvents(ecs);
     }
 
-    void onEditorUI() override {
-        if (m_physics) {
-            ImGui::TextColored({0.3f,1.0f,0.4f,1.0f}, "Jolt %d.%d.%d  ACTIVE",
-                JPH_VERSION_MAJOR, JPH_VERSION_MINOR, JPH_VERSION_PATCH);
-            ImGui::Text("Bodies:   %d", (int)m_entityToBody.size());
-            ImGui::Text("Fixed dt: %.0f Hz", 1.0f / kFixedDt);
-        } else {
-            ImGui::TextColored({0.3f,1.0f,0.4f,1.0f}, "Jolt %d.%d.%d  standby",
-                JPH_VERSION_MAJOR, JPH_VERSION_MINOR, JPH_VERSION_PATCH);
-            ImGui::TextDisabled("Enter play mode to simulate");
-        }
-        ImGui::TextDisabled("Gravity: (0, -9.81, 0)");
-    }
+    // ── Stats (UI-free — the editor's Plugins panel reads these) ────────
+    bool simulationActive() const { return m_physics != nullptr; }
+    int  bodyCount()        const { return (int)m_entityToBody.size(); }
+    static constexpr float fixedTimestep() { return kFixedDt; }
 
     // ── IPhysicsService (scripts reach these through ScriptHost) ────────
     void applyImpulse(flecs::entity e, float x, float y, float z) override {

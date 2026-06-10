@@ -2,12 +2,20 @@
 //
 // Proves the API freeze: no editor code, no ImGui, no manual wiring. A
 // window opens showing the default cube scene rendered through a Camera
-// entity, with simulation running from boot.
+// entity, with physics/scripting/audio plugins attached and simulation
+// running from boot.
 #include <engine/engine.h>
+#include <engine/plugins.h>
 
 int main() {
     EngineRuntime engine;
     if (!engine.init({})) return 1; // auto-detect project, GLFW window
+
+    // Stock plugins — UI-free backends, no ImGui anywhere in this program.
+    engine.plugins().add(std::make_shared<JoltPlugin>());
+    engine.plugins().add(std::make_shared<LuaScriptPlugin>());
+    engine.plugins().add(std::make_shared<AudioPlugin>());
+    engine.attachPlugins();
 
     // Gameplay lives directly on the ECS world — the engine doesn't wrap it.
     flecs::world& world = engine.ctx().ecs;
