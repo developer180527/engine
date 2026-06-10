@@ -22,6 +22,9 @@ Cooking is orchestrated by `CookService` (`src/io`) through
 calling thread.
 
 ## Invariants
+- Cookers live in `engine_core` (GPU-free): they may use Assimp/stb/assetlib
+  but must never reference bgfx, GLFW, or plugin symbols — `engine_cook`
+  links engine_core alone and must stay headless.
 - Cooked output is invalidated by source-content hash, not timestamps.
 - On cook failure, delete any stale cooked binary for that asset — a missing
   cooked file falls back to the importer path; a stale one renders wrong.

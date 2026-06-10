@@ -21,6 +21,7 @@ get_filename_component(_engine_prefix "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOL
 # (inherited from the vendored projects), so accept both names.
 set(_engine_libs
     engine_runtime
+    engine_core
     assetlib
     assimp
     bgfx bimg bx

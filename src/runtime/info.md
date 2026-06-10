@@ -73,5 +73,11 @@ Two supported modes:
   (SIGTRAP) at runtime if consumers compile with mismatched JPH_* defines,
   so never hand-trim that list.
 
-## Future Work
-- engine_core split (GPU-free layer) to slim headless/CLI consumers.
+## Layering
+`engine_core` (alias `engine::core`) is the GPU-free layer underneath:
+cookers, cook service, and the single-header library implementation TUs
+(stb/cgltf). It links only assetlib + assimp — no bgfx, no GLFW, no
+Jolt/Lua. `engine_cook` links engine_core alone; `engine_runtime` links
+engine_core plus the graphics/platform/plugin stack. Keep new sources on
+the right side of this line: if a .cpp references no bgfx/GLFW symbols
+and serves data processing, it belongs in engine_core.

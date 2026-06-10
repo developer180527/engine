@@ -97,8 +97,8 @@ set_target_properties(sample_minimal PROPERTIES
 # Produces a relocatable SDK: lib/ (engine + bundled third-party archives),
 # include/ (public umbrellas + engine headers + third-party headers), and a
 # hand-written package config so consumers just find_package(EngineRuntime).
-install(TARGETS engine_runtime assetlib assimp bgfx bimg bx glfw flecs_static
-                Jolt lua
+install(TARGETS engine_runtime engine_core assetlib assimp bgfx bimg bx glfw
+                flecs_static Jolt lua
         ARCHIVE DESTINATION lib)
 install(TARGETS engine_cook RUNTIME DESTINATION bin)
 

@@ -50,6 +50,42 @@ set(ENGINE_SHADER_SOURCES
     ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
 )
 
+# ── engine_core — GPU-free layer ─────────────────────────────────────────────
+# Pure-CPU code: asset cooking, single-header library implementations. No
+# bgfx, no GLFW, no window — links into CLI tools (engine_cook) and servers
+# without dragging in graphics or platform libraries.
+add_library(engine_core STATIC
+    # Asset cook pipeline (Assimp/stb in, cooked binaries out)
+    cookers/mesh_cooker.cpp
+    cookers/scene_cooker.cpp
+    cookers/texture_cooker.cpp
+    io/cook_service.cpp
+
+    # Single-header library implementation TUs (CPU decode only)
+    io/stb_impl.cpp
+    io/cgltf_impl.cpp
+)
+
+target_include_directories(engine_core PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/components
+    ${CMAKE_CURRENT_SOURCE_DIR}/render
+    ${CMAKE_CURRENT_SOURCE_DIR}/io
+    ${CMAKE_SOURCE_DIR}/third_party/nlohmann
+    ${CMAKE_SOURCE_DIR}/third_party/cgltf
+    ${CMAKE_SOURCE_DIR}/third_party/stb
+)
+
+target_link_libraries(engine_core PUBLIC
+    assetlib
+    assimp
+)
+
+add_library(engine::core ALIAS engine_core)
+
+# ── engine_runtime — the full game SDK ───────────────────────────────────────
 # Public API surface: include/engine/*.h umbrella headers. Everything under
 # src/ is implementation detail unless re-exported there.
 add_library(engine_runtime STATIC
@@ -61,17 +97,9 @@ add_library(engine_runtime STATIC
     runtime/asset_service.cpp
     runtime/scene_service.cpp
 
-    # Import + serialization
-    io/cgltf_impl.cpp
+    # Source-format importers (produce GPU meshes — main thread)
     io/gltf_importer.cpp
-    io/stb_impl.cpp
     io/assimp_importer.cpp
-    io/cook_service.cpp
-
-    # Asset cook pipeline
-    cookers/mesh_cooker.cpp
-    cookers/scene_cooker.cpp
-    cookers/texture_cooker.cpp
 
     # Cooked-binary loaders
     loaders/mesh_loader.cpp
@@ -89,15 +117,6 @@ set_source_files_properties(
 )
 
 target_include_directories(engine_runtime PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/components
-    ${CMAKE_CURRENT_SOURCE_DIR}/render
-    ${CMAKE_CURRENT_SOURCE_DIR}/io
-    ${CMAKE_SOURCE_DIR}/third_party/nlohmann
-    ${CMAKE_SOURCE_DIR}/third_party/cgltf
-    ${CMAKE_SOURCE_DIR}/third_party/stb
     ${CMAKE_SOURCE_DIR}/third_party/JoltPhysics
     ${CMAKE_SOURCE_DIR}/third_party/miniaudio
     "${SHADER_OUTPUT_DIR}"
@@ -110,8 +129,7 @@ target_compile_definitions(engine_runtime PUBLIC
 )
 
 target_link_libraries(engine_runtime PUBLIC
-    assetlib
-    assimp
+    engine_core
     bgfx bx bimg
     glfw
     flecs_static
@@ -163,9 +181,10 @@ add_subdirectory(editor)
 
 # ── engine_cook — CLI asset cooker ───────────────────────────────────────────
 # Cooks a project's assets without the editor: engine_cook [project-dir].
-# Game build scripts call this as a pre-build step.
+# Game build scripts call this as a pre-build step. Links engine_core only —
+# no bgfx, no GLFW, no Jolt/Lua in the binary.
 add_executable(engine_cook tools/engine_cook.cpp)
-target_link_libraries(engine_cook PRIVATE engine_runtime)
+target_link_libraries(engine_cook PRIVATE engine_core)
 set_target_properties(engine_cook PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
