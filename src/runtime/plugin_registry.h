@@ -3,7 +3,7 @@
 #include <vector>
 #include <memory>
 #include "runtime/plugin.h"
-#include "runtime/logger.h"
+#include "core/logger.h"
 
 // ── PluginRegistry ─────────────────────────────────────────────────────────
 // Owns all registered plugins and fans out lifecycle events to each one.

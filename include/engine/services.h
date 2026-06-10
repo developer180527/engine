@@ -5,5 +5,5 @@
 //                  main-thread GPU upload drained by the frame loop)
 //   SceneService — cooked binary scene loading
 
-#include "runtime/asset_service.h"
-#include "runtime/scene_service.h"
+#include "runtime/services/asset_service.h"
+#include "runtime/services/scene_service.h"

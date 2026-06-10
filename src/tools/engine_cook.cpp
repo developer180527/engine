@@ -7,9 +7,9 @@
 //   0  everything cooked (or already up to date)
 //   1  one or more assets failed to cook
 //   2  no project found
-#include "io/cook_service.h"
-#include "io/project_context.h"
-#include "runtime/logger.h"
+#include "assets/cookers/cook_service.h"
+#include "project/project_context.h"
+#include "core/logger.h"
 
 #include <cstdio>
 #include <filesystem>

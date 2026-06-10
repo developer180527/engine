@@ -6,8 +6,8 @@
 #include <vector>
 
 #include "runtime/runtime.h"
-#include "io/known_projects.h"
-#include "io/project_scaffold.h"
+#include "project/known_projects.h"
+#include "project/project_scaffold.h"
 #include "editor/editor_icons.h"
 
 // ── Project hub ─────────────────────────────────────────────────────────────

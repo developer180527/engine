@@ -7,6 +7,6 @@
 //   IPlatform         — implement yourself to embed the engine in an
 //                       existing native window
 
-#include "runtime/platform.h"
-#include "runtime/glfw_platform.h"
-#include "runtime/headless_platform.h"
+#include "runtime/platform/platform.h"
+#include "runtime/platform/glfw_platform.h"
+#include "runtime/platform/headless_platform.h"

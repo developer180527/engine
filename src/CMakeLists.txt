@@ -56,17 +56,17 @@ set(ENGINE_SHADER_SOURCES
 # without dragging in graphics or platform libraries.
 add_library(engine_core STATIC
     # Asset cook pipeline (Assimp/stb in, cooked binaries out)
-    cookers/mesh_cooker.cpp
-    cookers/scene_cooker.cpp
-    cookers/texture_cooker.cpp
-    io/cook_service.cpp
+    assets/cookers/mesh_cooker.cpp
+    assets/cookers/scene_cooker.cpp
+    assets/cookers/texture_cooker.cpp
+    assets/cookers/cook_service.cpp
 
     # Project management — scaffolding new projects (canonical v2 layout)
-    io/project_scaffold.cpp
+    project/project_scaffold.cpp
 
     # Single-header library implementation TUs (CPU decode only)
-    io/stb_impl.cpp
-    io/cgltf_impl.cpp
+    assets/importers/stb_impl.cpp
+    assets/importers/cgltf_impl.cpp
 )
 
 target_include_directories(engine_core PUBLIC
@@ -75,7 +75,6 @@ target_include_directories(engine_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/components
     ${CMAKE_CURRENT_SOURCE_DIR}/render
-    ${CMAKE_CURRENT_SOURCE_DIR}/io
     ${CMAKE_SOURCE_DIR}/third_party/nlohmann
     ${CMAKE_SOURCE_DIR}/third_party/cgltf
     ${CMAKE_SOURCE_DIR}/third_party/stb
@@ -94,19 +93,19 @@ add_library(engine::core ALIAS engine_core)
 add_library(engine_runtime STATIC
     # Runtime core — platform, frame loop, renderer, services
     runtime/runtime.cpp
-    runtime/glfw_platform.cpp
-    runtime/renderer.cpp
-    runtime/async_loader.cpp
-    runtime/asset_service.cpp
-    runtime/scene_service.cpp
+    runtime/platform/glfw_platform.cpp
+    render/renderer.cpp
+    runtime/services/async_loader.cpp
+    runtime/services/asset_service.cpp
+    runtime/services/scene_service.cpp
     runtime/scripting/engine_api.cpp
 
     # Source-format importers (produce GPU meshes — main thread)
-    io/gltf_importer.cpp
-    io/assimp_importer.cpp
+    assets/importers/gltf_importer.cpp
+    assets/importers/assimp_importer.cpp
 
     # Cooked-binary loaders
-    loaders/mesh_loader.cpp
+    assets/loaders/mesh_loader.cpp
 
     # Plugin backends
     plugins/audio_impl.cpp
@@ -193,7 +192,6 @@ target_include_directories(engine_headers INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/components
     ${CMAKE_CURRENT_SOURCE_DIR}/render
-    ${CMAKE_CURRENT_SOURCE_DIR}/io
     ${CMAKE_SOURCE_DIR}/third_party/nlohmann
     ${CMAKE_SOURCE_DIR}/third_party/flecs/include
     ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bx/include

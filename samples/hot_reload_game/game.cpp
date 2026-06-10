@@ -14,7 +14,7 @@
 #include <engine/game_module.h>
 #include <engine/engine_api.h>   // C API — calls execute HOST-side
 #include "runtime/runtime_context.h"
-#include "runtime/logger.h"
+#include "core/logger.h"
 #include "core/transform.h"
 #include "components/mesh_renderer.h"
 #include <flecs.h>

@@ -1,7 +1,7 @@
 #pragma once
 #include "render/primitive_library.h"
-#include "runtime/asset_service.h"
-#include "runtime/scene_service.h"
+#include "runtime/services/asset_service.h"
+#include "runtime/services/scene_service.h"
 #include "animation/skeleton_registry.h"
 #include "animation/clip_registry.h"
 #include <chrono>
@@ -10,9 +10,9 @@
 #include <memory>
 #include <string>
 #include <bgfx/bgfx.h>
-#include "runtime/platform.h"
+#include "runtime/platform/platform.h"
 #include "runtime/runtime_context.h"
-#include "runtime/renderer.h"
+#include "render/renderer.h"
 #include "runtime/plugin_registry.h"
 #include "core/transform.h"
 #include "components/spinner.h"

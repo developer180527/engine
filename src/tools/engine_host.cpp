@@ -14,8 +14,8 @@
 #include <engine/engine.h>
 #include <engine/game_module.h>
 #include <engine/input.h>
-#include "io/scene_serializer.h"
-#include "runtime/async_loader.h"
+#include "scene/scene_serializer.h"
+#include "runtime/services/async_loader.h"
 
 #include <dlfcn.h>
 #include <cstdio>

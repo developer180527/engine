@@ -7,7 +7,7 @@
 #include <GLFW/glfw3.h>
 #include <cmath>
 
-#include "engine_context.h"
+#include "editor/engine_context.h"
 #include "editor/gizmo_state.h"
 #include "core/transform.h"
 

@@ -1,6 +1,6 @@
 #pragma once
 #include "runtime/plugin.h"
-#include "runtime/logger.h"
+#include "core/logger.h"
 
 // ── NullScriptPlugin ───────────────────────────────────────────────────────
 // Placeholder scripting backend. Proves the scripting plugin slot before

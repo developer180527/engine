@@ -4,6 +4,6 @@
 //   InputSystem::get().init(window);          // GLFW-backed platforms only
 //   InputMap::get().bindAction("Jump", Key::Space);
 
-#include "runtime/input.h"
-#include "runtime/input_system.h"
-#include "runtime/input_map.h"
+#include "runtime/input/input.h"
+#include "runtime/input/input_system.h"
+#include "runtime/input/input_map.h"

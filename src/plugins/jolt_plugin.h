@@ -4,7 +4,7 @@
 #include <thread>
 
 #include "runtime/plugin.h"
-#include "runtime/logger.h"
+#include "core/logger.h"
 #include "components/collision_events.h"
 #include <mutex>
 #include <unordered_map>

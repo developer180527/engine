@@ -5,8 +5,8 @@
 
 add_executable(editor
     main.cpp
-    imgui_bgfx.cpp
-    imgui_impl_glfw.cpp
+    imgui/imgui_bgfx.cpp
+    imgui/imgui_impl_glfw.cpp
 )
 
 target_include_directories(editor PRIVATE

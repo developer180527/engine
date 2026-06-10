@@ -3,8 +3,8 @@
 #include "render/asset_registry.h"
 #include "render/texture_registry.h"
 #include "render/material_registry.h"
-#include "io/project_context.h"
-#include "io/importer_registry.h"
+#include "project/project_context.h"
+#include "assets/importers/importer_registry.h"
 #include <assetlib/asset_registry.h>
 
 class PrimitiveLibrary;   // forward declare

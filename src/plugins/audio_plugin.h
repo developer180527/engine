@@ -7,7 +7,7 @@
 // LuaScriptPlugin picks that up in bindAudio() and routes Audio.play(...)
 // calls here. Until then every call safely no-ops inside ScriptHost.
 #include "runtime/plugin.h"
-#include "runtime/logger.h"
+#include "core/logger.h"
 #include "runtime/runtime_context.h"
 #include "runtime/scripting/script_services.h"
 #include "miniaudio.h"

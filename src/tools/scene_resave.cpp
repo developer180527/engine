@@ -10,8 +10,8 @@
 //   2. Round-trip test harness for the serializer — output defaults to
 //      /tmp/<scene>.resaved so nothing is overwritten unless asked.
 #include <engine/engine.h>
-#include "io/scene_serializer.h"
-#include "runtime/async_loader.h"
+#include "scene/scene_serializer.h"
+#include "runtime/services/async_loader.h"
 
 #include <cstdio>
 

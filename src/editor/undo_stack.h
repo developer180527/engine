@@ -8,8 +8,8 @@
 #include "components/name.h"
 #include "components/entity_id.h"
 #include "core/entity_id_util.h"
-#include "io/entity_serializer.h"
-#include "runtime/logger.h"
+#include "scene/entity_serializer.h"
+#include "core/logger.h"
 
 // ── UndoStack ──────────────────────────────────────────────────────────────
 // Session-only. Entity references key on the stable EntityId. Full-entity

@@ -1,8 +1,8 @@
 #pragma once
 #include "runtime/plugin.h"
-#include "runtime/logger.h"
+#include "core/logger.h"
 #include "runtime/runtime_context.h" // full RuntimeContext (plugin.h only fwd-decls it)
-#include "io/project_context.h"  // ProjectContext::projectRoot
+#include "project/project_context.h"  // ProjectContext::projectRoot
 #include "runtime/scripting/script_host.h"
 #include "runtime/scripting/lua_bindings.h"
 #include "components/script_component.h"

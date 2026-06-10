@@ -6,9 +6,9 @@
 //
 // SDK users without the editor scaffold projects with this; the editor's
 // project hub calls the same engine_core code.
-#include "io/project_scaffold.h"
-#include "io/known_projects.h"
-#include "io/project_context.h"
+#include "project/project_scaffold.h"
+#include "project/known_projects.h"
+#include "project/project_context.h"
 
 #include <cstdio>
 #include <cstring>

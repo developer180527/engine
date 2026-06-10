@@ -1,6 +1,6 @@
 #pragma once
 #include "runtime/plugin.h"
-#include "runtime/logger.h"
+#include "core/logger.h"
 
 // ── NullPhysicsPlugin ──────────────────────────────────────────────────────
 // Placeholder physics backend. Satisfies the physics plugin slot so the

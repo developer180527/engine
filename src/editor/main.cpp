@@ -1,12 +1,12 @@
 #include "runtime/runtime.h"
-#include "runtime/glfw_platform.h"
+#include "runtime/platform/glfw_platform.h"
 #include "editor/editor_app.h"
 #include "editor/project_hub.h"
 #include "editor/editor_theme.h"
-#include "editor/imgui_bgfx.h"
-#include "io/project_context.h"
-#include "io/cook_service.h"
-#include "runtime/logger.h"
+#include "editor/imgui/imgui_bgfx.h"
+#include "project/project_context.h"
+#include "assets/cookers/cook_service.h"
+#include "core/logger.h"
 #include <assetlib/asset_registry.h>
 
 int main(int argc, char** argv) {
