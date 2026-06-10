@@ -124,12 +124,12 @@ public:
 
         // Register component meta schemas (drives Lua FFI, Blueprint, inspector)
         MetaRegistry::registerAll(m_rt.ctx().ecs);
-        // Register plugins — null backends until real integrations land
-        m_plugins.add(std::make_shared<JoltPlugin>());
-        m_plugins.add(std::make_shared<LuaScriptPlugin>());
-        m_plugins.add(std::make_shared<AudioPlugin>());
-        auto ctx = buildCtx();
-        m_plugins.attachAll(ctx);
+        // Register plugins with the runtime — it owns their lifecycle.
+        // A standalone game does exactly this, minus the editor.
+        m_rt.plugins().add(std::make_shared<JoltPlugin>());
+        m_rt.plugins().add(std::make_shared<LuaScriptPlugin>());
+        m_rt.plugins().add(std::make_shared<AudioPlugin>());
+        m_rt.attachPlugins();
     }
 
     void run() {
@@ -244,9 +244,10 @@ public:
             // Explicit phase order so script intent lands in the SAME physics
             // step (kills the input-latency frame): scripts -> physics -> contacts.
             if (m_editor.simState == SimState::Playing && m_gameWorld) {
-                m_plugins.broadcastUpdate(*m_gameWorld, dt);        // pre-physics: read input, set intent
-                m_plugins.broadcastPhysicsStep(*m_gameWorld, dt);   // step + write back transforms
-                m_plugins.broadcastPostPhysics(*m_gameWorld);       // flush contacts -> onCollisionEnter/Exit
+                auto& plugins = m_rt.plugins();
+                plugins.broadcastUpdate(*m_gameWorld, dt);        // pre-physics: read input, set intent
+                plugins.broadcastPhysicsStep(*m_gameWorld, dt);   // step + write back transforms
+                plugins.broadcastPostPhysics(*m_gameWorld);       // flush contacts -> onCollisionEnter/Exit
             }
 
             // ---- Editor UI (all ImGui panel draws) ----
@@ -260,7 +261,7 @@ public:
     }
 
     void shutdown() {
-        m_plugins.detachAll();
+        // Plugins detach in EngineRuntime::shutdown() — runtime owns them.
         imguiShutdown();
     }
 
@@ -287,7 +288,6 @@ private:
     // Play mode
     std::unique_ptr<flecs::world> m_gameWorld;
     std::string                   m_snapshotJSON;
-    PluginRegistry                m_plugins;
     bool                          m_showProjectSettings = false;
     ProjectSettingsState          m_projectSettingsState;
 
@@ -320,7 +320,7 @@ private:
         SceneSerializer::loadIntoWorld(
             m_snapshotJSON, *m_gameWorld, snap_storage);
         m_editor.simState = SimState::Playing;
-        m_plugins.broadcastSimStart(*m_gameWorld);
+        m_rt.plugins().broadcastSimStart(*m_gameWorld);
         LOG_SUCCESS("Sim", "Play — game world ready");
     }
     void onPause() {
@@ -331,7 +331,7 @@ private:
     }
     void onStop() {
         if (m_editor.simState == SimState::Editing) return;
-        m_plugins.broadcastSimStop();
+        m_rt.plugins().broadcastSimStop();
         m_gameWorld.reset();
         m_snapshotJSON.clear();
         m_editor.simState = SimState::Editing;

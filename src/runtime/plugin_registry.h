@@ -6,8 +6,9 @@
 
 // ── PluginRegistry ─────────────────────────────────────────────────────────
 // Owns all registered plugins and fans out lifecycle events to each one.
-// Lives in EditorApp. Plugins are registered at startup before the first
-// frame and remain attached until shutdown.
+// Lives in EngineRuntime — plugins are a runtime concept; standalone games
+// register them exactly like the editor does. Plugins are registered at
+// startup before the first frame and remain attached until shutdown.
 class PluginRegistry {
 public:
     // Register a plugin. Must be called before attachAll().
@@ -15,8 +16,8 @@ public:
         m_plugins.push_back(std::move(plugin));
     }
 
-    // Call after engine context is ready (EditorApp::init).
-    void attachAll(EngineContext& ctx) {
+    // Call after the runtime context is ready (EngineRuntime::attachPlugins).
+    void attachAll(RuntimeContext& ctx) {
         for (auto& p : m_plugins) {
             p->onAttach(ctx);
             LOG_INFO("Plugin", "Attached: %s %s", p->name(), p->version());
@@ -52,11 +53,8 @@ public:
         for (auto& p : m_plugins) p->onPostPhysics(gameWorld);
     }
 
-    // Called from Plugins menu / editor UI pass.
-    void broadcastEditorUI() {
-        for (auto& p : m_plugins) p->onEditorUI();
-    }
-
+    // Editor UI is NOT broadcast here — the editor walks all() and
+    // dynamic_casts each plugin to IEditorPlugin (editor/editor_plugin.h).
     const std::vector<std::shared_ptr<IEnginePlugin>>& all() const {
         return m_plugins;
     }

@@ -5,6 +5,7 @@
 #include <imgui.h>
 
 #include "runtime/plugin.h"
+#include "editor/editor_plugin.h"
 #include "runtime/logger.h"
 #include "components/collision_events.h"
 #include <mutex>
@@ -98,12 +99,12 @@ public:
 struct CollisionPair { JPH::BodyID a, b; bool enter; };
 
 // ── JoltPlugin ─────────────────────────────────────────────────────────────
-class JoltPlugin final : public IEnginePlugin, public IPhysicsService {
+class JoltPlugin final : public IEnginePlugin, public IEditorPlugin, public IPhysicsService {
 public:
     const char* name()    const override { return "Physics"; }
     const char* version() const override { return "0.1.0-jolt5"; }
 
-    void onAttach(EngineContext&) override {
+    void onAttach(RuntimeContext&) override {
         JPH::RegisterDefaultAllocator();
         JPH::Factory::sInstance = new JPH::Factory();
         JPH::RegisterTypes();

@@ -10,6 +10,7 @@
 #include "runtime/platform.h"
 #include "runtime/runtime_context.h"
 #include "runtime/renderer.h"
+#include "runtime/plugin_registry.h"
 #include "core/transform.h"
 #include "components/spinner.h"
 #include "systems/animator_system.h"
@@ -56,6 +57,11 @@ public:
     IPlatform&       platform()     { return *m_platform; }
     bool             headless() const { return m_headless; }
     RuntimeContext&  ctx()          { return *m_ctx; }
+
+    // Plugins — register via plugins().add(...) after init(), then call
+    // attachPlugins() once. detachAll happens automatically in shutdown().
+    PluginRegistry&  plugins()      { return m_plugins; }
+    void attachPlugins()            { m_plugins.attachAll(*m_ctx); }
     SkeletonRegistry& skeletons()  { return m_skeletons; }
     AnimClipRegistry& clips()      { return m_clips; }
     PrimitiveLibrary& primitives() { return m_primitives; }
@@ -95,6 +101,7 @@ private:
     // Gameplay-tick query (editor world); NOT a render concern — stays here.
     flecs::query<Transform, const Spinner> m_spinnerQuery;
     AnimatorSystem m_animatorSystem;
+    PluginRegistry m_plugins;
 
     bool initRenderer(const EngineConfig& cfg);
     bool initSystems();

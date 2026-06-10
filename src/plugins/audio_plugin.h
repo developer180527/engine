@@ -8,7 +8,7 @@
 // calls here. Until then every call safely no-ops inside ScriptHost.
 #include "runtime/plugin.h"
 #include "runtime/logger.h"
-#include "engine_context.h"
+#include "runtime/runtime_context.h"
 #include "runtime/scripting/script_services.h"
 #include "miniaudio.h"
 
@@ -24,7 +24,7 @@ public:
     const char* version() const override { return "0.1.0"; }
 
     // ── Editor lifecycle ────────────────────────────────────────────────
-    void onAttach(EngineContext& ctx) override {
+    void onAttach(RuntimeContext& ctx) override {
         m_assetsRoot = ctx.project.assetsRoot;
         ma_engine_config cfg = ma_engine_config_init();
         if (ma_engine_init(&cfg, &m_engine) != MA_SUCCESS) {
@@ -57,7 +57,6 @@ public:
         // at the origin facing -Z.
     }
 
-    void onEditorUI() override {}
 
     // ── IAudioService (invoked from Lua via ScriptHost) ─────────────────
     uint32_t play(const char* path) override {

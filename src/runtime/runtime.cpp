@@ -150,6 +150,7 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
 }
 
 void EngineRuntime::shutdown() {
+    m_plugins.detachAll(); // plugins may hold services — detach before teardown
     m_clips.clear();
     m_skeletons.clear();
     m_materials.clear();

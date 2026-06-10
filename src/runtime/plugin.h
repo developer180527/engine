@@ -1,22 +1,26 @@
 #pragma once
 #include <flecs.h>
 
-// Forward — plugins receive EngineContext on attach for accessing
-// asset storage, ECS world, project settings etc.
-struct EngineContext;
+// Forward — plugins receive RuntimeContext on attach for accessing
+// asset storage, ECS world, project settings etc. Editor-free: a
+// standalone game attaches plugins exactly the same way.
+struct RuntimeContext;
 
 // ── IEnginePlugin ──────────────────────────────────────────────────────────
 // All engine subsystems (physics, scripting, audio, networking) implement
 // this interface. The engine calls each lifecycle method at the right moment;
 // plugins are completely decoupled from each other and from editor code.
 //
+// Plugins that also want to draw editor UI additionally implement
+// IEditorPlugin (editor/editor_plugin.h) — the editor discovers it via
+// dynamic_cast. The runtime never calls UI methods.
+//
 // Lifecycle:
-//   onAttach        — registered with engine (editor startup)
-//   onDetach        — unregistered (editor shutdown)
-//   onSimulationStart — Play pressed, game world freshly populated
-//   onSimulationStop  — Stop pressed, game world about to be destroyed
-//   onUpdate          — called every frame during Playing (not Paused)
-//   onEditorUI        — draw plugin-specific ImGui widgets (settings, stats)
+//   onAttach        — registered with engine (startup)
+//   onDetach        — unregistered (shutdown)
+//   onSimulationStart — Play pressed / game boot, game world freshly populated
+//   onSimulationStop  — Stop pressed / game exit, game world about to be destroyed
+//   onUpdate          — called every frame while simulating (not paused)
 class IEnginePlugin {
 public:
     virtual ~IEnginePlugin() = default;
@@ -24,15 +28,15 @@ public:
     virtual const char* name()    const = 0;
     virtual const char* version() const = 0;
 
-    // Editor lifecycle
-    virtual void onAttach(EngineContext& ctx) = 0;
-    virtual void onDetach()                   = 0;
+    // Engine lifecycle
+    virtual void onAttach(RuntimeContext& ctx) = 0;
+    virtual void onDetach()                    = 0;
 
     // Simulation lifecycle — game world is ONLY valid between Start and Stop
     virtual void onSimulationStart(flecs::world& gameWorld) = 0;
     virtual void onSimulationStop()                         = 0;
 
-    // Per-frame phases, only while SimState == Playing, called in THIS order
+    // Per-frame phases, only while simulating, called in THIS order
     // each frame BEFORE rendering. All default-empty — implement only what you need:
     //   onUpdate      — pre-physics: gameplay/scripts read input + set intent
     //   onPhysicsStep — advance the simulation (applies the intent above)
@@ -40,7 +44,4 @@ public:
     virtual void onUpdate     (flecs::world& /*gameWorld*/, float /*dt*/) {}
     virtual void onPhysicsStep(flecs::world& /*gameWorld*/, float /*dt*/) {}
     virtual void onPostPhysics(flecs::world& /*gameWorld*/)               {}
-
-    // Editor UI — called inside an existing ImGui scope (Plugins menu etc.)
-    virtual void onEditorUI() = 0;
 };

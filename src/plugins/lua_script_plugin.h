@@ -1,7 +1,8 @@
 #pragma once
 #include "runtime/plugin.h"
+#include "editor/editor_plugin.h"
 #include "runtime/logger.h"
-#include "engine_context.h"      // full EngineContext (plugin.h only fwd-decls it)
+#include "runtime/runtime_context.h" // full RuntimeContext (plugin.h only fwd-decls it)
 #include "io/project_context.h"  // ProjectContext::projectRoot
 #include "runtime/scripting/script_host.h"
 #include "runtime/scripting/lua_bindings.h"
@@ -27,12 +28,12 @@
 // Each entity with a ScriptComponent gets an instance table (state lives on
 // self; self.entity is the entity handle). Modules are cached by path and
 // cleared on Stop, so editing a script and pressing Play reloads it.
-class LuaScriptPlugin final : public IEnginePlugin {
+class LuaScriptPlugin final : public IEnginePlugin, public IEditorPlugin {
 public:
     const char* name()    const override { return "Scripting"; }
     const char* version() const override { return "5.4-lua"; }
 
-    void onAttach(EngineContext& ec) override {
+    void onAttach(RuntimeContext& ec) override {
         m_projectRoot = ec.project.projectRoot;
         if (ec.assetService)
             m_host.setAssetService(ec.assetService);
