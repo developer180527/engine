@@ -218,11 +218,21 @@ private:
                          (float)m_rt.height() / (float)m_desiredSceneH)));
             const int renderW = (int)(m_desiredSceneW * ssaa);
             const int renderH = (int)(m_desiredSceneH * ssaa);
-            // Hysteresis: only recreate FB when size differs by > 8px.
-            // Prevents GPU texture thrash during window resize animations.
+            // Debounce: recreate the FB only once the panel size has been
+            // stable for a few frames (a live drag changes it every frame —
+            // recreating per frame churns 6 GPU resources each time), and
+            // only when it differs by > 8px (resize-animation hysteresis).
+            if (m_desiredSceneW == m_lastDesiredW &&
+                m_desiredSceneH == m_lastDesiredH) {
+                if (m_desiredStableFrames < 1000) ++m_desiredStableFrames;
+            } else {
+                m_desiredStableFrames = 0;
+                m_lastDesiredW = m_desiredSceneW;
+                m_lastDesiredH = m_desiredSceneH;
+            }
             const int dw = std::abs(renderW - m_rt.sceneW());
             const int dh = std::abs(renderH - m_rt.sceneH());
-            if (dw > 8 || dh > 8)
+            if ((dw > 8 || dh > 8) && m_desiredStableFrames >= 5)
                 m_rt.createSceneFB(renderW, renderH);
 
             m_rt.tick(dt, view, proj, ImGuizmo::IsUsing());
@@ -267,6 +277,9 @@ private:
     GLFWwindow*    m_sceneGLFWWindow  = nullptr; // GLFW window currently hosting Scene View
     int            m_desiredSceneW    = 1280;
     int            m_desiredSceneH    = 720;
+    int            m_lastDesiredW     = 0;    // FB-recreate debounce
+    int            m_lastDesiredH     = 0;
+    int            m_desiredStableFrames = 0;
     // Play mode — sim state/world owned by the runtime (m_rt.simWorld()).
     bool                          m_showProjectSettings = false;
     ProjectSettingsState          m_projectSettingsState;

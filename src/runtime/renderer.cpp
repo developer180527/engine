@@ -97,8 +97,15 @@ void Renderer::createSceneFB(int w, int h) {
     if (bgfx::isValid(m_sceneFB))       bgfx::destroy(m_sceneFB);
     if (bgfx::isValid(m_sceneColorTex)) bgfx::destroy(m_sceneColorTex);
     if (bgfx::isValid(m_sceneDepthTex)) bgfx::destroy(m_sceneDepthTex);
-    // Game FB handles may have been invalidated by bgfx::reset(); never destroy
-    // here (double-free) — they are torn down in shutdown().
+    // The game FB follows the scene FB size — destroy it so renderGameView
+    // recreates it at the new size. It must be DESTROYED, not just forgotten:
+    // forgetting the handles leaked an FB + two textures per resize, and a
+    // continuous Scene View drag exhausted the bgfx texture pool (handle
+    // 65535 / "Invalid texture attachment" crash). bgfx::reset() never
+    // invalidates user-created handles, so destroying here is safe.
+    if (bgfx::isValid(m_gameFB))       bgfx::destroy(m_gameFB);
+    if (bgfx::isValid(m_gameColorTex)) bgfx::destroy(m_gameColorTex);
+    if (bgfx::isValid(m_gameDepthTex)) bgfx::destroy(m_gameDepthTex);
     m_gameFB       = BGFX_INVALID_HANDLE;
     m_gameColorTex = BGFX_INVALID_HANDLE;
     m_gameDepthTex = BGFX_INVALID_HANDLE;
@@ -139,6 +146,15 @@ void Renderer::renderGameView(const float view[16], const float proj[16],
             bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT);
         m_gameDepthTex = bgfx::createTexture2D(W, H, false, 1,
             bgfx::TextureFormat::D24S8, BGFX_TEXTURE_RT);
+        // Defensive: if texture allocation ever fails, skip the game view
+        // this frame instead of asserting inside createFrameBuffer.
+        if (!bgfx::isValid(m_gameColorTex) || !bgfx::isValid(m_gameDepthTex)) {
+            if (bgfx::isValid(m_gameColorTex)) bgfx::destroy(m_gameColorTex);
+            if (bgfx::isValid(m_gameDepthTex)) bgfx::destroy(m_gameDepthTex);
+            m_gameColorTex = BGFX_INVALID_HANDLE;
+            m_gameDepthTex = BGFX_INVALID_HANDLE;
+            return;
+        }
         bgfx::TextureHandle gatt[2] = { m_gameColorTex, m_gameDepthTex };
         m_gameFB = bgfx::createFrameBuffer(2, gatt, false);
     }
