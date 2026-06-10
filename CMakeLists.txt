@@ -92,3 +92,53 @@ target_link_libraries(sample_minimal PRIVATE engine::runtime)
 set_target_properties(sample_minimal PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+# ── Install — `cmake --install build --prefix <sdk-dir>` ────────────────────
+# Produces a relocatable SDK: lib/ (engine + bundled third-party archives),
+# include/ (public umbrellas + engine headers + third-party headers), and a
+# hand-written package config so consumers just find_package(EngineRuntime).
+install(TARGETS engine_runtime assetlib assimp bgfx bimg bx glfw flecs_static
+                Jolt lua
+        ARCHIVE DESTINATION lib)
+install(TARGETS engine_cook RUNTIME DESTINATION bin)
+
+# Engine headers: public umbrellas + the src tree they re-export.
+install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY src/ DESTINATION include
+        FILES_MATCHING PATTERN "*.h"
+        PATTERN "editor" EXCLUDE)
+
+# Third-party headers reachable from public engine headers.
+install(DIRECTORY third_party/flecs/include/ DESTINATION include)
+install(DIRECTORY third_party/bgfx.cmake/bx/include/ DESTINATION include)
+install(DIRECTORY third_party/bgfx.cmake/bgfx/include/ DESTINATION include)
+install(DIRECTORY third_party/glfw/include/ DESTINATION include)
+install(DIRECTORY third_party/JoltPhysics/Jolt DESTINATION include
+        FILES_MATCHING PATTERN "*.h" PATTERN "*.inl")
+install(DIRECTORY third_party/nlohmann/ DESTINATION include
+        FILES_MATCHING PATTERN "*.hpp")
+install(DIRECTORY modules/assetlib/include/ DESTINATION include)
+install(FILES third_party/miniaudio/miniaudio.h DESTINATION include)
+# Lua headers go at the include root: lua.hpp quote-includes "lua.h", so
+# they must live in the same directory (mirrors lua/src being on the path).
+install(DIRECTORY third_party/lua/src/ DESTINATION include
+        FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp")
+
+# Capture the bundled libraries' INTERFACE_COMPILE_DEFINITIONS at generate
+# time. ABI-sensitive deps (Jolt especially) require consumers to compile
+# with exactly the definitions the libraries were built with — the installed
+# config replays them. Generator expressions resolve for this build's config,
+# which matches the single set of archives we install.
+set(_sdk_def_targets Jolt bx bgfx bimg flecs_static glfw assimp lua assetlib)
+set(_sdk_defs_genex "")
+foreach(_t ${_sdk_def_targets})
+    string(APPEND _sdk_defs_genex "$<TARGET_PROPERTY:${_t},INTERFACE_COMPILE_DEFINITIONS>;")
+endforeach()
+file(GENERATE
+    OUTPUT ${CMAKE_BINARY_DIR}/EngineRuntimeDefinitions.cmake
+    CONTENT "set(ENGINE_BUNDLED_DEFINITIONS \"${_sdk_defs_genex}\")\n")
+install(FILES ${CMAKE_BINARY_DIR}/EngineRuntimeDefinitions.cmake
+        DESTINATION lib/cmake/EngineRuntime)
+
+install(FILES cmake/EngineRuntimeConfig.cmake
+        DESTINATION lib/cmake/EngineRuntime)

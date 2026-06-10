@@ -62,5 +62,16 @@ camera render to the backbuffer (`renderToBackbuffer`, invalid FB target).
 link the `engine::runtime` alias target. `samples/minimal_game` is the
 living proof that the API builds a game with no editor code.
 
+## Distribution
+Two supported modes:
+- **Vendored**: `add_subdirectory(engine)` + link `engine::runtime`.
+- **Installed**: `cmake --install build --prefix <sdk>` produces a
+  relocatable SDK (lib/ archives, include/ headers, bin/engine_cook,
+  lib/cmake/EngineRuntime). Consumers `find_package(EngineRuntime)`.
+  The config replays the bundled libraries' INTERFACE_COMPILE_DEFINITIONS
+  (EngineRuntimeDefinitions.cmake, generated at build time) — Jolt traps
+  (SIGTRAP) at runtime if consumers compile with mismatched JPH_* defines,
+  so never hand-trim that list.
+
 ## Future Work
-- Install rules + EngineRuntimeConfig.cmake for find_package distribution.
+- engine_core split (GPU-free layer) to slim headless/CLI consumers.
