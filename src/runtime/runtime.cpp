@@ -49,7 +49,7 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     if (!initRenderer(cfg))  return false;
     if (!initSystems(cfg))   return false;
     if (hasProject()) openProject(m_project.projectRoot); // DB + service wiring
-    buildDefaultScene();
+    if (cfg.defaultScene) buildDefaultScene();
     return true;
 }
 

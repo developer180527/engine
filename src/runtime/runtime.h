@@ -34,6 +34,10 @@ struct EngineConfig {
     // Open <projectRoot>/.cache/registry.db and scan the assets folder at
     // startup. Disable for tools that bring their own database connection.
     bool openAssetDatabase = true;
+
+    // Populate the world with the demo spinning-cube grid when no scene is
+    // loaded. Games that build their own world from scratch disable this.
+    bool defaultScene = true;
 };
 
 // Frame coordinator: owns platform, the ECS world + content systems, plugin
