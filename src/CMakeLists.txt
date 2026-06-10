@@ -153,3 +153,12 @@ elseif(UNIX)
 endif()
 
 add_subdirectory(editor)
+
+# ── engine_cook — CLI asset cooker ───────────────────────────────────────────
+# Cooks a project's assets without the editor: engine_cook [project-dir].
+# Game build scripts call this as a pre-build step.
+add_executable(engine_cook tools/engine_cook.cpp)
+target_link_libraries(engine_cook PRIVATE engine_runtime)
+set_target_properties(engine_cook PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)

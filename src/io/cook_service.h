@@ -30,6 +30,14 @@ public:
     // Launch background cook thread — call once after editor opens
     void start();
 
+    // Run a single synchronous cook pass on the calling thread — no
+    // background thread. For CLI tooling (engine_cook). Returns the number
+    // of assets that failed to cook (0 = success).
+    int cookOnce() {
+        runOneCookPass();
+        return m_stats.load().failed;
+    }
+
     // Re-scan assets/ and cook anything new or stale.
     // Safe to call from any thread (main thread, button handler, etc.)
     void requestRefresh();
