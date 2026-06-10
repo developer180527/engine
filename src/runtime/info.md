@@ -49,7 +49,18 @@ systems → animation → `flecs::world::progress()` → scene render.
 - `RuntimeContext` raw pointers are wired in `initSystems` — all non-null
   after a successful `init()` except `assetLib` when `openAssetDatabase=false`.
 
+## Simulation Lifecycle
+`startSimulation(InPlace|Snapshot)` / `stopSimulation()` / `tickSimulation(dt)`.
+InPlace simulates the runtime's own world (game: boot = play). Snapshot
+serializes the world and simulates a fresh copy (editor Play; Stop restores
+the editing world untouched). `simWorld()` returns whichever is active.
+The game-facing `tick(dt)` overload runs systems + simulation + a primary-
+camera render to the backbuffer (`renderToBackbuffer`, invalid FB target).
+
+## Public API
+`include/engine/*.h` umbrella headers are the supported surface; consumers
+link the `engine::runtime` alias target. `samples/minimal_game` is the
+living proof that the API builds a game with no editor code.
+
 ## Future Work
-- Move simulation lifecycle (play/stop, game world) from the editor into the
-  runtime so games drive plugins without copying editor logic.
-- Public/private header split for SDK distribution (install rules).
+- Install rules + EngineRuntimeConfig.cmake for find_package distribution.

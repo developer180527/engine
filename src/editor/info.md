@@ -22,11 +22,12 @@ only layer that links ImGui/ImGuizmo — the runtime stays UI-free.
   plugins; the editor dynamic_casts entries of the runtime's PluginRegistry.
 
 ## Play Mode
-Play snapshots the editor world to JSON, deserializes it into a fresh
-`m_gameWorld` (`flecs::world`), and broadcasts `onSimulationStart`. Per frame
-while playing: `broadcastUpdate → broadcastPhysicsStep → broadcastPostPhysics`
-(script intent lands in the same physics step — no input-latency frame).
-Stop destroys the game world; the editor world is untouched.
+Play calls `m_rt.startSimulation(SimMode::Snapshot)` — the runtime snapshots
+the editor world and simulates a fresh copy (`m_rt.simWorld()`). Per frame
+while Playing (not Paused) the editor calls `m_rt.tickSimulation(dt)`, which
+runs the plugin phases in order (script intent lands in the same physics
+step — no input-latency frame). Stop calls `m_rt.stopSimulation()`; the
+editor world is untouched. Pause is purely "don't call tickSimulation".
 
 ## Invariants
 - `EngineContext` is stack-only, one frame lifetime.
@@ -37,5 +38,4 @@ Stop destroys the game world; the editor world is untouched.
 - Scene saves also cook the binary scene (keeps both formats in sync).
 
 ## Future Work
-- Move play-mode simulation lifecycle into the runtime (games need it too).
 - Plugins menu surfacing IEditorPlugin::onEditorUI (currently not drawn).
