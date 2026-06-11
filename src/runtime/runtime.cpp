@@ -33,6 +33,10 @@ bool EngineRuntime::init(const EngineConfig& cfg) {
 
 bool EngineRuntime::init(const EngineConfig& cfg,
                          std::unique_ptr<IPlatform> platform) {
+    if (m_initialized) {
+        LOG_ERROR("Runtime", "init() called twice — ignoring");
+        return false;
+    }
     m_width = cfg.width; m_height = cfg.height; m_fov = cfg.fov;
 
     // Project loads first so the window title can default to its name.
@@ -53,11 +57,34 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     if (!initSystems(cfg))   return false;
     if (hasProject()) openProject(m_project.projectRoot); // DB + service wiring
     if (cfg.defaultScene) buildDefaultScene();
+    m_initialized = true;
     return true;
+}
+
+void EngineRuntime::attachPlugins() {
+    if (!m_initialized) {
+        LOG_ERROR("Runtime", "attachPlugins() before init()");
+        return;
+    }
+    if (m_pluginsAttached) {
+        LOG_WARN("Runtime", "attachPlugins() called twice — ignoring "
+                 "(plugins added later need manual onAttach)");
+        return;
+    }
+    m_pluginsAttached = true;
+    m_plugins.attachAll(*m_ctx);
 }
 
 bool EngineRuntime::openProject(const std::filesystem::path& root) {
     namespace fs = std::filesystem;
+    if (!m_initialized) {
+        // init() calls this internally AFTER systems exist but BEFORE the
+        // flag flips — allow that path; reject true pre-init external calls.
+        if (!m_assetService) {
+            LOG_ERROR("Project", "openProject() before init()");
+            return false;
+        }
+    }
     if (!fs::exists(root / "project.json")) {
         LOG_WARN("Project", "No project.json at: %s", root.string().c_str());
         return false;
@@ -93,13 +120,13 @@ bool EngineRuntime::openProject(const std::filesystem::path& root) {
 }
 
 bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
-    void* nwh = m_platform->nativeWindowHandle();
-    if (!nwh) {
+    if (!m_platform->supportsRendering()) {
         // Headless platform — no GPU. ECS, assets, animation, physics and
         // scripting still run; render entry points become no-ops.
         m_headless = true;
         return true;
     }
+    void* nwh = m_platform->nativeWindowHandle();
     return m_renderer.init(nwh, cfg.width, cfg.height,
                            m_ecs, m_assets, m_textures, m_materials,
                            m_skeletons);
@@ -183,6 +210,10 @@ void EngineRuntime::buildDefaultScene() {
 }
 
 bool EngineRuntime::frameBegin(float& dt) {
+    if (!m_initialized) {
+        LOG_ERROR("Runtime", "frameBegin()/run() before init()");
+        return false;
+    }
     if (!m_platform || m_platform->shouldClose()) return false;
 
     m_platform->pollEvents();
@@ -249,7 +280,7 @@ bool EngineRuntime::tick(float dt) {
     float view[16], proj[16], clear[4];
     const float aspect = m_height > 0
         ? float(m_width) / float(m_height) : 16.0f / 9.0f;
-    if (!findPrimaryCamera(simWorld(), view, proj, aspect, clear))
+    if (!m_cameraFinder.find(simWorld(), view, proj, aspect, clear))
         return false;
 
     flecs::world* world = m_gameWorld ? m_gameWorld.get() : nullptr;
@@ -258,6 +289,10 @@ bool EngineRuntime::tick(float dt) {
 }
 
 bool EngineRuntime::startSimulation(SimMode mode) {
+    if (!m_initialized) {
+        LOG_ERROR("Sim", "startSimulation() before init()");
+        return false;
+    }
     if (m_simulating) return true;
 
     if (mode == SimMode::Snapshot) {
@@ -285,6 +320,11 @@ void EngineRuntime::stopSimulation() {
     if (!m_simulating) return;
     m_plugins.broadcastSimStop();
     m_scriptHost->setWorld(nullptr);            // C API + Lua go dormant
+    // The snapshot world dies below — drop every cached query against it
+    // (a future world could reuse the same address and false-match).
+    m_cameraFinder.reset();
+    m_animatorSystem.resetWorldCache();
+    m_renderer.resetWorldCaches();
     m_scriptHost->setPhysicsService(nullptr);
     m_scriptHost->setAudioService(nullptr);
     m_gameWorld.reset();
@@ -324,6 +364,7 @@ void EngineRuntime::tickSimulation(float dt) {
 }
 
 void EngineRuntime::tickSystems(float dt, bool paused) {
+    if (!m_initialized) { LOG_ERROR("Runtime", "tick() before init()"); return; }
     if (!paused) {
         m_spinnerQuery
             .each([dt](flecs::entity, Transform& t, const Spinner& s) {
@@ -341,6 +382,8 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
 }
 
 void EngineRuntime::shutdown() {
+    if (!m_initialized) return;   // idempotent / never-initialized safe
+    m_initialized = false;
     stopSimulation();      // broadcasts onSimulationStop if still running
     engineApiBindHost(nullptr);
     m_plugins.detachAll(); // plugins may hold services — detach before teardown

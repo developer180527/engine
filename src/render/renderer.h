@@ -11,6 +11,7 @@
 #include "components/skinned_mesh.h"
 #include "components/light.h"
 #include "animation/skeleton_registry.h"
+#include "runtime/world_query_cache.h"
 
 // Owns the GPU device lifecycle and ALL render-side state: framebuffers,
 // fallback textures, reserved view ids, the swappable pipeline, and per-frame
@@ -42,6 +43,10 @@ public:
     void renderToBackbuffer(const float view[16], const float proj[16],
                             const float clearColor[4], flecs::world* world = nullptr);
 
+    // Drop cached queries against the play-mode world — the runtime calls
+    // this when that world is destroyed (sim stop).
+    void resetWorldCaches();
+
     // Bring-your-own-renderer: swap the pipeline (default is ForwardPipeline).
     // Safe before or after init(); attaches once the device is ready.
     void setPipeline(std::unique_ptr<IRenderPipeline> pipeline);
@@ -66,8 +71,10 @@ private:
 
     std::unique_ptr<IRenderPipeline>                  m_pipeline;
     bool                                              m_initialized = false;
-    flecs::query<const Transform, const MeshRenderer> m_itemQuery;
-    flecs::query<const Transform, const Light>        m_lightQuery;
+    flecs::query<const Transform, const MeshRenderer> m_itemQuery;   // editor world
+    flecs::query<const Transform, const Light>        m_lightQuery;  // editor world
+    WorldQueryCache<const Transform, const MeshRenderer> m_gameItemQuery;  // sim world
+    WorldQueryCache<const Transform, const Light>        m_gameLightQuery; // sim world
     std::vector<RenderItem> m_items;
     std::vector<LightItem>  m_lights;
 

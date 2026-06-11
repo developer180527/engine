@@ -81,6 +81,31 @@ Two supported modes:
   (SIGTRAP) at runtime if consumers compile with mismatched JPH_* defines,
   so never hand-trim that list.
 
+## Accepted Tradeoffs (reviewed, kept deliberately)
+Documented so these don't get re-litigated from scratch — each lists the
+trigger that would revisit it:
+- **EngineRuntime as composition root** — it owns everything by design;
+  the rule is "wiring lives here, logic lives in subsystems". Revisit if
+  runtime.cpp grows real logic.
+- **RuntimeContext service locator** — raw-pointer service bundle trades
+  explicit dependency declarations for simplicity. Misuse is mitigated by
+  lifecycle guards (init/attach/tick order is enforced with loud errors).
+- **Single-threaded frame orchestration** — Jolt parallelizes internally,
+  asset decode is off-thread; the frame itself is sequential. Trigger:
+  the planned shared job system (flecs set_threads + engine::jobs).
+- **Snapshot play mode via full serialization** — editor-only cost.
+  Trigger: noticeable Play-button latency on large scenes.
+- **Input singletons + single window** — InputSystem/InputMap are global,
+  digital-only axes, linear action lookup (N≈6, hash-keyed). Key/MouseButton
+  are engine-owned constants (GLFW-free header; backend static_asserts the
+  values). Triggers: gamepad support (analog axes), multi-window editor.
+- **ScriptHost as THE gateway** — one deliberately-monolithic stable
+  surface shared by Lua/C API/future C#. Keep it minimal; never split it
+  per-domain (that relocates coupling without removing it).
+- **Per-world query caches** (WorldQueryCache) — queries against the sim
+  world are cached and MUST be reset when that world dies; the runtime
+  resets its own (and renderer/animator) in stopSimulation.
+
 ## Layering
 `engine_core` (alias `engine::core`) is the GPU-free layer underneath:
 cookers, cook service, and the single-header library implementation TUs

@@ -17,6 +17,7 @@
 #include "animation/clip_registry.h"
 #include "components/animator.h"
 #include "components/skinned_mesh.h"
+#include "runtime/world_query_cache.h"
 
 class AnimatorSystem {
 public:
@@ -37,15 +38,18 @@ public:
         });
     }
 
-    // Tick an arbitrary world — the play-mode snapshot world. Builds a
-    // transient query (snapshot worlds are short-lived; not worth caching).
+    // Tick an arbitrary world — the play-mode snapshot world. The query is
+    // cached per world; the runtime calls resetWorldCache() when the
+    // snapshot world is destroyed (sim stop).
     void tick(flecs::world& world, float dt) {
         if (!m_skeletons || !m_clips) return;
-        world.query_builder<Animator, SkinnedMesh>().build()
+        m_worldQuery.get(world)
             .each([&](flecs::entity, Animator& anim, SkinnedMesh& skin) {
                 step(anim, skin, dt);
             });
     }
+
+    void resetWorldCache() { m_worldQuery.reset(); }
 
 private:
     static constexpr int kMaxBones = 128;
@@ -111,5 +115,6 @@ private:
 
     SkeletonRegistry* m_skeletons = nullptr;
     AnimClipRegistry* m_clips     = nullptr;
-    flecs::query<Animator, SkinnedMesh> m_query;
+    flecs::query<Animator, SkinnedMesh> m_query;       // init() world
+    WorldQueryCache<Animator, SkinnedMesh> m_worldQuery; // sim/snapshot world
 };

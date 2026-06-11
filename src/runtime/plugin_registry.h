@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <exception>
 #include <vector>
 #include <memory>
 #include "runtime/plugin.h"
@@ -29,7 +30,7 @@ public:
     // Call after the runtime context is ready (EngineRuntime::attachPlugins).
     void attachAll(RuntimeContext& ctx) {
         for (auto& p : m_plugins) {
-            p->onAttach(ctx);
+            guarded(*p, "onAttach", [&] { p->onAttach(ctx); });
             LOG_INFO("Plugin", "Attached: %s %s", p->name(), p->version());
         }
     }
@@ -37,30 +38,35 @@ public:
     // Call at shutdown.
     void detachAll() {
         for (auto it = m_plugins.rbegin(); it != m_plugins.rend(); ++it)
-            (*it)->onDetach();
+            guarded(**it, "onDetach", [&] { (*it)->onDetach(); });
     }
 
     // ── Simulation broadcasts ──────────────────────────────────────────────
     // gameWorld is the freshly-populated game ECS — plugins may register
     // their own systems into it during onSimulationStart.
     void broadcastSimStart(flecs::world& gameWorld) {
-        for (auto& p : m_plugins) p->onSimulationStart(gameWorld);
+        for (auto& p : m_plugins)
+            guarded(*p, "onSimulationStart", [&] { p->onSimulationStart(gameWorld); });
     }
 
     void broadcastSimStop() {
-        for (auto& p : m_plugins) p->onSimulationStop();
+        for (auto& p : m_plugins)
+            guarded(*p, "onSimulationStop", [&] { p->onSimulationStop(); });
     }
 
     // Per-frame phases while SimState == Playing (Paused skips them). Called in
     // this order each frame, before rendering: pre-physics -> step -> post.
     void broadcastUpdate(flecs::world& gameWorld, float dt) {
-        for (auto& p : m_plugins) p->onUpdate(gameWorld, dt);
+        for (auto& p : m_plugins)
+            guarded(*p, "onUpdate", [&] { p->onUpdate(gameWorld, dt); });
     }
     void broadcastPhysicsStep(flecs::world& gameWorld, float dt) {
-        for (auto& p : m_plugins) p->onPhysicsStep(gameWorld, dt);
+        for (auto& p : m_plugins)
+            guarded(*p, "onPhysicsStep", [&] { p->onPhysicsStep(gameWorld, dt); });
     }
     void broadcastPostPhysics(flecs::world& gameWorld) {
-        for (auto& p : m_plugins) p->onPostPhysics(gameWorld);
+        for (auto& p : m_plugins)
+            guarded(*p, "onPostPhysics", [&] { p->onPostPhysics(gameWorld); });
     }
 
     // Editor UI is NOT broadcast here — the editor walks all() and
@@ -70,5 +76,20 @@ public:
     }
 
 private:
+    // Exception fence: one plugin throwing must not take down the frame or
+    // skip its peers. Honest limit — segfaults/aborts remain uncatchable;
+    // this guards the recoverable failure class only.
+    template <typename Fn>
+    static void guarded(IEnginePlugin& p, const char* phase, Fn&& fn) {
+        try {
+            fn();
+        } catch (const std::exception& e) {
+            LOG_ERROR("Plugin", "%s threw in %s: %s", p.name(), phase, e.what());
+        } catch (...) {
+            LOG_ERROR("Plugin", "%s threw an unknown exception in %s",
+                      p.name(), phase);
+        }
+    }
+
     std::vector<std::shared_ptr<IEnginePlugin>> m_plugins;
 };

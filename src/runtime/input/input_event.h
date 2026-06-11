@@ -1,67 +1,41 @@
 #pragma once
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
 #include <cstdint>
 
-// ── Key enum ───────────────────────────────────────────────────────────────
-// Mirrors GLFW key codes directly — zero-cost cast, no lookup table.
+// ── Key / MouseButton — engine-owned input constants ────────────────────────
+// Numeric values are identical to GLFW3 key codes (a stable, documented
+// mapping), but this header deliberately does NOT include GLFW: the semantic
+// input layer (Key, Input::, InputMap) is backend-free public API. The
+// GLFW-backed implementation (input_system.h) static_asserts the values
+// match, so a backend swap is a new implementation — not a gameplay-code
+// migration.
 enum class Key : int {
-    Unknown   = GLFW_KEY_UNKNOWN,
-    Space     = GLFW_KEY_SPACE,
-    Enter     = GLFW_KEY_ENTER,
-    Escape    = GLFW_KEY_ESCAPE,
-    Tab       = GLFW_KEY_TAB,
-    Backspace = GLFW_KEY_BACKSPACE,
-    Delete    = GLFW_KEY_DELETE,
+    Unknown   = -1,
+    Space     = 32,
+    Escape    = 256,
+    Enter     = 257,
+    Tab       = 258,
+    Backspace = 259,
+    Delete    = 261,
     // Arrows
-    Right = GLFW_KEY_RIGHT, Left = GLFW_KEY_LEFT,
-    Up    = GLFW_KEY_UP,    Down = GLFW_KEY_DOWN,
-    // Letters
-    A=GLFW_KEY_A, B=GLFW_KEY_B, C=GLFW_KEY_C, D=GLFW_KEY_D,
-    E=GLFW_KEY_E, F=GLFW_KEY_F, G=GLFW_KEY_G, H=GLFW_KEY_H,
-    I=GLFW_KEY_I, J=GLFW_KEY_J, K=GLFW_KEY_K, L=GLFW_KEY_L,
-    M=GLFW_KEY_M, N=GLFW_KEY_N, O=GLFW_KEY_O, P=GLFW_KEY_P,
-    Q=GLFW_KEY_Q, R=GLFW_KEY_R, S=GLFW_KEY_S, T=GLFW_KEY_T,
-    U=GLFW_KEY_U, V=GLFW_KEY_V, W=GLFW_KEY_W, X=GLFW_KEY_X,
-    Y=GLFW_KEY_Y, Z=GLFW_KEY_Z,
-    // Numbers
-    Num0=GLFW_KEY_0, Num1=GLFW_KEY_1, Num2=GLFW_KEY_2,
-    Num3=GLFW_KEY_3, Num4=GLFW_KEY_4, Num5=GLFW_KEY_5,
-    Num6=GLFW_KEY_6, Num7=GLFW_KEY_7, Num8=GLFW_KEY_8,
-    Num9=GLFW_KEY_9,
-    // Function
-    F1=GLFW_KEY_F1,   F2=GLFW_KEY_F2,   F3=GLFW_KEY_F3,
-    F4=GLFW_KEY_F4,   F5=GLFW_KEY_F5,   F6=GLFW_KEY_F6,
-    F7=GLFW_KEY_F7,   F8=GLFW_KEY_F8,   F9=GLFW_KEY_F9,
-    F10=GLFW_KEY_F10, F11=GLFW_KEY_F11, F12=GLFW_KEY_F12,
+    Right = 262, Left = 263, Down = 264, Up = 265,
+    // Letters (ASCII uppercase)
+    A=65, B=66, C=67, D=68, E=69, F=70, G=71, H=72,
+    I=73, J=74, K=75, L=76, M=77, N=78, O=79, P=80,
+    Q=81, R=82, S=83, T=84, U=85, V=86, W=87, X=88,
+    Y=89, Z=90,
+    // Numbers (ASCII digits)
+    Num0=48, Num1=49, Num2=50, Num3=51, Num4=52,
+    Num5=53, Num6=54, Num7=55, Num8=56, Num9=57,
+    // Function keys
+    F1=290,  F2=291,  F3=292,  F4=293,  F5=294,  F6=295,
+    F7=296,  F8=297,  F9=298,  F10=299, F11=300, F12=301,
     // Modifiers
-    LeftShift  = GLFW_KEY_LEFT_SHIFT,   RightShift  = GLFW_KEY_RIGHT_SHIFT,
-    LeftCtrl   = GLFW_KEY_LEFT_CONTROL, RightCtrl   = GLFW_KEY_RIGHT_CONTROL,
-    LeftAlt    = GLFW_KEY_LEFT_ALT,     RightAlt    = GLFW_KEY_RIGHT_ALT,
-    LeftSuper  = GLFW_KEY_LEFT_SUPER,   RightSuper  = GLFW_KEY_RIGHT_SUPER,
+    LeftShift = 340, LeftCtrl  = 341, LeftAlt  = 342, LeftSuper  = 343,
+    RightShift= 344, RightCtrl = 345, RightAlt = 346, RightSuper = 347,
 };
 
 enum class MouseButton : int {
-    Left   = GLFW_MOUSE_BUTTON_LEFT,
-    Right  = GLFW_MOUSE_BUTTON_RIGHT,
-    Middle = GLFW_MOUSE_BUTTON_MIDDLE,
-};
-
-// ── InputEvent ─────────────────────────────────────────────────────────────
-// Every OS input event is captured into this struct and pushed onto
-// the queue. Processed at frame start — never dropped between ticks.
-enum class InputEventType {
-    KeyPress, KeyRelease,
-    MouseButtonPress, MouseButtonRelease,
-    MouseMove, Scroll,
-    TextInput,
-};
-
-struct InputEvent {
-    InputEventType type      = InputEventType::KeyPress;
-    int            key       = 0;       // GLFW_KEY_* for key events
-    int            button    = 0;       // GLFW_MOUSE_BUTTON_* for mouse events
-    float          x         = 0.0f;   // cursor delta x / scroll x
-    float          y         = 0.0f;   // cursor delta y / scroll y
-    uint32_t       codepoint = 0;      // UTF-32 for TextInput events
+    Left   = 0,
+    Right  = 1,
+    Middle = 2,
 };

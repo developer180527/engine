@@ -5,6 +5,19 @@
 #include <cstring>
 #include "runtime/input/input_event.h"
 
+// The engine-owned Key/MouseButton constants (input_event.h, GLFW-free) must
+// stay numerically identical to GLFW's — this backend casts between them.
+static_assert((int)Key::Space      == GLFW_KEY_SPACE);
+static_assert((int)Key::Escape     == GLFW_KEY_ESCAPE);
+static_assert((int)Key::Enter      == GLFW_KEY_ENTER);
+static_assert((int)Key::W          == GLFW_KEY_W);
+static_assert((int)Key::Num9       == GLFW_KEY_9);
+static_assert((int)Key::F12        == GLFW_KEY_F12);
+static_assert((int)Key::LeftShift  == GLFW_KEY_LEFT_SHIFT);
+static_assert((int)Key::RightSuper == GLFW_KEY_RIGHT_SUPER);
+static_assert((int)MouseButton::Left   == GLFW_MOUSE_BUTTON_LEFT);
+static_assert((int)MouseButton::Middle == GLFW_MOUSE_BUTTON_MIDDLE);
+
 // ── InputSystem ────────────────────────────────────────────────────────────
 // Hybrid approach: poll keys/mouse/cursor directly (no callback conflicts
 // with ImGui), use callbacks only for scroll + text input which have no

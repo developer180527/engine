@@ -19,6 +19,9 @@ public:
     void  waitEvents(double timeoutSeconds) override;
     void  setTitle(const std::string& title) override;
 
+    // APP-LAYER ONLY (editor, engine_host, samples — code that explicitly
+    // chose this platform). Engine internals must stay behind IPlatform so
+    // alternative platforms don't compile-but-break on hidden GLFW deps.
     GLFWwindow* glfwWindow() const { return m_window; }
 
 private:

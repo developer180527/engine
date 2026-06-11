@@ -23,5 +23,13 @@ No logic beyond trivial helpers — systems and plugins own behavior.
   explicitly runtime-only (like `skinMatrices`).
 - New components need: serializer support, MetaRegistry schema (inspector +
   Lua FFI), and inspector UI if user-editable.
+- **Serialization checklist — a component is enumerated in THREE places**
+  (known duplication; unification is future work):
+    1. `scene/entity_serializer.h` (JSON save/load table)
+    2. `assets/cookers/scene_cooker.cpp` (JSON → binary)
+    3. `runtime/services/scene_service.cpp` (binary → entities)
+  Touching only the first makes the component silently vanish from cooked
+  scenes. Also: changing any component's LAYOUT invalidates hot-reload
+  modules (engine_abi::componentLayoutHash) — restart engine_host.
 - Asset references serialize as registry ids/UUIDs, never raw `Handle`
   values (handles are session-local).

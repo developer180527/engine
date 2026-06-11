@@ -29,6 +29,12 @@ public:
     // Null => headless, no renderer.
     virtual void* nativeWindowHandle() const = 0;
 
+    // Explicit capability: can this platform host a GPU device? The runtime
+    // checks THIS (not the null-handle convention) to decide whether to
+    // initialize the renderer. Default derives from the handle so existing
+    // platforms keep working; custom platforms may override directly.
+    virtual bool supportsRendering() const { return nativeWindowHandle() != nullptr; }
+
     virtual void pollEvents()                       = 0;
     virtual bool shouldClose() const                = 0;
     virtual void requestClose()                     = 0;

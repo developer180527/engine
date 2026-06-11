@@ -11,6 +11,7 @@
 #include <string>
 #include <bgfx/bgfx.h>
 #include "runtime/platform/platform.h"
+#include "runtime/camera_util.h"
 #include "runtime/runtime_context.h"
 #include "render/renderer.h"
 #include "runtime/plugin_registry.h"
@@ -138,7 +139,7 @@ public:
     // Plugins — register via plugins().add(...) after init(), then call
     // attachPlugins() once. detachAll happens automatically in shutdown().
     PluginRegistry&  plugins()      { return m_plugins; }
-    void attachPlugins()            { m_plugins.attachAll(*m_ctx); }
+    void attachPlugins();
     SkeletonRegistry& skeletons()  { return m_skeletons; }
     AnimClipRegistry& clips()      { return m_clips; }
     PrimitiveLibrary& primitives() { return m_primitives; }
@@ -151,6 +152,10 @@ public:
 private:
     // Platform — abstract; default is GlfwPlatform, swappable at init()
     std::unique_ptr<IPlatform> m_platform;
+    // Lifecycle guards — misuse (tick before init, double attach, ...) is
+    // reported loudly instead of corrupting state silently.
+    bool  m_initialized     = false;
+    bool  m_pluginsAttached = false;
     bool  m_headless = false;
     bool  m_openAssetDatabase = true;
     int   m_width  = 1280;
@@ -188,6 +193,7 @@ private:
     flecs::query<Transform, const Spinner> m_spinnerQuery;
     AnimatorSystem m_animatorSystem;
     PluginRegistry m_plugins;
+    PrimaryCameraFinder m_cameraFinder; // cached camera query (game tick)
 
     // Simulation state — game world only exists in Snapshot mode.
     bool                          m_simulating = false;

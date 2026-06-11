@@ -267,6 +267,7 @@ private:
     CookService*             m_cookService = nullptr;
     EditorCamera   m_cam;
     EditorInput    m_input;
+    PrimaryCameraFinder m_cameraFinder; // game-view camera (cached query)
     EditorState    m_editor;
     GizmoState     m_gizmo;
     bool           m_sceneViewHovered = true;
@@ -321,6 +322,7 @@ private:
     void onStop() {
         if (m_editor.simState == SimState::Editing) return;
         m_rt.stopSimulation();
+        m_cameraFinder.reset(); // sim world died — drop its cached query
         m_editor.simState = SimState::Editing;
     }
     void drawSceneViewPanel(const float view[16], const float proj[16],
@@ -453,8 +455,8 @@ private:
         const bool inSim = m_editor.simState != SimState::Editing
                            && m_rt.simulating();
         flecs::world& camWorld = inSim ? m_rt.simWorld() : m_rt.ctx().ecs;
-        bool hasCam = findPrimaryCamera(camWorld, gameView, gameProj,
-                                        aspect, gameClear);
+        bool hasCam = m_cameraFinder.find(camWorld, gameView, gameProj,
+                                          aspect, gameClear);
         if (hasCam) {
             flecs::world* renderWorld = inSim ? &m_rt.simWorld() : nullptr;
             m_rt.renderGameView(gameView, gameProj, gameClear, renderWorld);

@@ -8,6 +8,7 @@
 #include "runtime/input/input_event.h"
 #include "core/logger.h"
 #include "runtime/scripting/script_services.h"
+#include "runtime/world_query_cache.h"
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
 
@@ -51,7 +52,10 @@ inline Key keyFromName(const char* name) {
 class ScriptHost {
 public:
     explicit ScriptHost(flecs::world* world) : m_world(world) {}
-    void setWorld(flecs::world* w) { m_world = w; } // bound per Play
+    void setWorld(flecs::world* w) {                // bound per Play
+        m_world = w;
+        m_nameQuery.reset();   // old world may be destroyed — drop its query
+    }
     void     beginSession() { ++m_epoch; } // invalidates entity refs from prior plays
     uint32_t epoch() const  { return m_epoch; }
 
@@ -69,8 +73,9 @@ public:
     flecs::entity find(const char* name) {
         // Scene entities are named via the Name component, not flecs' builtin
         // name (load creates them anonymous), so search Name first.
+        // Scripts call this per frame — the query is cached per world.
         flecs::entity found;
-        m_world->query_builder<const Name>().build().each([&](flecs::entity e, const Name& n) {
+        m_nameQuery.get(*m_world).each([&](flecs::entity e, const Name& n) {
             if (!found && n.value == name) found = e;
         });
         if (found) return found;
@@ -117,25 +122,29 @@ public:
     void logWarn (const char* m) const { LOG_WARN ("Script", "%s", m); }
     void logError(const char* m) const { LOG_ERROR("Script", "%s", m); }
 
-    // ── Physics (RESERVED — no-op until a service is registered) ────────
-    void applyImpulse(flecs::entity e, float x, float y, float z) { if (m_physics) m_physics->applyImpulse(e,x,y,z); }
-    void setVelocity (flecs::entity e, float x, float y, float z) { if (m_physics) m_physics->setVelocity(e,x,y,z); }
-    bool getVelocity (flecs::entity e, float& x, float& y, float& z) { return m_physics ? m_physics->getVelocity(e,x,y,z) : false; }
+    // ── Physics (no-op + ONE warning until a service is registered) ─────
+    // The optional services fail safe but not silent: the first call against
+    // an unbound service logs once, so "my impulse does nothing" is a log
+    // line away from "is JoltPlugin attached / is the simulation running?".
+    void applyImpulse(flecs::entity e, float x, float y, float z) { if (auto* p = physicsOrWarn()) p->applyImpulse(e,x,y,z); }
+    void setVelocity (flecs::entity e, float x, float y, float z) { if (auto* p = physicsOrWarn()) p->setVelocity(e,x,y,z); }
+    bool getVelocity (flecs::entity e, float& x, float& y, float& z) { auto* p = physicsOrWarn(); return p ? p->getVelocity(e,x,y,z) : false; }
     RaycastHit raycast(float ox,float oy,float oz, float dx,float dy,float dz, float maxDist) {
-        return m_physics ? m_physics->raycast(ox,oy,oz,dx,dy,dz,maxDist) : RaycastHit{};
+        auto* p = physicsOrWarn();
+        return p ? p->raycast(ox,oy,oz,dx,dy,dz,maxDist) : RaycastHit{};
     }
-    void setPhysicsService(IPhysicsService* s) { m_physics = s; }
+    void setPhysicsService(IPhysicsService* s) { m_physics = s; if (s) m_warnedPhysics = false; }
 
-    // Character controller (no-op until a physics service is registered)
-    void charMove(flecs::entity e, float vx, float vz) { if (m_physics) m_physics->charMove(e,vx,vz); }
-    void charJump(flecs::entity e, float speed)        { if (m_physics) m_physics->charJump(e,speed); }
-    bool charGrounded(flecs::entity e)                 { return m_physics ? m_physics->charIsGrounded(e) : false; }
+    // Character controller (same warn-once contract)
+    void charMove(flecs::entity e, float vx, float vz) { if (auto* p = physicsOrWarn()) p->charMove(e,vx,vz); }
+    void charJump(flecs::entity e, float speed)        { if (auto* p = physicsOrWarn()) p->charJump(e,speed); }
+    bool charGrounded(flecs::entity e)                 { auto* p = physicsOrWarn(); return p ? p->charIsGrounded(e) : false; }
 
-    // ── Audio (RESERVED — no-op until a service is registered) ──────────
-    uint32_t playSound  (const char* path)                          { return m_audio ? m_audio->play(path) : 0; }
-    uint32_t playSoundAt(const char* path, float x, float y, float z) { return m_audio ? m_audio->playAt(path,x,y,z) : 0; }
-    void     stopSound  (uint32_t handle)                           { if (m_audio) m_audio->stop(handle); }
-    void     setAudioService(IAudioService* s) { m_audio = s; }
+    // ── Audio (no-op + ONE warning until a service is registered) ───────
+    uint32_t playSound  (const char* path)                          { auto* a = audioOrWarn(); return a ? a->play(path) : 0; }
+    uint32_t playSoundAt(const char* path, float x, float y, float z) { auto* a = audioOrWarn(); return a ? a->playAt(path,x,y,z) : 0; }
+    void     stopSound  (uint32_t handle)                           { if (auto* a = audioOrWarn()) a->stop(handle); }
+    void     setAudioService(IAudioService* s) { m_audio = s; if (s) m_warnedAudio = false; }
 
     // ── Assets (sync cooked-asset loading via AssetService) ────────────
     // Returns uint32_t handle IDs (0 = invalid) for FFI compatibility.
@@ -210,6 +219,28 @@ private:
     IAudioService*   m_audio        = nullptr; // null until miniaudio lands
     AssetService*    m_assetService = nullptr; // null until wired from EngineContext
     SceneService*    m_sceneService = nullptr; // null until wired from EngineContext
+    IPhysicsService* physicsOrWarn() {
+        if (!m_physics && !m_warnedPhysics) {
+            m_warnedPhysics = true;
+            LOG_WARN("Script", "physics API called but no physics service is "
+                     "bound — is a physics plugin attached and the simulation "
+                     "running? (warning shown once)");
+        }
+        return m_physics;
+    }
+    IAudioService* audioOrWarn() {
+        if (!m_audio && !m_warnedAudio) {
+            m_warnedAudio = true;
+            LOG_WARN("Script", "audio API called but no audio service is "
+                     "bound — is an audio plugin attached and the simulation "
+                     "running? (warning shown once)");
+        }
+        return m_audio;
+    }
+
+    bool m_warnedPhysics = false;
+    bool m_warnedAudio   = false;
+    WorldQueryCache<const Name> m_nameQuery;
     float    m_dt      = 0.0f;
     double   m_elapsed = 0.0;
     uint64_t m_frame   = 0;

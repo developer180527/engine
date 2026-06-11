@@ -265,9 +265,9 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     if (&world == m_editorWorld) {              // editor world: cached queries
         m_itemQuery.each(extractItem);
         m_lightQuery.each(extractLight);
-    } else {                                    // transient Play snapshot: build per-call
-        world.query_builder<const Transform, const MeshRenderer>().build().each(extractItem);
-        world.query_builder<const Transform, const Light>().build().each(extractLight);
+    } else {                                    // Play snapshot: cached per world
+        m_gameItemQuery.get(world).each(extractItem);
+        m_gameLightQuery.get(world).each(extractLight);
     }
 
     rv.items   = { m_items.data(),  m_items.size() };
@@ -283,6 +283,11 @@ RenderContext Renderer::makeContext() {
     rc.viewCursor    = &m_viewCursor;
     rc.shadowViewId  = kShadowView;
     return rc;
+}
+
+void Renderer::resetWorldCaches() {
+    m_gameItemQuery.reset();
+    m_gameLightQuery.reset();
 }
 
 void Renderer::shutdown() {
