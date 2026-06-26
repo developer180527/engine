@@ -237,6 +237,20 @@ set_target_properties(engine_host PROPERTIES
     ENABLE_EXPORTS ON
 )
 
+# ── profiler_test — headless profiler correctness check (engine_core) ────────
+add_executable(profiler_test tools/profiler_test.cpp)
+target_link_libraries(profiler_test PRIVATE engine_core)
+set_target_properties(profiler_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ── profiler_frames — headless proof of the frame profiler path ──────────────
+add_executable(profiler_frames tools/profiler_frames.cpp)
+target_link_libraries(profiler_frames PRIVATE engine_runtime)
+set_target_properties(profiler_frames PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # ── scene_resave — scene migration + serializer round-trip harness ──────────
 # Loads a project's scene (waiting for async imports), saves it back in the
 # current format. Upgrades legacy scenes to AssetRef references.

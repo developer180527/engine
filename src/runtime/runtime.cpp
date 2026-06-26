@@ -37,6 +37,9 @@ bool EngineRuntime::init(const EngineConfig& cfg,
         LOG_ERROR("Runtime", "init() called twice — ignoring");
         return false;
     }
+    // Profiler comes up first so it can time the boot sequence itself.
+    prof::Profiler::get().setEnabled(cfg.enableProfiler);
+    prof::Profiler::get().beginFrame();   // boot = "frame 0"
     m_width = cfg.width; m_height = cfg.height; m_fov = cfg.fov;
 
     // Project loads first so the window title can default to its name.
@@ -52,12 +55,21 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     const std::string title = !cfg.title.empty() ? cfg.title
         : (hasProject() ? m_project.name : std::string("Engine"));
     m_platform = std::move(platform);
-    if (!m_platform->init({title, cfg.width, cfg.height})) return false;
-    if (!initRenderer(cfg))  return false;
-    if (!initSystems(cfg))   return false;
-    if (hasProject()) openProject(m_project.projectRoot); // DB + service wiring
-    if (cfg.defaultScene) buildDefaultScene();
+    { ENGINE_PROFILE_SCOPE("boot.platform");
+      if (!m_platform->init({title, cfg.width, cfg.height})) return false; }
+    { ENGINE_PROFILE_SCOPE("boot.renderer");
+      if (!initRenderer(cfg))  return false; }
+    { ENGINE_PROFILE_SCOPE("boot.systems");
+      if (!initSystems(cfg))   return false; }
+    if (hasProject()) { ENGINE_PROFILE_SCOPE("boot.openProject");
+      openProject(m_project.projectRoot); } // DB + service wiring
+    if (cfg.defaultScene) { ENGINE_PROFILE_SCOPE("boot.defaultScene");
+      buildDefaultScene(); }
     m_initialized = true;
+
+    // Dump the boot breakdown (boot = the profiler frame opened above).
+    prof::Profiler::get().endFrame();
+    if (cfg.enableProfiler) prof::Profiler::get().timer().logLastFrame("Boot");
     return true;
 }
 
@@ -156,7 +168,10 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
         m_ecs, m_assets, m_textures,
         m_materials, m_project, m_importers});
-    m_primitives.init(m_assets);
+    // Primitive meshes are GPU buffers — skip them headless (bgfx is never
+    // initialized without a render device; touching it null-derefs the
+    // allocator). Servers/CLI tools run fine without them.
+    if (!m_headless) m_primitives.init(m_assets);
     m_ctx->assetLib      = &m_assetLib;
     m_ctx->primitives    = &m_primitives;
     m_ctx->assetService  = m_assetService.get();
@@ -242,14 +257,19 @@ bool EngineRuntime::frameBegin(float& dt) {
     m_lastFrameTime = now;
     m_firstFrame    = false;
 
+    prof::Profiler::get().beginFrame();
+
     // Drain async asset uploads (main-thread GPU upload)
-    if (m_assetService) m_assetService->drainUploads();
+    { ENGINE_PROFILE_SCOPE("AsyncDrain");
+      if (m_assetService) m_assetService->drainUploads(); }
 
     return true;
 }
 
 void EngineRuntime::frameEnd() {
-    if (!m_headless) bgfx::frame();
+    { ENGINE_PROFILE_SCOPE("bgfx.frame");
+      if (!m_headless) bgfx::frame(); }
+    prof::Profiler::get().endFrame();
 }
 
 void EngineRuntime::run(const std::function<void(float)>& frame) {
@@ -284,6 +304,7 @@ bool EngineRuntime::tick(float dt) {
         return false;
 
     flecs::world* world = m_gameWorld ? m_gameWorld.get() : nullptr;
+    ENGINE_PROFILE_SCOPE("Render");
     m_renderer.renderToBackbuffer(view, proj, clear, world);
     return true;
 }
@@ -349,9 +370,9 @@ void EngineRuntime::tickSimulation(float dt) {
 
     // Explicit phase order so script intent lands in the SAME physics step:
     // scripts set intent -> physics applies it -> contacts dispatch.
-    m_plugins.broadcastUpdate(w, dt);
-    m_plugins.broadcastPhysicsStep(w, dt);
-    m_plugins.broadcastPostPhysics(w);
+    { ENGINE_PROFILE_SCOPE("Sim.update");  m_plugins.broadcastUpdate(w, dt); }
+    { ENGINE_PROFILE_SCOPE("Sim.physics"); m_plugins.broadcastPhysicsStep(w, dt); }
+    { ENGINE_PROFILE_SCOPE("Sim.post");    m_plugins.broadcastPostPhysics(w); }
 
     // Snapshot mode runs in a separate world that tickSystems never touches —
     // run animation and the flecs pipeline here so play mode behaves exactly
@@ -377,8 +398,8 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
     }
     // Animation runs even when gameplay systems are paused — the editor
     // scrubber and preview should always animate.
-    m_animatorSystem.tick(dt);
-    m_ecs.progress();
+    { ENGINE_PROFILE_SCOPE("Animation");   m_animatorSystem.tick(dt); }
+    { ENGINE_PROFILE_SCOPE("ECS.progress"); m_ecs.progress(); }
 }
 
 void EngineRuntime::shutdown() {

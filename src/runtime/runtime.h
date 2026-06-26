@@ -1,4 +1,5 @@
 #pragma once
+#include "core/profiler.h"
 #include "render/primitive_library.h"
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
@@ -41,6 +42,10 @@ struct EngineConfig {
     // Populate the world with the demo spinning-cube grid when no scene is
     // loaded. Games that build their own world from scratch disable this.
     bool defaultScene = true;
+
+    // Enable the frame/boot profiler. Defaults on when ENGINE_PROFILE is
+    // compiled in (debug); shipping release builds compile it out entirely.
+    bool enableProfiler = (ENGINE_PROFILE != 0);
 };
 
 // Frame coordinator: owns platform, the ECS world + content systems, plugin
