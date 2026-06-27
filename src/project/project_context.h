@@ -76,11 +76,24 @@ struct ProjectContext {
         return ctx;
     }
 
+    // Cross-platform user home directory (HOME on Unix/macOS, USERPROFILE or
+    // HOMEDRIVE+HOMEPATH on Windows; "." as a last resort).
+    static std::filesystem::path homeDir() {
+#if defined(_WIN32)
+        if (const char* up = getenv("USERPROFILE")) return up;
+        const char* hd = getenv("HOMEDRIVE");
+        const char* hp = getenv("HOMEPATH");
+        if (hd && hp) return std::filesystem::path(hd) / hp;
+        return ".";
+#else
+        const char* h = getenv("HOME");
+        return h ? std::filesystem::path(h) : std::filesystem::path(".");
+#endif
+    }
+
     // Last-opened project stored in user home for quick resume.
     static std::filesystem::path lastProjectFile() {
-        auto home = std::filesystem::path(
-            getenv("HOME") ? getenv("HOME") : ".");
-        auto dir = home / ".engine";
+        auto dir = homeDir() / ".engine";
         std::filesystem::create_directories(dir);
         return dir / "last_project.txt";
     }

@@ -30,10 +30,6 @@
 #include <mutex>
 #include <vector>
 
-#if defined(__APPLE__)
-  #include <mach/mach_time.h>
-#endif
-
 // Compile switch: macros vanish entirely in shipping release builds.
 #ifndef ENGINE_PROFILE
   #ifdef NDEBUG
@@ -50,29 +46,17 @@
 
 namespace prof {
 
-// ── Platform high-resolution monotonic clock (the single time source) ───────
+// ── Monotonic clock (the single time source) ────────────────────────────────
 // The one place time comes from, isolated so it can be swapped (rdtsc, a fake
-// clock for deterministic replay) without touching any caller.
-//   macOS/iOS: mach_absolute_time scaled by the timebase (raw, ~tens of ns).
-//   elsewhere: steady_clock (already mach/QPC-backed on its platforms).
+// clock for deterministic replay) without touching any caller. std::steady_
+// clock is portable and already backed by the best monotonic source on each
+// platform (mach_absolute_time on Apple, QueryPerformanceCounter on Windows,
+// clock_gettime(MONOTONIC) on Linux).
 struct Clock {
     static uint64_t nowNs() {
-#if defined(__APPLE__)
-        static const double s = scale();
-        return (uint64_t)((double)mach_absolute_time() * s);
-#else
         return (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-#endif
     }
-#if defined(__APPLE__)
-private:
-    static double scale() {
-        mach_timebase_info_data_t tb;
-        mach_timebase_info(&tb);
-        return (double)tb.numer / (double)tb.denom; // ticks -> ns
-    }
-#endif
 };
 inline uint64_t nowNs() { return Clock::nowNs(); }
 

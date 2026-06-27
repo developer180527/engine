@@ -67,9 +67,10 @@ buffers; it assumes worker jobs are joined by then (the threading contract).
 - **Parent IDs**: each sample stores its parent's index (pre-order emission),
   not only a depth — exact tree/flamegraph reconstruction. Depth kept for quick
   indentation. Indices are rebased into the merged buffer at collect time.
-- **Platform clock seam** (`prof::Clock`): mach_absolute_time on Apple, steady_
-  clock elsewhere; isolated so it can be swapped (rdtsc, a fake clock for
-  deterministic replay) without touching callers.
+- **Clock seam** (`prof::Clock`): portable `std::steady_clock` (the best
+  monotonic source per platform — mach on Apple, QPC on Windows, MONOTONIC on
+  Linux); isolated so it can be swapped (rdtsc, a fake clock for deterministic
+  replay) without touching callers.
 - **Cache-line aligned recorders** (`alignas(64)`): false-sharing insurance —
   the correct use of cache-line padding (between-thread hot data), as opposed
   to the wrong use on densely-iterated components.

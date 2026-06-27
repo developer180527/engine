@@ -29,9 +29,7 @@ struct KnownProject {
 class KnownProjects {
 public:
     static std::filesystem::path file() {
-        auto home = std::filesystem::path(
-            getenv("HOME") ? getenv("HOME") : ".");
-        auto dir = home / ".engine";
+        auto dir = ProjectContext::homeDir() / ".engine";
         std::filesystem::create_directories(dir);
         return dir / "projects.json";
     }
