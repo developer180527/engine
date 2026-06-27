@@ -36,6 +36,10 @@ void  engineMouseDelta(float* dx, float* dy) {
     if (dy) *dy = y;
 }
 
+// ── Cursor ───────────────────────────────────────────────────────────────────
+void engineSetCursorCaptured(bool c) { if (g_host) g_host->setCursorCaptured(c); }
+bool engineCursorCaptured(void)       { return g_host ? g_host->cursorCaptured() : false; }
+
 // ── Time ─────────────────────────────────────────────────────────────────────
 float    engineDeltaTime(void) { return g_host ? g_host->dt()      : 0.0f; }
 double   engineElapsed(void)   { return g_host ? g_host->elapsed() : 0.0;  }

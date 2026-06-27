@@ -18,6 +18,7 @@ public:
     void  framebufferSize(int& w, int& h) const override;
     void  waitEvents(double timeoutSeconds) override;
     void  setTitle(const std::string& title) override;
+    void  setCursorMode(CursorMode mode) override;
 
     // APP-LAYER ONLY (editor, engine_host, samples — code that explicitly
     // chose this platform). Engine internals must stay behind IPlatform so

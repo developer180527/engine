@@ -81,3 +81,9 @@ void GlfwPlatform::waitEvents(double timeoutSeconds) {
 void GlfwPlatform::setTitle(const std::string& title) {
     if (m_window) glfwSetWindowTitle(m_window, title.c_str());
 }
+
+void GlfwPlatform::setCursorMode(CursorMode mode) {
+    if (!m_window) return;
+    glfwSetInputMode(m_window, GLFW_CURSOR,
+        mode == CursorMode::Captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+}

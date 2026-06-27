@@ -52,6 +52,10 @@ float engineAxis      (const char* axisName);   /* bound via InputMap */
 bool  engineMouseDown (int button);             /* 0=left 1=right 2=middle */
 void  engineMouseDelta(float* dx, float* dy);
 
+/* ── Cursor (mouse-look capture; no-op headless) ─────────────────────────── */
+void engineSetCursorCaptured(bool captured);
+bool engineCursorCaptured(void);
+
 /* ── Time (simulation clock — set each tick) ─────────────────────────────── */
 float    engineDeltaTime(void);
 double   engineElapsed(void);

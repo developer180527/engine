@@ -18,6 +18,8 @@ struct PlatformConfig {
 //
 // nativeWindowHandle() returning null means headless: EngineRuntime skips
 // renderer (bgfx) initialization entirely.
+enum class CursorMode { Normal, Captured };
+
 class IPlatform {
 public:
     virtual ~IPlatform() = default;
@@ -47,4 +49,9 @@ public:
     // Update the window title (no-op where there is no window). Used when a
     // project is opened after init — the title follows the project name.
     virtual void setTitle(const std::string& /*title*/) {}
+
+    // Cursor capture for mouse-look. Captured = hidden + locked to the window
+    // (raw relative motion via mouseDelta); Normal = visible OS cursor. No-op
+    // where there is no window (headless).
+    virtual void setCursorMode(CursorMode /*mode*/) {}
 };

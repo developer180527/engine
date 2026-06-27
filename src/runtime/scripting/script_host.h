@@ -8,6 +8,7 @@
 #include "runtime/input/input_event.h"
 #include "core/logger.h"
 #include "runtime/scripting/script_services.h"
+#include "runtime/platform/platform.h"
 #include "runtime/world_query_cache.h"
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
@@ -153,6 +154,16 @@ public:
     // small assets; async loading comes in a later step.
     void setAssetService(AssetService* s) { m_assetService = s; }
 
+    // ── Cursor (mouse-look capture) — routed to the platform ───────────────
+    void setPlatform(IPlatform* p) { m_platform = p; }
+    void setCursorCaptured(bool captured) {
+        if (m_platform)
+            m_platform->setCursorMode(captured ? CursorMode::Captured
+                                               : CursorMode::Normal);
+        m_cursorCaptured = captured;
+    }
+    bool cursorCaptured() const { return m_cursorCaptured; }
+
     uint32_t assetLoadMesh(const char* cookedPath) {
         return m_assetService ? m_assetService->loadMesh(cookedPath).id : 0;
     }
@@ -215,6 +226,8 @@ public:
 
 private:
     flecs::world*    m_world        = nullptr;
+    IPlatform*       m_platform     = nullptr; // for cursor capture
+    bool             m_cursorCaptured = false;
     IPhysicsService* m_physics      = nullptr; // null until Jolt service lands
     IAudioService*   m_audio        = nullptr; // null until miniaudio lands
     AssetService*    m_assetService = nullptr; // null until wired from EngineContext

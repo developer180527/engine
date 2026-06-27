@@ -169,6 +169,7 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_scriptHost = std::make_unique<ScriptHost>(nullptr);
     m_scriptHost->setAssetService(m_assetService.get());
     m_scriptHost->setSceneService(m_sceneService.get());
+    m_scriptHost->setPlatform(m_platform.get());   // cursor capture via C API
     engineApiBindHost(m_scriptHost.get());
 
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
