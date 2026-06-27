@@ -45,6 +45,7 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     m_memChannel = std::make_unique<MemoryChannel>();
     prof::Profiler::get().addChannel(m_memChannel.get());
     prof::Profiler::get().beginFrame();   // boot = "frame 0"
+    m_frameArena.init(4 * 1024 * 1024);   // 4 MB per-frame transient pool
     m_width = cfg.width; m_height = cfg.height; m_fov = cfg.fov;
 
     // Project loads first so the window title can default to its name.
@@ -263,6 +264,7 @@ bool EngineRuntime::frameBegin(float& dt) {
     m_firstFrame    = false;
 
     prof::Profiler::get().beginFrame();
+    m_frameArena.reset();   // last frame's transient allocations are freed here
 
     // Drain async asset uploads (main-thread GPU upload)
     { ENGINE_PROFILE_SCOPE("AsyncDrain");

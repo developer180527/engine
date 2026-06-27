@@ -247,6 +247,11 @@ set_target_properties(profiler_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# ── arena_test — headless frame-arena correctness check (engine_core) ────────
+add_executable(arena_test tools/arena_test.cpp)
+target_link_libraries(arena_test PRIVATE engine_core)
+set_target_properties(arena_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # ── profiler_frames — headless proof of the frame profiler path ──────────────
 add_executable(profiler_frames tools/profiler_frames.cpp)
 target_link_libraries(profiler_frames PRIVATE engine_runtime)

@@ -1,5 +1,6 @@
 #pragma once
 #include "core/profiler.h"
+#include "core/frame_arena.h"
 #include "render/primitive_library.h"
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
@@ -149,6 +150,9 @@ public:
     SkeletonRegistry& skeletons()  { return m_skeletons; }
     AnimClipRegistry& clips()      { return m_clips; }
     PrimitiveLibrary& primitives() { return m_primitives; }
+    // Per-frame transient allocator — reset at the start of every frame.
+    // Memory is valid ONLY within the current frame (see core/frame_arena.h).
+    mem::FrameArena&  frameArena() { return m_frameArena; }
     AssetService&   assetService() { return *m_assetService; }
     SceneService&   sceneService() { return *m_sceneService; }
     int             width()  const { return m_width; }
@@ -201,6 +205,7 @@ private:
     AnimatorSystem m_animatorSystem;
     PluginRegistry m_plugins;
     PrimaryCameraFinder m_cameraFinder; // cached camera query (game tick)
+    mem::FrameArena     m_frameArena;   // per-frame transient allocator
 
     // Simulation state — game world only exists in Snapshot mode.
     bool                          m_simulating = false;

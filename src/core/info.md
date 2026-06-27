@@ -20,6 +20,11 @@ include renderer, ECS, or editor headers.
 - **`mem_counters.h/.cpp`** — process-wide counting `operator new`/`delete`
   (COUNTS + forwards to malloc/free; never pools — ASan/leaks keep working).
   Gated by ENGINE_MEM_COUNT. Read per-frame deltas via runtime's MemoryChannel.
+- **`frame_arena.h`** — linear bump allocator for per-frame transient data;
+  reset() frees everything in O(1). Opt-in/explicit (our code uses it, it
+  intercepts nothing). Lifetime: valid only within the frame; trivial
+  destruction only; one arena per thread. EngineRuntime owns one (4 MB),
+  reset each frameBegin; reach it via `engine.frameArena()`.
 
 ## Rules
 - Keep this layer header-only and free of engine state; it should compile in
