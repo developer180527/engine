@@ -14,8 +14,12 @@ include renderer, ECS, or editor headers.
 - **`logger.h`** — LOG_INFO/WARN/ERROR/SUCCESS → stdout + editor console.
 - **`profiler.h`** — extensible instrumenting profiler (hub + channel
   registry; timer is the first channel). `ENGINE_PROFILE_SCOPE("name")`.
-  GPU/ECS-free so it times boot and works in engine_core tools. See
-  `docs/performance.md` for the scope-granularity discipline rule.
+  GPU/ECS-free so it times boot and works in engine_core tools. Hardened:
+  fixed-capacity buffers (overflow drops+warns), parent IDs, platform clock
+  seam, cache-line-aligned recorders. See `docs/performance.md`.
+- **`mem_counters.h/.cpp`** — process-wide counting `operator new`/`delete`
+  (COUNTS + forwards to malloc/free; never pools — ASan/leaks keep working).
+  Gated by ENGINE_MEM_COUNT. Read per-frame deltas via runtime's MemoryChannel.
 
 ## Rules
 - Keep this layer header-only and free of engine state; it should compile in

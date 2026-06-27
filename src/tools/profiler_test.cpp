@@ -39,10 +39,13 @@ int main() {
     // scheduling adds slack, so use a generous upper bound).
     double outerMs = -1, innerMs = -1;
     int    outerDepth = -1, innerDepth = -1;
-    for (const auto& s : timer.lastFrame()) {
+    uint32_t outerIdx = prof::kNoParent, innerParent = prof::kNoParent;
+    const auto& frame = timer.lastFrame();
+    for (uint32_t i = 0; i < frame.size(); ++i) {
+        const auto& s = frame[i];
         double ms = (s.end - s.start) / 1e6;
-        if (std::string(s.name) == "outer") { outerMs = ms; outerDepth = s.depth; }
-        if (std::string(s.name) == "inner") { innerMs = ms; innerDepth = s.depth; }
+        if (std::string(s.name) == "outer") { outerMs = ms; outerDepth = s.depth; outerIdx = i; }
+        if (std::string(s.name) == "inner") { innerMs = ms; innerDepth = s.depth; innerParent = s.parent; }
     }
 
     bool ok = true;
@@ -57,6 +60,7 @@ int main() {
     check("outer contains inner",  outerMs >= innerMs);
     check("outer depth 0",         outerDepth == 0);
     check("inner depth 1 (nested)", innerDepth == 1);
+    check("inner.parent == outer (id)", innerParent == outerIdx);
 
     // Dormant path: a scope run while disabled must record nothing. (begin/
     // endFrame are zero-cost no-ops when disabled, so the snapshot keeps the
@@ -70,6 +74,17 @@ int main() {
     for (const auto& s : timer.lastFrame())
         if (std::string(s.name) == "ignored") ignoredFound = true;
     check("dormant scope records nothing", !ignoredFound);
+
+    // Overflow: blow past the per-thread cap; samples must drop (not grow
+    // unboundedly) and the frame must report it.
+    prof.setEnabled(true);
+    prof.beginFrame();
+    for (uint32_t i = 0; i < prof::TimerChannel::kMaxSamplesPerThread + 200; ++i)
+        { ENGINE_PROFILE_SCOPE("flood"); }
+    prof.endFrame();
+    check("overflow capped at budget",
+          timer.lastFrame().size() <= prof::TimerChannel::kMaxSamplesPerThread);
+    check("overflow reported (dropped>0)", timer.lastFrameDropped() > 0);
 
     std::printf("profiler_test: %s\n", ok ? "OK" : "FAILED");
     return ok ? 0 : 1;

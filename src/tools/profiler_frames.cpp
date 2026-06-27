@@ -6,6 +6,7 @@
 #include "runtime/runtime.h"
 #include "runtime/platform/headless_platform.h"
 #include "core/profiler.h"
+#include "runtime/mem_channel.h"
 
 int main() {
     EngineConfig cfg;
@@ -24,6 +25,11 @@ int main() {
         engine.frameEnd();
     }
     prof::Profiler::get().timer().logLastFrame("Headless frame");
+    // Walk the channel registry and dump the memory channel — proves a
+    // consumer can downcast to a known channel type (the overlay pattern).
+    for (auto* ch : prof::Profiler::get().channels())
+        if (auto* m = dynamic_cast<MemoryChannel*>(ch))
+            m->logLastFrame("Headless frame");
     engine.shutdown();
     return 0;
 }

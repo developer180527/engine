@@ -4,6 +4,7 @@
 #include "runtime/scripting/script_host.h"
 #include "runtime/scripting/script_services.h"
 #include "runtime/scripting/engine_api_binding.h"
+#include "runtime/mem_channel.h"
 
 #include <cstdio>
 #include <utility>
@@ -38,7 +39,11 @@ bool EngineRuntime::init(const EngineConfig& cfg,
         return false;
     }
     // Profiler comes up first so it can time the boot sequence itself.
+    // The memory channel registers before the boot frame so boot allocations
+    // are measured too (the framework's first extra channel).
     prof::Profiler::get().setEnabled(cfg.enableProfiler);
+    m_memChannel = std::make_unique<MemoryChannel>();
+    prof::Profiler::get().addChannel(m_memChannel.get());
     prof::Profiler::get().beginFrame();   // boot = "frame 0"
     m_width = cfg.width; m_height = cfg.height; m_fov = cfg.fov;
 
@@ -405,6 +410,8 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
 void EngineRuntime::shutdown() {
     if (!m_initialized) return;   // idempotent / never-initialized safe
     m_initialized = false;
+    if (m_memChannel) { prof::Profiler::get().removeChannel(m_memChannel.get());
+                        m_memChannel.reset(); }
     stopSimulation();      // broadcasts onSimulationStop if still running
     engineApiBindHost(nullptr);
     m_plugins.detachAll(); // plugins may hold services — detach before teardown

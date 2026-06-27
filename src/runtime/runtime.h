@@ -20,7 +20,8 @@
 #include "components/spinner.h"
 #include "systems/animator_system.h"
 
-class ScriptHost; // runtime-owned scripting surface (scripting/script_host.h)
+class ScriptHost;    // runtime-owned scripting surface (scripting/script_host.h)
+class MemoryChannel; // profiler memory channel (runtime/mem_channel.h)
 
 struct EngineConfig {
     // Empty title => use the project name from project.json.
@@ -188,6 +189,7 @@ private:
     std::unique_ptr<AssetService>   m_assetService;
     std::unique_ptr<SceneService>   m_sceneService;
     std::unique_ptr<ScriptHost>     m_scriptHost;   // canonical script surface
+    std::unique_ptr<MemoryChannel>  m_memChannel;   // profiler memory channel
     std::unique_ptr<RuntimeContext> m_ctx;
 
     // Render subsystem — owns the device + all render state. Declared after the

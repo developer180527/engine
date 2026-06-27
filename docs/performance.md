@@ -60,11 +60,50 @@ buffers; it assumes worker jobs are joined by then (the threading contract).
 - `profiler_frames` (engine_runtime, headless): the real frame-loop path
   through a headless runtime — boots, ticks frames, dumps the phase breakdown.
 
+### Hardening (timer)
+
+- **Fixed-capacity buffers** (`kMaxSamplesPerThread`): no realloc after warmup;
+  overflow drops and warns once (`lastFrameDropped()`), never grows unbounded.
+- **Parent IDs**: each sample stores its parent's index (pre-order emission),
+  not only a depth — exact tree/flamegraph reconstruction. Depth kept for quick
+  indentation. Indices are rebased into the merged buffer at collect time.
+- **Platform clock seam** (`prof::Clock`): mach_absolute_time on Apple, steady_
+  clock elsewhere; isolated so it can be swapped (rdtsc, a fake clock for
+  deterministic replay) without touching callers.
+- **Cache-line aligned recorders** (`alignas(64)`): false-sharing insurance —
+  the correct use of cache-line padding (between-thread hot data), as opposed
+  to the wrong use on densely-iterated components.
+
+## Memory channel (`runtime/mem_channel.h`) — measure, don't replace
+
+The framework's first extra channel. It MEASURES per-frame allocations; it
+never replaces an allocator (so ASan/`leaks`/Instruments keep working):
+
+- **C++ new/delete** — `core/mem_counters.h`: a process-wide counting
+  `operator new`/`delete` override that COUNTS and FORWARDS to malloc/free.
+  Gated by `ENGINE_MEM_COUNT` (default on in debug, compiled out in release).
+- **flecs (C malloc)** — flecs's built-in `ecs_os_api_*_count` globals.
+
+Why measure-first matters: a steady headless frame already reports
+`flecs alloc:0, C++ new:0` — flecs reuses its tables, so it allocates nothing
+per frame. That is the honest answer to "is malloc my stutter source?" before
+any pooling is considered.
+
+The disciplined path if a library ever DOES show per-frame churn: hook that one
+library through its OWN allocator API (flecs `ecs_os_set_api`, Jolt
+`JPH::Allocate`, Lua `lua_newstate`, bgfx `bx::AllocatorI`) — never a global
+`--wrap`/operator-new REPLACEMENT (broken on macOS's ld; misses all C
+libraries since they use malloc not `new`; cross-boundary free corruption;
+destroys the debugging tools). And own transient allocation with a frame arena
+(our code, explicit), not by intercepting libraries.
+
 ### Roadmap
 
-- **P2** — editor overlay panel: live table + frame-time graph + flamegraph.
-- **P3** — Chrome-trace export (Perfetto/`chrome://tracing`) + a GPU channel
-  reading `bgfx::Stats`. The channel registry is built for exactly this.
+- **P2** — editor overlay panel: live table + frame-time graph + flamegraph,
+  walking the channel registry (timer tree + memory bars).
+- **P3** — Chrome-trace export (Perfetto/`chrome://tracing`, uses the parent
+  IDs) + a GPU channel reading `bgfx::Stats`. The channel registry is built
+  for exactly this.
 
 ## Threading model (current + intended)
 

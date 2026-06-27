@@ -67,6 +67,9 @@ add_library(engine_core STATIC
     # Single-header library implementation TUs (CPU decode only)
     assets/importers/stb_impl.cpp
     assets/importers/cgltf_impl.cpp
+
+    # Profiler memory counters (safe counting global new/delete)
+    core/mem_counters.cpp
 )
 
 target_include_directories(engine_core PUBLIC
