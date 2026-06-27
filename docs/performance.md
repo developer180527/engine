@@ -99,8 +99,10 @@ destroys the debugging tools). And own transient allocation with a frame arena
 
 ### Roadmap
 
-- **P2** — editor overlay panel: live table + frame-time graph + flamegraph,
-  walking the channel registry (timer tree + memory bars).
+- **P2** ✅ — editor overlay panel (`editor/panels/profiler_panel.h`,
+  menubar → Profiler → Frame Profiler): rolling frame-time graph, per-phase
+  table (parent-ID tree), flamegraph, and a Memory section (C++/flecs alloc
+  counts + frame-arena usage/high-water). Walks the channel registry.
 - **P3** — Chrome-trace export (Perfetto/`chrome://tracing`, uses the parent
   IDs) + a GPU channel reading `bgfx::Stats`. The channel registry is built
   for exactly this.

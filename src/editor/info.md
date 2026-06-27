@@ -18,7 +18,7 @@ only layer that links ImGui/ImGuizmo — the runtime stays UI-free.
   loop via `m_rt.run([this](float dt){ frame(dt); })`. Owns editor-only state:
   camera, selection, undo stack, sim state, the play-mode game world.
 - **Panels** — each a `draw*Panel(ctx)` free function or small header:
-  hierarchy, inspector, asset browser, console/terminal, game view, scene
+  hierarchy, inspector, asset browser, console/terminal, profiler, game view, scene
   view, project settings, menu bar. All receive `EngineContext` per frame.
 - **`EngineContext`** (`src/engine_context.h`) — `RuntimeContext` +
   `EditorState` + `GizmoState`, built on the stack each frame in `buildCtx()`.

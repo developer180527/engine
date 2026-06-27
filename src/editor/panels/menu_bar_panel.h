@@ -17,6 +17,7 @@ struct MenuBarCallbacks {
     std::string undoDesc;
     std::string redoDesc;
     std::string           projectName;   // shown after the separator
+    bool* showProfiler = nullptr;        // toggled by Profiler > Frame Profiler
 };
 
 inline void drawMenuBar(const MenuBarCallbacks& cb) {
@@ -112,8 +113,8 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
 
     // ── Profiler ─────────────────────────────────────────────────────
     if (ImGui::BeginMenu("Profiler")) {
-        static bool sFrameProfiler = false;
-        ImGui::MenuItem("Frame Timeline", nullptr, &sFrameProfiler); // TODO
+        if (cb.showProfiler)
+            ImGui::MenuItem("Frame Profiler", "", cb.showProfiler); // real panel
         ImGui::Separator();
         if (ImGui::BeginMenu("CPU")) {
             if (ImGui::MenuItem("ECS Query Cost"))    {} // TODO

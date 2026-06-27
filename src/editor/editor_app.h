@@ -26,6 +26,7 @@
 #include "editor/panels/asset_browser_panel.h"
 #include "editor/panels/console_panel.h"
 #include "editor/panels/plugins_panel.h"
+#include "editor/panels/profiler_panel.h"
 #include "editor/panels/project_settings_window.h"
 #include "editor/gizmo.h"
 #include "editor/imgui/imgui_bgfx.h"
@@ -283,6 +284,7 @@ private:
     int            m_desiredStableFrames = 0;
     // Play mode — sim state/world owned by the runtime (m_rt.simWorld()).
     bool                          m_showProjectSettings = false;
+    bool                          m_showProfiler        = false;
     ProjectSettingsState          m_projectSettingsState;
 
     // Build a fresh EngineContext for this frame's panels.
@@ -418,7 +420,8 @@ private:
             m_editor.undoStack.undoDescription(),
             m_editor.undoStack.redoDescription(),
             m_projectRoot.empty() ? std::string{}
-                : m_projectRoot.filename().string()
+                : m_projectRoot.filename().string(),
+            &m_showProfiler
         });
 
         // Cmd+S: save  |  Cmd+P: play/pause  |  Escape: stop
@@ -499,6 +502,7 @@ private:
         drawAssetBrowserPanel(ctx, m_loader, m_cookService);
         drawConsolePanel();
         drawPluginsPanel(m_rt.plugins());
+        drawProfilerPanel(&m_showProfiler, m_rt.frameArena());
         drawProjectSettings(&m_showProjectSettings,
                             m_editor.simState,
                             m_projectSettingsState);
