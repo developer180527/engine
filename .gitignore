@@ -5,3 +5,8 @@ build/
 *.dSYM/
 compile_commands.json
 .DS_Store
+docs/generated
+assets/
+# Kits (separate repos) + user game projects — not part of the engine repo
+FPSPlayerControllerKit/
+fps_shooter/
