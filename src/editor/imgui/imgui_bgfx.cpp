@@ -9,7 +9,11 @@
 #include "roboto_regular.ttf.h"
 #include "fa_solid_900.ttf.h"
 #include "editor/editor_icons.h"
+#include "project/project_context.h"   // homeDir() for the stable ini path
 #include <cstring>
+#include <string>
+#include <filesystem>
+#include <system_error>
 #include <GLFW/glfw3.h>  // must precede glfw3native.h (defines GLFWAPI)
 #ifdef __APPLE__
 #  define GLFW_EXPOSE_NATIVE_COCOA
@@ -190,7 +194,23 @@ void imguiInit(GLFWwindow* window, float fontSize) {
     io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.BackendFlags |= ImGuiBackendFlags_RendererHasViewports;
-    io.IniFilename = "imgui.ini";
+    // Panels dragged out of the main window become real OS windows. Let them
+    // wear native decorations — title bar (synced from the panel name by the
+    // GLFW backend), close button, and the platform's window controls
+    // (traffic lights on macOS). Flip back to true for borderless ImGui-only
+    // chrome. NOTE: ImGui still draws its own title bar inside, so a torn-off
+    // window shows both the OS bar and ImGui's.
+    io.ConfigViewportsNoDecoration = false;
+
+    // Docking layout persists across runs. Pin it to a stable per-user path so
+    // it survives no matter which directory the editor is launched from (the
+    // default "imgui.ini" is relative to the CWD and easily lost).
+    static std::string s_iniPath = [] {
+        auto dir = ProjectContext::homeDir() / ".engine";
+        std::error_code ec; std::filesystem::create_directories(dir, ec);
+        return (dir / "editor_layout.ini").string();
+    }();
+    io.IniFilename = s_iniPath.c_str();
     ImGui::StyleColorsDark();        // neutral base; editor applies its own theme
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding              = 0.0f;

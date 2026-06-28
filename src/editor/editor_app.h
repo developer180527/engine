@@ -285,6 +285,7 @@ private:
     // Play mode — sim state/world owned by the runtime (m_rt.simWorld()).
     bool                          m_showProjectSettings = false;
     bool                          m_showProfiler        = false;
+    bool                          m_showPlugins         = true;
     ProjectSettingsState          m_projectSettingsState;
 
     // Build a fresh EngineContext for this frame's panels.
@@ -421,7 +422,8 @@ private:
             m_editor.undoStack.redoDescription(),
             m_projectRoot.empty() ? std::string{}
                 : m_projectRoot.filename().string(),
-            &m_showProfiler
+            &m_showProfiler,
+            &m_showPlugins
         });
 
         // Cmd+S: save  |  Cmd+P: play/pause  |  Escape: stop
@@ -501,7 +503,8 @@ private:
         drawInspectorPanel(ctx);
         drawAssetBrowserPanel(ctx, m_loader, m_cookService);
         drawConsolePanel();
-        drawPluginsPanel(m_rt.plugins());
+        drawPluginsPanel(&m_showPlugins, m_rt.plugins(),
+                         m_rt.project(), m_rt.simulating());
         drawProfilerPanel(&m_showProfiler, m_rt.frameArena());
         drawProjectSettings(&m_showProjectSettings,
                             m_editor.simState,

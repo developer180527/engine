@@ -18,6 +18,7 @@ struct MenuBarCallbacks {
     std::string redoDesc;
     std::string           projectName;   // shown after the separator
     bool* showProfiler = nullptr;        // toggled by Profiler > Frame Profiler
+    bool* showPlugins  = nullptr;        // toggled by Plugins > Plugin Manager
 };
 
 inline void drawMenuBar(const MenuBarCallbacks& cb) {
@@ -138,6 +139,9 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
 
     // ── Plugins ──────────────────────────────────────────────────────
     if (ImGui::BeginMenu("Plugins")) {
+        if (cb.showPlugins)
+            ImGui::MenuItem("Plugin Manager", "", cb.showPlugins); // real panel
+        ImGui::Separator();
         if (ImGui::BeginMenu("Physics Backend")) {
             static int sPhysics = 0; // 0=None
             ImGui::RadioButton("None",  &sPhysics, 0);
@@ -160,8 +164,6 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
             ImGui::RadioButton("Wren", &sScript, 2); // TODO
             ImGui::EndMenu();
         }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Manage Plugins...")) {} // TODO: launcher plugin wizard
         ImGui::EndMenu();
     }
 

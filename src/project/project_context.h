@@ -50,18 +50,22 @@ struct ProjectContext {
         std::filesystem::create_directories(projectRoot);
         std::filesystem::create_directories(projectRoot / "scenes");
 
+        // Preserve keys we don't model (e.g. "engine", "template") by loading
+        // the existing file first and overwriting only the fields we own.
         nlohmann::json j;
+        {
+            std::ifstream in(projectRoot / "project.json");
+            if (in) { try { in >> j; } catch (...) { j = nlohmann::json::object(); } }
+        }
         j["name"]        = name;
         j["version"]     = version;
         j["assetRoot"]   = std::filesystem::relative(assetsRoot, projectRoot).string();
         j["lastScene"]   = lastScene;
-        if (!kits.empty()) {
-            nlohmann::json jk = nlohmann::json::array();
-            for (const auto& k : kits)
-                jk.push_back({{"name", k.name}, {"module", k.module},
-                              {"enabled", k.enabled}});
-            j["kits"] = std::move(jk);
-        }
+        nlohmann::json jk = nlohmann::json::array();
+        for (const auto& k : kits)
+            jk.push_back({{"name", k.name}, {"module", k.module},
+                          {"enabled", k.enabled}});
+        j["kits"] = std::move(jk);
 
         std::ofstream f(projectRoot / "project.json");
         f << j.dump(2);
