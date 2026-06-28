@@ -65,6 +65,22 @@ the editing world untouched). `simWorld()` returns whichever is active.
 The game-facing `tick(dt)` overload runs systems + simulation + a primary-
 camera render to the backbuffer (`renderToBackbuffer`, invalid FB target).
 
+## Kits (project plug-ins)
+Kits are reusable C++ gameplay systems built ON the engine (FPS controller, IK,
+water, ...), each its own repo. A project lists them in `project.json`'s `kits`
+array (parsed eagerly into `ProjectContext::kits`); the code loads LAZILY.
+`KitHost` (`kit_host.h`) is owned by the runtime and driven by the simulation
+lifecycle: `start()` dlopens + attaches manifest kits inside `startSimulation`
+(before the SimStart broadcast), `poll()` hot-reloads any changed `.so` in
+`tickSimulation`, `stop()` detaches + dlcloses them in `stopSimulation` (after
+the SimStop broadcast). Loading defers to Play because kits are *simulation*
+plugins — while not playing, no `.so` is held open, so kits rebuild freely.
+The dlopen + ABI gauntlet is shared with `engine_host` via `module_loader.h`
+(`ModuleLibrary` + `GameModuleAdapter` + `ModuleWatcher`). Hosts that dlopen
+modules need `ENABLE_EXPORTS` so kits resolve engine symbols (engine_host,
+editor). A shipped game instead LINKS the kit library and registers the plugin
+directly — no manifest, no dlopen.
+
 ## Public API
 `include/engine/*.h` umbrella headers are the supported surface; consumers
 link the `engine::runtime` alias target. `samples/minimal_game` is the

@@ -339,6 +339,9 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     // instantiates script instances during broadcastSimStart.
     m_scriptHost->setWorld(&simWorld());
     m_scriptHost->beginSession();   // invalidate entity refs from prior runs
+    // Lazily dlopen the project's kits and attach them — they join the registry
+    // BEFORE the broadcast so their onSimulationStart fires with everyone else.
+    m_kits.start(m_project, m_plugins, *m_ctx);
     m_plugins.broadcastSimStart(simWorld());
     LOG_SUCCESS("Sim", "Simulation started (%s)",
                 mode == SimMode::Snapshot ? "snapshot" : "in-place");
@@ -348,6 +351,9 @@ bool EngineRuntime::startSimulation(SimMode mode) {
 void EngineRuntime::stopSimulation() {
     if (!m_simulating) return;
     m_plugins.broadcastSimStop();
+    // Kits detach + dlclose AFTER the stop broadcast (so onSimulationStop has
+    // fired on them) and before the sim world is torn down below.
+    m_kits.stop(m_plugins);
     m_scriptHost->setWorld(nullptr);            // C API + Lua go dormant
     // The snapshot world dies below — drop every cached query against it
     // (a future world could reuse the same address and false-match).
@@ -365,6 +371,10 @@ void EngineRuntime::stopSimulation() {
 void EngineRuntime::tickSimulation(float dt) {
     if (!m_simulating) return;
     flecs::world& w = simWorld();
+
+    // Hot-reload any kit whose .so changed on disk — before the broadcasts, so
+    // the registry is stable while they iterate.
+    m_kits.poll(dt, m_plugins, *m_ctx, w);
 
     // Script-facing frame state + late service discovery (physics/audio
     // publish refs into the sim world during their onSimulationStart).

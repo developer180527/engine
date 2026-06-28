@@ -17,6 +17,7 @@
 #include "runtime/runtime_context.h"
 #include "render/renderer.h"
 #include "runtime/plugin_registry.h"
+#include "runtime/kit_host.h"
 #include "core/transform.h"
 #include "components/spinner.h"
 #include "systems/animator_system.h"
@@ -204,6 +205,7 @@ private:
     flecs::query<Transform, const Spinner> m_spinnerQuery;
     AnimatorSystem m_animatorSystem;
     PluginRegistry m_plugins;
+    KitHost        m_kits;              // project kits — dlopened lazily at Play
     PrimaryCameraFinder m_cameraFinder; // cached camera query (game tick)
     mem::FrameArena     m_frameArena;   // per-frame transient allocator
 

@@ -1,6 +1,7 @@
 #pragma once
 #include <filesystem>
 #include <string>
+#include <vector>
 #include <fstream>
 #include <nlohmann/json.hpp>
 
@@ -11,11 +12,23 @@
 #endif
 
 struct ProjectContext {
+    // A reusable C++ gameplay kit this project plugs in (FPS controller, IK,
+    // water, ...). Kits live in their own repos, built ON the engine; the game
+    // names the module here and the runtime dlopens it lazily at Play.
+    //   module — path to the loadable .so, absolute or relative to projectRoot
+    //   enabled — skip the load without deleting the entry
+    struct Kit {
+        std::string name;
+        std::string module;
+        bool        enabled = true;
+    };
+
     std::filesystem::path projectRoot;   // folder containing project.json
     std::filesystem::path assetsRoot;    // projectRoot/assets by default
     std::string           name          = "Untitled Project";
     std::string           lastScene     = "scenes/main.scene";
     int                   version       = 1;
+    std::vector<Kit>      kits;          // plugged-in gameplay kits (see Kit)
 
     bool valid() const {
         return !assetsRoot.empty()
@@ -42,6 +55,13 @@ struct ProjectContext {
         j["version"]     = version;
         j["assetRoot"]   = std::filesystem::relative(assetsRoot, projectRoot).string();
         j["lastScene"]   = lastScene;
+        if (!kits.empty()) {
+            nlohmann::json jk = nlohmann::json::array();
+            for (const auto& k : kits)
+                jk.push_back({{"name", k.name}, {"module", k.module},
+                              {"enabled", k.enabled}});
+            j["kits"] = std::move(jk);
+        }
 
         std::ofstream f(projectRoot / "project.json");
         f << j.dump(2);
@@ -63,6 +83,15 @@ struct ProjectContext {
                 ctx.lastScene  = j.value("lastScene", "scenes/main.scene");
                 std::string ar = j.value("assetRoot", "assets");
                 ctx.assetsRoot = std::filesystem::weakly_canonical(ctx.projectRoot / ar);
+                if (auto it = j.find("kits"); it != j.end() && it->is_array()) {
+                    for (const auto& jk : *it) {
+                        Kit k;
+                        k.name    = jk.value("name",    std::string{});
+                        k.module  = jk.value("module",  std::string{});
+                        k.enabled = jk.value("enabled", true);
+                        if (!k.module.empty()) ctx.kits.push_back(std::move(k));
+                    }
+                }
             } catch (...) {
                 ctx.assetsRoot = ctx.projectRoot / "assets";
             }

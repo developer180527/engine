@@ -18,7 +18,10 @@ target_link_libraries(editor PRIVATE
     imgui
 )
 
-# Keep the binary at build/editor (not build/src/editor/editor)
+# Keep the binary at build/editor (not build/src/editor/editor).
+# ENABLE_EXPORTS: project kits dlopened at Play resolve engine symbols (flecs,
+# the C API, logger) from this executable — same as engine_host.
 set_target_properties(editor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    ENABLE_EXPORTS ON
 )
