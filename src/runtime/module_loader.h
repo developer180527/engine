@@ -15,15 +15,52 @@
 #include "runtime/runtime_context.h"
 #include "core/logger.h"
 
-#include <dlfcn.h>
 #include <atomic>
 #include <filesystem>
 #include <memory>
 #include <string>
 
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  ifndef NOMINMAX
+#    define NOMINMAX            // keep windows.h min/max macros out of bx/flecs/std
+#  endif
+#  include <windows.h>
+#else
+#  include <dlfcn.h>
+#endif
+
 namespace modload {
 
 namespace fs = std::filesystem;
+
+// ── Dynamic-library shim ─────────────────────────────────────────────────────
+// The only platform-specific surface: open a shared library, look up a symbol,
+// close it, report the last error. POSIX dlfcn on macOS/Linux, the Win32 loader
+// on Windows. Everything above this (gauntlet, adapter, watcher) is portable.
+#if defined(_WIN32)
+using LibHandle = HMODULE;
+inline LibHandle libOpen(const fs::path& p) { return ::LoadLibraryW(p.c_str()); }
+inline void*     libSym(LibHandle h, const char* n) { return (void*)::GetProcAddress(h, n); }
+inline void      libClose(LibHandle h) { if (h) ::FreeLibrary(h); }
+inline std::string libError() {
+    DWORD e = ::GetLastError();
+    if (!e) return {};
+    char* buf = nullptr;
+    ::FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                     FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, e, 0,
+                     (char*)&buf, 0, nullptr);
+    std::string s = buf ? buf : "unknown error";
+    if (buf) ::LocalFree(buf);
+    return s;
+}
+#else
+using LibHandle = void*;
+inline LibHandle libOpen(const fs::path& p) { return ::dlopen(p.c_str(), RTLD_NOW | RTLD_LOCAL); }
+inline void*     libSym(LibHandle h, const char* n) { return ::dlsym(h, n); }
+inline void      libClose(LibHandle h) { if (h) ::dlclose(h); }
+inline std::string libError() { const char* e = ::dlerror(); return e ? e : ""; }
+#endif
 
 // ── Host-side adapter ────────────────────────────────────────────────────────
 // Wraps the module's C function table as an IEnginePlugin for the registry.
@@ -82,14 +119,14 @@ public:
             return false;
         }
 
-        m_handle = dlopen(m_tempPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+        m_handle = libOpen(m_tempPath);
         if (!m_handle) {
-            LOG_ERROR("Module", "dlopen failed: %s", dlerror());
+            LOG_ERROR("Module", "load failed: %s", libError().c_str());
             return false;
         }
 
-        auto create  = (EngineGameModuleCreateV1Fn) dlsym(m_handle, "engineGameModuleCreateV1");
-        auto destroy = (EngineGameModuleDestroyV1Fn)dlsym(m_handle, "engineGameModuleDestroyV1");
+        auto create  = (EngineGameModuleCreateV1Fn) libSym(m_handle, "engineGameModuleCreateV1");
+        auto destroy = (EngineGameModuleDestroyV1Fn)libSym(m_handle, "engineGameModuleDestroyV1");
         if (!create || !destroy) {
             LOG_ERROR("Module", "Missing ENGINE_GAME_MODULE exports "
                       "(engineGameModuleCreateV1/DestroyV1)");
@@ -155,7 +192,7 @@ public:
         if (m_table && m_destroy) m_destroy(m_table);  // module-side delete
         m_table   = nullptr;
         m_destroy = nullptr;
-        if (m_handle) { dlclose(m_handle); m_handle = nullptr; }
+        if (m_handle) { libClose(m_handle); m_handle = nullptr; }
         std::error_code ec;
         if (!m_tempPath.empty()) { fs::remove(m_tempPath, ec); m_tempPath.clear(); }
     }
@@ -169,7 +206,7 @@ private:
         return s_counter.fetch_add(1);
     }
 
-    void*                          m_handle  = nullptr;
+    LibHandle                      m_handle  = nullptr;
     std::shared_ptr<IEnginePlugin> m_plugin;            // host-side adapter
     EngineGameModuleV1*            m_table   = nullptr; // module-owned
     EngineGameModuleDestroyV1Fn    m_destroy = nullptr;

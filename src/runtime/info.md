@@ -75,8 +75,10 @@ lifecycle: `start()` dlopens + attaches manifest kits inside `startSimulation`
 `tickSimulation`, `stop()` detaches + dlcloses them in `stopSimulation` (after
 the SimStop broadcast). Loading defers to Play because kits are *simulation*
 plugins — while not playing, no `.so` is held open, so kits rebuild freely.
-The dlopen + ABI gauntlet is shared with `engine_host` via `module_loader.h`
-(`ModuleLibrary` + `GameModuleAdapter` + `ModuleWatcher`). Hosts that dlopen
+The dynamic-library load + ABI gauntlet is shared with `engine_host` via
+`module_loader.h` (`ModuleLibrary` + `GameModuleAdapter` + `ModuleWatcher`);
+the loader is cross-platform (dlfcn on macOS/Linux, the Win32 loader on
+Windows behind a small `libOpen`/`libSym`/`libClose` shim). Hosts that dlopen
 modules need `ENABLE_EXPORTS` so kits resolve engine symbols (engine_host,
 editor). A shipped game instead LINKS the kit library and registers the plugin
 directly — no manifest, no dlopen.

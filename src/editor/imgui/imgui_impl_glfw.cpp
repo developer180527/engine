@@ -1538,7 +1538,17 @@ static ImVec2 ImGui_ImplGlfw_GetWindowFramebufferScale(ImGuiViewport* viewport)
 static void ImGui_ImplGlfw_SetWindowTitle(ImGuiViewport* viewport, const char* title)
 {
     ImGui_ImplGlfw_ViewportData* vd = (ImGui_ImplGlfw_ViewportData*)viewport->PlatformUserData;
-    glfwSetWindowTitle(vd->Window, title);
+    // Panel names carry a leading Font Awesome glyph (ICON_FA_* " Name").
+    // ImGui's title bar has that icon font merged and renders it fine; the
+    // native OS title bar uses the system font and would show a broken box.
+    // Strip a leading private-use glyph (high-bit UTF-8 bytes) + its space.
+    const char* clean = title;
+    if (title && (unsigned char)title[0] >= 0x80) {
+        const char* p = title;
+        while ((unsigned char)*p >= 0x80) ++p;   // past the glyph's UTF-8 bytes
+        if (*p == ' ') clean = p + 1;             // and the separator space
+    }
+    glfwSetWindowTitle(vd->Window, clean);
 }
 
 static void ImGui_ImplGlfw_SetWindowFocus(ImGuiViewport* viewport)
