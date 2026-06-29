@@ -36,6 +36,20 @@ runs the plugin phases in order (script intent lands in the same physics
 step — no input-latency frame). Stop calls `m_rt.stopSimulation()`; the
 editor world is untouched. Pause is purely "don't call tickSimulation".
 
+### The Play boundary (keep editor stuff out of play)
+Two kinds of isolation, by construction:
+- **World** — play runs on a *snapshot copy* (`simWorld()`), edited entirely
+  separately from the editor world. Editor-world edits persist across Play;
+  play-world changes are discarded on Stop. Nothing to police here.
+- **Input / interaction** — this is the part that leaks if you're not careful.
+  Rule: while playing, the *game* owns input and editor-authoring tools are
+  inert. The predicate is `EditorState::playing()`. Enforced today:
+  the mouse gate is skipped while the game locks the cursor (so ImGui's
+  `WantCaptureMouse` can't eat clicks); `gizmoHandleHotkeys` and `drawGizmo`
+  early-out. **Any new editor-authoring feature must gate on `playing()`** —
+  that's the one check that keeps the boundary clean. (The Scene-View free
+  camera is deliberately *not* gated: flying it during play is a debug view.)
+
 ## Invariants
 - `EngineContext` is stack-only, one frame lifetime.
 - `imguiNewFrame()` before any ImGui call; gizmo BeginFrame outside any

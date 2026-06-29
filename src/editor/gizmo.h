@@ -75,6 +75,7 @@ inline void gizmoBeginFrame() {
 }
 
 inline void gizmoHandleHotkeys(GLFWwindow* window, EngineContext& ctx) {
+    if (ctx.editor.playing()) return;          // editor authoring is inert in play
     if (ImGui::GetIO().WantTextInput) return;
     if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)
         ctx.gizmoState.operation = ImGuizmo::TRANSLATE;
@@ -87,6 +88,12 @@ inline void gizmoHandleHotkeys(GLFWwindow* window, EngineContext& ctx) {
 inline void drawGizmo(EngineContext& ctx,
                       const float view[16],
                       const float proj[16]) {
+    // No editor authoring while playing — the gizmo would edit the editor
+    // world behind the running snapshot. Drop the sync so it re-reads on Stop.
+    if (ctx.editor.playing()) {
+        ctx.gizmoState.lastSyncedFrom = flecs::entity{};
+        return;
+    }
     if (!ctx.editor.selected.is_alive()) {
         ctx.gizmoState.lastSyncedFrom = flecs::entity{};
         return;

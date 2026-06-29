@@ -25,4 +25,10 @@ struct EditorState {
     bool          sceneDirty = false;
     SimState      simState   = SimState::Editing;
     UndoStack     undoStack;
+
+    // The Play-boundary predicate. While playing, the game owns input and the
+    // world is a live snapshot — editor-authoring interactions (gizmo drag,
+    // gizmo hotkeys, …) must stay inert so they can't leak into gameplay.
+    // Any editor-authoring code should gate on this.
+    bool playing() const { return simState == SimState::Playing; }
 };
