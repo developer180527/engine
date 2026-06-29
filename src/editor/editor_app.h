@@ -159,12 +159,19 @@ private:
 
             // ---- ImGui frame start (must come before any ImGui calls) ----
             imguiNewFrame();
-            // Gate gameplay input when ImGui owns the keyboard/mouse
+            // Gate gameplay input when ImGui owns the keyboard/mouse. EXCEPT
+            // when the game has locked the cursor (FPS capture): the game owns
+            // the mouse exclusively, so don't let ImGui's WantCaptureMouse
+            // (which flickers true on the frozen cursor) eat clicks — that was
+            // silently disabling shooting mid-play. Freeing the cursor (Esc)
+            // restores normal ImGui gating so panels stay clickable.
             { auto& io = ImGui::GetIO();
               const bool __playing = (m_editor.simState == SimState::Playing);
+              const bool __cursorLocked =
+                  glfwGetInputMode(m_window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
               InputSystem::get().setUICapture(
                   __playing ? io.WantTextInput : io.WantCaptureKeyboard,
-                  io.WantCaptureMouse); }
+                  __cursorLocked ? false : io.WantCaptureMouse); }
             // BeginFrame MUST be outside any Begin/End block —
             // it creates an internal transparent overlay window.
             gizmoBeginFrame();
