@@ -10,6 +10,8 @@
 #include "editor/engine_context.h"
 #include "editor/gizmo_state.h"
 #include "core/transform.h"
+#include "core/transform_utils.h"   // getWorldMatrix / safeInvert (parent chain)
+#include <cstring>
 
 namespace gizmo_detail {
 
@@ -93,11 +95,22 @@ inline void drawGizmo(EngineContext& ctx,
 
     Transform& t = ctx.editor.selected.get_mut<Transform>();
 
+    // The gizmo always works in WORLD space. For a parented entity the world
+    // pose is parentWorld * local, so the handles sit on the object instead of
+    // at its local coordinates (which is why the gun's gizmo was stranded near
+    // the origin). Unparented => parentWorld is identity and this is a no-op.
+    flecs::entity parent = ctx.editor.selected.target(flecs::ChildOf);
+    const bool hasParent = parent && parent.is_alive() && parent.has<Transform>();
+    float parentWorld[16]; bx::mtxIdentity(parentWorld);
+    if (hasParent) getWorldMatrix(parent, parentWorld);
+
     const bool selectionChanged =
         (ctx.gizmoState.lastSyncedFrom != ctx.editor.selected);
 
     if (selectionChanged || !ImGuizmo::IsUsing()) {
-        t.getMatrix(ctx.gizmoState.matrix);
+        float localM[16]; t.getMatrix(localM);
+        if (hasParent) bx::mtxMul(ctx.gizmoState.matrix, localM, parentWorld); // world = local * parent
+        else           std::memcpy(ctx.gizmoState.matrix, localM, sizeof(localM));
         ctx.gizmoState.lastSyncedFrom = ctx.editor.selected;
     }
 
@@ -113,15 +126,24 @@ inline void drawGizmo(EngineContext& ctx,
         ctx.gizmoState.transformBefore = t;
 
     if (using_) {
+        // Bring the manipulated world matrix back to local before extracting.
+        float local[16];
+        if (hasParent) {
+            float parentInv[16];
+            safeInvert(parentInv, parentWorld);
+            bx::mtxMul(local, ctx.gizmoState.matrix, parentInv);   // local = world * parent^-1
+        } else {
+            std::memcpy(local, ctx.gizmoState.matrix, sizeof(local));
+        }
         switch (ctx.gizmoState.operation) {
             case ImGuizmo::TRANSLATE:
-                t.position = gizmo_detail::mtxTranslation(ctx.gizmoState.matrix);
+                t.position = gizmo_detail::mtxTranslation(local);
                 break;
             case ImGuizmo::ROTATE:
-                t.rotation = gizmo_detail::mtxToQuat(ctx.gizmoState.matrix);
+                t.rotation = gizmo_detail::mtxToQuat(local);
                 break;
             case ImGuizmo::SCALE:
-                t.scale = gizmo_detail::mtxScale(ctx.gizmoState.matrix);
+                t.scale = gizmo_detail::mtxScale(local);
                 break;
             default: break;
         }
