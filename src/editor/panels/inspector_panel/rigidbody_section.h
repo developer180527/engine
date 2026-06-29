@@ -87,17 +87,8 @@ inline void drawRigidBodySection(EngineContext& ctx, flecs::entity e) {
             e.remove<RigidBody>(); ctx.editor.sceneDirty = true;
         }
         ImGui::PopStyleColor();
-    } else if (!e.has<CharacterController>()) {
-        // Add only when the entity has neither RigidBody nor CharacterController
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Button("+ Add RigidBody", {-1, 0})) {
-            e.set<RigidBody>({});
-            ctx.editor.undoStack.pushComponentAdd(e, "rigidBody", "Add RigidBody");
-            ctx.editor.sceneDirty = true;
-        }
     }
+    // Adding is handled by the unified "+ Add Component" menu (add_component.h).
 }
 
 } // namespace inspector_detail

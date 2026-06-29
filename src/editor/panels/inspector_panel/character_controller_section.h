@@ -40,14 +40,8 @@ inline void drawCharacterControllerSection(EngineContext& ctx, flecs::entity e) 
             e.remove<CharacterController>(); ctx.editor.sceneDirty = true;
         }
         ImGui::PopStyleColor();
-    } else if (!e.has<RigidBody>()) {
-        ImGui::Spacing();
-        if (ImGui::Button("+ Add Character Controller", {-1, 0})) {
-            e.set<CharacterController>({});
-            ctx.editor.undoStack.pushComponentAdd(e, "characterController", "Add Character Controller");
-            ctx.editor.sceneDirty = true;
-        }
     }
+    // Adding is handled by the unified "+ Add Component" menu (add_component.h).
 }
 
 } // namespace inspector_detail

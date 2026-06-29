@@ -82,15 +82,8 @@ inline void drawScriptSection(EngineContext& ctx, flecs::entity e) {
             e.remove<ScriptComponent>(); ctx.editor.sceneDirty = true;
         }
         ImGui::PopStyleColor();
-    } else {
-        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-        if (ImGui::Button("+ Add Script", {-1, 0})) {
-            e.set<ScriptComponent>({});
-            ctx.editor.undoStack.pushComponentAdd(e, "script", "Add Script");
-            ctx.editor.sceneDirty = true;
-        }
-        acceptScriptDrop(nullptr);
     }
+    // Adding is handled by the unified "+ Add Component" menu (add_component.h).
 }
 
 } // namespace inspector_detail
