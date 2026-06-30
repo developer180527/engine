@@ -88,6 +88,13 @@ directly — no manifest, no dlopen.
 link the `engine::runtime` alias target. `samples/minimal_game` is the
 living proof that the API builds a game with no editor code.
 
+The flat C API (`engine/engine_api.h`, impl `scripting/engine_api.cpp`) is the
+*one doorway* kits/modules/Lua call — input, time, entities, transform,
+physics, audio, assets, scenes, cursor, plus the **editor-UI facade**
+(`engineUi*`). UI calls route to a host-registered `EngineUiBackend` (the editor
+provides one over ImGui); with no backend (engine_host / headless) they no-op,
+so a kit's `onEditorUI()` is safe everywhere. Full reference: `docs/engine-api.md`.
+
 ## Distribution
 Two supported modes:
 - **Vendored**: `add_subdirectory(engine)` + link `engine::runtime`.

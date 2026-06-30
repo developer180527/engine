@@ -5,6 +5,17 @@ Engine subsystem implementations behind the `IEnginePlugin` interface
 (`src/runtime/plugin.h`): physics, scripting, audio. Registered with the
 runtime's `PluginRegistry`; the host (editor or game) chooses which to add.
 
+## Plugin vs Kit (same interface, different deployment)
+`IEnginePlugin` is just the lifecycle hook — both built-in subsystems and
+external Kits implement it. They differ only in *where they live and how they
+load*:
+- **Plugin** (this directory) — ships in-tree, compiled *into* `engine_runtime`,
+  registered statically at boot.
+- **Kit** — its own repo, compiled as a `.so` module, loaded dynamically from
+  `project.json` at Play by `KitHost` (`src/runtime/kit_host.h`) over the
+  module contract `include/engine/game_module.h`.
+Both run through the same `PluginRegistry` broadcasts.
+
 ## Implementations
 - **`JoltPlugin`** (`jolt_plugin.h`) — JoltPhysics. Creates bodies from
   `RigidBody`/`CharacterController` components on sim start, steps at fixed
@@ -27,9 +38,11 @@ runtime's `PluginRegistry`; the host (editor or game) chooses which to add.
   `onSimulationStop`.
 - Per-frame order is guaranteed: `onUpdate` (all plugins) → `onPhysicsStep`
   (all) → `onPostPhysics` (all).
-- Editor UI goes through `IEditorPlugin` (`src/editor/editor_plugin.h`) —
-  inherit both interfaces. Keep ImGui usage out of simulation code paths so
-  a game build never needs ImGui.
+- Editor UI goes through `IEnginePlugin::onEditorUI()`, drawn with the
+  `engineUi*` facade (`include/engine/engine_api.h`) — never ImGui directly.
+  The editor registers an ImGui backend; hosts without a UI surface no-op. This
+  keeps plugins/kits free of any ImGui/editor dependency (works in `engine_host`
+  too). (`IEditorPlugin` is retired.)
 
 ## Future Work
 - Split plugin headers into backend (runtime-clean) + editor UI parts.

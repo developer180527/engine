@@ -25,8 +25,17 @@ only layer that links ImGui/ImGuizmo — the runtime stays UI-free.
   Never stored.
 - **ImGui glue** — `imgui_bgfx.*` (renderer backend, embedded shaders +
   fonts), `imgui_impl_glfw.*` (platform backend), docking + multi-viewport.
-- **`IEditorPlugin`** (`editor_plugin.h`) — optional UI extension for engine
-  plugins; the editor dynamic_casts entries of the runtime's PluginRegistry.
+  `imguiInit` also registers the **editor UI backend** (`engineUiSetBackend`)
+  so any plugin/kit can draw via the `engineUi*` facade without linking ImGui.
+- **Plug-in Manager** (`panels/plugins_panel.h`) — lists running plugins +
+  manifest kits with their *true* load status (`KitHost::status()`), raises a
+  modal on kit-load failure, and calls each plugin's `onEditorUI()` (drawn
+  through the facade above). `IEditorPlugin` is retired — editor UI is now a
+  runtime concept (`IEnginePlugin::onEditorUI`) routed through the facade, so
+  it works for dynamically-loaded kits too.
+- **Add Component** (`panels/inspector_panel/add_component.h`) — one searchable
+  menu over a small addable-component registry (the manual stand-in for the
+  coming reflection system).
 
 ## Play Mode
 Play calls `m_rt.startSimulation(SimMode::Snapshot)` — the runtime snapshots
