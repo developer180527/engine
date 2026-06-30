@@ -293,6 +293,7 @@ private:
     bool                          m_showProjectSettings = false;
     bool                          m_showProfiler        = false;
     bool                          m_showPlugins         = true;
+    bool                          m_showKitErrorModal   = false;
     ProjectSettingsState          m_projectSettingsState;
 
     // Build a fresh EngineContext for this frame's panels.
@@ -320,8 +321,11 @@ private:
                      "from this play session", m_loader.pendingCount());
         // Snapshot mode: the runtime serializes the editor world and
         // simulates a fresh copy, so Stop restores editing state untouched.
-        if (m_rt.startSimulation(EngineRuntime::SimMode::Snapshot))
+        if (m_rt.startSimulation(EngineRuntime::SimMode::Snapshot)) {
             m_editor.simState = SimState::Playing;
+            // Surface any kit that failed to load (bad path, ABI mismatch).
+            if (m_rt.kits().anyFailed()) m_showKitErrorModal = true;
+        }
     }
     void onPause() {
         if (m_editor.simState == SimState::Playing)
@@ -511,7 +515,8 @@ private:
         drawAssetBrowserPanel(ctx, m_loader, m_cookService);
         drawConsolePanel();
         drawPluginsPanel(&m_showPlugins, m_rt.plugins(),
-                         m_rt.project(), m_rt.simulating());
+                         m_rt.project(), m_rt.kits(), m_rt.simulating());
+        drawKitErrorModal(&m_showKitErrorModal, m_rt.kits());
         drawProfilerPanel(&m_showProfiler, m_rt.frameArena());
         drawProjectSettings(&m_showProjectSettings,
                             m_editor.simState,

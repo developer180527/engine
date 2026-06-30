@@ -147,6 +147,7 @@ public:
     // Plugins — register via plugins().add(...) after init(), then call
     // attachPlugins() once. detachAll happens automatically in shutdown().
     PluginRegistry&  plugins()      { return m_plugins; }
+    KitHost&         kits()         { return m_kits; }   // manifest kits + load status
     void attachPlugins();
     SkeletonRegistry& skeletons()  { return m_skeletons; }
     AnimClipRegistry& clips()      { return m_clips; }

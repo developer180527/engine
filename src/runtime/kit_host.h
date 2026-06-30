@@ -27,28 +27,53 @@
 
 class KitHost {
 public:
+    // Per-manifest-kit outcome of the last start() — the truth the editor shows
+    // instead of guessing from "is the sim running". Lives only while playing.
+    struct KitStatus {
+        enum class State { Loaded, FileNotFound, LoadFailed };
+        std::string           name;
+        std::filesystem::path resolvedPath;   // where we actually looked
+        State                 state = State::LoadFailed;
+        std::string           message;        // human-readable reason / version
+    };
+
     // Load every enabled kit from the manifest and attach it. Call BEFORE
     // broadcastSimStart so the broadcast includes the freshly-attached kits.
     void start(const ProjectContext& project, PluginRegistry& reg, RuntimeContext& ctx) {
+        m_status.clear();
         for (const auto& k : project.kits) {
             if (!k.enabled) continue;
             std::filesystem::path path = resolve(project, k.module);
             if (!std::filesystem::exists(path)) {
                 LOG_ERROR("Kit", "'%s' module not found: %s",
                           k.name.c_str(), path.string().c_str());
+                m_status.push_back({k.name, path, KitStatus::State::FileNotFound,
+                                    "module file not found"});
                 continue;
             }
             auto e = std::make_unique<Entry>(k.name, path);
             if (!e->lib.load(path)) {
                 LOG_ERROR("Kit", "failed to load '%s'", k.name.c_str());
+                m_status.push_back({k.name, path, KitStatus::State::LoadFailed,
+                                    "load failed — ABI mismatch or bad module (see console)"});
                 continue;
             }
             e->plugin = e->lib.plugin();
             reg.add(e->plugin);
             e->plugin->onAttach(ctx);
             LOG_SUCCESS("Kit", "loaded '%s' %s", e->plugin->name(), e->plugin->version());
+            m_status.push_back({k.name, path, KitStatus::State::Loaded,
+                                e->plugin->version()});
             m_loaded.push_back(std::move(e));
         }
+    }
+
+    // Truthful load results for the current play session (empty while idle).
+    const std::vector<KitStatus>& status() const { return m_status; }
+    bool anyFailed() const {
+        for (const auto& s : m_status)
+            if (s.state != KitStatus::State::Loaded) return true;
+        return false;
     }
 
     // Detach + unregister + dlclose every kit. Call AFTER broadcastSimStop
@@ -62,6 +87,7 @@ public:
             e->lib.unload();
         }
         m_loaded.clear();
+        m_status.clear();   // no runtime status while idle
     }
 
     // Hot-reload: swap any kit whose .so changed on disk, live against the
@@ -112,4 +138,5 @@ private:
     }
 
     std::vector<std::unique_ptr<Entry>> m_loaded;
+    std::vector<KitStatus>              m_status;
 };
