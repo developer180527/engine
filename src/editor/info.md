@@ -68,4 +68,8 @@ Two kinds of isolation, by construction:
 - Scene saves also cook the binary scene (keeps both formats in sync).
 
 ## Future Work
-- Plugins menu surfacing IEditorPlugin::onEditorUI (currently not drawn).
+- Debug-draw API (`engineDraw*`) so kits can render gizmos/overlays in the
+  scene view (damage radii, motion-matching trajectories) — the 3D counterpart
+  to the `engineUi*` panel facade.
+- Reflection so kit-defined components serialize + show in the Inspector
+  (replaces the hand-rolled add-component registry).
