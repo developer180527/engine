@@ -8,5 +8,5 @@ compile_commands.json
 docs/generated
 assets/
 # Kits (separate repos) + user game projects — not part of the engine repo
-FPSPlayerControllerKit/
+Kits/
 fps_shooter/
