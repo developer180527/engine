@@ -105,6 +105,26 @@ bool     engineSceneUnload (uint32_t handle);
 void     engineScenePreload(const char* cookedPath);
 bool     engineSceneIsReady(const char* cookedPath);
 
+/* ── Editor UI facade ────────────────────────────────────────────────────────
+ * Immediate-mode widgets a kit/plugin draws from its onEditorUI(), WITHOUT
+ * touching ImGui. The host (the editor) registers a backend; in a host with no
+ * UI surface (engine_host) these no-op. One doorway — the kit never links UI. */
+typedef struct EngineUiBackend {
+    void (*text)       (const char* str);
+    bool (*button)     (const char* label);
+    bool (*sliderFloat)(const char* label, float* v, float lo, float hi);
+    bool (*checkbox)   (const char* label, bool* v);
+    void (*separator)  (void);
+} EngineUiBackend;
+
+void engineUiSetBackend(const EngineUiBackend* backend); /* host registers; null = none */
+
+void engineUiText       (const char* fmt, ...);
+bool engineUiButton     (const char* label);
+bool engineUiSliderFloat(const char* label, float* v, float lo, float hi);
+bool engineUiCheckbox   (const char* label, bool* v);
+void engineUiSeparator  (void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -44,4 +44,9 @@ public:
     virtual void onUpdate     (flecs::world& /*gameWorld*/, float /*dt*/) {}
     virtual void onPhysicsStep(flecs::world& /*gameWorld*/, float /*dt*/) {}
     virtual void onPostPhysics(flecs::world& /*gameWorld*/)               {}
+
+    // Optional editor panel: draw with the engineUi* facade (NOT ImGui). The
+    // editor calls this for each plugin; with no UI surface the calls no-op.
+    // Lets a kit own a tuning/debug UI without linking any editor/ImGui code.
+    virtual void onEditorUI() {}
 };

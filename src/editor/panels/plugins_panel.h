@@ -68,8 +68,7 @@ inline void drawPluginsPanel(bool* open, PluginRegistry& plugins,
                 ImGui::TextDisabled("Scripts reload on each Play");
             }
 
-            if (auto* ui = dynamic_cast<IEditorPlugin*>(p.get()))
-                ui->onEditorUI();
+            p->onEditorUI();   // draws via the engineUi* facade, or no-ops
         }
         ImGui::PopID();
     }

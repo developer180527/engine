@@ -6,6 +6,8 @@
 #include <engine/engine_api.h>
 #include "runtime/scripting/engine_api_binding.h"
 #include "runtime/scripting/script_host.h"
+#include <cstdarg>
+#include <cstdio>
 
 static ScriptHost* g_host = nullptr;
 
@@ -149,6 +151,31 @@ void     engineAssetLoadTextureAsync(const char* p) { if (g_host && p) g_host->a
 uint32_t engineAssetQueryMesh(const char* p)      { return (g_host && p) ? g_host->assetQueryMesh(p) : 0; }
 uint32_t engineAssetQueryTexture(const char* p)   { return (g_host && p) ? g_host->assetQueryTexture(p) : 0; }
 bool     engineAssetIsLoading(const char* p)      { return (g_host && p) ? g_host->assetIsLoading(p) : false; }
+
+// ── Editor UI facade ───────────────────────────────────────────────────────
+// Routed to a host-registered backend (the editor, over ImGui). No backend
+// (engine_host / headless) => no-op. The kit never sees ImGui.
+static const EngineUiBackend* g_ui = nullptr;
+void engineUiSetBackend(const EngineUiBackend* backend) { g_ui = backend; }
+
+void engineUiText(const char* fmt, ...) {
+    if (!g_ui || !g_ui->text || !fmt) return;
+    char buf[1024];
+    va_list ap; va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    g_ui->text(buf);
+}
+bool engineUiButton(const char* label) {
+    return (g_ui && g_ui->button && label) ? g_ui->button(label) : false;
+}
+bool engineUiSliderFloat(const char* label, float* v, float lo, float hi) {
+    return (g_ui && g_ui->sliderFloat && label && v) ? g_ui->sliderFloat(label, v, lo, hi) : false;
+}
+bool engineUiCheckbox(const char* label, bool* v) {
+    return (g_ui && g_ui->checkbox && label && v) ? g_ui->checkbox(label, v) : false;
+}
+void engineUiSeparator(void) { if (g_ui && g_ui->separator) g_ui->separator(); }
 
 // ── Scenes ───────────────────────────────────────────────────────────────────
 uint32_t engineSceneLoad(const char* p)    { return (g_host && p) ? g_host->sceneLoad(p) : 0; }

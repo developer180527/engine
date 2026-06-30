@@ -88,6 +88,7 @@ public:
     void onPostPhysics(flecs::world& w) override {
         if (m_t->postPhysics) m_t->postPhysics(m_t->user, w.c_ptr());
     }
+    void onEditorUI() override { if (m_t->editorUi) m_t->editorUi(m_t->user); }
 
 private:
     EngineGameModuleV1* m_t;

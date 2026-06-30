@@ -53,7 +53,7 @@
 //                        layouts would misread live ECS memory; the hash
 //                        turns that silent corruption into a refusal with
 //                        a "restart the host" message.
-#define ENGINE_GAME_API_VERSION 2
+#define ENGINE_GAME_API_VERSION 3   /* v3: + editorUi hook */
 
 #ifdef NDEBUG
     #define ENGINE_ABI_BUILD_MODE "release"
@@ -122,6 +122,7 @@ typedef struct EngineGameModuleV1 {
     void (*physicsStep)(void* user, ecs_world_t* world, float dt);
     void (*postPhysics)(void* user, ecs_world_t* world);
     void (*loadReason) (void* user, int reason);   // nullable, optional
+    void (*editorUi)   (void* user);               // nullable; draws via engineUi* facade
 } EngineGameModuleV1;
 
 typedef EngineGameModuleV1* (*EngineGameModuleCreateV1Fn)(void);
@@ -160,6 +161,9 @@ typedef void                (*EngineGameModuleDestroyV1Fn)(EngineGameModuleV1*);
         flecs::world wv(w);                                                    \
         static_cast<PluginType*>(u)->onPostPhysics(wv);                        \
     }                                                                          \
+    static void _egm_editorUi(void* u) {                                       \
+        static_cast<PluginType*>(u)->onEditorUI();                             \
+    }                                                                          \
     extern "C" __attribute__((visibility("default")))                          \
     EngineGameModuleV1* engineGameModuleCreateV1(void) {                       \
         auto* p = new PluginType();                                            \
@@ -178,6 +182,7 @@ typedef void                (*EngineGameModuleDestroyV1Fn)(EngineGameModuleV1*);
         t->update      = _egm_update;                                          \
         t->physicsStep = _egm_physics;                                         \
         t->postPhysics = _egm_post;                                            \
+        t->editorUi    = _egm_editorUi;                                        \
         t->loadReason  = nullptr; /* fill in a custom create if you need it */ \
         return t;                                                              \
     }                                                                          \

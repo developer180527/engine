@@ -10,6 +10,7 @@
 #include "fa_solid_900.ttf.h"
 #include "editor/editor_icons.h"
 #include "project/project_context.h"   // homeDir() for the stable ini path
+#include <engine/engine_api.h>         // EngineUiBackend — kit/plugin editor UI
 #include <cstring>
 #include <string>
 #include <filesystem>
@@ -246,6 +247,17 @@ void imguiInit(GLFWwindow* window, float fontSize) {
         .end();
     g_texUniform = bgfx::createUniform("s_tex", bgfx::UniformType::Sampler);
     setupViewportCallbacks();
+
+    // Register the editor UI backend so kits/plugins can draw via the engineUi*
+    // facade (they never touch ImGui). Non-capturing lambdas -> C fn pointers.
+    static const EngineUiBackend s_uiBackend = {
+        [](const char* s) { ImGui::TextUnformatted(s); },
+        [](const char* l) { return ImGui::Button(l); },
+        [](const char* l, float* v, float lo, float hi) { return ImGui::SliderFloat(l, v, lo, hi); },
+        [](const char* l, bool* v) { return ImGui::Checkbox(l, v); },
+        []() { ImGui::Separator(); },
+    };
+    engineUiSetBackend(&s_uiBackend);
 }
 void imguiShutdown() {
     ImGui_ImplGlfw_Shutdown();
