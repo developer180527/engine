@@ -293,7 +293,9 @@ private:
     bool                          m_showProjectSettings = false;
     bool                          m_showProfiler        = false;
     bool                          m_showPlugins         = true;
+    bool                          m_focusPlugins        = false;
     bool                          m_showKitErrorModal   = false;
+    PluginWindows                 m_pluginWindows;   // per-plugin dockable windows
     ProjectSettingsState          m_projectSettingsState;
 
     // Build a fresh EngineContext for this frame's panels.
@@ -434,7 +436,8 @@ private:
             m_projectRoot.empty() ? std::string{}
                 : m_projectRoot.filename().string(),
             &m_showProfiler,
-            &m_showPlugins
+            &m_showPlugins,
+            &m_focusPlugins
         });
 
         // Cmd+S: save  |  Cmd+P: play/pause  |  Escape: stop
@@ -514,8 +517,10 @@ private:
         drawInspectorPanel(ctx);
         drawAssetBrowserPanel(ctx, m_loader, m_cookService);
         drawConsolePanel();
-        drawPluginsPanel(&m_showPlugins, m_rt.plugins(),
-                         m_rt.project(), m_rt.kits(), m_rt.simulating());
+        drawPluginsPanel(&m_showPlugins, &m_focusPlugins, m_rt.plugins(),
+                         m_rt.project(), m_rt.kits(), m_rt.simulating(),
+                         m_pluginWindows);
+        drawPluginWindows(m_rt.plugins(), m_pluginWindows, m_rt.simulating());
         drawKitErrorModal(&m_showKitErrorModal, m_rt.kits());
         drawProfilerPanel(&m_showProfiler, m_rt.frameArena());
         drawProjectSettings(&m_showProjectSettings,

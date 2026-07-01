@@ -18,7 +18,8 @@ struct MenuBarCallbacks {
     std::string redoDesc;
     std::string           projectName;   // shown after the separator
     bool* showProfiler = nullptr;        // toggled by Profiler > Frame Profiler
-    bool* showPlugins  = nullptr;        // toggled by Plugins > Plugin Manager
+    bool* showPlugins  = nullptr;        // Plugins > Plugin Manager (visibility)
+    bool* focusPlugins = nullptr;        // set true to bring the panel to front
 };
 
 inline void drawMenuBar(const MenuBarCallbacks& cb) {
@@ -139,8 +140,12 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
 
     // ── Plugins ──────────────────────────────────────────────────────
     if (ImGui::BeginMenu("Plugins")) {
-        if (cb.showPlugins)
-            ImGui::MenuItem("Plugin Manager", "", cb.showPlugins); // real panel
+        // Always-on panel — clicking reveals + focuses it (it may be hiding as a
+        // background dock tab), rather than toggling a checkbox that's always on.
+        if (ImGui::MenuItem("Plugin Manager")) {
+            if (cb.showPlugins)  *cb.showPlugins  = true;
+            if (cb.focusPlugins) *cb.focusPlugins = true;
+        }
         ImGui::Separator();
         if (ImGui::BeginMenu("Physics Backend")) {
             static int sPhysics = 0; // 0=None
