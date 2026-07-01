@@ -177,6 +177,34 @@ bool engineUiCheckbox(const char* label, bool* v) {
 }
 void engineUiSeparator(void) { if (g_ui && g_ui->separator) g_ui->separator(); }
 
+// ── Debug draw ───────────────────────────────────────────────────────────────
+// Route to the runtime's per-frame line collector (via ScriptHost). No collector
+// (headless) => no-op.
+void engineDrawLine(float x0, float y0, float z0, float x1, float y1, float z1,
+                    float r, float g, float b) {
+    if (!g_host) return;
+    if (dbg::DebugDraw* d = g_host->debugDraw())
+        d->line({x0, y0, z0}, {x1, y1, z1}, dbg::packRGBA(r, g, b));
+}
+void engineDrawSphere(float cx, float cy, float cz, float radius,
+                      float r, float g, float b) {
+    if (!g_host) return;
+    if (dbg::DebugDraw* d = g_host->debugDraw())
+        d->sphere({cx, cy, cz}, radius, dbg::packRGBA(r, g, b));
+}
+void engineDrawBox(float cx, float cy, float cz, float hx, float hy, float hz,
+                   float r, float g, float b) {
+    if (!g_host) return;
+    if (dbg::DebugDraw* d = g_host->debugDraw())
+        d->box({cx, cy, cz}, {hx, hy, hz}, dbg::packRGBA(r, g, b));
+}
+void engineDrawDisk(float cx, float cy, float cz, float nx, float ny, float nz,
+                    float radius, float r, float g, float b) {
+    if (!g_host) return;
+    if (dbg::DebugDraw* d = g_host->debugDraw())
+        d->disk({cx, cy, cz}, {nx, ny, nz}, radius, dbg::packRGBA(r, g, b));
+}
+
 // ── Scenes ───────────────────────────────────────────────────────────────────
 uint32_t engineSceneLoad(const char* p)    { return (g_host && p) ? g_host->sceneLoad(p) : 0; }
 bool     engineSceneUnload(uint32_t h)     { return g_host ? g_host->sceneUnload(h) : false; }

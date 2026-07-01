@@ -4,6 +4,8 @@
 #include "render/texture_registry.h"
 #include "render/material_registry.h"
 
+namespace dbg { class DebugDraw; }   // core/debug_draw.h — line collector
+
 // Shared services handed to a pipeline: resource registries (so it MAY resolve
 // handles itself), fallback textures, and a collision-free view-id allocator so
 // pass view-ids never clash with the editor's ImGui/blit views.
@@ -19,4 +21,8 @@ struct RenderContext {
     bgfx::ViewId* viewCursor = nullptr;
     bgfx::ViewId shadowViewId = 0; // reserved depth-from-light pass
     bgfx::ViewId allocView() { return viewCursor ? (*viewCursor)++ : 0; }
+
+    // Immediate-mode debug lines (kits/plugins via engineDraw*). Drawn into each
+    // world view after its meshes; null when nothing queued / no collector.
+    const dbg::DebugDraw* debugDraw = nullptr;
 };

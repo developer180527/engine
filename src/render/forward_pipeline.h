@@ -6,12 +6,14 @@
 #include "render/mesh.h"
 #include "render/material.h"
 #include "render/texture.h"
+#include "core/debug_draw.h"          // dbg::DebugDraw / DebugVertex (line pass)
 #include <bgfx/bgfx.h>
 #include <bx/math.h>
 #include <vector>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 // Compiled shaders — bgfx cmake compiles per-platform; pick the right binary.
 // Variable names follow bgfx convention: vs_triangle_mtl, vs_triangle_spv, etc.
@@ -23,6 +25,12 @@
     #include "metal/fs_shadow.sc.bin.h"
     #include "metal/vs_skinned.sc.bin.h"
     #include "metal/vs_shadow_skinned.sc.bin.h"
+    #include "metal/vs_line.sc.bin.h"
+    #include "metal/fs_line.sc.bin.h"
+    #define VS_LINE_DATA           vs_line_mtl
+    #define VS_LINE_SIZE           sizeof(vs_line_mtl)
+    #define FS_LINE_DATA           fs_line_mtl
+    #define FS_LINE_SIZE           sizeof(fs_line_mtl)
     #define VS_TRIANGLE_DATA       vs_triangle_mtl
     #define VS_TRIANGLE_SIZE       sizeof(vs_triangle_mtl)
     #define FS_TRIANGLE_DATA       fs_triangle_mtl
@@ -42,6 +50,12 @@
     #include "dxbc/fs_shadow.sc.bin.h"
     #include "dxbc/vs_skinned.sc.bin.h"
     #include "dxbc/vs_shadow_skinned.sc.bin.h"
+    #include "dxbc/vs_line.sc.bin.h"
+    #include "dxbc/fs_line.sc.bin.h"
+    #define VS_LINE_DATA           vs_line_dxbc
+    #define VS_LINE_SIZE           sizeof(vs_line_dxbc)
+    #define FS_LINE_DATA           fs_line_dxbc
+    #define FS_LINE_SIZE           sizeof(fs_line_dxbc)
     #define VS_TRIANGLE_DATA       vs_triangle_dxbc
     #define VS_TRIANGLE_SIZE       sizeof(vs_triangle_dxbc)
     #define FS_TRIANGLE_DATA       fs_triangle_dxbc
@@ -61,6 +75,12 @@
     #include "spirv/fs_shadow.sc.bin.h"
     #include "spirv/vs_skinned.sc.bin.h"
     #include "spirv/vs_shadow_skinned.sc.bin.h"
+    #include "spirv/vs_line.sc.bin.h"
+    #include "spirv/fs_line.sc.bin.h"
+    #define VS_LINE_DATA           vs_line_spv
+    #define VS_LINE_SIZE           sizeof(vs_line_spv)
+    #define FS_LINE_DATA           fs_line_spv
+    #define FS_LINE_SIZE           sizeof(fs_line_spv)
     #define VS_TRIANGLE_DATA       vs_triangle_spv
     #define VS_TRIANGLE_SIZE       sizeof(vs_triangle_spv)
     #define FS_TRIANGLE_DATA       fs_triangle_spv
@@ -116,6 +136,16 @@ public:
         m_sShadowMap    = bgfx::createUniform("s_shadowMap",    bgfx::UniformType::Sampler);
         m_uShadowMtx    = bgfx::createUniform("u_shadowMtx",    bgfx::UniformType::Mat4);
         m_uShadowParams = bgfx::createUniform("u_shadowParams", bgfx::UniformType::Vec4);
+
+        // Debug-line pass: unlit vertex-colored line list (engineDraw*).
+        m_lineProgram = bgfx::createProgram(
+            bgfx::createShader(bgfx::makeRef(VS_LINE_DATA, VS_LINE_SIZE)),
+            bgfx::createShader(bgfx::makeRef(FS_LINE_DATA, FS_LINE_SIZE)),
+            true);
+        m_lineLayout.begin()
+            .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+            .add(bgfx::Attrib::Color0,   4, bgfx::AttribType::Uint8, true)
+            .end();
     }
 
     void onDetach() override {
@@ -130,6 +160,24 @@ public:
         if (bgfx::isValid(m_shadowFB))      { bgfx::destroy(m_shadowFB);      m_shadowFB      = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowMap))     { bgfx::destroy(m_shadowMap);     m_shadowMap     = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowProgram)) { bgfx::destroy(m_shadowProgram); m_shadowProgram = BGFX_INVALID_HANDLE; }
+        if (bgfx::isValid(m_lineProgram))   { bgfx::destroy(m_lineProgram);   m_lineProgram   = BGFX_INVALID_HANDLE; }
+    }
+
+    // Drain the debug-line collector into view `id` (its view-transform is
+    // already set). Depth-tested against the scene so lines occlude naturally;
+    // no writes to depth. One transient buffer, one submit.
+    void submitDebugLines(bgfx::ViewId id, RenderContext& ctx) {
+        if (!ctx.debugDraw || ctx.debugDraw->empty() || !bgfx::isValid(m_lineProgram)) return;
+        const auto& verts = ctx.debugDraw->vertices();
+        const uint32_t count = (uint32_t)verts.size();
+        if (bgfx::getAvailTransientVertexBuffer(count, m_lineLayout) < count) return;
+        bgfx::TransientVertexBuffer tvb;
+        bgfx::allocTransientVertexBuffer(&tvb, count, m_lineLayout);
+        std::memcpy(tvb.data, verts.data(), count * sizeof(dbg::DebugVertex));
+        bgfx::setVertexBuffer(0, &tvb);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
+                       | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_PT_LINES);
+        bgfx::submit(id, m_lineProgram);
     }
 
     void render(const RenderView& v, RenderContext& ctx) override {
@@ -249,6 +297,8 @@ public:
                 }
             }
         }
+
+        submitDebugLines(id, ctx);   // debug lines last, drawn over the meshes
     }
 
 private:
@@ -353,6 +403,8 @@ private:
     bgfx::ProgramHandle m_program              = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_skinnedProgram       = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_skinnedShadowProgram = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_lineProgram          = BGFX_INVALID_HANDLE;   // debug lines
+    bgfx::VertexLayout  m_lineLayout;
     bgfx::UniformHandle m_uBoneMatrices        = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_sBaseColor   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uParams      = BGFX_INVALID_HANDLE;

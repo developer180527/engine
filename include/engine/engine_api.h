@@ -125,6 +125,19 @@ bool engineUiSliderFloat(const char* label, float* v, float lo, float hi);
 bool engineUiCheckbox   (const char* label, bool* v);
 void engineUiSeparator  (void);
 
+/* ── Debug draw (immediate-mode 3D lines/wireframes, THIS frame only) ─────────
+ * A kit queues shapes from its per-frame code; the renderer draws them into the
+ * world views and clears the queue next frame. Color is 0..1 RGB. Works in any
+ * host with a renderer (editor + engine_host); no-ops headless. */
+void engineDrawLine  (float x0, float y0, float z0, float x1, float y1, float z1,
+                      float r, float g, float b);
+void engineDrawSphere(float cx, float cy, float cz, float radius,
+                      float r, float g, float b);
+void engineDrawBox   (float cx, float cy, float cz, float hx, float hy, float hz,
+                      float r, float g, float b);
+void engineDrawDisk  (float cx, float cy, float cz, float nx, float ny, float nz,
+                      float radius, float r, float g, float b);
+
 #ifdef __cplusplus
 }
 #endif

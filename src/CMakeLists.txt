@@ -17,10 +17,12 @@ set(ENGINE_VERTEX_SHADERS
     ${CMAKE_SOURCE_DIR}/shaders/vs_shadow.sc
     ${CMAKE_SOURCE_DIR}/shaders/vs_skinned.sc
     ${CMAKE_SOURCE_DIR}/shaders/vs_shadow_skinned.sc
+    ${CMAKE_SOURCE_DIR}/shaders/vs_line.sc
 )
 set(ENGINE_FRAGMENT_SHADERS
     ${CMAKE_SOURCE_DIR}/shaders/fs_triangle.sc
     ${CMAKE_SOURCE_DIR}/shaders/fs_shadow.sc
+    ${CMAKE_SOURCE_DIR}/shaders/fs_line.sc
 )
 
 foreach(SHADER ${ENGINE_VERTEX_SHADERS})

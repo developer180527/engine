@@ -162,6 +162,27 @@ ImGui); where there is no UI surface (`engine_host`, headless) these no-op. See
 | `bool engineUiCheckbox(const char* label, bool* v)`      | checkbox; `true` on toggle |
 | `void engineUiSeparator(void)`                           | horizontal rule |
 
+## Debug draw
+
+Immediate-mode 3D wireframes for **this frame only** — a kit queues shapes from
+its per-frame code; the renderer draws them into every world view and clears the
+queue next frame. Color is 0..1 RGB. Works in any host with a renderer (editor +
+`engine_host`); no-ops headless. This is the 3D counterpart to the UI facade —
+the tool for damage radii, AI/trajectory overlays, motion-matching debuggers.
+
+| Function | Purpose |
+|---|---|
+| `void engineDrawLine(float x0,y0,z0, float x1,y1,z1, float r,g,b)` | a segment |
+| `void engineDrawSphere(float cx,cy,cz, float radius, float r,g,b)` | 3 great-circle wire sphere |
+| `void engineDrawBox(float cx,cy,cz, float hx,hy,hz, float r,g,b)`   | wire box (half-extents) |
+| `void engineDrawDisk(float cx,cy,cz, float nx,ny,nz, float radius, float r,g,b)` | wire circle in a plane |
+
+```cpp
+void onUpdate(flecs::world&, float) override {
+    engineDrawSphere(px, py, pz, blastRadius, 1.0f, 0.3f, 0.1f);  // damage radius
+}
+```
+
 ### Drawing your own editor UI
 
 A kit overrides `onEditorUI()` and draws with `engineUi*` only:

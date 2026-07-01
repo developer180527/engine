@@ -170,6 +170,8 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_scriptHost->setAssetService(m_assetService.get());
     m_scriptHost->setSceneService(m_sceneService.get());
     m_scriptHost->setPlatform(m_platform.get());   // cursor capture via C API
+    m_scriptHost->setDebugDraw(&m_debugDraw);       // engineDraw* -> collector
+    m_renderer.setDebugDraw(&m_debugDraw);          // collector -> line pass
     engineApiBindHost(m_scriptHost.get());
 
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
@@ -266,6 +268,7 @@ bool EngineRuntime::frameBegin(float& dt) {
 
     prof::Profiler::get().beginFrame();
     m_frameArena.reset();   // last frame's transient allocations are freed here
+    m_debugDraw.clear();    // debug lines are per-frame — kits re-queue each frame
 
     // Drain async asset uploads (main-thread GPU upload)
     { ENGINE_PROFILE_SCOPE("AsyncDrain");

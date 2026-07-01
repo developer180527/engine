@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cstdint>
 #include "core/transform.h"
+#include "core/debug_draw.h"
 #include "components/name.h"
 #include "runtime/input/input.h"
 #include "runtime/input/input_event.h"
@@ -164,6 +165,10 @@ public:
     }
     bool cursorCaptured() const { return m_cursorCaptured; }
 
+    // ── Debug draw (engineDraw* -> per-frame line collector) ───────────────
+    void setDebugDraw(dbg::DebugDraw* d) { m_debugDraw = d; }
+    dbg::DebugDraw* debugDraw() const { return m_debugDraw; }
+
     uint32_t assetLoadMesh(const char* cookedPath) {
         return m_assetService ? m_assetService->loadMesh(cookedPath).id : 0;
     }
@@ -228,6 +233,7 @@ private:
     flecs::world*    m_world        = nullptr;
     IPlatform*       m_platform     = nullptr; // for cursor capture
     bool             m_cursorCaptured = false;
+    dbg::DebugDraw*  m_debugDraw    = nullptr; // per-frame line collector (engineDraw*)
     IPhysicsService* m_physics      = nullptr; // null until Jolt service lands
     IAudioService*   m_audio        = nullptr; // null until miniaudio lands
     AssetService*    m_assetService = nullptr; // null until wired from EngineContext

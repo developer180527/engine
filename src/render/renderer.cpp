@@ -282,6 +282,7 @@ RenderContext Renderer::makeContext() {
     rc.flatNormalTex = m_flatNormalTex;
     rc.viewCursor    = &m_viewCursor;
     rc.shadowViewId  = kShadowView;
+    rc.debugDraw     = m_debugDraw;
     return rc;
 }
 

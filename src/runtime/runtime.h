@@ -1,6 +1,7 @@
 #pragma once
 #include "core/profiler.h"
 #include "core/frame_arena.h"
+#include "core/debug_draw.h"
 #include "render/primitive_library.h"
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
@@ -155,6 +156,9 @@ public:
     // Per-frame transient allocator — reset at the start of every frame.
     // Memory is valid ONLY within the current frame (see core/frame_arena.h).
     mem::FrameArena&  frameArena() { return m_frameArena; }
+    // Immediate-mode debug lines — queue via engineDraw*/this, drawn this frame,
+    // cleared at the next frameBegin.
+    dbg::DebugDraw&   debugDraw()  { return m_debugDraw; }
     AssetService&   assetService() { return *m_assetService; }
     SceneService&   sceneService() { return *m_sceneService; }
     int             width()  const { return m_width; }
@@ -209,6 +213,7 @@ private:
     KitHost        m_kits;              // project kits — dlopened lazily at Play
     PrimaryCameraFinder m_cameraFinder; // cached camera query (game tick)
     mem::FrameArena     m_frameArena;   // per-frame transient allocator
+    dbg::DebugDraw      m_debugDraw;     // per-frame debug lines (engineDraw*)
 
     // Simulation state — game world only exists in Snapshot mode.
     bool                          m_simulating = false;

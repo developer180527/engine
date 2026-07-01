@@ -51,6 +51,9 @@ public:
     // Safe before or after init(); attaches once the device is ready.
     void setPipeline(std::unique_ptr<IRenderPipeline> pipeline);
 
+    // Debug-line collector (owned by EngineRuntime) drawn into each world view.
+    void setDebugDraw(const dbg::DebugDraw* dd) { m_debugDraw = dd; }
+
     bgfx::TextureHandle sceneColorTexture() const { return m_sceneColorTex; }
     bgfx::TextureHandle gameColorTex()      const { return m_gameColorTex; }
     int sceneW() const { return m_sceneW; }
@@ -68,6 +71,7 @@ private:
     TextureRegistry*   m_textures    = nullptr;
     MaterialRegistry*  m_materials   = nullptr;
     SkeletonRegistry*  m_skeletons   = nullptr;
+    const dbg::DebugDraw* m_debugDraw = nullptr;
 
     std::unique_ptr<IRenderPipeline>                  m_pipeline;
     bool                                              m_initialized = false;
