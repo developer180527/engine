@@ -9,8 +9,9 @@ inline TerminalPanel& getTerminal() {
     return t;
 }
 
-inline void drawConsolePanel() {
-    ImGui::Begin(ICON_FA_TERMINAL " Console");
+inline void drawConsolePanel(bool* open) {
+    if (open && !*open) return;
+    ImGui::Begin(ICON_FA_TERMINAL " Console", open);
 
     if (ImGui::BeginTabBar("##consoletabs")) {
 

@@ -20,8 +20,9 @@
 #include "editor/panels/inspector_panel/animator_section.h"
 #include "editor/panels/inspector_panel/add_component.h"
 
-inline void drawInspectorPanel(EngineContext& ctx) {
-    ImGui::Begin(ICON_FA_WRENCH " Inspector");
+inline void drawInspectorPanel(EngineContext& ctx, bool* open) {
+    if (open && !*open) return;
+    ImGui::Begin(ICON_FA_WRENCH " Inspector", open);
 
     if (!ctx.editor.selected.is_alive()) {
         ImGui::TextDisabled("(no entity selected)");

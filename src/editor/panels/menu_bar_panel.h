@@ -3,6 +3,13 @@
 #include <functional>
 #include <string>
 
+// Per-panel visibility, owned by the editor and toggled from View > Panels.
+// The same bool drives the menu checkbox AND each panel's title-bar [x].
+struct PanelVisibility {
+    bool sceneView = true, gameView = true, stats     = true;
+    bool hierarchy = true, inspector = true, assets   = true, console = true;
+};
+
 // Callbacks for menu items that require engine-level actions.
 // Everything else is either demo (no-op) or self-contained.
 struct MenuBarCallbacks {
@@ -20,6 +27,8 @@ struct MenuBarCallbacks {
     bool* showProfiler = nullptr;        // toggled by Profiler > Frame Profiler
     bool* showPlugins  = nullptr;        // Plugins > Plugin Manager (visibility)
     bool* focusPlugins = nullptr;        // set true to bring the panel to front
+    PanelVisibility*      panels = nullptr;  // View > Panels toggles
+    std::function<void()> resetLayout;       // View > Reset Layout
 };
 
 inline void drawMenuBar(const MenuBarCallbacks& cb) {
@@ -74,17 +83,15 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
 
     // ── View ─────────────────────────────────────────────────────────
     if (ImGui::BeginMenu("View")) {
-        if (ImGui::BeginMenu("Panels")) {
-            // TODO: toggle panel visibility
-            static bool sSceneView = true, sInspector = true;
-            static bool sHierarchy = true, sAssets   = true;
-            static bool sConsole   = true, sStats     = true;
-            ImGui::MenuItem("Scene View",  nullptr, &sSceneView);
-            ImGui::MenuItem("Hierarchy",   nullptr, &sHierarchy);
-            ImGui::MenuItem("Inspector",   nullptr, &sInspector);
-            ImGui::MenuItem("Assets",      nullptr, &sAssets);
-            ImGui::MenuItem("Console",     nullptr, &sConsole);
-            ImGui::MenuItem("Stats",       nullptr, &sStats);
+        if (cb.panels && ImGui::BeginMenu("Panels")) {
+            ImGui::MenuItem("Scene View", nullptr, &cb.panels->sceneView);
+            ImGui::MenuItem("Game View",  nullptr, &cb.panels->gameView);
+            ImGui::MenuItem("Hierarchy",  nullptr, &cb.panels->hierarchy);
+            ImGui::MenuItem("Inspector",  nullptr, &cb.panels->inspector);
+            ImGui::MenuItem("Assets",     nullptr, &cb.panels->assets);
+            ImGui::MenuItem("Console",    nullptr, &cb.panels->console);
+            ImGui::MenuItem("Stats",      nullptr, &cb.panels->stats);
+            if (cb.showPlugins) ImGui::MenuItem("Plug-in Manager", nullptr, cb.showPlugins);
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -96,7 +103,7 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Reset Layout")) {} // TODO: reset dockspace
+        if (ImGui::MenuItem("Reset Layout") && cb.resetLayout) cb.resetLayout();
         ImGui::EndMenu();
     }
 

@@ -215,8 +215,9 @@ inline void drawEntityNode(flecs::entity e, EngineContext& ctx,
 } // namespace detail_hier
 
 // ── drawHierarchyPanel ─────────────────────────────────────────────────────
-inline void drawHierarchyPanel(EngineContext& ctx) {
-    ImGui::Begin(ICON_FA_SITEMAP " Hierarchy");
+inline void drawHierarchyPanel(EngineContext& ctx, bool* open) {
+    if (open && !*open) return;
+    ImGui::Begin(ICON_FA_SITEMAP " Hierarchy", open);
 
     // Header
     if (ImGui::Button("+ Add")) ImGui::OpenPopup("##addEntity");

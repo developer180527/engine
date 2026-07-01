@@ -3,6 +3,8 @@
 #include <GLFW/glfw3.h>
 #include "runtime/runtime.h"
 #include "scene/scene_serializer.h"
+#include <imgui.h>
+#include <imgui_internal.h>   // DockBuilder (Reset Layout)
 #include "editor/editor_icons.h"
 #include "editor/editor_prefs.h"
 #include "editor/editor_theme.h"
@@ -296,6 +298,8 @@ private:
     bool                          m_focusPlugins        = false;
     bool                          m_showKitErrorModal   = false;
     PluginWindows                 m_pluginWindows;   // per-plugin dockable windows
+    PanelVisibility               m_panels;          // View > Panels toggles
+    bool                          m_resetLayout      = false;
     ProjectSettingsState          m_projectSettingsState;
 
     // Build a fresh EngineContext for this frame's panels.
@@ -341,6 +345,33 @@ private:
         m_cameraFinder.reset(); // sim world died — drop its cached query
         m_editor.simState = SimState::Editing;
     }
+    // Rebuild the dockspace to a sane default (View > Reset Layout). Also
+    // un-hides every panel, so this recovers a lost/broken layout in one click.
+    void buildDefaultLayout(ImGuiID root) {
+        ImGui::DockBuilderRemoveNode(root);
+        ImGui::DockBuilderAddNode(root, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(root, ImGui::GetMainViewport()->WorkSize);
+
+        ImGuiID center = root, left, right, bottom, bottomR;
+        left    = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left,  0.18f, nullptr, &center);
+        right   = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f, nullptr, &center);
+        bottom  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down,  0.30f, nullptr, &center);
+        bottomR = ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Right, 0.40f, nullptr, &bottom);
+
+        ImGui::DockBuilderDockWindow(ICON_FA_SITEMAP " Hierarchy",  left);
+        ImGui::DockBuilderDockWindow(ICON_FA_EYE " Scene View",     center);
+        ImGui::DockBuilderDockWindow(ICON_FA_GAMEPAD " Game View",  center);
+        ImGui::DockBuilderDockWindow(ICON_FA_WRENCH " Inspector",   right);
+        ImGui::DockBuilderDockWindow(ICON_FA_CHART_LINE " Stats",   right);
+        ImGui::DockBuilderDockWindow(ICON_FA_TERMINAL " Console",   bottom);
+        ImGui::DockBuilderDockWindow(ICON_FA_FOLDER_OPEN " Assets", bottom);
+        ImGui::DockBuilderDockWindow(ICON_FA_SCREWDRIVER_WRENCH " Plug-in Manager", bottomR);
+        ImGui::DockBuilderFinish(root);
+
+        m_panels = PanelVisibility{};   // reveal everything again
+        m_showPlugins = true;
+    }
+
     void drawSceneViewPanel(const float view[16], const float proj[16],
                             EngineContext& ctx) {
         // Set position/size on first run (no ini file = always first run)
@@ -352,7 +383,7 @@ private:
             ImVec2(_vp->WorkSize.x - 500, _vp->WorkSize.y - 60),
             ImGuiCond_FirstUseEver);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        ImGui::Begin(ICON_FA_EYE " Scene View");
+        ImGui::Begin(ICON_FA_EYE " Scene View", &m_panels.sceneView);
         ImGui::PopStyleVar();
 
         // Track which GLFW window hosts this panel for camera input.
@@ -415,6 +446,7 @@ private:
             ImGui::PopStyleVar(3);
 
             ImGuiID dsid = ImGui::GetID("MainDockSpace");
+            if (m_resetLayout) { buildDefaultLayout(dsid); m_resetLayout = false; }
             ImGui::DockSpace(dsid, ImVec2(0,0),
                 ImGuiDockNodeFlags_None);
 
@@ -437,7 +469,9 @@ private:
                 : m_projectRoot.filename().string(),
             &m_showProfiler,
             &m_showPlugins,
-            &m_focusPlugins
+            &m_focusPlugins,
+            &m_panels,
+            [this]{ m_resetLayout = true; }
         });
 
         // Cmd+S: save  |  Cmd+P: play/pause  |  Escape: stop
@@ -463,7 +497,7 @@ private:
 
         auto ctx = buildCtx();
 
-        drawSceneViewPanel(view, proj, ctx);
+        if (m_panels.sceneView) drawSceneViewPanel(view, proj, ctx);
 
         // ── Game view ────────────────────────────────────────────
         float gameView[16], gameProj[16], gameClear[4];
@@ -485,10 +519,12 @@ private:
                          m_rt.sceneW(), m_rt.sceneH(),
                          [this]{ onPlay(); },
                          [this]{ onPause(); },
-                         [this]{ onStop(); });
+                         [this]{ onStop(); },
+                         &m_panels.gameView);
 
         // Stats
-        ImGui::Begin(ICON_FA_CHART_LINE " Stats");
+        if (m_panels.stats) {
+        ImGui::Begin(ICON_FA_CHART_LINE " Stats", &m_panels.stats);
         ImGui::Text("FPS: %.1f",      ImGui::GetIO().Framerate);
         ImGui::Text("Frame: %.2f ms", 1000.0f / std::max(ImGui::GetIO().Framerate, 1.0f));
         ImGui::Text("Renderer: Metal");
@@ -512,11 +548,12 @@ private:
                     "Failed: %d", cs.failed);
         }
         ImGui::End();
+        }
 
-        drawHierarchyPanel(ctx);
-        drawInspectorPanel(ctx);
-        drawAssetBrowserPanel(ctx, m_loader, m_cookService);
-        drawConsolePanel();
+        drawHierarchyPanel(ctx, &m_panels.hierarchy);
+        drawInspectorPanel(ctx, &m_panels.inspector);
+        drawAssetBrowserPanel(ctx, m_loader, m_cookService, &m_panels.assets);
+        drawConsolePanel(&m_panels.console);
         drawPluginsPanel(&m_showPlugins, &m_focusPlugins, m_rt.plugins(),
                          m_rt.project(), m_rt.kits(), m_rt.simulating(),
                          m_pluginWindows);

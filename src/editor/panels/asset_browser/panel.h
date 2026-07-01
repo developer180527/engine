@@ -26,7 +26,9 @@
 #include <cstring>
 
 inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
-                                  CookService* cookService = nullptr) {
+                                  CookService* cookService = nullptr,
+                                  bool* open = nullptr) {
+    if (open && !*open) return;
     using namespace ab;
     namespace fs = std::filesystem;
 
@@ -53,7 +55,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
     }
     auto cacheRoot = ctx.project.projectRoot / ".cache";
 
-    ImGui::Begin(ICON_FA_FOLDER_OPEN " Assets");
+    ImGui::Begin(ICON_FA_FOLDER_OPEN " Assets", open);
 
     // ── Toolbar ──────────────────────────────────────────────────────────────
     {

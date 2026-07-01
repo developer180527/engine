@@ -64,8 +64,10 @@ inline void drawGameViewPanel(bgfx::TextureHandle gameTex, bool hasCam,
                               SimState simState, int sceneW, int sceneH,
                               std::function<void()> onPlay,
                               std::function<void()> onPause,
-                              std::function<void()> onStop) {
-    ImGui::Begin(ICON_FA_GAMEPAD " Game View");
+                              std::function<void()> onStop,
+                              bool* open = nullptr) {
+    if (open && !*open) return;
+    ImGui::Begin(ICON_FA_GAMEPAD " Game View", open);
 
     drawPlayBar(simState, onPlay, onPause, onStop);
 
