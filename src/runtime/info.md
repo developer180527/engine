@@ -75,6 +75,12 @@ lifecycle: `start()` dlopens + attaches manifest kits inside `startSimulation`
 `tickSimulation`, `stop()` detaches + dlcloses them in `stopSimulation` (after
 the SimStop broadcast). Loading defers to Play because kits are *simulation*
 plugins — while not playing, no `.so` is held open, so kits rebuild freely.
+Manifest `"requires": [names]` orders loading (topological sort in `start()`;
+ordering ONLY — kits never link each other's code; unknown deps warn, cycles
+fall back to manifest order). Single kits can be unloaded/reloaded mid-play
+(`unloadOne`/`loadOne`, surfaced as Plug-in Manager buttons via
+`EngineRuntime::kitLoad/kitUnload`); a mid-play load runs its own
+`onSimulationStart` since the broadcast already fired.
 The dynamic-library load + ABI gauntlet is shared with `engine_host` via
 `module_loader.h` (`ModuleLibrary` + `GameModuleAdapter` + `ModuleWatcher`);
 the loader is cross-platform (dlfcn on macOS/Linux, the Win32 loader on

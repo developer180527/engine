@@ -556,7 +556,9 @@ private:
         drawConsolePanel(&m_panels.console);
         drawPluginsPanel(&m_showPlugins, &m_focusPlugins, m_rt.plugins(),
                          m_rt.project(), m_rt.kits(), m_rt.simulating(),
-                         m_pluginWindows);
+                         m_pluginWindows,
+                         [this](const std::string& n){ m_rt.kitLoad(n);   },
+                         [this](const std::string& n){ m_rt.kitUnload(n); });
         drawPluginWindows(m_rt.plugins(), m_pluginWindows, m_rt.simulating());
         drawKitErrorModal(&m_showKitErrorModal, m_rt.kits());
         drawProfilerPanel(&m_showProfiler, m_rt.frameArena());

@@ -17,10 +17,14 @@ struct ProjectContext {
     // names the module here and the runtime dlopens it lazily at Play.
     //   module — path to the loadable .so, absolute or relative to projectRoot
     //   enabled — skip the load without deleting the entry
+    //   requiresKits — names of kits that must LOAD BEFORE this one (JSON key
+    //     "requires"). Ordering only — kits never link each other's code; this
+    //     exists for service-publish patterns where A must start before B reads.
     struct Kit {
         std::string name;
         std::string module;
         bool        enabled = true;
+        std::vector<std::string> requiresKits;
     };
 
     std::filesystem::path projectRoot;   // folder containing project.json
@@ -62,9 +66,12 @@ struct ProjectContext {
         j["assetRoot"]   = std::filesystem::relative(assetsRoot, projectRoot).string();
         j["lastScene"]   = lastScene;
         nlohmann::json jk = nlohmann::json::array();
-        for (const auto& k : kits)
-            jk.push_back({{"name", k.name}, {"module", k.module},
-                          {"enabled", k.enabled}});
+        for (const auto& k : kits) {
+            nlohmann::json e = {{"name", k.name}, {"module", k.module},
+                                {"enabled", k.enabled}};
+            if (!k.requiresKits.empty()) e["requires"] = k.requiresKits;
+            jk.push_back(std::move(e));
+        }
         j["kits"] = std::move(jk);
 
         std::ofstream f(projectRoot / "project.json");
@@ -93,6 +100,9 @@ struct ProjectContext {
                         k.name    = jk.value("name",    std::string{});
                         k.module  = jk.value("module",  std::string{});
                         k.enabled = jk.value("enabled", true);
+                        if (auto r = jk.find("requires"); r != jk.end() && r->is_array())
+                            for (const auto& dep : *r)
+                                if (dep.is_string()) k.requiresKits.push_back(dep.get<std::string>());
                         if (!k.module.empty()) ctx.kits.push_back(std::move(k));
                     }
                 }

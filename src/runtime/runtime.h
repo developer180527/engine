@@ -149,6 +149,14 @@ public:
     // attachPlugins() once. detachAll happens automatically in shutdown().
     PluginRegistry&  plugins()      { return m_plugins; }
     KitHost&         kits()         { return m_kits; }   // manifest kits + load status
+    // Mid-play single-kit control (Plug-in Manager Load/Unload buttons).
+    // No-ops while not simulating — kits only exist during Play.
+    bool kitLoad(const std::string& name) {
+        return m_simulating && m_kits.loadOne(name, m_project, m_plugins, *m_ctx, simWorld());
+    }
+    bool kitUnload(const std::string& name) {
+        return m_simulating && m_kits.unloadOne(name, m_plugins);
+    }
     void attachPlugins();
     SkeletonRegistry& skeletons()  { return m_skeletons; }
     AnimClipRegistry& clips()      { return m_clips; }

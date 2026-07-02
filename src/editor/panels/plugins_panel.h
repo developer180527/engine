@@ -1,6 +1,7 @@
 #pragma once
 #include <imgui.h>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include "editor/editor_icons.h"
@@ -78,7 +79,9 @@ inline void drawPluginWindows(PluginRegistry& plugins, PluginWindows& w, bool si
 
 inline void drawPluginsPanel(bool* open, bool* focus, PluginRegistry& plugins,
                              ProjectContext& project, const KitHost& kits,
-                             bool simulating, PluginWindows& windows) {
+                             bool simulating, PluginWindows& windows,
+                             const std::function<void(const std::string&)>& loadKit,
+                             const std::function<void(const std::string&)>& unloadKit) {
     if (open && !*open) return;
     if (focus && *focus) { ImGui::SetNextWindowFocus(); *focus = false; }
     // Title-bar [x] closes it; reopen from Plugins > Plugin Manager or View > Panels.
@@ -138,6 +141,8 @@ inline void drawPluginsPanel(bool* open, bool* focus, PluginRegistry& plugins,
                 switch (st->state) {
                     case S::Loaded:
                         ImGui::TextColored(kGreen, ICON_FA_CIRCLE_CHECK " loaded"); break;
+                    case S::Unloaded:
+                        ImGui::TextDisabled(ICON_FA_CIRCLE_XMARK " unloaded"); break;
                     case S::FileNotFound:
                         ImGui::TextColored(kRed, ICON_FA_TRIANGLE_EXCLAMATION " missing");
                         errLine = st->message.c_str(); break;
@@ -152,7 +157,23 @@ inline void drawPluginsPanel(bool* open, bool* focus, PluginRegistry& plugins,
                 ImGui::TextDisabled(ICON_FA_CIRCLE_PLAY " loads at Play");
             }
 
+            // Mid-play single-kit control: unload a running kit, or (re)load an
+            // enabled one that isn't in (unloaded / fixed on disk since Play).
+            if (simulating && k.enabled) {
+                ImGui::SameLine();
+                if (kits.isLoaded(k.name)) {
+                    if (ImGui::SmallButton("Unload") && unloadKit) unloadKit(k.name);
+                } else if (std::filesystem::exists(full)) {
+                    if (ImGui::SmallButton("Load") && loadKit) loadKit(k.name);
+                }
+            }
+
             ImGui::TextDisabled("      %s", full.string().c_str());
+            if (!k.requiresKits.empty()) {
+                std::string req;
+                for (const auto& d : k.requiresKits) { if (!req.empty()) req += ", "; req += d; }
+                ImGui::TextDisabled("      requires: %s", req.c_str());
+            }
             if (errLine) ImGui::TextColored(kRed, "      %s", errLine);
             ImGui::PopID();
         }
