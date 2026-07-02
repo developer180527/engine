@@ -85,32 +85,37 @@ CookResult CookPipeline::cookOne(const UUID& uuid) {
         rec->cookVersion  = kCurrentCookVersion;
         rec->cookedAt     = static_cast<int64_t>(std::time(nullptr));
         rec->state        = AssetState::Ready;
+        rec->errorMessage.clear();
         m_registry.update(*rec);
         std::printf("[AssetLib] Cooked: %s\n", rec->sourcePath.c_str());
     } else if (result.skipped) {
-        // Cooker can't handle this asset type (e.g. skinned meshes).
-        // Mark Ready with empty cookedPath — the runtime Assimp path will
-        // load it on demand. Not an error.
+        // Cooker can't handle this asset type (e.g. skinned meshes, animation-
+        // only files). Mark Ready with empty cookedPath — the runtime Assimp
+        // path loads it on demand. Not an error; keep the reason inspectable.
         if (!rec->cookedPath.empty()) {
             auto stale = m_cacheRoot / rec->cookedPath;
             std::error_code ec;
             std::filesystem::remove(stale, ec);
         }
         rec->cookedPath.clear();
-        rec->cookVersion = kCurrentCookVersion;
-        rec->state       = AssetState::Ready;
+        rec->cookVersion  = kCurrentCookVersion;
+        rec->state        = AssetState::Ready;
+        rec->errorMessage = result.error;    // "why it was skipped"
         m_registry.update(*rec);
     } else {
         // Genuine cook failure. Delete any stale .cooked binary so no code
-        // path can accidentally serve it.
+        // path can accidentally serve it. Persist WHY it failed — an empty
+        // error_message made failures undiagnosable from the DB/editor.
         if (!rec->cookedPath.empty()) {
             auto stale = m_cacheRoot / rec->cookedPath;
             std::error_code ec;
             std::filesystem::remove(stale, ec);
         }
         rec->cookedPath.clear();
-        rec->cookVersion = kCurrentCookVersion;
-        rec->state       = AssetState::Failed;
+        rec->cookVersion  = kCurrentCookVersion;
+        rec->state        = AssetState::Failed;
+        rec->errorMessage = result.error.empty() ? "cook failed (no error reported)"
+                                                 : result.error;
         m_registry.update(*rec);
     }
     return result;
@@ -217,8 +222,9 @@ int CookPipeline::cookMany(const std::vector<UUID>& uuids,
                         std::filesystem::remove(stale, ec);
                     }
                     rec->cookedPath.clear();
-                    rec->cookVersion = kCurrentCookVersion;
-                    rec->state       = AssetState::Ready;
+                    rec->cookVersion  = kCurrentCookVersion;
+                    rec->state        = AssetState::Ready;
+                    rec->errorMessage = w.result.error;   // "why it was skipped"
                     m_registry.update(*rec);
                 }
             } else {
@@ -233,8 +239,10 @@ int CookPipeline::cookMany(const std::vector<UUID>& uuids,
                         std::filesystem::remove(stale, ec);
                     }
                     rec->cookedPath.clear();
-                    rec->cookVersion = kCurrentCookVersion;
-                    rec->state       = AssetState::Failed;
+                    rec->cookVersion  = kCurrentCookVersion;
+                    rec->state        = AssetState::Failed;
+                    rec->errorMessage = w.result.error.empty()
+                        ? "cook failed (no error reported)" : w.result.error;
                     m_registry.update(*rec);
                 }
             }
@@ -246,6 +254,7 @@ int CookPipeline::cookMany(const std::vector<UUID>& uuids,
             rec->cookVersion = kCurrentCookVersion;
             rec->cookedAt    = static_cast<int64_t>(std::time(nullptr));
             rec->state       = AssetState::Ready;
+            rec->errorMessage.clear();
             m_registry.update(*rec);
         }
         ++cooked;

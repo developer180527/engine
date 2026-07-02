@@ -143,8 +143,27 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
     imp.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE,
                            aiPrimitiveType_POINT | aiPrimitiveType_LINE);
     const aiScene* scene = imp.ReadFile(ctx.sourcePath.string(), kImportFlags);
-    if (!scene || !scene->mRootNode || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE))
-        return {.success = false, .error = std::string("Assimp: ") + imp.GetErrorString()};
+    if (!scene || !scene->mRootNode) {
+        const char* why = imp.GetErrorString();
+        return {.success = false, .error = std::string("Assimp: ")
+                + ((why && why[0]) ? why : "importer returned no scene")};
+    }
+
+    // Animation-only files (Mixamo clip FBXs: skeleton + animation, ZERO
+    // meshes) load fine but Assimp flags them INCOMPLETE. They are valid
+    // assets — clips import via the runtime Assimp path until the animation
+    // cooker lands — so classify as skipped-by-design, not failed.
+    if (scene->mNumMeshes == 0 && scene->mNumAnimations > 0) {
+        std::printf("[MeshCooker] %s — animation-only, skipping cook (runtime Assimp path)\n",
+                    ctx.sourcePath.filename().string().c_str());
+        return {.success = false, .skipped = true,
+                .error = "animation-only file — clips load via the runtime Assimp path"};
+    }
+    if (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) {
+        const char* why = imp.GetErrorString();
+        return {.success = false, .error = std::string("Assimp: incomplete scene")
+                + (((why && why[0])) ? (std::string(" — ") + why) : std::string()) };
+    }
 
     // Skinned meshes (bones + animation) cannot be cooked yet — the cook format
     // doesn't store SkinnedVertex, skeleton, or animation clips. The runtime

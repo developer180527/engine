@@ -82,13 +82,28 @@ void CookService::runOneCookPass() {
     for (auto& rec : all)
         if (isCookable(rec)) ++total;
 
+    // Assets that failed at the current cook version are NOT retried (that
+    // would loop forever) — but they must not be silently reported as "up to
+    // date" either. Surface them every pass until the source is fixed.
+    int standingFailures = 0;
+    for (auto& rec : all)
+        if (rec.state == assetlib::AssetState::Failed) {
+            ++standingFailures;
+            LOG_WARN("CookService", "Still failing: %s — %s (resave/fix the file to retry)",
+                     rec.sourcePath.c_str(),
+                     rec.errorMessage.empty() ? "no error recorded" : rec.errorMessage.c_str());
+        }
+
     m_stats.total  = total;
     m_stats.cooked = 0;
-    m_stats.failed = 0;
+    m_stats.failed = standingFailures;
     m_stats.active = total > 0;
 
     if (total == 0) {
-        LOG_INFO("CookService", "All assets up to date");
+        if (standingFailures > 0)
+            LOG_WARN("CookService", "Up to date, but %d asset(s) in FAILED state", standingFailures);
+        else
+            LOG_INFO("CookService", "All assets up to date");
         // Still check for stale scenes even when no mesh/texture changed —
         // the user may have edited scene JSON directly.
         cookSceneFiles(registry, false);
