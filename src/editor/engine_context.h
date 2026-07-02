@@ -28,4 +28,5 @@ struct EngineContext {
     SceneService*            sceneService = nullptr;
     SkeletonRegistry*        skeletons    = nullptr;
     AnimClipRegistry*        clips        = nullptr;
+    ClipLibrary*             clipLibrary  = nullptr;   // standalone-clip loader
 };

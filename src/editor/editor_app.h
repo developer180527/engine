@@ -78,7 +78,8 @@ public:
                                    m_rt.ctx().primitives,
                                    m_rt.ctx().assetService,
                                    ctx.projectRoot,
-                                   m_rt.ctx().assetLib);
+                                   m_rt.ctx().assetLib,
+                                   &m_rt.clipLibrary());
 
         // Selection restore: entities with Name exist immediately after
         // loadAsync (transform + name are set synchronously).
@@ -311,7 +312,7 @@ private:
             rc.materials, rc.project, rc.importers,
             m_editor, m_gizmo, rc.assetLib, rc.primitives,
             rc.assetService, rc.sceneService,
-            rc.skeletons, rc.clips
+            rc.skeletons, rc.clips, rc.clipLibrary
         };
     }
 

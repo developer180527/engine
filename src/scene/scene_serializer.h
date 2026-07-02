@@ -24,6 +24,7 @@
 #include "assets/importers/importer_registry.h"
 #include "runtime/services/async_loader.h"
 #include "runtime/services/asset_service.h"
+#include "animation/clip_library.h"
 #include "render/primitive_library.h"
 #include "core/entity_id_util.h"
 #include "core/logger.h"
@@ -122,7 +123,8 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
                       PrimitiveLibrary* primitives = nullptr,
                       AssetService*     assetService = nullptr,
                       const std::filesystem::path& projectRoot = {},
-                      assetlib::AssetRegistry*     assetLib = nullptr) {
+                      assetlib::AssetRegistry*     assetLib = nullptr,
+                      ClipLibrary*                 clipLib = nullptr) {
     if (!std::filesystem::exists(scenePath)) {
         LOG_WARN("Scene", "Not found: %s", scenePath.string().c_str());
         return false;
@@ -156,19 +158,20 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
     for (auto& pm : pending) {
         const Name* n = pm.entity.try_get<Name>();
         std::string label = n ? n->value : std::string{};
-        flecs::world*   pw  = &ecs;
-        flecs::entity_t eid = pm.entity.id();
+        flecs::world*     pw       = &ecs;
+        flecs::entity_t   eid      = pm.entity.id();
+        SkeletonRegistry* skels    = storage.skeletons;   // runtime-owned, outlive the load
+        AnimClipRegistry* clipsReg = storage.clips;
         loader.load(pm.assetPath, label,
-            [pw, eid](const AsyncLoadResult& r, const std::string&) {
+            [pw, eid, skels, clipsReg, clipLib](const AsyncLoadResult& r, const std::string&) {
                 if (!r.mesh.valid()) return;
                 flecs::entity e = pw->entity(eid);
                 if (e.id() == 0 || !e.is_alive()) return;
                 e.set<MeshRenderer>({r.mesh});
                 // Restore skeletal animation if the asset has bones.
-                // Handles are session-local — the scene file stores only the
-                // semantic clip selection (Animator::clipIndex); both the
-                // skeleton and clip handles are resolved HERE, from this
-                // import, never from disk.
+                // Handles are session-local — the scene file stores identity
+                // only (Animator::clipPath asset ref, or legacy clipIndex);
+                // handles are resolved HERE, from this import, never from disk.
                 if (r.skeleton.valid()) {
                     SkinnedMesh sm;
                     sm.skeleton = r.skeleton;
@@ -180,7 +183,18 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
                         anim = *a;
                         hadAnimator = true;
                     }
-                    if (!r.clips.empty()) {
+                    if (!anim.clipPath.empty() && clipLib && skels && clipsReg) {
+                        // Standalone clip asset: bind by bone name to THIS
+                        // entity's freshly imported skeleton.
+                        if (const Skeleton* sk = skels->get(r.skeleton)) {
+                            AnimClipHandle h = clipLib->load(anim.clipPath,
+                                                             r.skeleton, *sk, *clipsReg);
+                            if (h.valid()) {
+                                anim.clip = h;
+                                if (!hadAnimator) anim.playing = true;
+                            }
+                        }
+                    } else if (!r.clips.empty()) {   // legacy: clip inside the mesh file
                         int idx = anim.clipIndex;
                         if (idx < 0 || idx >= (int)r.clips.size()) idx = 0;
                         anim.clipIndex = idx;

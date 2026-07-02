@@ -21,6 +21,7 @@
 #include "assets/asset_storage.h"
 #include "scene/scene_serializer.h"
 #include "scene/reflected_serde.h"
+#include "animation/clip_library.h"
 #include "components/meta_registry.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
@@ -95,6 +96,10 @@ void EngineRuntime::attachPlugins() {
     m_plugins.attachAll(*m_ctx);
 }
 
+// Out-of-line: ClipLibrary is forward-declared in the header (it pulls Assimp,
+// which the kit-facing header surface must not).
+ClipLibrary& EngineRuntime::clipLibrary() { return *m_clipLibrary; }
+
 bool EngineRuntime::openProject(const std::filesystem::path& root) {
     namespace fs = std::filesystem;
     if (!m_initialized) {
@@ -158,6 +163,7 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     // runtime's world (the game world in Snapshot mode registers in
     // startSimulation). Kits register their own at attach/sim-start.
     MetaRegistry::registerAll(m_ecs);
+    m_clipLibrary = std::make_unique<ClipLibrary>();
     m_importers.registerImporter(std::make_unique<GltfImporter>());
     m_importers.registerImporter(std::make_unique<AssimpImporter>());
 
@@ -193,6 +199,7 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_ctx->sceneService  = m_sceneService.get();
     m_ctx->skeletons     = &m_skeletons;
     m_ctx->clips         = &m_clips;
+    m_ctx->clipLibrary   = m_clipLibrary.get();
     m_ctx->scriptHost    = m_scriptHost.get();
 
     // Gameplay-tick query (editor world) — render queries live in Renderer.

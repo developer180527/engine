@@ -252,6 +252,14 @@ set_target_properties(kit_lifecycle_test PROPERTIES
     ENABLE_EXPORTS ON
 )
 
+# ── clip_binding_test — standalone clip name-binding regression (CPU-only) ──
+# Links engine_runtime for include dirs (bx/skeleton headers); executes no GPU.
+add_executable(clip_binding_test tools/clip_binding_test.cpp)
+target_link_libraries(clip_binding_test PRIVATE engine_runtime)
+set_target_properties(clip_binding_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # ── profiler_test — headless profiler correctness check (engine_core) ────────
 add_executable(profiler_test tools/profiler_test.cpp)
 target_link_libraries(profiler_test PRIVATE engine_core)

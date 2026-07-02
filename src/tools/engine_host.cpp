@@ -150,7 +150,8 @@ int main(int argc, char** argv) {
     SceneSerializer::loadAsync(
         engine.project().projectRoot / engine.project().lastScene,
         ctx.ecs, storage, loader, ctx.importers, ctx.primitives,
-        ctx.assetService, engine.project().projectRoot, &engine.assetLib());
+        ctx.assetService, engine.project().projectRoot, &engine.assetLib(),
+        &engine.clipLibrary());
 
     engine.startSimulation(); // in-place: boot = play
 

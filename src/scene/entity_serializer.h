@@ -348,8 +348,15 @@ inline void loadSkinnedMesh(flecs::entity e, const nlohmann::json& j, SerdeConte
 inline bool hasAnimator(flecs::entity e) { return e.try_get<Animator>() != nullptr; }
 inline void saveAnimator(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx) {
     const Animator* a = e.try_get<Animator>(); if (!a) return;
-    if (ctx.mode == SerdeMode::Memory)
-        j["clipId"] = a->clip.id;              // same-session handle reuse
+    if (ctx.mode == SerdeMode::Memory) {
+        j["clipId"]   = a->clip.id;            // same-session handle reuse
+        if (!a->clipPath.empty()) j["clipPath"] = a->clipPath;  // raw runtime path
+    } else if (!a->clipPath.empty()) {
+        // Standalone clip asset: uuid + project-relative path ("asset"/"path"),
+        // same identity scheme meshes use — survives sessions and renames.
+        AssetRef ref = assetref::make(a->clipPath, ctx.projectRoot, ctx.assetLib);
+        assetref::toJson(ref, j);
+    }
     j["clipIndex"] = a->clipIndex;
     j["time"]    = a->time;
     j["speed"]   = a->speed;
@@ -358,11 +365,17 @@ inline void saveAnimator(flecs::entity e, nlohmann::json& j, const SerdeContext&
 }
 inline void loadAnimator(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
     Animator a;
-    if (ctx.mode == SerdeMode::Memory)
-        a.clip.id = j.value("clipId", 0u);
-    // Disk: clip handle stays invalid — the import callback resolves
-    // clipIndex against the freshly imported clip list. (Legacy "clipId"
-    // is ignored: load-order-dependent slot index.)
+    if (ctx.mode == SerdeMode::Memory) {
+        a.clip.id  = j.value("clipId", 0u);
+        a.clipPath = j.value("clipPath", std::string{});
+    } else {
+        // Disk: resolve the standalone-clip AssetRef to a loadable source
+        // path; the import callback binds it to the skeleton once the skinned
+        // mesh arrives. Clip handle stays invalid until then.
+        AssetRef ref = assetref::fromJson(j);
+        if (!ref.empty())
+            a.clipPath = assetref::resolve(ref, ctx.projectRoot, ctx.assetLib);
+    }
     a.clipIndex = j.value("clipIndex", 0);
     a.time    = j.value("time", 0.0f);
     a.speed   = j.value("speed", 1.0f);

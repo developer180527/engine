@@ -12,6 +12,7 @@ class AssetService;       // forward declare
 class SceneService;       // forward declare
 class SkeletonRegistry;   // forward declare
 class AnimClipRegistry;   // forward declare
+class ClipLibrary;        // forward declare
 class ScriptHost;         // forward declare
 
 struct RuntimeContext {
@@ -27,6 +28,8 @@ struct RuntimeContext {
     SceneService*            sceneService = nullptr;
     SkeletonRegistry*        skeletons    = nullptr;
     AnimClipRegistry*        clips        = nullptr;
+    // Standalone-clip loader + bind cache (animation/clip_library.h).
+    ClipLibrary*             clipLibrary  = nullptr;
     // The canonical scripting surface — runtime-owned; Lua bindings, the
     // C API (engine_api.h) and future language hosts all drive this one.
     ScriptHost*              scriptHost   = nullptr;

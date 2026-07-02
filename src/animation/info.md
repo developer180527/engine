@@ -19,6 +19,18 @@ arrays (parent index always < child index) for cache-friendly evaluation.
   weights (top-4 influences, normalized).
 - **Registries** (`skeleton_registry.h`, `clip_registry.h`) — `Handle<Tag>`
   dense-vector storage, slot 0 reserved as null.
+- **`ClipLibrary`** (`clip_library.h`) — clips as STANDALONE assets (the Mixamo
+  layout: character FBX + separate clip FBXs). Loads a clip file and BINDS it
+  to a target skeleton by bone name (baking `boneIndex` into channels via the
+  same `extractAnimClip` path; sampling stays index-only). Cache key is
+  (path | skeleton handle); unmapped tracks warn (first few named); zero
+  mapped tracks = wrong rig, refused. MUST import with the same Assimp
+  settings as `async_loader.cpp` (`PRESERVE_PIVOTS=false`) or rotation tracks
+  land on `$AssimpFbx$` helper names that don't exist on the skeleton.
+  `Animator::clipPath` carries the reference (AssetRef uuid+relative on disk);
+  the scene-load import callback binds it once the skinned mesh arrives.
+  Owned by EngineRuntime (`clipLibrary()`), reachable via RuntimeContext.
+  Regression: `clip_binding_test <character.fbx> <clip.fbx>`.
 
 ## Data Flow
 ```
