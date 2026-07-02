@@ -9,6 +9,20 @@
 
 namespace ab {
 
+// OS file-manager junk that should never show up as "assets":
+// macOS (.DS_Store, AppleDouble ._*, .localized, Spotlight/Trash/fsevents),
+// Windows (Thumbs.db, desktop.ini, ehthumbs.db), Linux/KDE (.directory).
+inline bool isOsJunk(const std::string& name) {
+    if (name == ".DS_Store" || name == ".localized" ||
+        name == ".Spotlight-V100" || name == ".Trashes" || name == ".fseventsd")
+        return true;
+    if (name.rfind("._", 0) == 0) return true;              // AppleDouble sidecars
+    if (name == "Thumbs.db" || name == "ehthumbs.db" || name == "desktop.ini")
+        return true;
+    if (name == ".directory") return true;                   // KDE folder metadata
+    return false;
+}
+
 // Scan one directory level and return sorted FileEntry list.
 inline std::vector<FileEntry> scanDir(const std::filesystem::path& dir,
                                       const ImporterRegistry&      importers,
@@ -18,6 +32,7 @@ inline std::vector<FileEntry> scanDir(const std::filesystem::path& dir,
     std::vector<FileEntry> out;
     if (!std::filesystem::is_directory(dir)) return out;
     for (const auto& de : std::filesystem::directory_iterator(dir)) {
+        if (isOsJunk(de.path().filename().string())) continue;
         FileEntry e;
         e.name     = de.path().filename().string();
         e.fullPath = de.path().string();
@@ -110,7 +125,8 @@ inline void drawFolderTree(const std::filesystem::path& dir,
     namespace fs = std::filesystem;
     bool hasSubs = false;
     try { for (const auto& e : fs::directory_iterator(dir))
-              if (e.is_directory()) { hasSubs = true; break; }
+              if (e.is_directory() && !isOsJunk(e.path().filename().string()))
+                  { hasSubs = true; break; }
     } catch (...) {}
 
     std::string label     = (dir == root) ? "assets" : dir.filename().string();
@@ -133,7 +149,8 @@ inline void drawFolderTree(const std::filesystem::path& dir,
         try {
             std::vector<fs::path> subs;
             for (const auto& e : fs::directory_iterator(dir))
-                if (e.is_directory()) subs.push_back(e.path());
+                if (e.is_directory() && !isOsJunk(e.path().filename().string()))
+                    subs.push_back(e.path());
             std::sort(subs.begin(), subs.end());
             for (auto& s : subs)
                 drawFolderTree(s, root, currentDir, needRefresh);

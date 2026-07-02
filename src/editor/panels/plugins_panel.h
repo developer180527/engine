@@ -81,8 +81,8 @@ inline void drawPluginsPanel(bool* open, bool* focus, PluginRegistry& plugins,
                              bool simulating, PluginWindows& windows) {
     if (open && !*open) return;
     if (focus && *focus) { ImGui::SetNextWindowFocus(); *focus = false; }
-    // No close button on the title bar — visibility is the Plugins menu's job.
-    if (!ImGui::Begin(ICON_FA_SCREWDRIVER_WRENCH " Plug-in Manager")) {
+    // Title-bar [x] closes it; reopen from Plugins > Plugin Manager or View > Panels.
+    if (!ImGui::Begin(ICON_FA_SCREWDRIVER_WRENCH " Plug-in Manager", open)) {
         ImGui::End();
         return;
     }
