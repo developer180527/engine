@@ -18,6 +18,7 @@
 #include "editor/panels/inspector_panel/character_controller_section.h"
 #include "editor/panels/inspector_panel/script_section.h"
 #include "editor/panels/inspector_panel/animator_section.h"
+#include "editor/panels/inspector_panel/reflected_section.h"
 #include "editor/panels/inspector_panel/add_component.h"
 
 inline void drawInspectorPanel(EngineContext& ctx, bool* open) {
@@ -43,6 +44,7 @@ inline void drawInspectorPanel(EngineContext& ctx, bool* open) {
     inspector_detail::drawCharacterControllerSection(ctx, e);
     inspector_detail::drawScriptSection(ctx, e);
     inspector_detail::drawAnimatorSection(ctx, e);
+    inspector_detail::drawReflectedSections(ctx, e);   // meta-driven (kit comps)
 
     inspector_detail::drawAddComponentButton(ctx, e);
 

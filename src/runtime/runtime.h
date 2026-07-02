@@ -2,6 +2,7 @@
 #include "core/profiler.h"
 #include "core/frame_arena.h"
 #include "core/debug_draw.h"
+#include "scene/reflected_serde.h"
 #include "render/primitive_library.h"
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
@@ -152,7 +153,10 @@ public:
     // Mid-play single-kit control (Plug-in Manager Load/Unload buttons).
     // No-ops while not simulating — kits only exist during Play.
     bool kitLoad(const std::string& name) {
-        return m_simulating && m_kits.loadOne(name, m_project, m_plugins, *m_ctx, simWorld());
+        if (!m_simulating) return false;
+        if (!m_kits.loadOne(name, m_project, m_plugins, *m_ctx, simWorld())) return false;
+        reflected::applyPending(simWorld());   // scene data waiting for its types
+        return true;
     }
     bool kitUnload(const std::string& name) {
         return m_simulating && m_kits.unloadOne(name, m_plugins);

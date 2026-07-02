@@ -20,6 +20,8 @@
 #include "assets/importers/assimp_importer.h"
 #include "assets/asset_storage.h"
 #include "scene/scene_serializer.h"
+#include "scene/reflected_serde.h"
+#include "components/meta_registry.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
 #include "components/spinner.h"
@@ -152,6 +154,10 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
 
 bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_openAssetDatabase = cfg.openAssetDatabase;
+    // Reflection backbone: engine component schemas registered in the
+    // runtime's world (the game world in Snapshot mode registers in
+    // startSimulation). Kits register their own at attach/sim-start.
+    MetaRegistry::registerAll(m_ecs);
     m_importers.registerImporter(std::make_unique<GltfImporter>());
     m_importers.registerImporter(std::make_unique<AssimpImporter>());
 
@@ -332,6 +338,9 @@ bool EngineRuntime::startSimulation(SimMode mode) {
                              &m_skeletons, &m_clips};
         m_simSnapshot = SceneSerializer::saveToString(m_ecs, storage);
         m_gameWorld   = std::make_unique<flecs::world>();
+        // Fresh world: engine schemas must exist before the snapshot populates
+        // it, or engine reflected components would all land in Pending.
+        MetaRegistry::registerAll(*m_gameWorld);
         SceneSerializer::loadIntoWorld(m_simSnapshot, *m_gameWorld, storage);
     }
 
@@ -346,6 +355,12 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     // BEFORE the broadcast so their onSimulationStart fires with everyone else.
     m_kits.start(m_project, m_plugins, *m_ctx);
     m_plugins.broadcastSimStart(simWorld());
+    // Kits have now registered their component schemas (attach/sim-start) —
+    // apply scene data that was waiting for those types. The editor world gets
+    // a pass too: kit onAttach registers against it, so after the first Play
+    // the editor can author/inspect kit components directly.
+    reflected::applyPending(simWorld());
+    if (m_gameWorld) reflected::applyPending(m_ecs);
     LOG_SUCCESS("Sim", "Simulation started (%s)",
                 mode == SimMode::Snapshot ? "snapshot" : "in-place");
     return true;

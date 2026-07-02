@@ -128,8 +128,8 @@ public:
         map.bindAction("Interact",    Key::F);
         map.bindAction("Sprint",      Key::LeftShift);
 
-        // Register component meta schemas (drives Lua FFI, Blueprint, inspector)
-        MetaRegistry::registerAll(m_rt.ctx().ecs);
+        // Component meta schemas are registered by the RUNTIME (initSystems +
+        // each fresh game world) — the reflection backbone is engine-owned now.
         // Register plugins with the runtime — it owns their lifecycle.
         // A standalone game does exactly this, minus the editor.
         m_rt.plugins().add(std::make_shared<JoltPlugin>());

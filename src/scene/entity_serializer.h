@@ -36,6 +36,7 @@
 #include "assets/importers/importer_registry.h"
 #include "render/primitive_library.h"
 #include "runtime/services/asset_service.h"
+#include "scene/reflected_serde.h"
 #include "core/logger.h"
 
 namespace EntitySerde {
@@ -397,6 +398,9 @@ inline nlohmann::json saveEntity(flecs::entity e, const SerdeContext& ctx) {
         if (const EntityId* pid = par.try_get<EntityId>()) je["parentId"] = pid->value;
     for (const auto& d : table())
         if (d.has(e)) { nlohmann::json sub; d.save(e, sub, ctx); je[d.key] = std::move(sub); }
+    // Generic path: every meta-registered component NOT in the table above
+    // (kit components, future engine components) + still-pending blobs.
+    { nlohmann::json r; reflected::save(e, r); if (!r.empty()) je["reflected"] = std::move(r); }
     return je;
 }
 
@@ -415,6 +419,9 @@ inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
     e.set<EntityId>({id});
     for (const auto& d : table())
         if (je.contains(d.key)) d.load(e, je[d.key], ctx);
+    // Generic path: apply reflected components that resolve now; stash the
+    // rest in ReflectedPending until their kit registers the type.
+    if (je.contains("reflected")) reflected::load(e, je["reflected"]);
     return e;
 }
 

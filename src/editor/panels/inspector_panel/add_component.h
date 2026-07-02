@@ -24,6 +24,8 @@
 #include "components/light.h"
 #include "components/animator.h"
 #include "components/script_component.h"
+#include "components/editor_addable.h"
+#include "scene/reflected_serde.h"
 
 namespace inspector_detail {
 
@@ -91,6 +93,33 @@ inline void drawAddComponentButton(EngineContext& ctx, flecs::entity e) {
                 ctx.editor.undoStack.pushComponentAdd(e, c.key, std::string("Add ") + c.label);
                 ctx.editor.sceneDirty = true;
                 ImGui::CloseCurrentPopup();
+            }
+        }
+
+        // ── Reflected components (meta-registered + EditorAddable tag) ──────
+        // Kit components appear here once their kit has registered schemas
+        // (after the first Play). Added with default values; no undo yet (v1).
+        {
+            flecs::world w = e.world();
+            std::vector<flecs::entity> addable;
+            w.query_builder()
+                .with<EditorAddable>().with<flecs::Struct>()
+                .build()
+                .each([&](flecs::entity comp) {
+                    const std::string path = reflected::componentPath(comp);
+                    if (reflected::isHandwritten(path))   return;
+                    if (ecs_has_id(w, e, comp))           return;   // already on it
+                    if (!matchesFilter(path.c_str(), filter)) return;
+                    addable.push_back(comp);
+                });
+            for (flecs::entity comp : addable) {
+                any = true;
+                const std::string path = reflected::componentPath(comp);
+                if (ImGui::Selectable(path.c_str())) {
+                    ecs_add_id(e.world(), e, comp);      // default-constructed
+                    ctx.editor.sceneDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
             }
         }
         if (!any)
