@@ -2,9 +2,12 @@
 
 #include <bx/math.h>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+namespace ozz::animation { class Skeleton; }   // fwd — the ozz runtime skeleton
 
 static constexpr int kMaxBones = 128;
 
@@ -29,6 +32,15 @@ struct Bone {
 struct Skeleton {
     std::vector<Bone>                          bones;
     std::unordered_map<std::string, int>       boneMap;
+
+    // ── ozz backbone (built once at import by anim::buildOzzSkeleton) ──────
+    // `ozz` is the runtime skeleton the SamplingJob/LocalToModelJob consume.
+    // ozz orders joints its own way (parents-first, its traversal), so
+    // `ozzJointOf[ourBoneIndex]` maps OUR bone order (what vertex weights and
+    // IBMs index) to ozz joint indices. shared_ptr keeps Skeleton copyable —
+    // the ozz skeleton is immutable shared asset data.
+    std::shared_ptr<const ozz::animation::Skeleton> ozz;
+    std::vector<int>                                ozzJointOf;
 
     int findBone(const std::string& name) const {
         auto it = boneMap.find(name);

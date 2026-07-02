@@ -6,6 +6,7 @@
 #include "render/texture.h"
 #include "render/material.h"
 #include "animation/assimp_skeleton_loader.h"
+#include "animation/ozz_bridge.h"
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -373,9 +374,19 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
 
         if (hasBones) {
             out.skeleton    = anim::extractSkeleton(scene);
-            out.hasSkeleton = out.skeleton.boneCount() > 0;
-            if (out.hasSkeleton && scene->mNumAnimations > 0)
-                out.animClips = anim::extractAllClips(scene, out.skeleton);
+            out.hasSkeleton = out.skeleton.boneCount() > 0
+                           && anim::buildOzzSkeleton(out.skeleton);
+            if (out.hasSkeleton && scene->mNumAnimations > 0) {
+                // Embedded clips -> compressed ozz Animations (same bridge the
+                // standalone-clip ClipLibrary uses).
+                std::string base = std::filesystem::path(path).stem().string();
+                out.animClips.reserve(scene->mNumAnimations);
+                for (unsigned a = 0; a < scene->mNumAnimations; ++a) {
+                    AnimClip c = anim::buildOzzClip(scene->mAnimations[a],
+                                                    out.skeleton, base);
+                    if (c.valid()) out.animClips.push_back(std::move(c));
+                }
+            }
             LOG_INFO("Assimp", "%s — %d bones, %u clip(s)",
                      name.c_str(), out.skeleton.boneCount(), (uint32_t)out.animClips.size());
         }

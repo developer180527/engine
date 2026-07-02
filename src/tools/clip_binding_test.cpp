@@ -9,6 +9,7 @@
 // handle on a second load. Pure CPU: no window, no bgfx.
 #include "animation/assimp_skeleton_loader.h"
 #include "animation/clip_library.h"
+#include "animation/ozz_bridge.h"
 #include "animation/clip_registry.h"
 
 #include <assimp/Importer.hpp>
@@ -34,6 +35,7 @@ int main(int argc, char** argv) {
 
     Skeleton skel = anim::extractSkeleton(scene);
     if (skel.boneCount() == 0) { std::fprintf(stderr, "FAIL: no bones in character\n"); return 1; }
+    if (!anim::buildOzzSkeleton(skel)) { std::fprintf(stderr, "FAIL: ozz skeleton build\n"); return 1; }
     std::printf("character skeleton: %d bones\n", skel.boneCount());
 
     // Standalone clip bound to that skeleton.
@@ -44,20 +46,16 @@ int main(int argc, char** argv) {
     if (!h.valid()) { std::fprintf(stderr, "FAIL: clip did not bind\n"); return 1; }
 
     const AnimClip* clip = clips.get(h);
-    if (!clip || clip->channels.empty()) { std::fprintf(stderr, "FAIL: clip has no bound channels\n"); return 1; }
-    if (clip->duration <= 0.0f)          { std::fprintf(stderr, "FAIL: zero duration\n"); return 1; }
-    for (const auto& ch : clip->channels)
-        if (ch.boneIndex < 0 || ch.boneIndex >= skel.boneCount()) {
-            std::fprintf(stderr, "FAIL: channel with out-of-range boneIndex %d\n", ch.boneIndex);
-            return 1;
-        }
+    if (!clip || !clip->valid())  { std::fprintf(stderr, "FAIL: clip did not build\n"); return 1; }
+    if (clip->duration <= 0.0f)   { std::fprintf(stderr, "FAIL: zero duration\n"); return 1; }
+    if (clip->mappedTracks <= 0)  { std::fprintf(stderr, "FAIL: no tracks mapped\n"); return 1; }
 
     // Cache: same (path, skeleton) must return the identical handle.
     AnimClipHandle h2 = lib.load(argv[2], sh, skel, clips);
     if (h2.id != h.id) { std::fprintf(stderr, "FAIL: cache miss on second load\n"); return 1; }
 
-    std::printf("clip_binding_test: PASS — '%s' %.2fs, %zu channels bound to %d bones\n",
-                clip->name.c_str(), clip->duration, clip->channels.size(),
-                skel.boneCount());
+    std::printf("clip_binding_test: PASS — '%s' %.2fs, %d/%d tracks bound to %d bones\n",
+                clip->name.c_str(), clip->duration, clip->mappedTracks,
+                clip->totalTracks, skel.boneCount());
     return 0;
 }

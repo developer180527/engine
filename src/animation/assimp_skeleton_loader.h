@@ -207,90 +207,11 @@ inline Skeleton extractSkeleton(const aiScene* scene) {
     return skel;
 }
 
-// ── Extract animation clips ─────────────────────────────────────────────────
-
-inline AnimClip extractAnimClip(const aiAnimation* anim, const Skeleton& skel) {
-    AnimClip clip;
-    clip.name = anim->mName.C_Str();
-    clip.ticksPerSecond = (anim->mTicksPerSecond > 0.0)
-        ? (float)anim->mTicksPerSecond : 24.0f;
-    clip.duration = (float)(anim->mDuration / clip.ticksPerSecond);
-
-    for (unsigned c = 0; c < anim->mNumChannels; ++c) {
-        const aiNodeAnim* na = anim->mChannels[c];
-        int boneIdx = skel.findBone(na->mNodeName.C_Str());
-        if (boneIdx < 0) continue;
-
-        // Position keys
-        if (na->mNumPositionKeys > 0) {
-            AnimChannel ch;
-            ch.boneIndex = boneIdx;
-            ch.property = AnimProperty::Translation;
-            ch.interpolation = AnimInterp::Linear;
-            ch.timestamps.reserve(na->mNumPositionKeys);
-            ch.values.reserve(na->mNumPositionKeys * 3);
-            for (unsigned k = 0; k < na->mNumPositionKeys; ++k) {
-                ch.timestamps.push_back((float)(na->mPositionKeys[k].mTime / clip.ticksPerSecond));
-                const auto& v = na->mPositionKeys[k].mValue;
-                ch.values.push_back(v.x);
-                ch.values.push_back(v.y);
-                ch.values.push_back(v.z);
-            }
-            clip.channels.push_back(std::move(ch));
-        }
-
-        // Rotation keys
-        if (na->mNumRotationKeys > 0) {
-            AnimChannel ch;
-            ch.boneIndex = boneIdx;
-            ch.property = AnimProperty::Rotation;
-            ch.interpolation = AnimInterp::Linear;
-            ch.timestamps.reserve(na->mNumRotationKeys);
-            ch.values.reserve(na->mNumRotationKeys * 4);
-            for (unsigned k = 0; k < na->mNumRotationKeys; ++k) {
-                ch.timestamps.push_back((float)(na->mRotationKeys[k].mTime / clip.ticksPerSecond));
-                // CONJUGATE — must match decomposeAiMatrix (see comment there):
-                // Assimp quats recompose inverted in our row-vector pipeline.
-                const auto& q = na->mRotationKeys[k].mValue;
-                ch.values.push_back(-q.x);
-                ch.values.push_back(-q.y);
-                ch.values.push_back(-q.z);
-                ch.values.push_back( q.w);
-            }
-            clip.channels.push_back(std::move(ch));
-        }
-
-        // Scale keys
-        if (na->mNumScalingKeys > 0) {
-            AnimChannel ch;
-            ch.boneIndex = boneIdx;
-            ch.property = AnimProperty::Scale;
-            ch.interpolation = AnimInterp::Linear;
-            ch.timestamps.reserve(na->mNumScalingKeys);
-            ch.values.reserve(na->mNumScalingKeys * 3);
-            for (unsigned k = 0; k < na->mNumScalingKeys; ++k) {
-                ch.timestamps.push_back((float)(na->mScalingKeys[k].mTime / clip.ticksPerSecond));
-                const auto& v = na->mScalingKeys[k].mValue;
-                ch.values.push_back(v.x);
-                ch.values.push_back(v.y);
-                ch.values.push_back(v.z);
-            }
-            clip.channels.push_back(std::move(ch));
-        }
-    }
-
-    return clip;
-}
-
-// ── Extract all clips from a scene ──────────────────────────────────────────
-
-inline std::vector<AnimClip> extractAllClips(const aiScene* scene, const Skeleton& skel) {
-    std::vector<AnimClip> clips;
-    clips.reserve(scene->mNumAnimations);
-    for (unsigned i = 0; i < scene->mNumAnimations; ++i)
-        clips.push_back(extractAnimClip(scene->mAnimations[i], skel));
-    return clips;
-}
+// ── Animation clips ─────────────────────────────────────────────────────────
+// Clip extraction moved to the ozz backbone: anim::buildOzzClip in
+// animation/ozz_bridge.h converts Assimp curves into compressed ozz
+// Animations bound to the skeleton. The hand-rolled AnimChannel sampler is
+// gone (see animation/info.md).
 
 // ── Extract per-vertex bone weights ─────────────────────────────────────────
 // For each vertex in a mesh, returns the top 4 bone indices and normalized

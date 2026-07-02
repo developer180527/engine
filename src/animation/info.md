@@ -4,25 +4,42 @@
 Skeletal animation: skeleton extraction from FBX (via Assimp), clip sampling,
 pose blending, and bone-palette computation for GPU linear-blend skinning.
 
+## The ozz Backbone
+Sampling/blending machinery is **ozz-animation** (third_party/ozz-animation,
+same philosophy as Jolt/bgfx/flecs — orchestrate, don't reinvent):
+- `ozz_bridge.h` — THE seam: `buildOzzSkeleton` (engine Skeleton -> ozz runtime
+  skeleton + ourBone->ozzJoint map), `buildOzzClip` (Assimp curves -> compressed
+  ozz Animation, name-bound, rest-pose keys for unanimated joints).
+- `AnimClip` wraps `ozz::animation::Animation`; `Skeleton` carries the ozz
+  skeleton + joint mapping. The hand-rolled AnimChannel sampler is deleted.
+- AnimatorSystem runs SamplingJob -> LocalToModelJob, remaps ozz joints to OUR
+  bone order, then IBM * model (pose.h) into the GPU palette. Per-entity ozz
+  contexts live in the system (components get snapshot-copied), keyed by
+  entity id, dropped with the world cache.
+- Conventions: ozz = Assimp (column-vector) — clip quats feed ozz UNCONJUGATED;
+  rest poses conjugate our stored bind SQT back; ozz Float4x4 memory is
+  byte-identical to bx row-vector layout (no transpose at the seam).
+- ozz jobs are scheduler-agnostic: the future job system parallelizes
+  animation by handing each entity's jobs to workers.
+
 ## Architecture
 Bones are **not** ECS entities — they live in flat, topologically sorted
 arrays (parent index always < child index) for cache-friendly evaluation.
 
 - **`Skeleton`/`Bone`** (`skeleton.h`) — bind pose as SQT *and* as the raw
   `localBindMatrix[16]`, plus `inverseBindMatrix[16]` per bone. `kMaxBones=128`.
-- **`AnimClip`/`AnimChannel`** (`animation_clip.h`) — per-bone keyframe
-  tracks (translation/rotation/scale), timestamps in seconds.
-- **`Pose`** (`pose.h`) — per-bone local SQT plus an `animated` bitmask
-  (1=pos, 2=rot, 4=scl) recording which properties a clip actually wrote.
+- **`AnimClip`** (`animation_clip.h`) — wraps a compressed
+  `ozz::animation::Animation` + name/duration + track-mapping diagnostics.
+- **`pose.h`** — the two surviving raw-matrix helpers: bind-pose world
+  matrices + IBM multiply (the precision-clean baseline for skinning).
 - **`assimp_skeleton_loader.h`** — walks the aiNode tree, collapses
-  `$AssimpFbx$` helper chains into single bones, extracts clips and per-vertex
-  weights (top-4 influences, normalized).
+  `$AssimpFbx$` helper chains into single bones, extracts per-vertex weights
+  (top-4 influences, normalized). Clip extraction lives in `ozz_bridge.h`.
 - **Registries** (`skeleton_registry.h`, `clip_registry.h`) — `Handle<Tag>`
   dense-vector storage, slot 0 reserved as null.
 - **`ClipLibrary`** (`clip_library.h`) — clips as STANDALONE assets (the Mixamo
   layout: character FBX + separate clip FBXs). Loads a clip file and BINDS it
-  to a target skeleton by bone name (baking `boneIndex` into channels via the
-  same `extractAnimClip` path; sampling stays index-only). Cache key is
+  to a target skeleton by bone name (via `anim::buildOzzClip`). Cache key is
   (path | skeleton handle); unmapped tracks warn (first few named); zero
   mapped tracks = wrong rig, refused. MUST import with the same Assimp
   settings as `async_loader.cpp` (`PRESERVE_PIVOTS=false`) or rotation tracks
@@ -34,17 +51,17 @@ arrays (parent index always < child index) for cache-friendly evaluation.
 
 ## Data Flow
 ```
-FBX → Assimp (PRESERVE_PIVOTS=false) → extractSkeleton/extractAllClips
-  → AnimatorSystem.tick: sampleClip → Pose
-  → computeWorldMatrices (parent-chain multiply)
-  → computeSkinMatrices: skin[i] = IBM[i] * world[i]
-  → SkinnedMesh::skinMatrices → vec4 uniform array → vs_skinned.sc
+FBX → Assimp (PRESERVE_PIVOTS=false) → extractSkeleton → buildOzzSkeleton
+                                     → buildOzzClip (per animation)
+  → AnimatorSystem.tick: ozz SamplingJob → ozz LocalToModelJob
+  → remap ozz joints → our bones; skin[i] = IBM[i] * model[ozzJointOf[i]]
+  → SkinnedMesh::skinMatrices → vec4 uniform array → vs_skinned.sc (mul(v,M))
 ```
 
 ## The Quaternion Convention (critical — root cause of exploded meshes)
 Assimp quaternions MUST be **conjugated** (negate xyz) at the import boundary
-(`decomposeAiMatrix` for bind, `extractAnimClip` for rotation keys — the two
-must stay consistent). Why: `bx::mtxFromQuaternion` emits column-vector-
+(`decomposeAiMatrix` for bind — ozz-bound clip keys stay UNCONJUGATED, since
+ozz shares Assimp's convention; `ozz_bridge.h` owns that seam). Why: `bx::mtxFromQuaternion` emits column-vector-
 convention memory into our row-vector pipeline (`aiMat4ToFloat16` transposes;
 `mtxMul(world, local, parent)` is v·L·P), so an unconjugated Assimp quaternion
 recomposes as the INVERSE rotation. Diagnosed numerically: `toMatrix(bindSQT)`
@@ -65,15 +82,10 @@ ever changed, keep `anim_pose_test`'s CPU-skin check AND an on-screen look —
 CPU-correct does not imply GPU-correct here.
 
 ## The Precision Invariant (still applies)
-`decomposeAiMatrix → SQT → toMatrix()` remains slightly lossy for matrices
-with shear (baked pivot chains). The historical "catastrophic drift" (a jaw
-bone at 299 cm) was actually the quaternion-convention bug above; the raw-
-matrix paths are kept as the precision-clean baseline:
-- Bones with **no** animation channels use `localBindMatrix` raw
-  (`pose.isAnimated(i)` check in `computeWorldMatrices`).
-- The pure bind pose uses `computeBindPoseWorldMatrices` (raw matrices only),
-  guaranteeing `IBM * world_bind ≈ identity`.
-Never "simplify" this back to SQT-everywhere.
+SQT decomposition is slightly lossy for matrices with shear (baked pivot
+chains), so the no-clip bind pose renders through the raw-matrix path
+(`computeBindPoseWorldMatrices`, guaranteeing `IBM * world_bind ≈ identity`)
+rather than any SQT round-trip.
 
 ## Invariants
 - Max 128 bones (512 vec4 uniforms), 4 influences/vertex, weights sum to 1.
@@ -83,6 +95,9 @@ Never "simplify" this back to SQT-everywhere.
 - Animation ticks even when gameplay is paused (editor scrubbing).
 
 ## Future Work
-- Phase 4: cross-fade transitions, blend trees, layers (the `blendPoses` /
-  `additiveBlend` primitives already exist).
+- Crossfade transitions + the engineAnim* C API (on ozz BlendingJob), then
+  data-driven state machines as a client of that.
+- Animation cooker: emit ozz archives (skeleton/animation serialization) so
+  the runtime loads pre-built data instead of bridging Assimp at import.
 - Cook skinned meshes (currently they always take the Assimp fallback path).
+- Parallel evaluation via the job system (ozz jobs are scheduler-agnostic).

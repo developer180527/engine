@@ -28,7 +28,7 @@ public:
 
     bool remove(AnimClipHandle h) {
         if (!h.valid() || h.id >= m_clips.size()) return false;
-        if (m_clips[h.id].channels.empty() && m_clips[h.id].name.empty()) return false;
+        if (!m_clips[h.id].valid() && m_clips[h.id].name.empty()) return false;
         m_clips[h.id] = AnimClip{};
         m_freeSlots.push_back(h.id);
         return true;
@@ -36,7 +36,7 @@ public:
 
     const AnimClip* get(AnimClipHandle h) const {
         if (h.valid() && h.id < m_clips.size() &&
-            !(m_clips[h.id].channels.empty() && m_clips[h.id].name.empty()))
+            !(!m_clips[h.id].valid() && m_clips[h.id].name.empty()))
             return &m_clips[h.id];
         return nullptr;
     }

@@ -1,39 +1,26 @@
 #pragma once
-
-#include <cstdint>
+// ── AnimClip — a runtime animation clip (ozz backbone) ───────────────────────
+// The clip IS an ozz::animation::Animation: compressed, SoA-friendly keyframes
+// built at import by anim::buildOzzClip from Assimp data, bound to a specific
+// skeleton's joint order. Sampling goes through ozz SamplingJob (see
+// systems/animator_system.h). The old hand-rolled AnimChannel storage and
+// sampler are gone — "don't reinvent the wheel" (Jolt/bgfx/flecs precedent).
+#include <memory>
 #include <string>
-#include <vector>
 
-enum class AnimProperty : uint8_t { Translation, Rotation, Scale };
-enum class AnimInterp   : uint8_t { Step, Linear, CubicSpline };
-
-struct AnimChannel {
-    int           boneIndex = -1;
-    AnimProperty  property  = AnimProperty::Translation;
-    AnimInterp    interpolation = AnimInterp::Linear;
-
-    std::vector<float> timestamps;
-    // Packed flat: vec3 for Translation/Scale (3 floats per key),
-    //              quat for Rotation (4 floats per key).
-    // CubicSpline: in-tangent + value + out-tangent per key
-    //              (3x the component count per key).
-    std::vector<float> values;
-
-    int keyCount() const { return (int)timestamps.size(); }
-
-    int componentCount() const {
-        return property == AnimProperty::Rotation ? 4 : 3;
-    }
-
-    int valuesPerKey() const {
-        int cc = componentCount();
-        return interpolation == AnimInterp::CubicSpline ? cc * 3 : cc;
-    }
-};
+namespace ozz::animation { class Animation; }
 
 struct AnimClip {
-    std::string              name;
-    float                    duration       = 0.0f;
-    float                    ticksPerSecond = 24.0f;
-    std::vector<AnimChannel> channels;
+    std::string name;
+    float       duration = 0.0f;     // seconds (mirrors ozz->duration())
+
+    // Immutable shared clip data; shared_ptr keeps AnimClip copyable for the
+    // registry. Null = empty/invalid clip.
+    std::shared_ptr<const ozz::animation::Animation> ozz;
+
+    // Import diagnostics: how many source tracks mapped onto the skeleton.
+    int mappedTracks = 0;
+    int totalTracks  = 0;
+
+    bool valid() const { return ozz != nullptr; }
 };

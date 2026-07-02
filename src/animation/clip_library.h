@@ -14,7 +14,7 @@
 #include "animation/animation_clip.h"
 #include "animation/clip_registry.h"
 #include "animation/skeleton.h"
-#include "animation/assimp_skeleton_loader.h"   // extractAnimClip (name binding)
+#include "animation/ozz_bridge.h"               // buildOzzClip (name binding)
 #include "core/handle.h"
 #include "core/logger.h"
 
@@ -54,31 +54,27 @@ public:
             LOG_ERROR("Anim", "no animations in %s", sourcePath.c_str());
             return {};
         }
+        if (!skeleton.ozz) {
+            LOG_ERROR("Anim", "target skeleton has no ozz runtime data");
+            return {};
+        }
 
         // v1: one clip per file (the Mixamo layout). Multi-take files can grow
         // a takeName parameter later without changing callers.
         const aiAnimation* src = scene->mAnimations[0];
-        AnimClip clip = anim::extractAnimClip(src, skeleton);
-
-        // Mixamo names every take "mixamo.com" — the filename is the identity.
-        if (clip.name.empty() || clip.name == "mixamo.com" ||
-            clip.name.rfind("Take", 0) == 0)
-            clip.name = std::filesystem::path(sourcePath).stem().string();
-
-        const int total  = (int)src->mNumChannels;
-        int mapped = 0;
-        for (unsigned c = 0; c < src->mNumChannels; ++c)
-            if (skeleton.findBone(src->mChannels[c]->mNodeName.C_Str()) >= 0)
-                ++mapped;
-        if (mapped == 0) {
+        AnimClip clip = anim::buildOzzClip(src, skeleton,
+            std::filesystem::path(sourcePath).stem().string());
+        if (clip.mappedTracks == 0) {
             LOG_ERROR("Anim", "'%s': no tracks match the target skeleton "
                       "(%d tracks, %d bones) — wrong rig?",
-                      clip.name.c_str(), total, skeleton.boneCount());
+                      clip.name.c_str(), clip.totalTracks, skeleton.boneCount());
             return {};
         }
-        if (mapped < total) {
+        if (!clip.valid()) return {};   // builder failure (already logged)
+        if (clip.mappedTracks < clip.totalTracks) {
             LOG_WARN("Anim", "'%s': %d/%d tracks unmapped on this skeleton",
-                     clip.name.c_str(), total - mapped, total);
+                     clip.name.c_str(), clip.totalTracks - clip.mappedTracks,
+                     clip.totalTracks);
             int shown = 0;
             for (unsigned c = 0; c < src->mNumChannels && shown < 6; ++c) {
                 const char* n = src->mChannels[c]->mNodeName.C_Str();
@@ -93,7 +89,7 @@ public:
         m_cache[key] = h;
         LOG_SUCCESS("Anim", "bound clip '%s' (%.2fs, %d/%d tracks) from %s",
                     clips.get(h)->name.c_str(), clips.get(h)->duration,
-                    mapped, total,
+                    clips.get(h)->mappedTracks, clips.get(h)->totalTracks,
                     std::filesystem::path(sourcePath).filename().string().c_str());
         return h;
     }

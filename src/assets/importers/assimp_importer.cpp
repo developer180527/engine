@@ -6,6 +6,7 @@
 #include "render/texture.h"
 #include "render/material.h"
 #include "animation/assimp_skeleton_loader.h"
+#include "animation/ozz_bridge.h"
 #include "animation/skeleton_registry.h"
 #include "animation/clip_registry.h"
 
@@ -382,24 +383,29 @@ MeshImportResult AssimpImporter::load(const std::string& path,
     for (uint32_t i = 0; i < scene->mNumMeshes; ++i)
         if (scene->mMeshes[i]->mNumBones > 0) { hasBones = true; break; }
 
-    // Extract skeleton if bones are present
+    // Extract skeleton if bones are present (+ its ozz runtime skeleton)
     Skeleton skeleton;
     SkeletonHandle skelHandle{};
     if (hasBones) {
         skeleton = anim::extractSkeleton(scene);
+        if (!skeleton.bones.empty() && !anim::buildOzzSkeleton(skeleton))
+            skeleton = {};   // unusable without ozz data
         if (!skeleton.bones.empty() && storage.skeletons) {
             LOG_INFO("Assimp", "Skeleton: %d bones", skeleton.boneCount());
             skelHandle = storage.skeletons->add(Skeleton(skeleton)); // copy — we keep a ref
         }
     }
 
-    // Extract animation clips
+    // Embedded animation clips -> compressed ozz Animations (ozz_bridge)
     std::vector<AnimClipHandle> clipHandles;
     if (hasBones && !skeleton.bones.empty() && storage.clips) {
-        auto clips = anim::extractAllClips(scene, skeleton);
-        for (auto& clip : clips) {
-            LOG_INFO("Assimp", "Clip: \"%s\" duration=%.2fs channels=%zu",
-                     clip.name.c_str(), clip.duration, clip.channels.size());
+        const std::string base = baseName;
+        for (unsigned a = 0; a < scene->mNumAnimations; ++a) {
+            AnimClip clip = anim::buildOzzClip(scene->mAnimations[a], skeleton, base);
+            if (!clip.valid()) continue;
+            LOG_INFO("Assimp", "Clip: \"%s\" duration=%.2fs tracks=%d/%d",
+                     clip.name.c_str(), clip.duration,
+                     clip.mappedTracks, clip.totalTracks);
             clipHandles.push_back(storage.clips->add(std::move(clip)));
         }
     }
