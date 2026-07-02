@@ -242,6 +242,16 @@ set_target_properties(engine_host PROPERTIES
     ENABLE_EXPORTS ON
 )
 
+# ── kit_lifecycle_test — headless mid-play kit unload/reload regression ─────
+# Guards the module graveyard: unloading a kit must not unmap code the worlds
+# still reference (flecs component hooks). ENABLE_EXPORTS: loads real kits.
+add_executable(kit_lifecycle_test tools/kit_lifecycle_test.cpp)
+target_link_libraries(kit_lifecycle_test PRIVATE engine_runtime)
+set_target_properties(kit_lifecycle_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    ENABLE_EXPORTS ON
+)
+
 # ── profiler_test — headless profiler correctness check (engine_core) ────────
 add_executable(profiler_test tools/profiler_test.cpp)
 target_link_libraries(profiler_test PRIVATE engine_core)

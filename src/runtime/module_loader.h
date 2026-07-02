@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
@@ -185,17 +186,33 @@ public:
         return true;
     }
 
-    // Destroy the module's instance + table (module-side) before dlclose. Safe
-    // to call repeatedly. The caller MUST have already released every
+    // Retire the module: destroy its instance + table (module-side) so its
+    // code stops RUNNING — but the image is NEVER unmapped. Live worlds keep
+    // pointers into module code long after the plugin is gone: flecs component
+    // hooks (ctor/dtor/move template instantiations of every component the
+    // module registered) stay in the world's type records, and other kits keep
+    // adding those components through the shared contract. dlclosing here made
+    // "unload kit mid-play, resume, shoot" jump into unmapped memory. Retired
+    // handles are parked in a process-lifetime graveyard instead — the Unreal
+    // hot-reload model. Dev-host-only cost: one small mapped image per
+    // unload/reload; shipped games statically link kits and never come here.
+    // Safe to call repeatedly. The caller MUST have already released every
     // shared_ptr to plugin() — the adapter's deleter lives in the host, but the
     // table it points at dies here.
     void unload() {
         if (m_table && m_destroy) m_destroy(m_table);  // module-side delete
         m_table   = nullptr;
         m_destroy = nullptr;
-        if (m_handle) { libClose(m_handle); m_handle = nullptr; }
-        std::error_code ec;
-        if (!m_tempPath.empty()) { fs::remove(m_tempPath, ec); m_tempPath.clear(); }
+        if (m_handle) { graveyard().push_back(m_handle); m_handle = nullptr; }
+        // The temp copy stays on disk while the image is mapped (Windows can't
+        // delete a loaded DLL; keep POSIX uniform). The OS temp cleaner owns it.
+        m_tempPath.clear();
+    }
+
+    // Images retired by unload(); mapped until process exit — never dlclose.
+    static std::vector<LibHandle>& graveyard() {
+        static std::vector<LibHandle> g;
+        return g;
     }
 
     std::shared_ptr<IEnginePlugin> plugin() const { return m_plugin; }
