@@ -31,7 +31,16 @@ inline void decomposeAiMatrix(const aiMatrix4x4& m,
     aiQuaternion aiRot;
     m.Decompose(aiScl, aiRot, aiPos);
     pos = { aiPos.x, aiPos.y, aiPos.z };
-    rot = { aiRot.x, aiRot.y, aiRot.z, aiRot.w };
+    // CONJUGATE (negate xyz): Assimp quaternions are column-vector convention,
+    // but bx::mtxFromQuaternion emits column-vector MEMORY into our row-vector
+    // pipeline (see aiMat4ToFloat16's transpose) — so an Assimp quaternion
+    // recomposes as the INVERSE rotation. The conjugate's matrix is exactly
+    // the transpose, making toMatrix(SQT) agree with localBindMatrix. Without
+    // this, every rotated bone recomposed inverted — invisible at bind pose
+    // (the raw-matrix fallback masked it) and catastrophic on the first real
+    // animation (exploded skinned meshes). Clip rotation keys get the same
+    // treatment in extractAnimClip — the two MUST stay consistent.
+    rot = { -aiRot.x, -aiRot.y, -aiRot.z, aiRot.w };
     scl = { aiScl.x, aiScl.y, aiScl.z };
 }
 
@@ -240,11 +249,13 @@ inline AnimClip extractAnimClip(const aiAnimation* anim, const Skeleton& skel) {
             ch.values.reserve(na->mNumRotationKeys * 4);
             for (unsigned k = 0; k < na->mNumRotationKeys; ++k) {
                 ch.timestamps.push_back((float)(na->mRotationKeys[k].mTime / clip.ticksPerSecond));
+                // CONJUGATE — must match decomposeAiMatrix (see comment there):
+                // Assimp quats recompose inverted in our row-vector pipeline.
                 const auto& q = na->mRotationKeys[k].mValue;
-                ch.values.push_back(q.x);
-                ch.values.push_back(q.y);
-                ch.values.push_back(q.z);
-                ch.values.push_back(q.w);
+                ch.values.push_back(-q.x);
+                ch.values.push_back(-q.y);
+                ch.values.push_back(-q.z);
+                ch.values.push_back( q.w);
             }
             clip.channels.push_back(std::move(ch));
         }

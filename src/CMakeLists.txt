@@ -260,6 +260,13 @@ set_target_properties(clip_binding_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# ── anim_pose_test — numeric skin-matrix diagnosis for standalone clips ─────
+add_executable(anim_pose_test tools/anim_pose_test.cpp)
+target_link_libraries(anim_pose_test PRIVATE engine_runtime)
+set_target_properties(anim_pose_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # ── profiler_test — headless profiler correctness check (engine_core) ────────
 add_executable(profiler_test tools/profiler_test.cpp)
 target_link_libraries(profiler_test PRIVATE engine_core)

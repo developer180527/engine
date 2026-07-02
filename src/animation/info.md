@@ -41,10 +41,24 @@ FBX → Assimp (PRESERVE_PIVOTS=false) → extractSkeleton/extractAllClips
   → SkinnedMesh::skinMatrices → vec4 uniform array → vs_skinned.sc
 ```
 
-## The Precision Invariant (important)
-`decomposeAiMatrix → SQT → toMatrix()` is **lossy** when FBX pre/post-rotation
-is baked in. Error accumulates catastrophically down long bone chains (a jaw
-bone once drifted 299 cm). Therefore:
+## The Quaternion Convention (critical — root cause of exploded meshes)
+Assimp quaternions MUST be **conjugated** (negate xyz) at the import boundary
+(`decomposeAiMatrix` for bind, `extractAnimClip` for rotation keys — the two
+must stay consistent). Why: `bx::mtxFromQuaternion` emits column-vector-
+convention memory into our row-vector pipeline (`aiMat4ToFloat16` transposes;
+`mtxMul(world, local, parent)` is v·L·P), so an unconjugated Assimp quaternion
+recomposes as the INVERSE rotation. Diagnosed numerically: `toMatrix(bindSQT)`
+vs raw `localBindMatrix` had per-element error 1.47 on rotated bones (toes,
+thumbs) — invisible at bind pose (raw-matrix fallback masked it), catastrophic
+the moment a clip actually played (skin translations of 200–380 cm ≡ the
+"exploded zombie"). After the fix the round-trip error is 0.000 and a
+near-bind take gives skin ≈ identity. Regression: `anim_pose_test`.
+
+## The Precision Invariant (still applies)
+`decomposeAiMatrix → SQT → toMatrix()` remains slightly lossy for matrices
+with shear (baked pivot chains). The historical "catastrophic drift" (a jaw
+bone at 299 cm) was actually the quaternion-convention bug above; the raw-
+matrix paths are kept as the precision-clean baseline:
 - Bones with **no** animation channels use `localBindMatrix` raw
   (`pose.isAnimated(i)` check in `computeWorldMatrices`).
 - The pure bind pose uses `computeBindPoseWorldMatrices` (raw matrices only),
