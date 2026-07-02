@@ -19,7 +19,9 @@ void main() {
               + getBoneMatrix(idx.y) * a_weight.y
               + getBoneMatrix(idx.z) * a_weight.z
               + getBoneMatrix(idx.w) * a_weight.w;
-    vec4 skinnedPos = mul(skin, vec4(a_position, 1.0));
+    // ROW-VECTOR multiply — raw vec4[] palettes arrive in bx row-major layout;
+    // see vs_skinned.sc for the diagnosis.
+    vec4 skinnedPos = mul(vec4(a_position, 1.0), skin);
     mat4 model  = u_model[0];
     gl_Position = mul(u_viewProj, mul(model, skinnedPos));
 }

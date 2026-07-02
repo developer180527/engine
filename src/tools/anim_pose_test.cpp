@@ -106,6 +106,51 @@ int main(int argc, char** argv) {
             pose.locals[i].rotation.x, pose.locals[i].rotation.y,
             pose.locals[i].rotation.z, pose.locals[i].rotation.w);
     }
+    // ── CPU-skin the real mesh: the decisive vertex-level check ─────────────
+    // Transforms every vertex exactly as vs_skinned does (LBS with the same
+    // weights/indices the runtime uploads). A sane result = all CPU data is
+    // correct and any remaining visual explosion is GPU-side.
+    {
+        auto xform = [](const float* m, float x, float y, float z, float out[3]) {
+            out[0] = x*m[0] + y*m[4] + z*m[8]  + m[12];   // row-vector v*M
+            out[1] = x*m[1] + y*m[5] + z*m[9]  + m[13];
+            out[2] = x*m[2] + y*m[6] + z*m[10] + m[14];
+        };
+        float mn[3] = { 1e9f, 1e9f, 1e9f }, mx[3] = { -1e9f, -1e9f, -1e9f };
+        float wsMin = 1e9f, wsMax = -1e9f;
+        int   far = 0, total = 0;
+        for (unsigned mi = 0; mi < scene->mNumMeshes; ++mi) {
+            const aiMesh* am = scene->mMeshes[mi];
+            if (am->mNumBones == 0) continue;
+            auto bd = anim::extractBoneWeights(am, skel);
+            for (unsigned v = 0; v < am->mNumVertices; ++v) {
+                float ws = bd[v].weights[0] + bd[v].weights[1]
+                         + bd[v].weights[2] + bd[v].weights[3];
+                wsMin = std::min(wsMin, ws); wsMax = std::max(wsMax, ws);
+                float acc[3] = { 0, 0, 0 };
+                for (int j = 0; j < 4; ++j) {
+                    if (bd[v].weights[j] <= 0.0f) continue;
+                    float p[3];
+                    xform(&skin[(size_t)bd[v].joints[j] * 16],
+                          am->mVertices[v].x, am->mVertices[v].y, am->mVertices[v].z, p);
+                    acc[0] += p[0] * bd[v].weights[j];
+                    acc[1] += p[1] * bd[v].weights[j];
+                    acc[2] += p[2] * bd[v].weights[j];
+                }
+                for (int k = 0; k < 3; ++k) {
+                    mn[k] = std::min(mn[k], acc[k]);
+                    mx[k] = std::max(mx[k], acc[k]);
+                }
+                if (len3(acc[0], acc[1], acc[2]) > 500.0f) ++far;
+                ++total;
+            }
+        }
+        std::printf("CPU-skinned %d verts: AABB (%.1f %.1f %.1f)..(%.1f %.1f %.1f)  "
+                    "weightSum[%.3f..%.3f]  verts beyond 5m: %d\n",
+                    total, mn[0], mn[1], mn[2], mx[0], mx[1], mx[2],
+                    wsMin, wsMax, far);
+    }
+
     // ── SQT round-trip check: toMatrix(bind SQT) vs localBindMatrix ─────────
     // If these diverge, the SQT path is broken for this rig even at bind —
     // every animated bone inherits the error.

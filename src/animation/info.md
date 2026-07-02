@@ -54,6 +54,16 @@ the moment a clip actually played (skin translations of 200–380 cm ≡ the
 "exploded zombie"). After the fix the round-trip error is 0.000 and a
 near-bind take gives skin ≈ identity. Regression: `anim_pose_test`.
 
+## The Palette Layout Contract (GPU handoff)
+Bone palettes upload as a RAW `vec4[512]` uniform array — bgfx does NOT prep
+raw arrays the way it preps `u_model`, so they arrive in bx row-major memory
+untouched. The skinned shaders therefore use the ROW-VECTOR multiply
+(`mul(v, skin)`, see vs_skinned.sc). Uploading with `mul(skin, v)` renders
+exploded meshes even with a bit-perfect palette (diagnosed empirically with
+identity/transposed-palette runs + screenshots). If the palette pipeline is
+ever changed, keep `anim_pose_test`'s CPU-skin check AND an on-screen look —
+CPU-correct does not imply GPU-correct here.
+
 ## The Precision Invariant (still applies)
 `decomposeAiMatrix → SQT → toMatrix()` remains slightly lossy for matrices
 with shear (baked pivot chains). The historical "catastrophic drift" (a jaw

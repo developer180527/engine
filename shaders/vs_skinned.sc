@@ -25,9 +25,15 @@ void main() {
               + getBoneMatrix(idx.z) * a_weight.z
               + getBoneMatrix(idx.w) * a_weight.w;
 
-    vec4 skinnedPos    = mul(skin, vec4(a_position, 1.0));
-    vec3 skinnedNormal = mul(skin, vec4(a_normal, 0.0)).xyz;
-    vec3 skinnedTan    = mul(skin, vec4(a_tangent.xyz, 0.0)).xyz;
+    // ROW-VECTOR multiply (v * M): the palette is uploaded as a raw vec4[]
+    // array, so it arrives in bx's row-major memory layout UNTOUCHED — unlike
+    // u_model, which bgfx preps for the mul(M, v) convention. Diagnosed
+    // empirically: mul(skin, v) rendered exploded meshes; transposed palettes
+    // (== this multiply order) render correctly. Keep AnimatorSystem palettes
+    // bx-native and flip the order here instead.
+    vec4 skinnedPos    = mul(vec4(a_position, 1.0),    skin);
+    vec3 skinnedNormal = mul(vec4(a_normal, 0.0),      skin).xyz;
+    vec3 skinnedTan    = mul(vec4(a_tangent.xyz, 0.0), skin).xyz;
 
     mat4 model    = u_model[0];
     vec4 worldPos = mul(model, skinnedPos);
