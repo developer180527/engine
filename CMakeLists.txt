@@ -69,6 +69,20 @@ add_subdirectory(third_party/JoltPhysics/Build)
 
 add_subdirectory(third_party/lua)
 
+# ── ozz-animation — skeletal animation backbone ──────────────────────────
+# Runtime (sampling/blending/local-to-model, SoA SIMD, allocation-free) +
+# offline builders (RawSkeleton/RawAnimation -> optimized runtime structures,
+# used by the Assimp import bridge and later the animation cooker). Tools,
+# samples and importers are disabled — Assimp remains our only file importer.
+set(ozz_build_tools    OFF CACHE BOOL "" FORCE)
+set(ozz_build_fbx      OFF CACHE BOOL "" FORCE)
+set(ozz_build_gltf     OFF CACHE BOOL "" FORCE)
+set(ozz_build_samples  OFF CACHE BOOL "" FORCE)
+set(ozz_build_howtos   OFF CACHE BOOL "" FORCE)
+set(ozz_build_tests    OFF CACHE BOOL "" FORCE)
+set(ozz_build_postfix  OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/ozz-animation)
+
 # ImGui — editor-only UI library. The runtime never links this.
 add_library(imgui STATIC
     third_party/imgui/imgui.cpp

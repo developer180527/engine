@@ -143,6 +143,7 @@ target_link_libraries(engine_runtime PUBLIC
     flecs_static
     Jolt
     lua
+    ozz_animation ozz_animation_offline   # skeletal animation backbone (+ import-time builders)
 )
 
 if(APPLE)
