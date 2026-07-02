@@ -18,6 +18,7 @@
 #include "scene/scene_serializer.h"
 #include "runtime/services/async_loader.h"
 #include "runtime/module_loader.h"   // shared dlopen + gauntlet (also used by KitHost)
+#include "core/profiler.h"           // periodic frame-profile dump (dev runner)
 
 #include <cstdio>
 #include <filesystem>
@@ -153,12 +154,17 @@ int main(int argc, char** argv) {
 
     engine.startSimulation(); // in-place: boot = play
 
+    int profFrame = 0;
     engine.run([&](float dt) {
         InputSystem::get().processEvents();
         loader.drainOne(storage);
         if (watcher && watcher->changed(dt))
             game.reload(modulePath, engine);
         engine.tick(dt);
+        // Dev runner: dump the frame profile every ~5s so windowed runs (the
+        // only place GPU/present cost is real) leave numbers in the log.
+        if (ENGINE_PROFILE && ++profFrame % 300 == 0)
+            prof::Profiler::get().timer().logLastFrame("engine_host frame");
     });
 
     // Order matters: the dev plugin must be fully released (its deleter lives

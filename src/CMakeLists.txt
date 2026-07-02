@@ -265,10 +265,13 @@ target_link_libraries(arena_test PRIVATE engine_core)
 set_target_properties(arena_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ── profiler_frames — headless proof of the frame profiler path ──────────────
+# ENABLE_EXPORTS: with a project argument it starts simulation, which loads
+# the project's kits (they resolve engine symbols from this executable).
 add_executable(profiler_frames tools/profiler_frames.cpp)
 target_link_libraries(profiler_frames PRIVATE engine_runtime)
 set_target_properties(profiler_frames PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    ENABLE_EXPORTS ON
 )
 
 # ── scene_resave — scene migration + serializer round-trip harness ──────────

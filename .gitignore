@@ -6,7 +6,7 @@ build/
 compile_commands.json
 .DS_Store
 docs/generated
-assets/
+/assets/
 # Kits (separate repos) + user game projects — not part of the engine repo
 Kits/
 fps_shooter/
