@@ -108,6 +108,7 @@ add_library(engine_runtime STATIC
     runtime/services/asset_service.cpp
     runtime/services/scene_service.cpp
     runtime/scripting/engine_api.cpp
+    runtime/scripting/engine_api_table.cpp
     runtime/jobs/jobs_enkits.cpp
     runtime/input/input_manager.cpp
 

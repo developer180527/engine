@@ -12,6 +12,7 @@
 // the engine_host / editor targets.
 #include <engine/game_module.h>
 #include <engine/contract.h>
+#include <engine/engine_api_table.h>
 #include "runtime/plugin.h"
 #include "runtime/runtime_context.h"
 #include "core/logger.h"
@@ -199,6 +200,14 @@ public:
                       "misread by the new module)");
             return refuse();
         }
+        // EXPLICIT API HANDOFF: modules built with engine_api_client.h get
+        // the versioned function table instead of dynamic-lookup symbols
+        // (per-subsystem versions checked module-side; see engine_api_table.h).
+        // Optional symbol — older modules keep resolving dynamically.
+        if (auto bindApi = (EngineModuleBindApiV1Fn)
+                dlsym(m_handle, "engineModuleBindApiV1"))
+            bindApi(engineApiHostTable());
+
         // Kit-to-kit CONTRACTS (shared component headers): flecs matches them
         // across modules by NAME, so version/layout skew between two kits is
         // silent memory corruption. Modules export their view (optional
