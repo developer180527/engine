@@ -16,6 +16,7 @@ set(BGFX_BUILD_TOOLS_GEOMETRY OFF CACHE BOOL "")
 set(BGFX_BUILD_TOOLS_TEXTURE OFF CACHE BOOL "")
 set(BGFX_INSTALL OFF CACHE BOOL "")
 add_subdirectory(modules/assetlib)
+add_subdirectory(modules/hid)       # raw-input module (devices + timestamped events)
 
 add_subdirectory(third_party/bgfx.cmake)
 
