@@ -55,9 +55,10 @@ static void printDevices(hid::Context& ctx) {
     const size_t n = ctx.devices(devs, 32);
     std::printf("%zu device(s):\n", n);
     for (size_t i = 0; i < n; ++i)
-        std::printf("  #%-3u %-8s %04x:%04x  %s\n",
+        std::printf("  #%-3u %-8s %04x:%04x  phys:%08x  %s\n",
                     devs[i].id, clsName(devs[i].cls),
-                    devs[i].vendorId, devs[i].productId, devs[i].name);
+                    devs[i].vendorId, devs[i].productId,
+                    devs[i].physId, devs[i].name);
 }
 
 int main(int argc, char** argv) {

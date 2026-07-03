@@ -119,6 +119,36 @@ struct Context::Impl {
                                    sizeof(info.name), kCFStringEncodingUTF8);
         if (!info.name[0]) std::snprintf(info.name, sizeof(info.name), "(unnamed)");
 
+        // Physical grouping key: LocationID is shared by every collection/
+        // interface of one physical device on one transport. Bluetooth
+        // devices may lack it — fall back to an FNV hash of identity
+        // (vendor:product:serial:name), which still groups the split
+        // collections of one physical unit.
+        {
+            int loc = 0;
+            if (CFTypeRef n = IOHIDDeviceGetProperty(dev, CFSTR(kIOHIDLocationIDKey)))
+                if (CFGetTypeID(n) == CFNumberGetTypeID())
+                    CFNumberGetValue((CFNumberRef)n, kCFNumberIntType, &loc);
+            if (loc) {
+                info.physId = (uint32_t)loc;
+            } else {
+                char serial[64] = {};
+                if (CFTypeRef s = IOHIDDeviceGetProperty(dev, CFSTR(kIOHIDSerialNumberKey)))
+                    if (CFGetTypeID(s) == CFStringGetTypeID())
+                        CFStringGetCString((CFStringRef)s, serial,
+                                           sizeof(serial), kCFStringEncodingUTF8);
+                uint32_t h = 2166136261u;
+                auto fnv = [&h](const void* p, size_t n) {
+                    for (size_t i = 0; i < n; ++i)
+                        h = (h ^ ((const uint8_t*)p)[i]) * 16777619u;
+                };
+                fnv(&info.vendorId, 2); fnv(&info.productId, 2);
+                fnv(serial, std::strlen(serial));
+                fnv(info.name, std::strlen(info.name));
+                info.physId = h ? h : 1;
+            }
+        }
+
         {
             std::lock_guard<std::mutex> lk(devMu);
             for (const Dev& d : devs)               // re-add of a known ref

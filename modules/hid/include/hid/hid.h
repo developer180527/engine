@@ -76,6 +76,13 @@ struct DeviceInfo {
     DeviceClass cls;
     uint16_t    vendorId;
     uint16_t    productId;
+    // PHYSICAL grouping key: modern OSes split one physical device into one
+    // logical endpoint per HID top-level collection / interface (macOS
+    // DriverKit does this per collection). Endpoints of the same physical
+    // device share physId — consumers collapse duplicates with it (e.g.
+    // elect one endpoint per event type). The module reports endpoints
+    // faithfully and never dedups itself.
+    uint32_t    physId;
     char        name[64];   // UTF-8, truncated, always NUL-terminated
 };
 
