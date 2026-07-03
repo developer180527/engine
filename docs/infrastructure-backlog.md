@@ -12,7 +12,7 @@ tier-3 game module.
 
 ---
 
-## Phase A — Close the gameplay loops (next session; small, high-feel)
+## Phase A — Gameplay loops (DEFERRED by user, July 2026 — infra first)
 1. **Kinematic hitbox follow** — push Transform → Jolt for kinematic bodies
    each step (reverse of the existing writeback). Unblocks moving enemies.
 2. **Zombie chase AI + health bars** — seek-toward-player velocity + debug-
@@ -24,7 +24,7 @@ tier-3 game module.
 5. **`engineActionId` fast path** — compiled action handles; query-by-id
    variants (input group v3).
 
-## Phase B — Asset pipeline maturity (prereq for export)
+## Phase B — Asset pipeline maturity (ACTIVE — cooker first, then C)
 6. **Animation cooker** — ozz archive serialization; runtime loads cooked
    skeletons/clips (mmap-and-go, no Assimp at runtime). Kills the sync-parse
    hitch class permanently.
@@ -64,7 +64,7 @@ tier-3 game module.
     authoring (deferred by user until more game infra exists).
 24. **bgfx shutdown RefCount warnings sweep** (resource lifetime hygiene).
 
-## Phase F — Windows port (bundle; several items pre-solved)
+## Phase F — Windows/Linux port (EXPLICITLY DELAYED — much later)
 25. Memory backend: **VirtualAlloc2** aligned reservations (mmap is POSIX).
 26. **Win32 Raw Input/GameInput** hid backend (module drop-in, engine
     untouched). Linux evdev alongside if desired.
@@ -72,7 +72,8 @@ tier-3 game module.
     remnants; profiler clock seam. (Module loading already table-based —
     the dynamic_lookup dependency is gone.)
 
-## Phase G — Export milestone (user-gated: when fps_shooter feels shippable)
+## Phase G — Export milestone (DELAYED FURTHER: after enough Kits + a
+## robust single-genre-capable engine)
 28. **engine_player** — generic runtime binary (engine_host minus dev/hot-
     reload machinery).
 29. **engine_build** — packaging CLI producing `<project>/build/`: player
@@ -96,7 +97,8 @@ tier-3 game module.
 ---
 
 ## Sequencing rationale
-- **A before everything**: tiny debts that make daily testing pleasant and
+- ~~A before everything~~ (user re-prioritized: essential systems first;
+  gameplay when the engine is reliably game-capable) — **B then C**: tiny debts that make daily testing pleasant and
   the game real; each item exercises infrastructure built this month.
 - **B before G**: export without cooked animation/meshes ships Assimp and
   source FBX files — the cooker IS most of the export work.

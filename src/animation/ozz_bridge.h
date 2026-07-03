@@ -118,6 +118,7 @@ inline AnimClip buildOzzClip(const aiAnimation* src, const Skeleton& skel,
 
     const ozz::animation::Skeleton& oskel = *skel.ozz;
     ozz::animation::offline::RawAnimation raw;
+    // Name travels INSIDE the ozz Animation (and so through cooked archives).
     raw.duration = duration;
     raw.tracks.resize(oskel.num_joints());
 
@@ -167,6 +168,14 @@ inline AnimClip buildOzzClip(const aiAnimation* src, const Skeleton& skel,
         LOG_ERROR("Anim", "RawAnimation validation failed for '%s'", fallbackName.c_str());
         return clip;
     }
+    // Resolve the display name BEFORE building: it serializes inside the
+    // ozz Animation, so cooked archives carry it too. Mixamo exports junk
+    // take names — fall back to the filename stem.
+    std::string clipName = src->mName.length ? src->mName.C_Str() : "";
+    if (clipName.empty() || clipName == "mixamo.com" || clipName.rfind("Take", 0) == 0)
+        clipName = fallbackName;
+    raw.name = clipName;
+
     ozz::animation::offline::AnimationBuilder builder;
     ozz::unique_ptr<ozz::animation::Animation> built = builder(raw);
     if (!built) {
@@ -174,9 +183,7 @@ inline AnimClip buildOzzClip(const aiAnimation* src, const Skeleton& skel,
         return clip;
     }
 
-    clip.name = src->mName.length ? src->mName.C_Str() : "";
-    if (clip.name.empty() || clip.name == "mixamo.com" || clip.name.rfind("Take", 0) == 0)
-        clip.name = fallbackName;
+    clip.name     = clipName;
     clip.duration = duration;
     clip.ozz = std::shared_ptr<const ozz::animation::Animation>(
         built.release(), ozz::Deleter<ozz::animation::Animation>());

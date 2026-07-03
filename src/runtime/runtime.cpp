@@ -178,6 +178,8 @@ bool EngineRuntime::openProject(const std::filesystem::path& root) {
     LOG_INFO("Project", "Opened: %s", m_project.projectRoot.string().c_str());
     // The editor boots projectless — input bindings arrive WITH the project.
     m_input.loadProjectBindings(m_project.projectRoot);
+    if (m_clipLibrary)   // cooked-clip cache lives with the project
+        m_clipLibrary->setCacheRoot(m_project.projectRoot / ".cache" / "anim");
 
     // Asset database — open + scan so handles resolve immediately.
     const auto cacheRoot = m_project.projectRoot / ".cache";

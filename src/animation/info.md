@@ -105,9 +105,19 @@ switch detection does the rest.
 - Matrices are row-major, bx/bgfx row-vector convention: `child * parent`.
 - Animation ticks even when gameplay is paused (editor scrubbing).
 
+## The Clip Cooker (cook-on-first-bind)
+ClipLibrary persists every successful bind as an ozz Animation archive under
+`<project>/.cache/anim/<hash(source|skeletonSig)>.ozzclip` (small invalidation
+header: source size+mtime, joint-name signature, format version — bump
+kCookVersion on format change). Later binds and later RUNS deserialize in
+~0.1ms instead of a ~20-50ms Assimp parse. Names serialize inside the ozz
+animation (raw.name set in ozz_bridge). Hosts enable it via setCacheRoot at
+project open; bare tools run pure-Assimp.
+
 ## Future Work
 - Data-driven state machines as a client of the crossfade + engineAnim* API.
-- Animation cooker: emit ozz archives (skeleton/animation serialization) so
+- Eager cook mode (engine_cook walks scene clip refs) + async bind path
+- Skeleton/skinned-mesh cooking (mesh FBX still parses via Assimp at load): emit ozz archives (skeleton/animation serialization) so
   the runtime loads pre-built data instead of bridging Assimp at import.
 - Cook skinned meshes (currently they always take the Assimp fallback path).
 - Parallel evaluation via the job system (ozz jobs are scheduler-agnostic).
