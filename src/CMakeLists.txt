@@ -87,11 +87,16 @@ target_include_directories(engine_core PUBLIC
     ${CMAKE_SOURCE_DIR}/third_party/cgltf
     ${CMAKE_SOURCE_DIR}/third_party/stb
     ${CMAKE_SOURCE_DIR}/third_party/tlsf
+    ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bx/include   # bx math (skeleton types in the cooker)
 )
 
 target_link_libraries(engine_core PUBLIC
     assetlib
     assimp
+    ozz_animation ozz_animation_offline   # skinned-mesh cooker (skeleton/clip archives)
+)
+target_compile_definitions(engine_core PUBLIC
+    BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>   # bx headers (cooker skeleton types)
 )
 
 add_library(engine::core ALIAS engine_core)

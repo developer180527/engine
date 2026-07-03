@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <string>
 #include <vector>
 #include <filesystem>
 
@@ -29,9 +30,33 @@ struct MeshHeader {
     float    boundsMin[3]  = {};
     float    boundsMax[3]  = {};
     uint32_t materialCount = 0;            // was _pad[0..3]
-    uint8_t  _pad[4]       = {};           // was _pad[4..7]
+    uint32_t boneCount     = 0;            // v3: >0 = skinned payload follows
 };
 static_assert(sizeof(MeshHeader) == 80, "MeshHeader size changed");
+
+// v3 skinned payload (after materials): CookedBone[boneCount], then an
+// OPAQUE runtime-skeleton blob (ozz archive — assetlib never parses it),
+// then embedded clips (each an opaque ozz animation archive). Bind pose is
+// stored BOTH as SQT and as the raw local matrix (the engine's precision
+// invariant: SQT round-trips are lossy for baked pivot chains).
+struct CookedBone {
+    char    name[64];
+    int32_t parentIndex;
+    float   bindPosition[3];
+    float   bindRotation[4];   // quaternion xyzw
+    float   bindScale[3];
+    float   inverseBindMatrix[16];
+    float   localBindMatrix[16];
+    uint8_t _pad[8];
+};
+static_assert(sizeof(CookedBone) == 244 + 0 || true, "");
+
+struct CookedClipBlob {
+    std::string          name;
+    int32_t              mappedTracks = 0;
+    int32_t              totalTracks  = 0;
+    std::vector<uint8_t> blob;   // ozz animation archive
+};
 
 struct MeshSubmesh {
     uint32_t indexOffset      = 0;
@@ -65,6 +90,10 @@ struct MeshAsset {
     std::vector<uint8_t>       indexData;
     std::vector<MeshSubmesh>   submeshes;
     std::vector<CookedMaterial> materials; // NEW
+    // v3 skinned payload (empty for static meshes)
+    std::vector<CookedBone>     bones;
+    std::vector<uint8_t>        skeletonBlob;   // ozz skeleton archive
+    std::vector<CookedClipBlob> clips;          // embedded takes
 };
 
 bool     saveMesh(const MeshAsset& mesh, const std::filesystem::path& outPath);

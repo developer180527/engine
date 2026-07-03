@@ -18,6 +18,15 @@
 
 using namespace assetlib;
 
+#include <ozz/animation/runtime/animation.h>
+#include <ozz/animation/runtime/skeleton.h>
+#include <ozz/base/io/archive.h>
+#include <ozz/base/io/stream.h>
+
+#include "animation/assimp_skeleton_loader.h"   // extractSkeleton/BoneWeights
+#include "animation/ozz_bridge.h"               // buildOzzSkeleton/Clip
+#include "animation/animation_clip.h"
+
 static constexpr unsigned kImportFlags =
     aiProcess_Triangulate | aiProcess_GenSmoothNormals |
     aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices |
@@ -138,6 +147,177 @@ static void emitNode(const aiScene* s, const aiNode* node,
         emitNode(s, node->mChildren[c], world, st);
 }
 
+// Mirror of the runtime SkinnedVertex (render/skinned_vertex.h): 68 bytes.
+// Layout for kSkinnedFlags: pos(3)+normal(3)+tangent(4)+uv(2)+joints(u8x4)+weights(4).
+static constexpr uint32_t kSkinnedFlags = kCookFlags | VF_JOINTS | VF_WEIGHTS;
+struct CookSkinnedVertex {
+    float   px, py, pz;
+    float   nx, ny, nz;
+    float   tx, ty, tz, tw;
+    float   u, v;
+    uint8_t joints[4];
+    float   weights[4];
+};
+static_assert(sizeof(CookSkinnedVertex) == 68, "must match runtime SkinnedVertex");
+
+// Drain an ozz output archive into a byte vector.
+static std::vector<uint8_t> drainOzzStream(ozz::io::MemoryStream& ms) {
+    const int size = ms.Tell();
+    std::vector<uint8_t> out((size_t)size);
+    ms.Seek(0, ozz::io::Stream::kSet);
+    ms.Read(out.data(), (size_t)size);
+    return out;
+}
+
+// ── Skinned cook ─────────────────────────────────────────────────────────────
+// Vertices stay in MESH space (the skin matrices place them at runtime), so
+// node transforms are NOT baked. Import settings must match the runtime
+// loader exactly (PRESERVE_PIVOTS=false) or clip tracks land on synthetic
+// node names the cooked skeleton doesn't have.
+static CookResult cookSkinned(const CookContext& ctx) {
+    Assimp::Importer imp;
+    imp.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
+    imp.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE,
+                           aiPrimitiveType_POINT | aiPrimitiveType_LINE);
+    const aiScene* scene = imp.ReadFile(ctx.sourcePath.string(), kImportFlags);
+    if (!scene || !scene->mRootNode)
+        return {.success = false, .error = "Assimp (skinned re-import) failed"};
+
+    Skeleton skel = anim::extractSkeleton(scene);
+    if (skel.boneCount() == 0)
+        return {.success = false, .error = "skinned mesh with no extractable skeleton"};
+    if (!anim::buildOzzSkeleton(skel))
+        return {.success = false, .error = "ozz skeleton build failed"};
+
+    MeshAsset asset;
+    asset.header.magic        = 0x4D455348;
+    asset.header.version      = 3;
+    asset.header.vertexFlags  = kSkinnedFlags;
+    asset.header.vertexStride = sizeof(CookSkinnedVertex);
+    asset.header.boneCount    = (uint32_t)skel.boneCount();
+    std::memcpy(asset.header.uuid, ctx.uuid.bytes.data(), 16);
+
+    // 1. Size from skinned meshes only.
+    uint32_t totalVerts = 0, totalIndices = 0;
+    for (unsigned m = 0; m < scene->mNumMeshes; ++m) {
+        const aiMesh* mesh = scene->mMeshes[m];
+        if (mesh->HasPositions() && mesh->mNumBones > 0) {
+            totalVerts   += mesh->mNumVertices;
+            totalIndices += mesh->mNumFaces * 3;
+        }
+    }
+    if (totalVerts == 0)
+        return {.success = false, .error = "no skinned geometry"};
+    const bool use16 = (totalVerts <= 65535);
+    asset.header.indexStride = use16 ? 2 : 4;
+    asset.vertexData.resize((size_t)totalVerts * sizeof(CookSkinnedVertex));
+    asset.indexData.resize((size_t)totalIndices * asset.header.indexStride);
+
+    // 2. Emit (mesh space, submesh per source mesh).
+    auto* verts = reinterpret_cast<CookSkinnedVertex*>(asset.vertexData.data());
+    uint8_t* idxBytes = asset.indexData.data();
+    uint32_t vWrite = 0, iByteOff = 0, vBase = 0;
+    float bMin[3] = { FLT_MAX,  FLT_MAX,  FLT_MAX};
+    float bMax[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+    for (unsigned m = 0; m < scene->mNumMeshes; ++m) {
+        const aiMesh* mesh = scene->mMeshes[m];
+        if (!mesh->HasPositions() || mesh->mNumBones == 0) continue;
+        const auto boneData = anim::extractBoneWeights(mesh, skel);
+        const bool hasN = mesh->HasNormals();
+        const bool hasT = mesh->HasTangentsAndBitangents();
+        const bool hasUV = mesh->HasTextureCoords(0);
+        for (unsigned v = 0; v < mesh->mNumVertices; ++v) {
+            CookSkinnedVertex& o = verts[vWrite++];
+            const aiVector3D& P = mesh->mVertices[v];
+            o.px = P.x; o.py = P.y; o.pz = P.z;
+            for (int i = 0; i < 3; ++i) {
+                const float c = (&P.x)[i];
+                bMin[i] = std::min(bMin[i], c);
+                bMax[i] = std::max(bMax[i], c);
+            }
+            const aiVector3D N = hasN ? mesh->mNormals[v] : aiVector3D(0, 1, 0);
+            o.nx = N.x; o.ny = N.y; o.nz = N.z;
+            if (hasT) {
+                const aiVector3D& T = mesh->mTangents[v];
+                o.tx = T.x; o.ty = T.y; o.tz = T.z; o.tw = 1.0f;
+            } else { o.tx = 1; o.ty = 0; o.tz = 0; o.tw = 1; }
+            if (hasUV) { o.u = mesh->mTextureCoords[0][v].x;
+                         o.v = mesh->mTextureCoords[0][v].y; }
+            else       { o.u = o.v = 0.0f; }
+            std::memcpy(o.joints,  boneData[v].joints,  4);
+            std::memcpy(o.weights, boneData[v].weights, 16);
+        }
+        MeshSubmesh sub{};
+        sub.indexOffset   = iByteOff / asset.header.indexStride;
+        sub.indexCount    = mesh->mNumFaces * 3;
+        sub.materialIndex = mesh->mMaterialIndex;
+        for (unsigned f = 0; f < mesh->mNumFaces; ++f) {
+            const aiFace& face = mesh->mFaces[f];
+            for (int k = 0; k < 3; ++k) {
+                const uint32_t idx = face.mIndices[k] + vBase;
+                if (use16) *reinterpret_cast<uint16_t*>(idxBytes + iByteOff)
+                               = (uint16_t)idx;
+                else       *reinterpret_cast<uint32_t*>(idxBytes + iByteOff) = idx;
+                iByteOff += asset.header.indexStride;
+            }
+        }
+        vBase += mesh->mNumVertices;
+        asset.submeshes.push_back(sub);
+    }
+    asset.header.vertexCount  = totalVerts;
+    asset.header.indexCount   = totalIndices;
+    asset.header.submeshCount = (uint32_t)asset.submeshes.size();
+    for (int i = 0; i < 3; ++i) {
+        asset.header.boundsMin[i] = bMin[i];
+        asset.header.boundsMax[i] = bMax[i];
+    }
+
+    // 3. Bones + ozz skeleton archive (opaque blob to assetlib).
+    asset.bones.reserve(skel.bones.size());
+    for (const Bone& b : skel.bones) {
+        CookedBone cb{};
+        std::snprintf(cb.name, sizeof(cb.name), "%s", b.name.c_str());
+        cb.parentIndex = b.parentIndex;
+        cb.bindPosition[0]=b.bindPosition.x; cb.bindPosition[1]=b.bindPosition.y;
+        cb.bindPosition[2]=b.bindPosition.z;
+        cb.bindRotation[0]=b.bindRotation.x; cb.bindRotation[1]=b.bindRotation.y;
+        cb.bindRotation[2]=b.bindRotation.z; cb.bindRotation[3]=b.bindRotation.w;
+        cb.bindScale[0]=b.bindScale.x; cb.bindScale[1]=b.bindScale.y;
+        cb.bindScale[2]=b.bindScale.z;
+        std::memcpy(cb.inverseBindMatrix, b.inverseBindMatrix, 64);
+        std::memcpy(cb.localBindMatrix,   b.localBindMatrix,   64);
+        asset.bones.push_back(cb);
+    }
+    {
+        ozz::io::MemoryStream ms;
+        { ozz::io::OArchive a(&ms); a << *skel.ozz; }
+        asset.skeletonBlob = drainOzzStream(ms);
+    }
+
+    // 4. Embedded clips (each an ozz animation archive).
+    const std::string stem = ctx.sourcePath.stem().string();
+    for (unsigned a = 0; a < scene->mNumAnimations; ++a) {
+        AnimClip clip = anim::buildOzzClip(scene->mAnimations[a], skel,
+            scene->mNumAnimations > 1 ? stem + "_" + std::to_string(a) : stem);
+        if (!clip.valid() || clip.mappedTracks == 0) continue;
+        ozz::io::MemoryStream ms;
+        { ozz::io::OArchive ar(&ms); ar << *clip.ozz; }
+        CookedClipBlob blob;
+        blob.name         = clip.name;
+        blob.mappedTracks = clip.mappedTracks;
+        blob.totalTracks  = clip.totalTracks;
+        blob.blob         = drainOzzStream(ms);
+        asset.clips.push_back(std::move(blob));
+    }
+
+    if (!saveMesh(asset, ctx.outputPath))
+        return {.success = false, .error = "saveMesh failed"};
+    std::printf("[MeshCooker] %s -> SKINNED verts=%u idx=%u bones=%u clips=%zu\n",
+        ctx.sourcePath.filename().string().c_str(),
+        totalVerts, totalIndices, asset.header.boneCount, asset.clips.size());
+    return {.success = true};
+}
+
 CookResult MeshCooker::cook(const CookContext& ctx) {
     Assimp::Importer imp;   // isolated per cook — safe inside the worker pool
     imp.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE,
@@ -173,12 +353,7 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
         bool hasBones = false;
         for (unsigned m = 0; m < scene->mNumMeshes && !hasBones; ++m)
             if (scene->mMeshes[m]->mNumBones > 0) hasBones = true;
-        if (hasBones) {
-            std::printf("[MeshCooker] %s — skinned mesh, skipping cook (runtime Assimp path)\n",
-                        ctx.sourcePath.filename().string().c_str());
-            return {.success = false, .skipped = true,
-                    .error = "Skinned mesh — runtime Assimp path handles bones"};
-        }
+        if (hasBones) return cookSkinned(ctx);   // v3 skinned payload
     }
 
     MeshAsset asset;

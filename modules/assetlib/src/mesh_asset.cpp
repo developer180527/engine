@@ -43,6 +43,27 @@ bool saveMesh(const MeshAsset& mesh, const std::filesystem::path& outPath) {
     // Material section — always written; materialCount in header says how many
     f.write(reinterpret_cast<const char*>(mesh.materials.data()),
             static_cast<std::streamsize>(mesh.materials.size() * sizeof(CookedMaterial)));
+
+    // v3 skinned payload
+    if (mesh.header.boneCount > 0) {
+        f.write(reinterpret_cast<const char*>(mesh.bones.data()),
+                (std::streamsize)(mesh.bones.size() * sizeof(CookedBone)));
+        const uint32_t skelSize = (uint32_t)mesh.skeletonBlob.size();
+        f.write(reinterpret_cast<const char*>(&skelSize), 4);
+        f.write(reinterpret_cast<const char*>(mesh.skeletonBlob.data()), skelSize);
+        const uint32_t clipCount = (uint32_t)mesh.clips.size();
+        f.write(reinterpret_cast<const char*>(&clipCount), 4);
+        for (const auto& c : mesh.clips) {
+            const uint32_t nameLen = (uint32_t)c.name.size();
+            f.write(reinterpret_cast<const char*>(&nameLen), 4);
+            f.write(c.name.data(), nameLen);
+            f.write(reinterpret_cast<const char*>(&c.mappedTracks), 4);
+            f.write(reinterpret_cast<const char*>(&c.totalTracks), 4);
+            const uint32_t blobSize = (uint32_t)c.blob.size();
+            f.write(reinterpret_cast<const char*>(&blobSize), 4);
+            f.write(reinterpret_cast<const char*>(c.blob.data()), blobSize);
+        }
+    }
     if (!f) {
         std::fprintf(stderr, "[MeshAsset] Write error: %s\n",
                      outPath.string().c_str());
@@ -68,7 +89,7 @@ bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
                      inPath.string().c_str());
         return false;
     }
-    if (out.header.version != 2) {
+    if (out.header.version != 2 && out.header.version != 3) {
         std::fprintf(stderr, "[MeshAsset] Unsupported version %u: %s\n",
                      out.header.version, inPath.string().c_str());
         return false;
@@ -97,6 +118,33 @@ bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
                static_cast<std::streamsize>(
                    out.header.materialCount * sizeof(CookedMaterial)));
     }
+
+    // v3 skinned payload (older files / static meshes: boneCount == 0)
+    if (out.header.version >= 3 && out.header.boneCount > 0) {
+        out.bones.resize(out.header.boneCount);
+        f.read(reinterpret_cast<char*>(out.bones.data()),
+               static_cast<std::streamsize>(out.bones.size() * sizeof(CookedBone)));
+        uint32_t skelSize = 0;
+        f.read(reinterpret_cast<char*>(&skelSize), 4);
+        out.skeletonBlob.resize(skelSize);
+        f.read(reinterpret_cast<char*>(out.skeletonBlob.data()), skelSize);
+        uint32_t clipCount = 0;
+        f.read(reinterpret_cast<char*>(&clipCount), 4);
+        out.clips.resize(clipCount);
+        for (auto& c : out.clips) {
+            uint32_t nameLen = 0;
+            f.read(reinterpret_cast<char*>(&nameLen), 4);
+            c.name.resize(nameLen);
+            f.read(c.name.data(), nameLen);
+            f.read(reinterpret_cast<char*>(&c.mappedTracks), 4);
+            f.read(reinterpret_cast<char*>(&c.totalTracks), 4);
+            uint32_t blobSize = 0;
+            f.read(reinterpret_cast<char*>(&blobSize), 4);
+            c.blob.resize(blobSize);
+            f.read(reinterpret_cast<char*>(c.blob.data()), blobSize);
+        }
+    }
+
     return f.good() || f.eof();
 }
 
