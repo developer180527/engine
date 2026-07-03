@@ -11,6 +11,7 @@
 // at load time. The host must therefore export its symbols — ENABLE_EXPORTS on
 // the engine_host / editor targets.
 #include <engine/game_module.h>
+#include <engine/contract.h>
 #include "runtime/plugin.h"
 #include "runtime/runtime_context.h"
 #include "core/logger.h"
@@ -18,6 +19,7 @@
 #include <atomic>
 #include <filesystem>
 #include <memory>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -104,10 +106,30 @@ private:
 // that sidesteps staleness and lets the build relink the original while the old
 // code still runs. unload() must destroy the table (module-side) strictly
 // before dlclose.
+// ── Contract registry — cross-module component-contract gauntlet ────────────
+// First declaration of a contract pins {version, layout}; every later module
+// must match or is refused (see engine/contract.h). Refcounted: when the last
+// module holding a pin unloads, the pin retires — so a hot-reloaded kit with
+// an intentionally NEW contract version loads cleanly once its old image and
+// all peers are gone.
+struct ContractPin { uint32_t version; uint64_t layout; int refs; };
+inline std::map<std::string, ContractPin>& contractRegistry() {
+    static std::map<std::string, ContractPin> r;
+    return r;
+}
+
 class ModuleLibrary {
 public:
     ModuleLibrary() = default;
     ~ModuleLibrary() { unload(); }
+    void releaseContracts() {
+        for (const std::string& name : m_contracts) {
+            auto it = contractRegistry().find(name);
+            if (it != contractRegistry().end() && --it->second.refs <= 0)
+                contractRegistry().erase(it);
+        }
+        m_contracts.clear();
+    }
     ModuleLibrary(const ModuleLibrary&)            = delete;
     ModuleLibrary& operator=(const ModuleLibrary&) = delete;
 
@@ -177,6 +199,37 @@ public:
                       "misread by the new module)");
             return refuse();
         }
+        // Kit-to-kit CONTRACTS (shared component headers): flecs matches them
+        // across modules by NAME, so version/layout skew between two kits is
+        // silent memory corruption. Modules export their view (optional
+        // symbol); mismatches against the pinned registry are refused.
+        if (auto contractsFn = (EngineModuleContractsV1Fn)
+                libSym(m_handle, "engineModuleContractsV1")) {
+            int n = 0;
+            const EngineContractDecl* decls = contractsFn(&n);
+            for (int i = 0; i < n; ++i) {
+                auto it = contractRegistry().find(decls[i].name);
+                if (it == contractRegistry().end()) continue;
+                if (it->second.version != decls[i].version ||
+                    it->second.layout  != decls[i].layout) {
+                    LOG_ERROR("Module", "contract '%s' mismatch: this module "
+                              "declares v%u/0x%llx, loaded modules pinned "
+                              "v%u/0x%llx — rebuild the older side",
+                              decls[i].name, decls[i].version,
+                              (unsigned long long)decls[i].layout,
+                              it->second.version,
+                              (unsigned long long)it->second.layout);
+                    return refuse();
+                }
+            }
+            for (int i = 0; i < n; ++i) {   // all compatible — take refs
+                auto& pin = contractRegistry()[decls[i].name];
+                if (pin.refs == 0) { pin.version = decls[i].version;
+                                     pin.layout  = decls[i].layout; }
+                ++pin.refs;
+                m_contracts.push_back(decls[i].name);
+            }
+        }
 
         if (t->loadReason)
             t->loadReason(t->user, m_loadCount++ == 0
@@ -203,6 +256,7 @@ public:
     // shared_ptr to plugin() — the adapter's deleter lives in the host, but the
     // table it points at dies here.
     void unload() {
+        releaseContracts();
         if (m_table && m_destroy) m_destroy(m_table);  // module-side delete
         m_table   = nullptr;
         m_destroy = nullptr;
@@ -228,6 +282,7 @@ private:
     }
 
     LibHandle                      m_handle  = nullptr;
+    std::vector<std::string>       m_contracts;   // pins held by this image
     std::shared_ptr<IEnginePlugin> m_plugin;            // host-side adapter
     EngineGameModuleV1*            m_table   = nullptr; // module-owned
     EngineGameModuleDestroyV1Fn    m_destroy = nullptr;

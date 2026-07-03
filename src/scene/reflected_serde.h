@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 #include "core/logger.h"
+#include "components/serde_transient.h"
 
 namespace reflected {
 
@@ -73,6 +74,7 @@ inline bool isReflectable(flecs::id id) {
     if (id.is_pair()) return false;
     flecs::entity comp = id.entity();
     return comp.is_valid() && comp.has<flecs::Struct>()
+        && !comp.has<SerdeTransient>()   // runtime state never reaches disk
         && !isHandwritten(componentPath(comp));
 }
 

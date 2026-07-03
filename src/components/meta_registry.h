@@ -1,4 +1,5 @@
 #pragma once
+#include "components/serde_transient.h"
 #include <flecs.h>
 #include <bx/math.h>
 #include "core/transform.h"
@@ -25,6 +26,7 @@
 namespace MetaRegistry {
 
 inline void registerAll(flecs::world& ecs) {
+    ecs.component<SerdeTransient>();   // serde-skip marker (see its header)
     // ── Primitive math types ───────────────────────────────────────────────
     // Register bx vector/quaternion types so component members that use
     // them are fully described in the meta schema.
