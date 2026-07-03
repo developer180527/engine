@@ -3,11 +3,11 @@
 #include <cstdint>
 
 // ── Process-wide C++ allocation counters ────────────────────────────────────
-// SAFE BY DESIGN: the global operator new/delete overrides (mem_counters.cpp)
-// COUNT and FORWARD to malloc/free. They never pool, never replace the
-// allocator, never change a pointer's provenance — so AddressSanitizer,
-// `leaks`, Instruments and guard-malloc all keep working. This MEASURES the
-// allocator; it does not become one.
+// The global operator new/delete overrides (mem_counters.cpp) COUNT here and
+// — since the memory manager landed — ROUTE through mem:: tagged heaps by
+// default (ENGINE_MEM_ROUTE=1). Build with -DENGINE_MEM_ROUTE=0 to restore
+// the original count+forward-to-malloc behavior, which keeps system pointer
+// provenance for AddressSanitizer / `leaks` / Instruments sessions.
 //
 // Scope of what's visible here: C++ `new`/`delete` only. C `malloc` from C
 // libraries (flecs, Lua, SQLite, zlib) does NOT go through operator new — read

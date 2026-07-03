@@ -8,6 +8,7 @@
 // calls here. Until then every call safely no-ops inside ScriptHost.
 #include "runtime/plugin.h"
 #include "core/logger.h"
+#include "core/memory/mem.h"
 #include "runtime/runtime_context.h"
 #include "runtime/scripting/script_services.h"
 #include "miniaudio.h"
@@ -27,6 +28,15 @@ public:
     void onAttach(RuntimeContext& ctx) override {
         m_assetsRoot = ctx.project.assetsRoot;
         ma_engine_config cfg = ma_engine_config_init();
+        // miniaudio → Audio heap (decoders, mixing buffers, voice objects).
+        cfg.allocationCallbacks.onMalloc =
+            [](size_t sz, void*) { return mem::alloc(sz, 16, mem::Tag::Audio); };
+        cfg.allocationCallbacks.onRealloc =
+            [](void* p, size_t sz, void*) {
+                if (!p) return mem::alloc(sz, 16, mem::Tag::Audio);
+                return mem::realloc(p, sz);
+            };
+        cfg.allocationCallbacks.onFree = [](void* p, void*) { mem::free(p); };
         if (ma_engine_init(&cfg, &m_engine) != MA_SUCCESS) {
             LOG_ERROR("Audio", "ma_engine_init failed - audio disabled");
             m_ready = false;

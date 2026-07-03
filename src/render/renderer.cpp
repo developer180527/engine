@@ -7,7 +7,34 @@
 
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
+#include <bx/allocator.h>
 #include <bx/math.h>
+
+#include <cstring>
+
+#include "core/memory/mem.h"
+
+// bgfx/bx allocations → Rendering heap. bx funnels everything through one
+// realloc-style virtual; the instance must outlive bgfx::shutdown → static.
+namespace {
+struct BgfxMemAllocator final : bx::AllocatorI {
+    void* realloc(void* p, size_t size, size_t align,
+                  const char*, uint32_t) override {
+        if (size == 0) { mem::free(p); return nullptr; }
+        if (!p) return mem::alloc(size, align ? align : 8, mem::Tag::Rendering);
+        if (align <= 8) return mem::realloc(p, size);
+        // Over-aligned grow: mem::realloc keeps provenance but not alignment,
+        // so move by hand.
+        void* np = mem::alloc(size, align, mem::Tag::Rendering);
+        if (!np) return nullptr;
+        const size_t old = mem::allocSize(p);
+        std::memcpy(np, p, old < size ? old : size);
+        mem::free(p);
+        return np;
+    }
+};
+BgfxMemAllocator s_bgfxAllocator;
+} // namespace
 
 #include "render/mesh.h"
 #include "render/material.h"
@@ -39,6 +66,7 @@ bool Renderer::init(void* nwh, int width, int height,
     bgfx::renderFrame();
 
     bgfx::Init init;
+    init.allocator = &s_bgfxAllocator;   // Rendering heap (see above)
     // Let bgfx pick the best backend for this platform:
     //   macOS  → Metal    Windows → Direct3D11/12    Linux → Vulkan/OpenGL
 #if defined(__APPLE__)

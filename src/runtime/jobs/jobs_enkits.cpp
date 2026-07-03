@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "core/logger.h"
+#include "core/memory/mem.h"
 #include "core/profiler.h"
 
 namespace jobs {
@@ -62,6 +63,12 @@ void init(uint32_t numWorkers) {
 
     enki::TaskSchedulerConfig cfg;
     if (numWorkers > 0) cfg.numTaskThreadsToCreate = numWorkers;
+    cfg.customAllocator.alloc =
+        [](size_t align, size_t size, void*, const char*, int) {
+            return mem::alloc(size, align, mem::Tag::Jobs);
+        };
+    cfg.customAllocator.free =
+        [](void* p, size_t, void*, const char*, int) { mem::free(p); };
     g_ts.Initialize(cfg);
 
     g_init.store(true);

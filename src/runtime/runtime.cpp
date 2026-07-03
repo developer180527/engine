@@ -6,6 +6,54 @@
 #include "runtime/scripting/engine_api_binding.h"
 #include "runtime/mem_channel.h"
 #include "runtime/jobs/jobs.h"
+#include "core/memory/mem.h"
+#include <ozz/base/memory/allocator.h>
+
+// ── Third-party allocators → tagged heaps ───────────────────────────────────
+// flecs: hooked at STATIC INIT because EngineRuntime's member world is
+// constructed with the object itself — before init() could run. The default
+// impls also maintain flecs's own counters (MemoryChannel reads them), so the
+// replacements keep them alive. ozz: installed in init() (its allocations
+// only start at import time); the instance leaks by design (statics may free
+// through it after main).
+namespace {
+
+bool hookFlecsAllocator() {
+    ecs_os_set_api_defaults();
+    ecs_os_api_t api = ecs_os_api;
+    api.malloc_ = [](ecs_size_t size) -> void* {
+        ecs_os_api_malloc_count++;
+        return mem::alloc((size_t)size, 16, mem::Tag::ECS);
+    };
+    api.calloc_ = [](ecs_size_t size) -> void* {
+        ecs_os_api_calloc_count++;
+        void* p = mem::alloc((size_t)size, 16, mem::Tag::ECS);
+        if (p) std::memset(p, 0, (size_t)size);
+        return p;
+    };
+    api.realloc_ = [](void* p, ecs_size_t size) -> void* {
+        ecs_os_api_realloc_count++;
+        if (!p) return mem::alloc((size_t)size, 16, mem::Tag::ECS);
+        return mem::realloc(p, (size_t)size);
+    };
+    api.free_ = [](void* p) {
+        ecs_os_api_free_count++;
+        mem::free(p);
+    };
+    ecs_os_set_api(&api);
+    return true;
+}
+[[maybe_unused]] const bool g_flecsHooked = hookFlecsAllocator();
+
+struct OzzMemAllocator final : ozz::memory::Allocator {
+    void* Allocate(size_t size, size_t align) override {
+        return mem::alloc(size, align, mem::Tag::Animation);
+    }
+    void Deallocate(void* p) override { mem::free(p); }
+};
+OzzMemAllocator g_ozzAllocator;
+
+} // namespace
 
 #include <cstdio>
 #include <utility>
@@ -53,6 +101,10 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     // Worker pool next — spawned exactly once for the engine's lifetime;
     // animation, physics (Jolt adapter) and future systems all schedule here.
     jobs::init();
+    // Memory manager warmup + remaining third-party hook (flecs hooked at
+    // static init above; Jolt/Lua/bgfx/miniaudio hook at their own inits).
+    ozz::memory::SetDefaulAllocator(&g_ozzAllocator);   // [sic] ozz API typo
+    mem::init();
     m_width = cfg.width; m_height = cfg.height; m_fov = cfg.fov;
 
     // Project loads first so the window title can default to its name.
@@ -461,6 +513,7 @@ void EngineRuntime::shutdown() {
     engineApiBindHost(nullptr);
     m_plugins.detachAll(); // plugins may hold services — detach before teardown
     jobs::shutdown();      // after plugins: Jolt's adapter schedules here
+    mem::shutdown();       // report-only: final per-tag residency dump
     m_clips.clear();
     m_skeletons.clear();
     m_materials.clear();

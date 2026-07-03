@@ -70,8 +70,11 @@ add_library(engine_core STATIC
     assets/importers/stb_impl.cpp
     assets/importers/cgltf_impl.cpp
 
-    # Profiler memory counters (safe counting global new/delete)
+    # Memory manager (2MB blocks + TLSF tagged heaps) and the counting/routing
+    # global new/delete that feeds it
+    core/memory/mem.cpp
     core/mem_counters.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/tlsf/tlsf.c
 )
 
 target_include_directories(engine_core PUBLIC
@@ -83,6 +86,7 @@ target_include_directories(engine_core PUBLIC
     ${CMAKE_SOURCE_DIR}/third_party/nlohmann
     ${CMAKE_SOURCE_DIR}/third_party/cgltf
     ${CMAKE_SOURCE_DIR}/third_party/stb
+    ${CMAKE_SOURCE_DIR}/third_party/tlsf
 )
 
 target_link_libraries(engine_core PUBLIC
@@ -262,6 +266,10 @@ target_link_libraries(clip_binding_test PRIVATE engine_runtime)
 set_target_properties(clip_binding_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+# ── mem_test — memory manager regression gauntlet ───────────────────────────
+add_executable(mem_test tools/mem_test.cpp)
+target_link_libraries(mem_test PRIVATE engine_core)
 
 # ── anim_pose_test — numeric skin-matrix diagnosis for standalone clips ─────
 add_executable(anim_pose_test tools/anim_pose_test.cpp)

@@ -7,6 +7,7 @@
 #include "render/material.h"
 #include "animation/assimp_skeleton_loader.h"
 #include "animation/ozz_bridge.h"
+#include "core/memory/mem.h"
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -646,6 +647,9 @@ int AsyncLoader::pendingCount() const {
 }
 
 void AsyncLoader::workerLoop() {
+    // Everything the loader thread allocates (Assimp scenes, vertex staging,
+    // ozz builders' scratch) is asset work — tag the whole thread.
+    MEM_SCOPE(mem::Tag::Assets);
     while (m_running) {
         LoadRequest req;
         {

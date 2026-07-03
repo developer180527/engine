@@ -8,6 +8,7 @@
 #include "fs_ocornut_imgui.bin.h"
 #include "roboto_regular.ttf.h"
 #include "fa_solid_900.ttf.h"
+#include "core/memory/mem.h"           // ImGui → Editor heap
 #include "editor/editor_icons.h"
 #include "project/project_context.h"   // homeDir() for the stable ini path
 #include <engine/engine_api.h>         // EngineUiBackend — kit/plugin editor UI
@@ -187,6 +188,10 @@ void setupViewportCallbacks() {
 } // namespace
 void imguiInit(GLFWwindow* window, float fontSize) {
     IMGUI_CHECKVERSION();
+    // Editor heap — set BEFORE the context so every ImGui allocation routes.
+    ImGui::SetAllocatorFunctions(
+        [](size_t sz, void*) { return mem::alloc(sz, 16, mem::Tag::Editor); },
+        [](void* p, void*) { mem::free(p); });
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;

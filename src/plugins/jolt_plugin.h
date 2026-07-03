@@ -5,6 +5,7 @@
 
 #include "runtime/plugin.h"
 #include "core/logger.h"
+#include "core/memory/mem.h"
 #include "components/collision_events.h"
 #include <mutex>
 #include <unordered_map>
@@ -103,7 +104,15 @@ public:
     const char* version() const override { return "0.1.0-jolt5"; }
 
     void onAttach(RuntimeContext&) override {
-        JPH::RegisterDefaultAllocator();
+        // All Jolt allocations land in the Physics heap (function pointers,
+        // set before the Factory — the first thing Jolt allocates).
+        JPH::Allocate   = [](size_t s) { return mem::alloc(s, 16, mem::Tag::Physics); };
+        JPH::Reallocate = [](void* p, size_t, size_t n) {
+            return p ? mem::realloc(p, n) : mem::alloc(n, 16, mem::Tag::Physics);
+        };
+        JPH::Free            = [](void* p) { mem::free(p); };
+        JPH::AlignedAllocate = [](size_t s, size_t a) { return mem::alloc(s, a, mem::Tag::Physics); };
+        JPH::AlignedFree     = [](void* p) { mem::free(p); };
         JPH::Factory::sInstance = new JPH::Factory();
         JPH::RegisterTypes();
         LOG_SUCCESS("Physics", "Jolt %d.%d.%d attached",

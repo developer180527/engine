@@ -19,6 +19,7 @@
 #include "runtime/services/async_loader.h"
 #include "runtime/module_loader.h"   // shared dlopen + gauntlet (also used by KitHost)
 #include "core/profiler.h"           // periodic frame-profile dump (dev runner)
+#include "core/memory/mem.h"         // periodic tagged-heap dump
 
 #include <cstdio>
 #include <filesystem>
@@ -164,8 +165,10 @@ int main(int argc, char** argv) {
         engine.tick(dt);
         // Dev runner: dump the frame profile every ~5s so windowed runs (the
         // only place GPU/present cost is real) leave numbers in the log.
-        if (ENGINE_PROFILE && ++profFrame % 300 == 0)
+        if (ENGINE_PROFILE && ++profFrame % 300 == 0) {
             prof::Profiler::get().timer().logLastFrame("engine_host frame");
+            mem::logStats("engine_host");   // tagged heaps + map-event total
+        }
     });
 
     // Order matters: the dev plugin must be fully released (its deleter lives

@@ -7,6 +7,7 @@
 #include "runtime/scripting/lua_bindings.h"
 #include "components/script_component.h"
 #include "components/collision_events.h"
+#include "core/memory/mem.h"
 #include <lua.hpp>
 #include <filesystem>
 #include <unordered_map>
@@ -38,8 +39,20 @@ public:
         // this plugin is just the Lua frontend over it.
         m_host = ec.scriptHost;
         if (!m_host) { LOG_ERROR("Script", "RuntimeContext has no ScriptHost"); return; }
-        m_L = luaL_newstate();
+        // Lua allocates EVERYTHING through one realloc-style callback — the
+        // cleanest hook of the third parties. Scripting heap.
+        m_L = lua_newstate(
+            [](void*, void* p, size_t, size_t nsize) -> void* {
+                if (nsize == 0) { mem::free(p); return nullptr; }
+                if (!p) return mem::alloc(nsize, 16, mem::Tag::Scripting);
+                return mem::realloc(p, nsize);
+            },
+            nullptr);
         if (!m_L) { LOG_ERROR("Script", "Failed to create Lua state"); return; }
+        lua_atpanic(m_L, [](lua_State* L) -> int {
+            LOG_ERROR("Script", "Lua panic: %s", lua_tostring(L, -1));
+            return 0;   // Lua abort()s after this returns
+        });
         openSafeLibs(m_L);
         LuaBindings::install(m_L, m_host);
         LOG_SUCCESS("Script", "%s online — bindings installed", LUA_RELEASE);
