@@ -5,6 +5,7 @@
 #include "runtime/scripting/script_services.h"
 #include "runtime/scripting/engine_api_binding.h"
 #include "runtime/mem_channel.h"
+#include "runtime/jobs/jobs.h"
 
 #include <cstdio>
 #include <utility>
@@ -49,6 +50,9 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     prof::Profiler::get().addChannel(m_memChannel.get());
     prof::Profiler::get().beginFrame();   // boot = "frame 0"
     m_frameArena.init(4 * 1024 * 1024);   // 4 MB per-frame transient pool
+    // Worker pool next — spawned exactly once for the engine's lifetime;
+    // animation, physics (Jolt adapter) and future systems all schedule here.
+    jobs::init();
     m_width = cfg.width; m_height = cfg.height; m_fov = cfg.fov;
 
     // Project loads first so the window title can default to its name.
@@ -431,6 +435,7 @@ void EngineRuntime::tickSimulation(float dt) {
 
 void EngineRuntime::tickSystems(float dt, bool paused) {
     if (!m_initialized) { LOG_ERROR("Runtime", "tick() before init()"); return; }
+    jobs::pumpMain();   // drain job->main-thread requests; sweep finished jobs
     if (!paused) {
         m_spinnerQuery
             .each([dt](flecs::entity, Transform& t, const Spinner& s) {
@@ -455,6 +460,7 @@ void EngineRuntime::shutdown() {
     stopSimulation();      // broadcasts onSimulationStop if still running
     engineApiBindHost(nullptr);
     m_plugins.detachAll(); // plugins may hold services — detach before teardown
+    jobs::shutdown();      // after plugins: Jolt's adapter schedules here
     m_clips.clear();
     m_skeletons.clear();
     m_materials.clear();

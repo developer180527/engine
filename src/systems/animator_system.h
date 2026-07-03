@@ -39,6 +39,7 @@
 #include "animation/clip_registry.h"
 #include "components/animator.h"
 #include "components/skinned_mesh.h"
+#include "runtime/jobs/jobs.h"
 #include "runtime/world_query_cache.h"
 
 class AnimatorSystem {
@@ -55,9 +56,8 @@ public:
     // Tick the world the system was init()ed with (cached query).
     void tick(float dt) {
         if (!m_skeletons || !m_clips) return;
-        m_query.each([&](flecs::entity e, Animator& anim, SkinnedMesh& skin) {
-            step(e.id(), anim, skin, dt);
-        });
+        collect(m_query);
+        stepAll(dt);
     }
 
     // Tick an arbitrary world — the play-mode snapshot world. The query is
@@ -65,10 +65,8 @@ public:
     // snapshot world is destroyed (sim stop).
     void tick(flecs::world& world, float dt) {
         if (!m_skeletons || !m_clips) return;
-        m_worldQuery.get(world)
-            .each([&](flecs::entity e, Animator& anim, SkinnedMesh& skin) {
-                step(e.id(), anim, skin, dt);
-            });
+        collect(m_worldQuery.get(world));
+        stepAll(dt);
     }
 
     void resetWorldCache() {
@@ -117,8 +115,39 @@ private:
         }
     };
 
+    // One frame's work items. Component pointers stay valid between collect
+    // and stepAll: both happen inside one tick, with no structural ECS
+    // changes in between. Context pointers survive map growth — unordered_map
+    // rehash moves buckets, not nodes.
+    struct WorkItem {
+        Animator*    anim;
+        SkinnedMesh* skin;
+        AnimContext* ctx;
+    };
+
+    // SERIAL: query iteration + m_contexts inserts (rehash) live here, so the
+    // parallel phase touches the map read-only through stable pointers.
+    template <typename Query>
+    void collect(Query&& q) {
+        m_work.clear();
+        q.each([&](flecs::entity e, Animator& anim, SkinnedMesh& skin) {
+            m_work.push_back({&anim, &skin, &m_contexts[e.id()]});
+        });
+    }
+
+    // PARALLEL: entities are independent (own context, own components, own
+    // crossfade state; registries are read-only during the tick), so this is
+    // a flat parallelFor. Grain 1 — one entity's sampling is real work.
+    void stepAll(float dt) {
+        jobs::parallelFor("anim.sample", (uint32_t)m_work.size(), 1,
+            [&](uint32_t begin, uint32_t end) {
+                for (uint32_t i = begin; i < end; ++i)
+                    step(*m_work[i].anim, *m_work[i].skin, *m_work[i].ctx, dt);
+            });
+    }
+
     // Advance time, sample the clip, write the bone palette for one entity.
-    void step(uint64_t entityId, Animator& anim, SkinnedMesh& skin, float dt) {
+    void step(Animator& anim, SkinnedMesh& skin, AnimContext& ctx, float dt) {
         const Skeleton* skel = m_skeletons->get(skin.skeleton);
         if (!skel || skel->boneCount() == 0 || !skel->ozz) {
             skin.hasSkinMatrices = false;
@@ -156,7 +185,6 @@ private:
             }
         }
 
-        AnimContext& ctx = m_contexts[entityId];
         ctx.ensure(*skel->ozz);
 
         // ── Crossfade bookkeeping: clip handle changed -> fade the old out ──
@@ -255,4 +283,5 @@ private:
     flecs::query<Animator, SkinnedMesh> m_query;       // init() world
     WorldQueryCache<Animator, SkinnedMesh> m_worldQuery; // sim/snapshot world
     std::unordered_map<uint64_t, AnimContext> m_contexts; // per-entity ozz state
+    std::vector<WorkItem> m_work;   // this frame's entities (collect -> stepAll)
 };

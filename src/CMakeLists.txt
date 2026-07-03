@@ -104,6 +104,7 @@ add_library(engine_runtime STATIC
     runtime/services/asset_service.cpp
     runtime/services/scene_service.cpp
     runtime/scripting/engine_api.cpp
+    runtime/jobs/jobs_enkits.cpp
 
     # Source-format importers (produce GPU meshes — main thread)
     assets/importers/gltf_importer.cpp
@@ -144,6 +145,7 @@ target_link_libraries(engine_runtime PUBLIC
     Jolt
     lua
     ozz_animation ozz_animation_offline   # skeletal animation backbone (+ import-time builders)
+    enkiTS                                # task scheduler behind engine::jobs (facade-only include)
 )
 
 if(APPLE)

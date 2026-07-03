@@ -28,3 +28,6 @@
 [submodule "third_party/ozz-animation"]
 	path = third_party/ozz-animation
 	url = https://github.com/guillaumeblanc/ozz-animation.git
+[submodule "third_party/enkiTS"]
+	path = third_party/enkiTS
+	url = https://github.com/dougbinks/enkiTS.git

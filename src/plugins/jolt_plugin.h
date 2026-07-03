@@ -18,7 +18,7 @@
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/TempAllocator.h>
-#include <Jolt/Core/JobSystemThreadPool.h>
+#include "plugins/jolt_jobs_adapter.h"   // physics on the engine job pool
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -119,9 +119,10 @@ public:
 
     void onSimulationStart(flecs::world& ecs) override {
         m_tempAllocator = std::make_unique<JPH::TempAllocatorImpl>(16 * 1024 * 1024);
-        m_jobSystem     = std::make_unique<JPH::JobSystemThreadPool>(
-            JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
-            std::max(1, (int)std::thread::hardware_concurrency() - 1));
+        // Physics runs on the ENGINE pool (see jolt_jobs_adapter.h) — Jolt
+        // spawns no threads of its own.
+        m_jobSystem     = std::make_unique<JoltJobsAdapter>(
+            JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers);
 
         m_physics = std::make_unique<JPH::PhysicsSystem>();
         m_physics->Init(4096, 0, 4096, 4096,
@@ -263,8 +264,8 @@ public:
     ObjVsBPFilter        m_objVsBP;
     ObjLayerPairFilter   m_objPairFilter;
 
-    std::unique_ptr<JPH::TempAllocatorImpl>   m_tempAllocator;
-    std::unique_ptr<JPH::JobSystemThreadPool> m_jobSystem;
+    std::unique_ptr<JPH::TempAllocatorImpl> m_tempAllocator;
+    std::unique_ptr<JoltJobsAdapter>        m_jobSystem;
     std::unique_ptr<JPH::PhysicsSystem>       m_physics;
     float                                      m_accumulator = 0.0f;
 

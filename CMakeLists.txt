@@ -65,6 +65,10 @@ set(JOLT_BUILD_SHARED_LIBS   OFF CACHE BOOL "" FORCE)
 set(ENABLE_ALL_WARNINGS      OFF CACHE BOOL "" FORCE)
 set(OVERRIDE_CXX_FLAGS       OFF CACHE BOOL "" FORCE)
 set(ENABLE_OBJECT_STREAM     OFF CACHE BOOL "" FORCE)
+# RTTI on: the engine derives from Jolt polymorphic classes with out-of-line
+# key functions (JobSystemWithBarrier -> JoltJobsAdapter); with Jolt's default
+# -fno-rtti the base typeinfo is never emitted and the link fails.
+set(CPP_RTTI_ENABLED         ON  CACHE BOOL "" FORCE)
 add_subdirectory(third_party/JoltPhysics/Build)
 
 add_subdirectory(third_party/lua)
@@ -82,6 +86,17 @@ set(ozz_build_howtos   OFF CACHE BOOL "" FORCE)
 set(ozz_build_tests    OFF CACHE BOOL "" FORCE)
 set(ozz_build_postfix  OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/ozz-animation)
+
+# ── enkiTS — task scheduler backing engine::jobs ──────────────────────────
+# Built directly (imgui-style) — its own CMakeLists declares a minimum too
+# old for CMake 4. The engine never includes enkiTS headers outside
+# src/runtime/jobs/ — the facade contract (jobs.h) is written so the backend
+# can be swapped for FiberTaskingLib without touching call sites.
+add_library(enkiTS STATIC third_party/enkiTS/src/TaskScheduler.cpp)
+target_include_directories(enkiTS PUBLIC third_party/enkiTS/src)
+target_compile_features(enkiTS PUBLIC cxx_std_11)
+find_package(Threads REQUIRED)
+target_link_libraries(enkiTS PUBLIC Threads::Threads)
 
 # ImGui — editor-only UI library. The runtime never links this.
 add_library(imgui STATIC
