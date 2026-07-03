@@ -174,7 +174,14 @@ private:
                   glfwGetInputMode(m_window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
               InputSystem::get().setUICapture(
                   __playing ? io.WantTextInput : io.WantCaptureKeyboard,
-                  __cursorLocked ? false : io.WantCaptureMouse); }
+                  __cursorLocked ? false : io.WantCaptureMouse);
+              // Captured play-mode cursor is GAME input: ImGui must not see
+              // the invisible mouse at all, or panels stay clickable and
+              // steal edits mid-play. Esc (release) restores editor UI.
+              if (__playing && __cursorLocked)
+                  io.ConfigFlags |=  ImGuiConfigFlags_NoMouse;
+              else
+                  io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse; }
             // BeginFrame MUST be outside any Begin/End block —
             // it creates an internal transparent overlay window.
             gizmoBeginFrame();

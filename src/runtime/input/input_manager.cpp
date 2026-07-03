@@ -151,9 +151,16 @@ void InputManager::pump() {
                     if (e.type == hid::EventType::Key ||
                         e.type == hid::EventType::Button) continue;
                     if (motionKind) m_lastRawMotionNs = e.timeNs;
+                    if (motionKind && !m_rawMotionLive) {
+                        m_rawMotionLive = true;
+                        LOG_INFO("Input", "motion source -> RAW (gaming mouse talking)");
+                    }
                 } else if (motionKind && m_source &&
                            hid::nowNs() - m_lastRawMotionNs < 1000000000ull) {
                     continue;   // raw mouse active — window motion is its echo
+                } else if (motionKind && m_rawMotionLive) {
+                    m_rawMotionLive = false;
+                    LOG_INFO("Input", "motion source -> WINDOW (trackpad/idle handoff)");
                 }
                 if (!accept(e)) continue;
                 m_staging.push_back(e);
