@@ -116,6 +116,10 @@ public:
 
     // Bindings from JSON text (file loader + tests share this).
     bool loadConfigText(const std::string& jsonText);
+    // Load (or scaffold) projectRoot/input.json. init() calls this when a
+    // project is known at boot; hosts that open a project LATER (the editor
+    // boots projectless) must call it again on project open.
+    void loadProjectBindings(const std::filesystem::path& projectRoot);
 
 private:
     struct Binding {

@@ -173,6 +173,8 @@ bool EngineRuntime::openProject(const std::filesystem::path& root) {
     }
     m_project = ProjectContext::load(root);
     LOG_INFO("Project", "Opened: %s", m_project.projectRoot.string().c_str());
+    // The editor boots projectless — input bindings arrive WITH the project.
+    m_input.loadProjectBindings(m_project.projectRoot);
 
     // Asset database — open + scan so handles resolve immediately.
     const auto cacheRoot = m_project.projectRoot / ".cache";

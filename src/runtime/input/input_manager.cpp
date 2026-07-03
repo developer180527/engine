@@ -67,20 +67,23 @@ void InputManager::init(const std::filesystem::path& projectRoot) {
     }
     refreshEndpoints();
 
-    // Project bindings: load or scaffold. The file belongs to the developer.
-    if (!projectRoot.empty()) {
-        const auto path = projectRoot / "input.json";
-        std::ifstream f(path);
-        if (f) {
-            std::stringstream ss; ss << f.rdbuf();
-            if (!loadConfigText(ss.str()))
-                LOG_ERROR("Input", "input.json invalid — no bindings loaded");
-        } else {
-            std::ofstream out(path);
-            out << kDefaultConfig;
-            LOG_INFO("Input", "scaffolded default input.json");
-            loadConfigText(kDefaultConfig);
-        }
+    loadProjectBindings(projectRoot);
+}
+
+// Project bindings: load or scaffold. The file belongs to the developer.
+void InputManager::loadProjectBindings(const std::filesystem::path& projectRoot) {
+    if (projectRoot.empty()) return;   // projectless boot: editor hub
+    const auto path = projectRoot / "input.json";
+    std::ifstream f(path);
+    if (f) {
+        std::stringstream ss; ss << f.rdbuf();
+        if (!loadConfigText(ss.str()))
+            LOG_ERROR("Input", "input.json invalid — no bindings loaded");
+    } else {
+        std::ofstream out(path);
+        out << kDefaultConfig;
+        LOG_INFO("Input", "scaffolded default input.json");
+        loadConfigText(kDefaultConfig);
     }
 }
 
