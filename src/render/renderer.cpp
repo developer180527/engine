@@ -246,7 +246,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         const Mesh* mesh = m_assets->getMesh(mr.mesh);
         if (!mesh) return;
         RenderItem it;
-        getWorldMatrix(e, it.model.m);
+        getWorldMatrixLerp(e, m_simAlpha, it.model.m);
         it.mesh = mesh;
         MaterialHandle mh = mr.materialOverride.valid()
                             ? mr.materialOverride : mesh->material;
@@ -269,7 +269,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         m_items.push_back(it);
     };
     auto extractLight = [&](flecs::entity e, const Transform&, const Light& lc) {
-        float m[16]; getWorldMatrix(e, m);
+        float m[16]; getWorldMatrixLerp(e, m_simAlpha, m);
         LightItem li;
         li.type      = lc.type;
         {

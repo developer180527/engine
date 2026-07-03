@@ -73,6 +73,8 @@ OzzMemAllocator g_ozzAllocator;
 #include "scene/reflected_serde.h"
 #include "animation/clip_library.h"
 #include "components/meta_registry.h"
+#include "components/prev_transform.h"
+#include "components/camera.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
 #include "components/spinner.h"
@@ -486,6 +488,15 @@ void EngineRuntime::tickSimulation(float dt) {
     if (m_simAccumulator > 4.0f * kSimDt) m_simAccumulator = 4.0f * kSimDt;
     while (m_simAccumulator >= kSimDt) {
         m_simAccumulator -= kSimDt;
+        // Interpolation snapshot: remember where everything WAS before this
+        // step so rendering can lerp. Cameras are excluded — their rotation
+        // is late-latched at render rate (onFrame) and must not lag.
+        w.defer_begin();   // set<> during iteration = structural op
+        w.each([](flecs::entity e, Transform& t) {
+            if (e.has<Camera>()) return;
+            e.set<PrevTransform>({t.position, t.rotation, t.scale});
+        });
+        w.defer_end();
         m_input.beginTick(hid::nowNs());   // fold staged events -> snapshot
         m_simElapsed += kSimDt;
         ++m_simFrame;
@@ -496,6 +507,8 @@ void EngineRuntime::tickSimulation(float dt) {
         { ENGINE_PROFILE_SCOPE("Sim.physics"); m_plugins.broadcastPhysicsStep(w, kSimDt); }
         { ENGINE_PROFILE_SCOPE("Sim.post");    m_plugins.broadcastPostPhysics(w); }
     }
+
+    m_renderer.setSimAlpha(m_simAccumulator / kSimDt);   // leftover fraction
 
     // Render-rate hook: presentation work (late-latched camera) runs once
     // per FRAME with real dt, after the fixed steps — this is what keeps

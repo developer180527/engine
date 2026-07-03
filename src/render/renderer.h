@@ -19,6 +19,9 @@
 // here. Borrows the ECS world + registries (owned by EngineRuntime).
 class Renderer {
 public:
+    // Fixed-timestep render interpolation: extraction lerps
+    // PrevTransform -> Transform by alpha (1 = current state, editor default).
+    void setSimAlpha(float a) { m_simAlpha = a; }
     Renderer();
     ~Renderer();
     Renderer(const Renderer&)            = delete;
@@ -60,6 +63,7 @@ public:
     int sceneH() const { return m_sceneH; }
 
 private:
+    float m_simAlpha = 1.0f;
     RenderView    buildView(flecs::world& world, const float view[16],
                             const float proj[16], const RenderTarget& target,
                             bgfx::ViewId baseViewId);

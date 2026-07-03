@@ -10,6 +10,7 @@
 #include <cstring>
 #include <cmath>
 #include "core/transform.h"
+#include "components/prev_transform.h"
 
 // ── quatFromMatrix ─────────────────────────────────────────────────────────
 // Extract quaternion from the upper-left 3x3 of a bgfx row-major matrix.
@@ -88,6 +89,51 @@ inline void getWorldMatrix(flecs::entity e, float out[16], int depth = 0) {
     if (parent && parent.is_alive() && parent.has<Transform>() && depth < 256) {
         float parentWorld[16];
         getWorldMatrix(parent, parentWorld, depth + 1);
+        bx::mtxMul(out, local, parentWorld);
+    } else {
+        std::memcpy(out, local, 16 * sizeof(float));
+    }
+}
+
+// ── getWorldMatrixLerp ─────────────────────────────────────────────────────
+// getWorldMatrix, but each local is nlerp(PrevTransform, Transform, alpha) —
+// the render-side of the fixed-timestep loop. Entities without PrevTransform
+// (editor world, cameras, alpha==1) use their current transform, so this is
+// safe as the universal extraction path.
+inline bx::Quaternion nlerpQuat(const bx::Quaternion& a, const bx::Quaternion& b,
+                                float t) {
+    // Shortest arc: flip when the hemispheres disagree.
+    const float d = a.x*b.x + a.y*b.y + a.z*b.z + a.w*b.w;
+    const float s = d < 0.0f ? -1.0f : 1.0f;
+    bx::Quaternion q = {
+        bx::lerp(a.x, s*b.x, t), bx::lerp(a.y, s*b.y, t),
+        bx::lerp(a.z, s*b.z, t), bx::lerp(a.w, s*b.w, t) };
+    return bx::normalize(q);
+}
+
+inline void getWorldMatrixLerp(flecs::entity e, float alpha, float out[16],
+                               int depth = 0) {
+    float local[16];
+    const Transform* t = e.try_get<Transform>();
+    if (!t) {
+        bx::mtxIdentity(local);
+    } else {
+        const PrevTransform* p =
+            alpha < 1.0f ? e.try_get<PrevTransform>() : nullptr;
+        if (!p) {
+            t->getMatrix(local);
+        } else {
+            Transform tmp = *t;
+            tmp.position = bx::lerp(p->position, t->position, alpha);
+            tmp.rotation = nlerpQuat(p->rotation, t->rotation, alpha);
+            tmp.scale    = bx::lerp(p->scale, t->scale, alpha);
+            tmp.getMatrix(local);
+        }
+    }
+    flecs::entity parent = e.target(flecs::ChildOf);
+    if (parent && parent.is_alive() && parent.has<Transform>() && depth < 256) {
+        float parentWorld[16];
+        getWorldMatrixLerp(parent, alpha, parentWorld, depth + 1);
         bx::mtxMul(out, local, parentWorld);
     } else {
         std::memcpy(out, local, 16 * sizeof(float));
