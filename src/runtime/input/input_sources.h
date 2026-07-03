@@ -32,6 +32,9 @@ class IInputSource {
 public:
     virtual ~IInputSource() = default;
     virtual const char* name() const = 0;
+    // True for sources whose ONLY trustworthy payload is motion/scroll (raw
+    // HID: keyboards/buttons come from the window path in hybrid mode).
+    virtual bool rawMotionOnly() const { return false; }
     virtual size_t poll(hid::Event* out, size_t max) = 0;
     virtual size_t devices(hid::DeviceInfo* out, size_t max) const = 0;
 };
@@ -43,6 +46,7 @@ public:
     const char* lastError() const { return m_ctx.lastError(); }
 
     const char* name() const override { return "hid(raw)"; }
+    bool rawMotionOnly() const override { return true; }
     size_t poll(hid::Event* out, size_t max) override {
         return m_ctx.drain(out, max);
     }
@@ -60,6 +64,10 @@ private:
 // endpoints: mouse (device 1) and keyboard (device 2).
 class WindowSource final : public IInputSource {
 public:
+    // Ids far above any hid endpoint so hybrid mode never collides.
+    static constexpr hid::DeviceId kWinMouse = 0xFFFF0001;
+    static constexpr hid::DeviceId kWinKbd   = 0xFFFF0002;
+
     const char* name() const override { return "window(glfw fallback)"; }
 
     size_t poll(hid::Event* out, size_t max) override {
@@ -81,32 +89,32 @@ public:
         const int32_t dx = quantize(in.mouseDeltaX(),  m_remX);
         const int32_t dy = quantize(in.mouseDeltaY(),  m_remY);
         if (dx || dy)
-            push({t, 1, hid::EventType::MouseMotion, 0, 0, dx, dy});
+            push({t, kWinMouse, hid::EventType::MouseMotion, 0, 0, dx, dy});
         const int32_t sx = quantize(in.scrollDeltaX(), m_remSX);
         const int32_t sy = quantize(in.scrollDeltaY(), m_remSY);
         if (sx || sy)
-            push({t, 1, hid::EventType::Scroll, 0, 0, sx, sy});
+            push({t, kWinMouse, hid::EventType::Scroll, 0, 0, sx, sy});
         for (int b = 0; b < 8; ++b) {
             if (in.isMousePressed(b))
-                push({t, 1, hid::EventType::Button, 0, (uint16_t)b, 1, 0});
+                push({t, kWinMouse, hid::EventType::Button, 0, (uint16_t)b, 1, 0});
             else if (in.isMouseReleased(b))
-                push({t, 1, hid::EventType::Button, 0, (uint16_t)b, 0, 0});
+                push({t, kWinMouse, hid::EventType::Button, 0, (uint16_t)b, 0, 0});
         }
         for (int k = 32; k <= 348; ++k) {
             const uint16_t usage = usageFromGlfw(k);
             if (!usage) continue;
             if (in.isKeyPressed(k))
-                push({t, 2, hid::EventType::Key, 0, usage, 1, 0});
+                push({t, kWinKbd, hid::EventType::Key, 0, usage, 1, 0});
             else if (in.isKeyReleased(k))
-                push({t, 2, hid::EventType::Key, 0, usage, 0, 0});
+                push({t, kWinKbd, hid::EventType::Key, 0, usage, 0, 0});
         }
         return n;
     }
 
     size_t devices(hid::DeviceInfo* out, size_t max) const override {
         static const hid::DeviceInfo kDevs[2] = {
-            {1, hid::DeviceClass::Mouse,    0, 0, 1, "window mouse"},
-            {2, hid::DeviceClass::Keyboard, 0, 0, 2, "window keyboard"},
+            {kWinMouse, hid::DeviceClass::Mouse,    0, 0, kWinMouse, "window mouse"},
+            {kWinKbd,   hid::DeviceClass::Keyboard, 0, 0, kWinKbd,   "window keyboard"},
         };
         const size_t n = max < 2 ? max : 2;
         for (size_t i = 0; i < n; ++i) out[i] = kDevs[i];

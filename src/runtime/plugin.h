@@ -44,6 +44,10 @@ public:
     virtual void onUpdate     (flecs::world& /*gameWorld*/, float /*dt*/) {}
     virtual void onPhysicsStep(flecs::world& /*gameWorld*/, float /*dt*/) {}
     virtual void onPostPhysics(flecs::world& /*gameWorld*/)               {}
+    // RENDER-RATE: once per rendered frame, after the fixed sim steps —
+    // presentation-only work (late-latched camera look, view effects).
+    // Gameplay state mutation belongs in onUpdate (fixed dt), never here.
+    virtual void onFrame      (flecs::world& /*gameWorld*/, float /*dt*/) {}
 
     // Optional editor panel: draw with the engineUi* facade (NOT ImGui). The
     // editor calls this for each plugin; with no UI surface the calls no-op.

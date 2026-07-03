@@ -60,6 +60,11 @@ public:
         for (auto& p : m_plugins)
             guarded(*p, "onUpdate", [&] { p->onUpdate(gameWorld, dt); });
     }
+    // RENDER-RATE (real dt, after the fixed sim steps): presentation-only.
+    void broadcastFrame(flecs::world& gameWorld, float dt) {
+        for (auto& p : m_plugins)
+            guarded(*p, "onFrame", [&] { p->onFrame(gameWorld, dt); });
+    }
     void broadcastPhysicsStep(flecs::world& gameWorld, float dt) {
         for (auto& p : m_plugins)
             guarded(*p, "onPhysicsStep", [&] { p->onPhysicsStep(gameWorld, dt); });

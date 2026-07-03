@@ -495,6 +495,11 @@ void EngineRuntime::tickSimulation(float dt) {
         { ENGINE_PROFILE_SCOPE("Sim.post");    m_plugins.broadcastPostPhysics(w); }
     }
 
+    // Render-rate hook: presentation work (late-latched camera) runs once
+    // per FRAME with real dt, after the fixed steps — this is what keeps
+    // look latency at frame rate even when sim ticks slower.
+    { ENGINE_PROFILE_SCOPE("Sim.frame"); m_plugins.broadcastFrame(w, dt); }
+
     // Snapshot mode runs in a separate world that tickSystems never touches —
     // run animation and the flecs pipeline here so play mode behaves exactly
     // like in-place simulation. (In-place mode: simWorld() == m_ecs, which

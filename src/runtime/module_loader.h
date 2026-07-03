@@ -83,6 +83,9 @@ public:
     void onUpdate(flecs::world& w, float dt) override {
         if (m_t->update) m_t->update(m_t->user, w.c_ptr(), dt);
     }
+    void onFrame(flecs::world& w, float dt) override {
+        if (m_t->frame) m_t->frame(m_t->user, w.c_ptr(), dt);
+    }
     void onPhysicsStep(flecs::world& w, float dt) override {
         if (m_t->physicsStep) m_t->physicsStep(m_t->user, w.c_ptr(), dt);
     }

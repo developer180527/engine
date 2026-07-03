@@ -144,7 +144,9 @@ private:
     void refreshEndpoints();
     bool accept(const hid::Event& e);
 
-    std::unique_ptr<IInputSource> m_source;
+    std::unique_ptr<IInputSource> m_source;    // raw (hid), may be null
+    std::unique_ptr<IInputSource> m_window;    // window fallback, always on
+    uint64_t m_lastRawMotionNs = 0;            // hybrid routing (see .cpp)
 
     struct Endpoint { uint32_t physId; hid::DeviceClass cls; };
     std::unordered_map<uint32_t, Endpoint> m_endpoints;          // DeviceId ->

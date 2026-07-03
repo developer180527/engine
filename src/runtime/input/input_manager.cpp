@@ -41,15 +41,23 @@ uint64_t electKey(uint32_t physId, hid::EventType t) {
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 void InputManager::init(const std::filesystem::path& projectRoot) {
+    // HYBRID SOURCING. Raw HID covers what it is genuinely better at: mouse
+    // motion/scroll from devices that emit relative counts (gaming mice).
+    // Internal trackpads are DIGITIZERS — the OS synthesizes the pointer
+    // later, so they emit no raw motion at all — and keyboards gain nothing
+    // from raw (typing wants focus semantics). So: keyboard + buttons come
+    // from the window path always; motion/scroll come raw while a raw mouse
+    // is talking, window otherwise (trackpad keeps working, gaming mouse
+    // never double-counts).
+    m_window = std::make_unique<WindowSource>();
     auto raw = std::make_unique<HidSource>();
     if (raw->init()) {
         m_source = std::move(raw);
-        LOG_SUCCESS("Input", "source: %s — unaccelerated counts, hardware "
-                    "timestamps", m_source->name());
+        LOG_SUCCESS("Input", "source: %s + window hybrid (raw motion, "
+                    "window keys/buttons)", m_source->name());
     } else {
-        LOG_WARN("Input", "raw backend unavailable (%s) — falling back to "
-                 "window input", raw->lastError());
-        m_source = std::make_unique<WindowSource>();
+        LOG_WARN("Input", "raw backend unavailable (%s) — window input only",
+                 raw->lastError());
     }
     refreshEndpoints();
 
@@ -77,6 +85,8 @@ void InputManager::initWithSource(std::unique_ptr<IInputSource> src) {
 
 void InputManager::shutdown() {
     m_source.reset();
+    m_window.reset();
+    m_lastRawMotionNs = 0;
     m_endpoints.clear(); m_elected.clear();
     m_staging.clear(); m_contexts.clear(); m_stack.clear();
     m_cur = m_prev = {};
@@ -85,12 +95,14 @@ void InputManager::shutdown() {
 
 // ── Election ────────────────────────────────────────────────────────────────
 void InputManager::refreshEndpoints() {
-    if (!m_source) return;
-    hid::DeviceInfo devs[64];
-    const size_t n = m_source->devices(devs, 64);
     m_endpoints.clear();
-    for (size_t i = 0; i < n; ++i)
-        m_endpoints[devs[i].id] = {devs[i].physId, devs[i].cls};
+    hid::DeviceInfo devs[64];
+    for (IInputSource* src : {m_source.get(), m_window.get()}) {
+        if (!src) continue;
+        const size_t n = src->devices(devs, 64);
+        for (size_t i = 0; i < n; ++i)
+            m_endpoints[devs[i].id] = {devs[i].physId, devs[i].cls};
+    }
 }
 
 bool InputManager::accept(const hid::Event& e) {
@@ -125,20 +137,36 @@ bool InputManager::accept(const hid::Event& e) {
 
 // ── Frame flow ──────────────────────────────────────────────────────────────
 void InputManager::pump() {
-    if (!m_source) return;
     hid::Event ev[512];
-    for (;;) {
-        const size_t n = m_source->poll(ev, 512);
-        for (size_t i = 0; i < n; ++i) {
-            if (!accept(ev[i])) continue;
-            m_staging.push_back(ev[i]);
-            if (ev[i].type == hid::EventType::MouseMotion) {
-                m_lookDx += ev[i].value;    // late-latch accumulator —
-                m_lookDy += ev[i].value2;   // independent of snapshots
+    auto drain = [&](IInputSource* src, bool isRaw) {
+        if (!src) return;
+        for (;;) {
+            const size_t n = src->poll(ev, 512);
+            for (size_t i = 0; i < n; ++i) {
+                const hid::Event& e = ev[i];
+                const bool motionKind = e.type == hid::EventType::MouseMotion ||
+                                        e.type == hid::EventType::Scroll;
+                if (isRaw) {
+                    // Raw path carries ONLY motion/scroll (+ device events).
+                    if (e.type == hid::EventType::Key ||
+                        e.type == hid::EventType::Button) continue;
+                    if (motionKind) m_lastRawMotionNs = e.timeNs;
+                } else if (motionKind && m_source &&
+                           hid::nowNs() - m_lastRawMotionNs < 1000000000ull) {
+                    continue;   // raw mouse active — window motion is its echo
+                }
+                if (!accept(e)) continue;
+                m_staging.push_back(e);
+                if (e.type == hid::EventType::MouseMotion) {
+                    m_lookDx += e.value;    // late-latch accumulator —
+                    m_lookDy += e.value2;   // independent of snapshots
+                }
             }
+            if (n < 512) break;
         }
-        if (n < 512) break;
-    }
+    };
+    drain(m_source.get(), m_source && m_source->rawMotionOnly());
+    drain(m_window.get(), false);
 }
 
 void InputManager::beginTick(uint64_t tickEndNs) {
