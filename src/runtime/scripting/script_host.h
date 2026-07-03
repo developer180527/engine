@@ -1,14 +1,10 @@
 #pragma once
+#include <unordered_map>
 #include <flecs.h>
 #include <cctype>
 #include <cstdint>
 #include "core/transform.h"
 #include "core/debug_draw.h"
-#include "components/animator.h"
-#include "components/skinned_mesh.h"
-#include "animation/skeleton_registry.h"
-#include "animation/clip_registry.h"
-#include "animation/clip_library.h"
 #include "components/name.h"
 #include "runtime/input/input.h"
 #include "runtime/input/input_event.h"
@@ -63,6 +59,24 @@ public:
     void setWorld(flecs::world* w) {                // bound per Play
         m_world = w;
         m_nameQuery.reset();   // old world may be destroyed — drop its query
+        // Name index: O(1) find() (the linear Name scan was a sleeper once
+        // spawners exist). Observers keep it fresh; observers die with the
+        // world, so re-register per bind. Primed with pre-existing names.
+        m_nameIndex.clear();
+        if (!w) return;
+        w->observer<const Name>().event(flecs::OnSet)
+            .each([this](flecs::entity e, const Name& n) {
+                m_nameIndex[n.value] = e.id();
+            });
+        w->observer<const Name>().event(flecs::OnRemove)
+            .each([this](flecs::entity e, const Name& n) {
+                auto it = m_nameIndex.find(n.value);
+                if (it != m_nameIndex.end() && it->second == e.id())
+                    m_nameIndex.erase(it);
+            });
+        w->each([this](flecs::entity e, const Name& n) {
+            m_nameIndex[n.value] = e.id();
+        });
     }
     void     beginSession() { ++m_epoch; } // invalidates entity refs from prior plays
     uint32_t epoch() const  { return m_epoch; }
@@ -80,14 +94,22 @@ public:
     void          destroy(flecs::entity e)            { if (e.is_alive()) e.destruct(); }
     flecs::entity find(const char* name) {
         // Scene entities are named via the Name component, not flecs' builtin
-        // name (load creates them anonymous), so search Name first.
-        // Scripts call this per frame — the query is cached per world.
+        // name. HOT PATH: the observer-maintained index answers in O(1);
+        // hits are re-verified (renames leave stale keys) and healed.
+        auto it = m_nameIndex.find(name);
+        if (it != m_nameIndex.end()) {
+            flecs::entity e = m_world->entity(it->second);
+            const Name* n = e.is_alive() ? e.try_get<Name>() : nullptr;
+            if (n && n->value == name) return e;
+            m_nameIndex.erase(it);   // stale (renamed/died) — heal
+        }
+        // COLD: full scan, healing the index on a hit.
         flecs::entity found;
         m_nameQuery.get(*m_world).each([&](flecs::entity e, const Name& n) {
             if (!found && n.value == name) found = e;
         });
-        if (found) return found;
-        return m_world->lookup(name); // fallback: flecs-named (script-created) entities
+        if (found) { m_nameIndex[name] = found.id(); return found; }
+        return m_world->lookup(name); // flecs-named (script-created) entities
     }
     bool          isAlive(flecs::entity e) const      { return e.is_alive(); }
     void          setParent(flecs::entity c, flecs::entity p) {
@@ -175,62 +197,21 @@ public:
     void setDebugDraw(dbg::DebugDraw* d) { m_debugDraw = d; }
     dbg::DebugDraw* debugDraw() const { return m_debugDraw; }
 
-    // ── Animation (engineAnim* / future Lua bindings) ──────────────────────
-    // The engine owns the machinery (ozz sampling/blending); this is the
-    // control surface gameplay code drives. Play crossfades automatically —
-    // AnimatorSystem fades from the previous clip over `fade` seconds.
-    void setAnimResources(SkeletonRegistry* skels, AnimClipRegistry* clips,
-                          ClipLibrary* lib, const ProjectContext* project) {
-        m_skelReg = skels; m_clipReg = clips; m_clipLib = lib; m_projectCtx = project;
-    }
+    // ── Animation — DELEGATED to the runtime's IAnimService ────────────────
+    // ScriptHost is a coordinator, not an implementation (god-object guard,
+    // per the July 2026 API review): the C API contract stays here, the
+    // policy lives in runtime/services/anim_service.h.
+    void setAnimService(IAnimService* s) { m_anim = s; }
 
     bool animPlay(flecs::entity e, const char* clipPath, float fade) {
-        if (!e.is_alive() || !clipPath || !m_skelReg || !m_clipReg || !m_clipLib)
-            return false;
-        const SkinnedMesh* sm = e.try_get<SkinnedMesh>();
-        if (!sm || !sm->skeleton.valid()) return false;
-        const Skeleton* sk = m_skelReg->get(sm->skeleton);
-        if (!sk) return false;
-
-        std::filesystem::path p(clipPath);
-        if (p.is_relative() && m_projectCtx)
-            p = m_projectCtx->projectRoot / p;
-        AnimClipHandle h = m_clipLib->load(p.string(), sm->skeleton, *sk, *m_clipReg);
-        if (!h.valid()) return false;
-
-        Animator a = e.has<Animator>() ? e.get<Animator>() : Animator{};
-        if (fade >= 0.0f) a.fade = fade;
-        if (a.clip.id == h.id) return true;   // already playing this clip
-        a.clip     = h;
-        a.clipPath = p.string();
-        a.time     = 0.0f;
-        a.playing  = true;
-        e.set<Animator>(a);
-        return true;
+        return m_anim && m_anim->play(e, clipPath, fade);
     }
-    void animSetSpeed(flecs::entity e, float s) {
-        if (Animator* a = mutAnimator(e)) a->speed = s;
-    }
-    void animSetLooping(flecs::entity e, bool loop) {
-        if (Animator* a = mutAnimator(e)) a->looping = loop;
-    }
-    void animSetPlaying(flecs::entity e, bool playing) {
-        if (Animator* a = mutAnimator(e)) a->playing = playing;
-    }
-    bool animIsPlaying(flecs::entity e) const {
-        const Animator* a = e.is_alive() ? e.try_get<Animator>() : nullptr;
-        return a && a->playing;
-    }
-    float animTime(flecs::entity e) const {
-        const Animator* a = e.is_alive() ? e.try_get<Animator>() : nullptr;
-        return a ? a->time : 0.0f;
-    }
-    float animDuration(flecs::entity e) const {
-        const Animator* a = e.is_alive() ? e.try_get<Animator>() : nullptr;
-        if (!a || !m_clipReg) return 0.0f;
-        const AnimClip* c = m_clipReg->get(a->clip);
-        return c ? c->duration : 0.0f;
-    }
+    void animSetSpeed(flecs::entity e, float s)    { if (m_anim) m_anim->setSpeed(e, s); }
+    void animSetLooping(flecs::entity e, bool l)   { if (m_anim) m_anim->setLooping(e, l); }
+    void animSetPlaying(flecs::entity e, bool p)   { if (m_anim) m_anim->setPlaying(e, p); }
+    bool animIsPlaying(flecs::entity e) const      { return m_anim && m_anim->isPlaying(e); }
+    float animTime(flecs::entity e) const          { return m_anim ? m_anim->time(e) : 0.0f; }
+    float animDuration(flecs::entity e) const      { return m_anim ? m_anim->duration(e) : 0.0f; }
 
     uint32_t assetLoadMesh(const char* cookedPath) {
         return m_assetService ? m_assetService->loadMesh(cookedPath).id : 0;
@@ -297,14 +278,7 @@ private:
     IPlatform*       m_platform     = nullptr; // for cursor capture
     bool             m_cursorCaptured = false;
     dbg::DebugDraw*  m_debugDraw    = nullptr; // per-frame line collector (engineDraw*)
-    SkeletonRegistry*     m_skelReg    = nullptr; // animation control surface
-    AnimClipRegistry*     m_clipReg    = nullptr;
-    ClipLibrary*          m_clipLib    = nullptr;
-    const ProjectContext* m_projectCtx = nullptr;
-
-    Animator* mutAnimator(flecs::entity e) {
-        return e.is_alive() && e.has<Animator>() ? &e.get_mut<Animator>() : nullptr;
-    }
+    IAnimService*         m_anim       = nullptr; // runtime-owned AnimService
     IPhysicsService* m_physics      = nullptr; // null until Jolt service lands
     IAudioService*   m_audio        = nullptr; // null until miniaudio lands
     AssetService*    m_assetService = nullptr; // null until wired from EngineContext
@@ -331,6 +305,7 @@ private:
     bool m_warnedPhysics = false;
     bool m_warnedAudio   = false;
     WorldQueryCache<const Name> m_nameQuery;
+    std::unordered_map<std::string, flecs::entity_t> m_nameIndex; // O(1) find
     float    m_dt      = 0.0f;
     double   m_elapsed = 0.0;
     uint64_t m_frame   = 0;

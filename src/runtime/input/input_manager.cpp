@@ -99,7 +99,8 @@ void InputManager::shutdown() {
     m_endpoints.clear(); m_elected.clear();
     m_staging.clear(); m_contexts.clear(); m_stack.clear();
     m_cur = m_prev = {};
-    m_lookDx = m_lookDy = 0.0;
+    m_lookTotalX = m_lookTotalY = 0.0;
+    m_lookCursorX = m_lookCursorY = 0.0;
 }
 
 // ── Election ────────────────────────────────────────────────────────────────
@@ -174,8 +175,8 @@ void InputManager::pump() {
                 if (!accept(e)) continue;
                 m_staging.push_back(e);
                 if (e.type == hid::EventType::MouseMotion) {
-                    m_lookDx += e.value;    // late-latch accumulator —
-                    m_lookDy += e.value2;   // independent of snapshots
+                    m_lookTotalX += e.value;    // cumulative — never reset;
+                    m_lookTotalY += e.value2;   // consumers diff (see header)
                 }
             }
             if (n < 512) break;
@@ -229,9 +230,15 @@ void InputManager::beginTick(uint64_t tickEndNs) {
 }
 
 void InputManager::consumeLook(float* dx, float* dy) {
-    if (dx) *dx = (float)m_lookDx;
-    if (dy) *dy = (float)m_lookDy;
-    m_lookDx = m_lookDy = 0.0;
+    if (dx) *dx = (float)(m_lookTotalX - m_lookCursorX);
+    if (dy) *dy = (float)(m_lookTotalY - m_lookCursorY);
+    m_lookCursorX = m_lookTotalX;
+    m_lookCursorY = m_lookTotalY;
+}
+
+void InputManager::lookTotal(double* x, double* y) const {
+    if (x) *x = m_lookTotalX;
+    if (y) *y = m_lookTotalY;
 }
 
 // ── Actions ─────────────────────────────────────────────────────────────────

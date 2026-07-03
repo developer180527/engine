@@ -65,6 +65,9 @@ bool  engineActionReleased(const char* action);
 float engineActionAxis1   (const char* action);
 void  engineActionAxis2   (const char* action, float* x, float* y);
 void  engineLookDelta     (float* dx, float* dy);
+/* Cumulative raw look counts (never reset): multi-consumer form — each
+ * consumer diffs against its own last-read totals. Input API v2. */
+void  engineLookTotal     (double* x, double* y);
 
 /* ── Cursor (mouse-look capture; no-op headless) ─────────────────────────── */
 void engineSetCursorCaptured(bool captured);

@@ -171,6 +171,11 @@ void  engineLookDelta(float* dx, float* dy) {
     if (dx) *dx = 0.0f;
     if (dy) *dy = 0.0f;
 }
+void  engineLookTotal(double* x, double* y) {
+    if (g_input) { g_input->lookTotal(x, y); return; }
+    if (x) *x = 0.0;
+    if (y) *y = 0.0;
+}
 
 // ── Editor UI facade ───────────────────────────────────────────────────────
 // Routed to a host-registered backend (the editor, over ImGui). No backend

@@ -97,8 +97,13 @@ public:
     const InputSnapshot& snapshot() const { return m_cur; }
     const InputSnapshot& prevSnapshot() const { return m_prev; }
 
-    // Late-latch: all pending raw look counts (drains the accumulator).
+    // Late-latch look, cumulative model: totals only ever grow; consumers
+    // diff against their own last-read value. consumeLook keeps the classic
+    // single-consumer drain semantics via an internal cursor; multi-consumer
+    // code (editor cameras, debug tools) reads lookTotal and diffs itself —
+    // no consumer can starve another (API review fix).
     void consumeLook(float* dx, float* dy);
+    void lookTotal(double* x, double* y) const;
 
     void setFocused(bool f) { m_focused = f; }
     void setUICapture(bool keyboard, bool mouse) {
@@ -160,7 +165,8 @@ private:
     std::vector<hid::Event> m_staging;   // pumped, not yet ticked
     InputSnapshot m_cur, m_prev;
 
-    double m_lookDx = 0.0, m_lookDy = 0.0;   // late-latch accumulator
+    double m_lookTotalX = 0.0, m_lookTotalY = 0.0;   // cumulative, never reset
+    double m_lookCursorX = 0.0, m_lookCursorY = 0.0;  // consumeLook's position
 
     std::vector<Context> m_contexts;
     std::vector<size_t>  m_stack;        // indices into m_contexts, top=back

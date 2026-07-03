@@ -14,6 +14,11 @@
  * groups work normally; a mismatched group disables only ITS functions (loud
  * per-call error, safe defaults) while the rest of the module runs.
  *
+ * CAPABILITY convention: a group published with version == 0 is ABSENT
+ * (e.g. a headless host may publish ui as absent) — the client shim treats
+ * it as a mismatch and disables that group; modules query
+ * engineApiHas(group) to adapt instead of assuming every service exists.
+ *
  * Evolution rules:
  *  - Append fields to the END of a group and bump that group's version.
  *  - Never reorder or remove fields within V1 structs; breaking changes make
@@ -31,7 +36,7 @@ extern "C" {
 #endif
 
 #define ENGINE_API_CORE_V    1  /* log, time, entities, transform          */
-#define ENGINE_API_INPUT_V   1  /* legacy keys, actions, look, cursor      */
+#define ENGINE_API_INPUT_V   2  /* v2: + lookTotal (cumulative look)       */
 #define ENGINE_API_PHYSICS_V 1  /* body forces, raycast, character         */
 #define ENGINE_API_AUDIO_V   1
 #define ENGINE_API_ASSETS_V  1  /* cooked assets + scenes                  */
@@ -71,6 +76,8 @@ typedef struct EngineApiInputV1 {
     void  (*lookDelta)(float*, float*);
     void  (*setCursorCaptured)(bool);
     bool  (*cursorCaptured)(void);
+    /* v2 additions (append-only) */
+    void  (*lookTotal)(double*, double*);
 } EngineApiInputV1;
 
 typedef struct EngineApiPhysicsV1 {

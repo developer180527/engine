@@ -33,6 +33,12 @@ static bool g_eapiOk[7] = {};         /* core,input,physics,audio,assets,anim,ui
 enum { EAPI_CORE, EAPI_INPUT, EAPI_PHYSICS, EAPI_AUDIO,
        EAPI_ASSETS, EAPI_ANIM, EAPI_UI };
 
+/* Capability query — true when the group is bound AND version-compatible.
+ * Groups published with version 0 are ABSENT by convention. */
+static inline bool engineApiHas(int group) {
+    return g_eapi && group >= 0 && group < 7 && g_eapiOk[group];
+}
+
 static bool eapiGuard(int group, const char* name) {
     if (g_eapi && g_eapiOk[group]) return true;
     static bool warned[7] = {};
@@ -119,6 +125,13 @@ void  engineLookDelta(float* dx, float* dy) {
     if (eapiGuard(EAPI_INPUT,"lookDelta")) { g_eapi->input.lookDelta(dx, dy); return; }
     if (dx) *dx = 0.0f;
     if (dy) *dy = 0.0f;
+}
+void engineLookTotal(double* x, double* y) {
+    if (eapiGuard(EAPI_INPUT,"lookTotal") && g_eapi->input.lookTotal) {
+        g_eapi->input.lookTotal(x, y); return;
+    }
+    if (x) *x = 0.0;
+    if (y) *y = 0.0;
 }
 void engineSetCursorCaptured(bool c) { if (eapiGuard(EAPI_INPUT,"setCursorCaptured")) g_eapi->input.setCursorCaptured(c); }
 bool engineCursorCaptured(void)      { return eapiGuard(EAPI_INPUT,"cursorCaptured") && g_eapi->input.cursorCaptured(); }

@@ -20,6 +20,21 @@ struct RaycastHit {
     float    distance  = 0.0f;
 };
 
+// Animation control surface (implemented by the runtime's AnimService).
+// NOTE: services still traffic in flecs::entity for consistency with the
+// existing interfaces; normalizing to entity_t handles is queued for the
+// full service-model pass (API review, July 2026).
+struct IAnimService {
+    virtual ~IAnimService() = default;
+    virtual bool  play(flecs::entity e, const char* clipPath, float fade) = 0;
+    virtual void  setSpeed(flecs::entity e, float s)        = 0;
+    virtual void  setLooping(flecs::entity e, bool loop)    = 0;
+    virtual void  setPlaying(flecs::entity e, bool playing) = 0;
+    virtual bool  isPlaying(flecs::entity e) const          = 0;
+    virtual float time(flecs::entity e) const               = 0;
+    virtual float duration(flecs::entity e) const           = 0;
+};
+
 struct IPhysicsService {
     virtual ~IPhysicsService() = default;
     virtual void applyImpulse(flecs::entity e, float x, float y, float z)        = 0;

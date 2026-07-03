@@ -2,6 +2,7 @@
 #include "runtime/platform/glfw_platform.h"
 #include "core/logger.h"
 #include "runtime/scripting/script_host.h"
+#include "runtime/services/anim_service.h"
 #include "runtime/scripting/script_services.h"
 #include "runtime/scripting/engine_api_binding.h"
 #include "runtime/mem_channel.h"
@@ -244,8 +245,9 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_scriptHost->setSceneService(m_sceneService.get());
     m_scriptHost->setPlatform(m_platform.get());   // cursor capture via C API
     m_scriptHost->setDebugDraw(&m_debugDraw);       // engineDraw* -> collector
-    m_scriptHost->setAnimResources(&m_skeletons, &m_clips,
-                                   m_clipLibrary.get(), &m_project);
+    m_animService = std::make_unique<AnimService>();
+    m_animService->init(&m_skeletons, &m_clips, m_clipLibrary.get(), &m_project);
+    m_scriptHost->setAnimService(m_animService.get());
 
     // Input: raw hid source when available (Input Monitoring on macOS),
     // window fallback otherwise. Bindings from the project's input.json.

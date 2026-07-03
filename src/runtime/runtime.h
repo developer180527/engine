@@ -27,6 +27,7 @@
 
 class ScriptHost;    // runtime-owned scripting surface (scripting/script_host.h)
 class MemoryChannel; // profiler memory channel (runtime/mem_channel.h)
+class AnimService;   // runtime/services/anim_service.h (pulls ClipLibrary/Assimp)
 class ClipLibrary;   // standalone animation clips (animation/clip_library.h) —
                      // fwd-declared: it pulls Assimp, which kits don't get
 
@@ -218,6 +219,7 @@ private:
     std::unique_ptr<ScriptHost>     m_scriptHost;   // canonical script surface
     std::unique_ptr<MemoryChannel>  m_memChannel;   // profiler memory channel
     std::unique_ptr<ClipLibrary>    m_clipLibrary;  // standalone-clip loader/cache
+    std::unique_ptr<AnimService>    m_animService;  // gameplay anim control (IAnimService)
     std::unique_ptr<RuntimeContext> m_ctx;
 
     // Render subsystem — owns the device + all render state. Declared after the
