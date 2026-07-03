@@ -149,6 +149,10 @@ public:
                 spawnCharacter(e, t, cc);
             });
 
+        // Cached for the per-step runtime sync (clones/spawns during play).
+        m_bodySyncQ = ecs.query_builder<const Transform, const RigidBody>().build();
+        m_charSyncQ = ecs.query_builder<const Transform, const CharacterController>().build();
+
         m_contactListener.owner = this;
         m_physics->SetContactListener(&m_contactListener);
         m_physics->OptimizeBroadPhase();
@@ -166,6 +170,8 @@ public:
         m_bodyToEntity.clear();
         m_characters.clear();   // JPH::Ref releases each CharacterVirtual
         m_charState.clear();
+        m_bodySyncQ = {};        // queries must die before their world
+        m_charSyncQ = {};
         m_physics.reset();
         m_jobSystem.reset();
         m_tempAllocator.reset();
@@ -175,6 +181,7 @@ public:
 
     void onPhysicsStep(flecs::world& ecs, float dt) override {
         if (!m_physics) return;
+        syncRuntimeBodies(ecs);   // entities cloned/destroyed DURING play
         m_accumulator += dt;
         int steps = 0;
         while (m_accumulator >= kFixedDt && steps < 4) {
@@ -186,6 +193,36 @@ public:
         }
         writeBackTransforms(ecs);
         writeBackCharacters(ecs);
+    }
+
+    // Bodies are born at sim start — but gameplay CLONES entities mid-play
+    // (spawners) and destroys them (deaths). Without this sync, runtime
+    // spawns are GHOSTS (raycasts pass through: "shot -> miss" on spawned
+    // zombies) and despawned entities leave invisible colliders behind.
+    void syncRuntimeBodies(flecs::world& ecs) {
+        m_bodySyncQ.each([this](flecs::entity e, const Transform& t,
+                                const RigidBody& rb) {
+            if (!m_entityToBody.count(e.id())) spawnBody(e, t, rb);
+        });
+        m_charSyncQ.each([this](flecs::entity e, const Transform& t,
+                                const CharacterController& cc) {
+            if (!m_characters.count(e.id())) spawnCharacter(e, t, cc);
+        });
+        auto& bi = m_physics->GetBodyInterface();
+        for (auto it = m_entityToBody.begin(); it != m_entityToBody.end();) {
+            if (!ecs.entity(it->first).is_alive()) {
+                m_bodyToEntity.erase(it->second);
+                bi.RemoveBody(it->second);
+                bi.DestroyBody(it->second);
+                it = m_entityToBody.erase(it);
+            } else ++it;
+        }
+        for (auto it = m_characters.begin(); it != m_characters.end();) {
+            if (!ecs.entity(it->first).is_alive()) {
+                m_charState.erase(it->first);
+                it = m_characters.erase(it);
+            } else ++it;
+        }
     }
 
     // Post-step: publish this frame's contacts as CollisionEvents components.
@@ -278,6 +315,8 @@ public:
     std::unique_ptr<JPH::PhysicsSystem>       m_physics;
     float                                      m_accumulator = 0.0f;
 
+    flecs::query<const Transform, const RigidBody>           m_bodySyncQ;
+    flecs::query<const Transform, const CharacterController> m_charSyncQ;
     std::unordered_map<flecs::entity_t, JPH::BodyID>              m_entityToBody;
     std::unordered_map<JPH::BodyID, flecs::entity_t, BodyIDHash>  m_bodyToEntity;
 
