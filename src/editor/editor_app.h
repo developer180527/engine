@@ -20,6 +20,7 @@
 #include "assets/cookers/cook_service.h"
 #include <assetlib/asset_registry.h>
 #include "editor/engine_context.h"
+#include <engine/engine_api.h>
 #include "editor/editor_camera.h"
 #include "editor/panels/hierarchy_panel.h"
 #include "editor/panels/menu_bar_panel.h"
@@ -227,6 +228,7 @@ private:
                         glfwSetInputMode(gw, GLFW_CURSOR, GLFW_CURSOR_NORMAL); }
                 }
                 m_wasPlaying = playing;
+
             }
 
             // ---- Camera matrices ----
