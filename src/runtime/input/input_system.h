@@ -92,6 +92,11 @@ public:
     float cursorX()      const { return m_cursorX; }
     float cursorY()      const { return m_cursorY; }
 
+    // Window focus — the InputManager's gate for raw (system-wide) input.
+    bool windowFocused() const {
+        return m_window && glfwGetWindowAttrib(m_window, GLFW_FOCUSED);
+    }
+
     // ── UI focus gate ──────────────────────────────────────────────────────
     void setUICapture(bool keyboard, bool mouse) noexcept {
         m_uiCaptureKb    = keyboard;

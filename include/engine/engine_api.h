@@ -52,6 +52,20 @@ float engineAxis      (const char* axisName);   /* bound via InputMap */
 bool  engineMouseDown (int button);             /* 0=left 1=right 2=middle */
 void  engineMouseDelta(float* dx, float* dy);
 
+/* ── Actions (input-agnostic gameplay input) ─────────────────────────────
+ * Gameplay binds to ACTIONS, never devices/keys: the project's input.json
+ * wires devices -> actions (contexts, axes, scales). Backed by the raw-input
+ * pipeline (modules/hid) when available, window input otherwise.
+ * engineLookDelta is the LATE-LATCH camera path: freshest accumulated raw
+ * mouse counts, drained on read — call once per frame from the camera code,
+ * apply your own sensitivity. */
+bool  engineActionDown    (const char* action);
+bool  engineActionPressed (const char* action);
+bool  engineActionReleased(const char* action);
+float engineActionAxis1   (const char* action);
+void  engineActionAxis2   (const char* action, float* x, float* y);
+void  engineLookDelta     (float* dx, float* dy);
+
 /* ── Cursor (mouse-look capture; no-op headless) ─────────────────────────── */
 void engineSetCursorCaptured(bool captured);
 bool engineCursorCaptured(void);

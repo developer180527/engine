@@ -1,0 +1,175 @@
+// ── input_test — InputManager gauntlet (no hardware needed) ─────────────────
+// ReplaySource drives scripted event streams through the full policy layer:
+//   * endpoint ELECTION: duplicate HID collections (same physId) must not
+//     double-count clicks or motion;
+//   * SNAPSHOT semantics: tick boundaries respected (events after tickEnd
+//     stay staged), held state persists, deltas reset per tick;
+//   * DETERMINISM: the same stream replayed twice yields bit-identical
+//     snapshots — the multiplayer contract;
+//   * ACTIONS: digital edges (pressed/released), axis2 from keys and motion,
+//     context stack resolution with blockLower;
+//   * LATE-LATCH: consumeLook drains everything pumped, including events
+//     newer than the last tick, then reads zero.
+#include <cstdio>
+#include <cstring>
+#include <memory>
+#include <vector>
+
+#include "runtime/input/input_manager.h"
+
+static int g_failures = 0;
+#define CHECK(cond, msg) do {                                        \
+    if (!(cond)) { std::printf("  FAIL  %s\n", msg); ++g_failures; } \
+    else         { std::printf("  ok    %s\n", msg); }               \
+} while (0)
+
+using namespace input;
+
+static const char* kTestConfig = R"({
+  "contexts": [
+    { "name": "Gameplay",
+      "actions": [
+        { "name": "Fire", "type": "digital", "bindings": ["mouse:left"] },
+        { "name": "Jump", "type": "digital", "bindings": ["key:Space"] },
+        { "name": "Move", "type": "axis2",
+          "bindings": ["key:W:+y","key:S:-y","key:D:+x","key:A:-x"] },
+        { "name": "Look", "type": "axis2", "bindings": ["mouse:motion"] }
+      ] },
+    { "name": "Menu", "blockLower": true,
+      "actions": [
+        { "name": "Confirm", "type": "digital", "bindings": ["key:Enter"] }
+      ] }
+  ]
+})";
+
+// Two mouse endpoints sharing physId 77 (split HID collections of one
+// physical mouse) + one keyboard.
+static std::unique_ptr<ReplaySource> makeSource(bool duplicateEndpoints) {
+    auto src = std::make_unique<ReplaySource>();
+    src->addDevice({1, hid::DeviceClass::Mouse,    0x25a7, 0xfaa0, 77, "toad A"});
+    if (duplicateEndpoints)
+        src->addDevice({2, hid::DeviceClass::Mouse, 0x25a7, 0xfaa0, 77, "toad B"});
+    src->addDevice({3, hid::DeviceClass::Keyboard, 0, 0, 110, "kbd"});
+
+    auto ev = [&](uint64_t tMs, hid::DeviceId d, hid::EventType ty,
+                  uint16_t code, int32_t v, int32_t v2 = 0) {
+        src->addEvent({tMs * 1000000ull, d, ty, 0, code, v, v2});
+    };
+    // One physical click reported by BOTH endpoints (identical timestamps),
+    // motion on both too — election must keep exactly one of each.
+    ev(1, 1, hid::EventType::Button, 0, 1);
+    if (duplicateEndpoints) ev(1, 2, hid::EventType::Button, 0, 1);
+    ev(2, 1, hid::EventType::MouseMotion, 0, 10, -4);
+    if (duplicateEndpoints) ev(2, 2, hid::EventType::MouseMotion, 0, 10, -4);
+    ev(3, 3, hid::EventType::Key, 0x1A /*W*/, 1);
+    ev(4, 1, hid::EventType::Button, 0, 0);
+    if (duplicateEndpoints) ev(4, 2, hid::EventType::Button, 0, 0);
+    // tick boundary at 5ms — these land in tick 2:
+    ev(6, 3, hid::EventType::Key, 0x1A, 0);
+    ev(7, 3, hid::EventType::Key, 0x2C /*Space*/, 1);
+    ev(8, 1, hid::EventType::MouseMotion, 0, 3, 3);
+    return src;
+}
+
+static void runStream(InputManager& m, InputSnapshot out[2]) {
+    m.pump();
+    m.beginTick(5 * 1000000ull);    // tick 1: events <= 5ms
+    out[0] = m.snapshot();
+    m.beginTick(10 * 1000000ull);   // tick 2: the rest
+    out[1] = m.snapshot();
+}
+
+int main() {
+    std::printf("input_test: InputManager gauntlet\n");
+
+    // ── Election + snapshot semantics ───────────────────────────────────────
+    {
+        InputManager m;
+        m.initWithSource(makeSource(true));
+        m.loadConfigText(kTestConfig);
+
+        InputSnapshot s[2];
+        runStream(m, s);
+
+        CHECK(s[0].mouseDx == 10 && s[0].mouseDy == -4,
+              "duplicate-endpoint motion counted ONCE (election)");
+        CHECK(s[0].keyDown(0x1A), "W held in tick 1");
+        CHECK(!s[0].buttonDown(0), "click released within tick 1");
+        CHECK(s[0].mouseDx == 10, "post-boundary events NOT in tick 1");
+        CHECK(!s[1].keyDown(0x1A) && s[1].keyDown(0x2C),
+              "tick 2: W released, Space held (state persists per tick)");
+        CHECK(s[1].mouseDx == 3 && s[1].mouseDy == 3,
+              "tick 2 deltas reset and re-accumulate");
+
+        float lx, ly;
+        m.consumeLook(&lx, &ly);
+        CHECK(lx == 13.0f && ly == -1.0f,
+              "late-latch look = ALL pumped motion (both ticks), once");
+        m.consumeLook(&lx, &ly);
+        CHECK(lx == 0.0f && ly == 0.0f, "look accumulator drains on read");
+    }
+
+    // ── Determinism: same stream twice -> bit-identical snapshots ───────────
+    {
+        InputSnapshot a[2], b[2];
+        for (InputSnapshot* out : {a, b}) {
+            InputManager m;
+            m.initWithSource(makeSource(true));
+            m.loadConfigText(kTestConfig);
+            runStream(m, out);
+        }
+        CHECK(std::memcmp(a, b, sizeof(a)) == 0,
+              "replayed stream -> bit-identical snapshots (netcode contract)");
+    }
+
+    // ── Actions: edges, axes, contexts ──────────────────────────────────────
+    {
+        InputManager m;
+        m.initWithSource(makeSource(false));
+        m.loadConfigText(kTestConfig);
+
+        m.pump();
+        m.beginTick(3 * 1000000ull);   // W down, click down+held, motion in
+        CHECK(m.actionDown("Fire"), "Fire down while button held");
+        CHECK(m.actionPressed("Fire"), "Fire pressed edge on first tick");
+        float mx, my;
+        m.axis2("Move", &mx, &my);
+        CHECK(mx == 0.0f && my == 1.0f, "Move axis2 = +y while W held");
+        m.axis2("Look", &mx, &my);
+        CHECK(mx == 10.0f && my == -4.0f, "Look axis2 from tick motion counts");
+
+        m.beginTick(5 * 1000000ull);   // button release lands here
+        CHECK(m.actionReleased("Fire"), "Fire released edge");
+
+        // Menu context blocks gameplay below it.
+        m.pushContext("Menu");
+        m.beginTick(10 * 1000000ull);  // Space press lands here
+        CHECK(!m.actionDown("Jump"), "blockLower context hides gameplay actions");
+        m.popContext();
+        CHECK(m.actionDown("Jump"), "pop restores gameplay resolution");
+    }
+
+    // ── Focus gate: unfocused drops presses, keeps releases ─────────────────
+    {
+        InputManager m;
+        auto src = std::make_unique<ReplaySource>();
+        src->addDevice({3, hid::DeviceClass::Keyboard, 0, 0, 110, "kbd"});
+        src->addEvent({1000000, 3, hid::EventType::Key, 0, 0x1A, 1, 0});
+        ReplaySource* raw = src.get();
+        m.initWithSource(std::move(src));
+        m.pump();
+        m.beginTick(2 * 1000000ull);
+        // now lose focus; release must still land (no stuck keys)
+        m.setFocused(false);
+        raw->addEvent({3000000, 3, hid::EventType::Key, 0, 0x1A, 0, 0});
+        raw->addEvent({3000001, 3, hid::EventType::Key, 0, 0x2C, 1, 0});
+        m.pump();
+        m.beginTick(4 * 1000000ull);
+        CHECK(!m.snapshot().keyDown(0x1A), "release applies while unfocused");
+        CHECK(!m.snapshot().keyDown(0x2C), "press dropped while unfocused");
+    }
+
+    if (g_failures) { std::printf("input_test: FAIL (%d)\n", g_failures); return 1; }
+    std::printf("input_test: PASS — election, snapshots, determinism, actions\n");
+    return 0;
+}

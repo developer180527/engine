@@ -109,6 +109,7 @@ add_library(engine_runtime STATIC
     runtime/services/scene_service.cpp
     runtime/scripting/engine_api.cpp
     runtime/jobs/jobs_enkits.cpp
+    runtime/input/input_manager.cpp
 
     # Source-format importers (produce GPU meshes — main thread)
     assets/importers/gltf_importer.cpp
@@ -150,6 +151,7 @@ target_link_libraries(engine_runtime PUBLIC
     lua
     ozz_animation ozz_animation_offline   # skeletal animation backbone (+ import-time builders)
     enkiTS                                # task scheduler behind engine::jobs (facade-only include)
+    hid                                   # raw-input module (modules/hid submodule)
 )
 
 if(APPLE)
@@ -270,6 +272,10 @@ set_target_properties(clip_binding_test PROPERTIES
 # ── mem_test — memory manager regression gauntlet ───────────────────────────
 add_executable(mem_test tools/mem_test.cpp)
 target_link_libraries(mem_test PRIVATE engine_core)
+
+# ── input_test — InputManager determinism/election/action gauntlet ──────────
+add_executable(input_test tools/input_test.cpp)
+target_link_libraries(input_test PRIVATE engine_runtime)
 
 # ── anim_pose_test — numeric skin-matrix diagnosis for standalone clips ─────
 add_executable(anim_pose_test tools/anim_pose_test.cpp)

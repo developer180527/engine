@@ -68,6 +68,26 @@ buttons are integers (`0` = left, `1` = right, `2` = middle).
 | `bool engineMouseDown(int button)`        | mouse button held |
 | `void engineMouseDelta(float* dx, float* dy)` | mouse movement since last frame |
 
+## Actions (input-agnostic gameplay input)
+
+Gameplay binds to **actions**, never devices: the project's `input.json`
+wires devices → actions (contexts, axes, scales) and is scaffolded with FPS
+defaults on first run. Backed by the raw-input pipeline (`modules/hid`:
+unaccelerated counts, hardware timestamps) when the platform backend is up,
+window input otherwise — game code cannot tell the difference.
+
+| Function | Purpose |
+|---|---|
+| `bool engineActionDown(const char* a)`     | action currently held |
+| `bool engineActionPressed(const char* a)`  | edge: went down this tick |
+| `bool engineActionReleased(const char* a)` | edge: went up this tick |
+| `float engineActionAxis1(const char* a)`   | 1D axis (scroll, key pairs) |
+| `void engineActionAxis2(const char* a, float* x, float* y)` | 2D axis (WASD, mouse motion) |
+| `void engineLookDelta(float* dx, float* dy)` | **late-latch camera path**: freshest accumulated raw mouse counts, drained on read — call once per frame from camera code, apply your own sensitivity |
+
+The old key-name polling (`engineKeyDown` etc.) still works but new code
+should use actions — bindings then live in data, not kits.
+
 ## Cursor
 
 | Function | Purpose |

@@ -6,6 +6,7 @@
 #include "runtime/scripting/engine_api_binding.h"
 #include "runtime/mem_channel.h"
 #include "runtime/jobs/jobs.h"
+#include "runtime/input/input_system.h"
 #include "core/memory/mem.h"
 #include <ozz/base/memory/allocator.h>
 
@@ -241,6 +242,11 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_scriptHost->setDebugDraw(&m_debugDraw);       // engineDraw* -> collector
     m_scriptHost->setAnimResources(&m_skeletons, &m_clips,
                                    m_clipLibrary.get(), &m_project);
+
+    // Input: raw hid source when available (Input Monitoring on macOS),
+    // window fallback otherwise. Bindings from the project's input.json.
+    m_input.init(m_project.projectRoot);
+    engineInputBindManager(&m_input);
     m_renderer.setDebugDraw(&m_debugDraw);          // collector -> line pass
     engineApiBindHost(m_scriptHost.get());
 
@@ -488,6 +494,13 @@ void EngineRuntime::tickSimulation(float dt) {
 void EngineRuntime::tickSystems(float dt, bool paused) {
     if (!m_initialized) { LOG_ERROR("Runtime", "tick() before init()"); return; }
     jobs::pumpMain();   // drain job->main-thread requests; sweep finished jobs
+    // Input: drain sources, mirror UI/focus gates, fold a tick snapshot.
+    // (Per-frame tick today; slots into the fixed-timestep loop when it lands.)
+    m_input.setFocused(InputSystem::get().windowFocused());
+    m_input.setUICapture(InputSystem::get().uiCapturesKeyboard(),
+                         InputSystem::get().uiCapturesMouse());
+    m_input.pump();
+    m_input.beginTick(hid::nowNs());
     if (!paused) {
         m_spinnerQuery
             .each([dt](flecs::entity, Transform& t, const Spinner& s) {
@@ -511,6 +524,8 @@ void EngineRuntime::shutdown() {
                         m_memChannel.reset(); }
     stopSimulation();      // broadcasts onSimulationStop if still running
     engineApiBindHost(nullptr);
+    engineInputBindManager(nullptr);
+    m_input.shutdown();
     m_plugins.detachAll(); // plugins may hold services — detach before teardown
     jobs::shutdown();      // after plugins: Jolt's adapter schedules here
     mem::shutdown();       // report-only: final per-tag residency dump

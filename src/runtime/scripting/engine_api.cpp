@@ -5,6 +5,7 @@
 // executable so hot-reloaded game modules resolve them at load time.
 #include <engine/engine_api.h>
 #include "runtime/scripting/engine_api_binding.h"
+#include "runtime/input/input_manager.h"
 #include "runtime/scripting/script_host.h"
 #include <cstdarg>
 #include <cstdio>
@@ -151,6 +152,25 @@ void     engineAssetLoadTextureAsync(const char* p) { if (g_host && p) g_host->a
 uint32_t engineAssetQueryMesh(const char* p)      { return (g_host && p) ? g_host->assetQueryMesh(p) : 0; }
 uint32_t engineAssetQueryTexture(const char* p)   { return (g_host && p) ? g_host->assetQueryTexture(p) : 0; }
 bool     engineAssetIsLoading(const char* p)      { return (g_host && p) ? g_host->assetIsLoading(p) : false; }
+
+// ── Actions — routed to the runtime's InputManager ────────────────────────
+static input::InputManager* g_input = nullptr;
+void engineInputBindManager(input::InputManager* m) { g_input = m; }
+
+bool  engineActionDown(const char* a)     { return g_input && a && g_input->actionDown(a); }
+bool  engineActionPressed(const char* a)  { return g_input && a && g_input->actionPressed(a); }
+bool  engineActionReleased(const char* a) { return g_input && a && g_input->actionReleased(a); }
+float engineActionAxis1(const char* a)    { return (g_input && a) ? g_input->axis1(a) : 0.0f; }
+void  engineActionAxis2(const char* a, float* x, float* y) {
+    if (g_input && a) { g_input->axis2(a, x, y); return; }
+    if (x) *x = 0.0f;
+    if (y) *y = 0.0f;
+}
+void  engineLookDelta(float* dx, float* dy) {
+    if (g_input) { g_input->consumeLook(dx, dy); return; }
+    if (dx) *dx = 0.0f;
+    if (dy) *dy = 0.0f;
+}
 
 // ── Editor UI facade ───────────────────────────────────────────────────────
 // Routed to a host-registered backend (the editor, over ImGui). No backend

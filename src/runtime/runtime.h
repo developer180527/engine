@@ -17,6 +17,7 @@
 #include "runtime/platform/platform.h"
 #include "runtime/camera_util.h"
 #include "runtime/runtime_context.h"
+#include "runtime/input/input_manager.h"
 #include "render/renderer.h"
 #include "runtime/plugin_registry.h"
 #include "runtime/kit_host.h"
@@ -171,6 +172,7 @@ public:
     // Per-frame transient allocator — reset at the start of every frame.
     // Memory is valid ONLY within the current frame (see core/frame_arena.h).
     mem::FrameArena&  frameArena() { return m_frameArena; }
+    input::InputManager& inputManager() { return m_input; }
     // Immediate-mode debug lines — queue via engineDraw*/this, drawn this frame,
     // cleared at the next frameBegin.
     dbg::DebugDraw&   debugDraw()  { return m_debugDraw; }
@@ -229,6 +231,7 @@ private:
     KitHost        m_kits;              // project kits — dlopened lazily at Play
     PrimaryCameraFinder m_cameraFinder; // cached camera query (game tick)
     mem::FrameArena     m_frameArena;   // per-frame transient allocator
+    input::InputManager m_input;        // action layer over raw input
     dbg::DebugDraw      m_debugDraw;     // per-frame debug lines (engineDraw*)
 
     // Simulation state — game world only exists in Snapshot mode.
