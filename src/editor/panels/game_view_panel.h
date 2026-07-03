@@ -65,9 +65,15 @@ inline void drawGameViewPanel(bgfx::TextureHandle gameTex, bool hasCam,
                               std::function<void()> onPlay,
                               std::function<void()> onPause,
                               std::function<void()> onStop,
-                              bool* open = nullptr) {
+                              bool* open = nullptr,
+                              void** hostWindow = nullptr) {
     if (open && !*open) return;
     ImGui::Begin(ICON_FA_GAMEPAD " Game View", open);
+    // Report which OS window hosts this panel — when detached it is a
+    // separate GLFW window and play-mode input must be read from IT.
+    if (hostWindow)
+        if (ImGuiViewport* vp = ImGui::GetWindowViewport())
+            *hostWindow = vp->PlatformHandle;
 
     drawPlayBar(simState, onPlay, onPause, onStop);
 

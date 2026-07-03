@@ -178,7 +178,9 @@ private:
               // Captured play-mode cursor is GAME input: ImGui must not see
               // the invisible mouse at all, or panels stay clickable and
               // steal edits mid-play. Esc (release) restores editor UI.
-              if (__playing && __cursorLocked)
+              const bool __capFocused = m_lastCaptureWin &&
+                  glfwGetWindowAttrib(m_lastCaptureWin, GLFW_FOCUSED);
+              if (__playing && __cursorLocked && __capFocused)
                   io.ConfigFlags |=  ImGuiConfigFlags_NoMouse;
               else
                   io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse; }
@@ -194,10 +196,21 @@ private:
             updateEditorCamera(m_cam, m_input, camWin, dt, m_sceneViewHovered);
             // ---- Play-mode cursor capture (FPS mouse-look) ----
             {
-                GLFWwindow* gw = m_window;
+                // Capture on the window that HOSTS the Game View — detached
+                // panels are separate OS windows and own the play input.
+                GLFWwindow* gw = m_gameGLFWWindow ? m_gameGLFWWindow : m_window;
+                if (m_lastCaptureWin && m_lastCaptureWin != gw)
+                    glfwSetInputMode(m_lastCaptureWin, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                m_lastCaptureWin = gw;
                 const bool playing = (m_editor.simState == SimState::Playing);
                 if (playing && !m_wasPlaying) m_playCursorLocked = true;
+                // FAIL-SAFE: losing focus always releases the cursor (the
+                // alt-tab rule) — a hidden cursor can never strand the UI.
+                if (playing && m_playCursorLocked &&
+                    !glfwGetWindowAttrib(gw, GLFW_FOCUSED))
+                    m_playCursorLocked = false;
                 if (playing) {
+                    InputSystem::get().setActiveWindow(gw);
                     const bool escNow = glfwGetKey(gw, GLFW_KEY_ESCAPE) == GLFW_PRESS;
                     if (escNow && !m_escPrev) {
                         if (m_playCursorLocked) m_playCursorLocked = false; // 1st Esc: free mouse
@@ -209,6 +222,7 @@ private:
                         glfwSetInputMode(gw, GLFW_CURSOR, want);
                 } else {
                     m_escPrev = false;
+                    InputSystem::get().setActiveWindow(m_window);
                     if (m_playCursorLocked) { m_playCursorLocked = false;
                         glfwSetInputMode(gw, GLFW_CURSOR, GLFW_CURSOR_NORMAL); }
                 }
@@ -271,6 +285,9 @@ private:
 
 public:
     void shutdown() {
+        // Cached world queries must die BEFORE the runtime destroys their
+        // worlds (cmd+q during play crashed here: query_fini on a dead world).
+        m_cameraFinder.reset();
         // Plugins detach in EngineRuntime::shutdown() — runtime owns them.
         imguiShutdown();
     }
@@ -294,6 +311,8 @@ private:
     bool           m_wasPlaying       = false;
     float          m_sceneAspect      = 16.0f / 9.0f;
     GLFWwindow*    m_sceneGLFWWindow  = nullptr; // GLFW window currently hosting Scene View
+    GLFWwindow*    m_gameGLFWWindow   = nullptr; // GLFW window currently hosting Game View
+    GLFWwindow*    m_lastCaptureWin   = nullptr; // un-hide cursor on host switch
     int            m_desiredSceneW    = 1280;
     int            m_desiredSceneH    = 720;
     int            m_lastDesiredW     = 0;    // FB-recreate debounce
@@ -528,7 +547,8 @@ private:
                          [this]{ onPlay(); },
                          [this]{ onPause(); },
                          [this]{ onStop(); },
-                         &m_panels.gameView);
+                         &m_panels.gameView,
+                         (void**)&m_gameGLFWWindow);
 
         // Stats
         if (m_panels.stats) {

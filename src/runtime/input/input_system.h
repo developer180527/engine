@@ -92,6 +92,15 @@ public:
     float cursorX()      const { return m_cursorX; }
     float cursorY()      const { return m_cursorY; }
 
+    // Retarget polling to another GLFW window (editor: a detached Game View
+    // lives in its own OS window — keys/cursor must be read THERE). Reseeds
+    // the cursor baseline so the switch doesn't produce a delta spike.
+    void setActiveWindow(GLFWwindow* w) {
+        if (!w || w == m_window) return;
+        m_window = w;
+        glfwGetCursorPos(w, &m_lastX, &m_lastY);
+    }
+
     // Window focus — the InputManager's gate for raw (system-wide) input.
     bool windowFocused() const {
         return m_window && glfwGetWindowAttrib(m_window, GLFW_FOCUSED);
