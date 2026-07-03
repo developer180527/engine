@@ -232,6 +232,8 @@ private:
     PrimaryCameraFinder m_cameraFinder; // cached camera query (game tick)
     mem::FrameArena     m_frameArena;   // per-frame transient allocator
     input::InputManager m_input;        // action layer over raw input
+    static constexpr float kSimDt = 1.0f / 60.0f;   // fixed simulation step
+    float m_simAccumulator = 0.0f;
     dbg::DebugDraw      m_debugDraw;     // per-frame debug lines (engineDraw*)
 
     // Simulation state — game world only exists in Snapshot mode.

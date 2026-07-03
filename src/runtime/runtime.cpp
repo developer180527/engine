@@ -467,19 +467,33 @@ void EngineRuntime::tickSimulation(float dt) {
 
     // Script-facing frame state + late service discovery (physics/audio
     // publish refs into the sim world during their onSimulationStart).
-    m_simElapsed += dt;
-    ++m_simFrame;
-    m_scriptHost->setFrame(dt, m_simElapsed, m_simFrame);
     if (const PhysicsServiceRef* pr = w.try_get<PhysicsServiceRef>())
         m_scriptHost->setPhysicsService(pr->svc);
     if (const AudioServiceRef* ar = w.try_get<AudioServiceRef>())
         m_scriptHost->setAudioService(ar->svc);
 
-    // Explicit phase order so script intent lands in the SAME physics step:
-    // scripts set intent -> physics applies it -> contacts dispatch.
-    { ENGINE_PROFILE_SCOPE("Sim.update");  m_plugins.broadcastUpdate(w, dt); }
-    { ENGINE_PROFILE_SCOPE("Sim.physics"); m_plugins.broadcastPhysicsStep(w, dt); }
-    { ENGINE_PROFILE_SCOPE("Sim.post");    m_plugins.broadcastPostPhysics(w); }
+    // ── FIXED-TIMESTEP simulation ───────────────────────────────────────────
+    // Gameplay/scripts/physics step at a constant kSimDt regardless of frame
+    // rate: stable integration, deterministic sim, and tick-aligned
+    // InputSnapshots (the netcode contract). Accumulator pattern; clamped so
+    // a hitch can't death-spiral into ever more catch-up steps. Rendering
+    // still runs per frame off the latest state (interpolation between the
+    // last two sim states is the planned follow-up); camera look stays fresh
+    // via the late-latch channel.
+    m_simAccumulator += dt;
+    if (m_simAccumulator > 4.0f * kSimDt) m_simAccumulator = 4.0f * kSimDt;
+    while (m_simAccumulator >= kSimDt) {
+        m_simAccumulator -= kSimDt;
+        m_input.beginTick(hid::nowNs());   // fold staged events -> snapshot
+        m_simElapsed += kSimDt;
+        ++m_simFrame;
+        m_scriptHost->setFrame(kSimDt, m_simElapsed, m_simFrame);
+        // Explicit phase order so script intent lands in the SAME physics
+        // step: scripts set intent -> physics applies it -> contacts dispatch.
+        { ENGINE_PROFILE_SCOPE("Sim.update");  m_plugins.broadcastUpdate(w, kSimDt); }
+        { ENGINE_PROFILE_SCOPE("Sim.physics"); m_plugins.broadcastPhysicsStep(w, kSimDt); }
+        { ENGINE_PROFILE_SCOPE("Sim.post");    m_plugins.broadcastPostPhysics(w); }
+    }
 
     // Snapshot mode runs in a separate world that tickSystems never touches —
     // run animation and the flecs pipeline here so play mode behaves exactly
@@ -500,7 +514,7 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
     m_input.setUICapture(InputSystem::get().uiCapturesKeyboard(),
                          InputSystem::get().uiCapturesMouse());
     m_input.pump();
-    m_input.beginTick(hid::nowNs());
+    if (!m_simulating) m_input.beginTick(hid::nowNs());
     if (!paused) {
         m_spinnerQuery
             .each([dt](flecs::entity, Transform& t, const Spinner& s) {
