@@ -358,6 +358,7 @@ inline void saveAnimator(flecs::entity e, nlohmann::json& j, const SerdeContext&
         assetref::toJson(ref, j);
     }
     j["clipIndex"] = a->clipIndex;
+    j["fade"]    = a->fade;
     j["time"]    = a->time;
     j["speed"]   = a->speed;
     j["playing"] = a->playing;
@@ -377,6 +378,7 @@ inline void loadAnimator(flecs::entity e, const nlohmann::json& j, SerdeContext&
             a.clipPath = assetref::resolve(ref, ctx.projectRoot, ctx.assetLib);
     }
     a.clipIndex = j.value("clipIndex", 0);
+    a.fade    = j.value("fade", 0.2f);
     a.time    = j.value("time", 0.0f);
     a.speed   = j.value("speed", 1.0f);
     a.playing = j.value("playing", false);

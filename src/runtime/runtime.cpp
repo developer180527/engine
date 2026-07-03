@@ -183,6 +183,8 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_scriptHost->setSceneService(m_sceneService.get());
     m_scriptHost->setPlatform(m_platform.get());   // cursor capture via C API
     m_scriptHost->setDebugDraw(&m_debugDraw);       // engineDraw* -> collector
+    m_scriptHost->setAnimResources(&m_skeletons, &m_clips,
+                                   m_clipLibrary.get(), &m_project);
     m_renderer.setDebugDraw(&m_debugDraw);          // collector -> line pass
     engineApiBindHost(m_scriptHost.get());
 

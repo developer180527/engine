@@ -24,6 +24,7 @@
 #include <unordered_map>
 
 #include <ozz/animation/runtime/animation.h>
+#include <ozz/animation/runtime/blending_job.h>
 #include <ozz/animation/runtime/local_to_model_job.h>
 #include <ozz/animation/runtime/sampling_job.h>
 #include <ozz/animation/runtime/skeleton.h>
@@ -79,17 +80,38 @@ private:
     static constexpr int kMaxBones2 = kMaxBones;   // palette budget (skeleton.h)
 
     // Per-entity ozz runtime buffers. Sized to the skeleton on first use;
-    // resized if the entity's skeleton changes.
+    // resized if the entity's skeleton changes. Crossfade state lives here
+    // (not on the component — components get snapshot-copied at Play):
+    // when the Animator's clip handle CHANGES, the old clip keeps playing and
+    // fades out over Animator::fade seconds via ozz BlendingJob.
     struct AnimContext {
-        ozz::animation::SamplingJob::Context     sampling;
+        // unique_ptr: SamplingJob::Context is not movable/swappable; the
+        // crossfade swap exchanges pointers instead.
+        std::unique_ptr<ozz::animation::SamplingJob::Context> sampling;     // current
+        std::unique_ptr<ozz::animation::SamplingJob::Context> samplingPrev; // fading out
         std::vector<ozz::math::SoaTransform>     locals;
+        std::vector<ozz::math::SoaTransform>     localsPrev;
+        std::vector<ozz::math::SoaTransform>     localsBlend;
         std::vector<ozz::math::Float4x4>         models;
         const ozz::animation::Skeleton*          builtFor = nullptr;
 
+        // Transition bookkeeping
+        AnimClipHandle lastClip{};      // clip seen last frame (switch detection)
+        float          lastTime = 0.0f;
+        AnimClipHandle prevClip{};      // the clip being faded OUT (invalid = none)
+        float          prevTime = 0.0f;
+        float          fadeElapsed = 0.0f;
+        float          fadeDuration = 0.0f;
+
         void ensure(const ozz::animation::Skeleton& skel) {
             if (builtFor == &skel) return;
-            sampling.Resize(skel.num_joints());
+            if (!sampling)     sampling     = std::make_unique<ozz::animation::SamplingJob::Context>();
+            if (!samplingPrev) samplingPrev = std::make_unique<ozz::animation::SamplingJob::Context>();
+            sampling->Resize(skel.num_joints());
+            samplingPrev->Resize(skel.num_joints());
             locals.resize((size_t)skel.num_soa_joints());
+            localsPrev.resize((size_t)skel.num_soa_joints());
+            localsBlend.resize((size_t)skel.num_soa_joints());
             models.resize((size_t)skel.num_joints());
             builtFor = &skel;
         }
@@ -137,17 +159,72 @@ private:
         AnimContext& ctx = m_contexts[entityId];
         ctx.ensure(*skel->ozz);
 
+        // ── Crossfade bookkeeping: clip handle changed -> fade the old out ──
+        if (ctx.lastClip.valid() && anim.clip.id != ctx.lastClip.id) {
+            if (anim.fade > 0.0f && m_clips->get(ctx.lastClip)) {
+                ctx.prevClip     = ctx.lastClip;
+                ctx.prevTime     = ctx.lastTime;
+                ctx.fadeElapsed  = 0.0f;
+                ctx.fadeDuration = anim.fade;
+                // The warm sampling context belongs to the OLD clip now.
+                std::swap(ctx.sampling, ctx.samplingPrev);
+            } else {
+                ctx.prevClip = {};   // hard cut
+            }
+        }
+        ctx.lastClip = anim.clip;
+        ctx.lastTime = anim.time;
+
         // ── ozz: compressed clip -> SoA locals -> model-space matrices ──────
         ozz::animation::SamplingJob sample;
         sample.animation = clip->ozz.get();
-        sample.context   = &ctx.sampling;
+        sample.context   = ctx.sampling.get();
         sample.ratio     = clip->duration > 0.0f ? anim.time / clip->duration : 0.0f;
         sample.output    = ozz::make_span(ctx.locals);
         if (!sample.Run()) { skin.hasSkinMatrices = false; return; }
 
+        // Fading? Sample the outgoing clip too and blend by fade progress.
+        const ozz::math::SoaTransform* finalLocals = ctx.locals.data();
+        const AnimClip* prev = ctx.prevClip.valid() ? m_clips->get(ctx.prevClip) : nullptr;
+        if (prev && prev->valid()) {
+            ctx.fadeElapsed += dt;
+            const float alpha = ctx.fadeDuration > 0.0f
+                ? std::min(ctx.fadeElapsed / ctx.fadeDuration, 1.0f) : 1.0f;
+            if (alpha >= 1.0f) {
+                ctx.prevClip = {};   // fade complete
+            } else {
+                // Outgoing clip keeps advancing (looped) so it doesn't freeze.
+                ctx.prevTime += dt * anim.speed;
+                if (prev->duration > 0.0f) {
+                    ctx.prevTime = std::fmod(ctx.prevTime, prev->duration);
+                    if (ctx.prevTime < 0.0f) ctx.prevTime += prev->duration;
+                }
+                ozz::animation::SamplingJob samplePrev;
+                samplePrev.animation = prev->ozz.get();
+                samplePrev.context   = ctx.samplingPrev.get();
+                samplePrev.ratio     = prev->duration > 0.0f
+                                     ? ctx.prevTime / prev->duration : 0.0f;
+                samplePrev.output    = ozz::make_span(ctx.localsPrev);
+                if (samplePrev.Run()) {
+                    ozz::animation::BlendingJob::Layer layers[2];
+                    layers[0].transform = ozz::make_span(ctx.localsPrev);
+                    layers[0].weight    = 1.0f - alpha;
+                    layers[1].transform = ozz::make_span(ctx.locals);
+                    layers[1].weight    = alpha;
+
+                    ozz::animation::BlendingJob blend;
+                    blend.layers    = layers;
+                    blend.rest_pose = skel->ozz->joint_rest_poses();
+                    blend.output    = ozz::make_span(ctx.localsBlend);
+                    if (blend.Run()) finalLocals = ctx.localsBlend.data();
+                }
+            }
+        }
+
         ozz::animation::LocalToModelJob l2m;
         l2m.skeleton = skel->ozz.get();
-        l2m.input    = ozz::make_span(ctx.locals);
+        l2m.input    = ozz::span<const ozz::math::SoaTransform>(
+                           finalLocals, ctx.locals.size());
         l2m.output   = ozz::make_span(ctx.models);
         if (!l2m.Run()) { skin.hasSkinMatrices = false; return; }
 

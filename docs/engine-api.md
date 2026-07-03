@@ -121,6 +121,24 @@ buttons are integers (`0` = left, `1` = right, `2` = middle).
 | `uint32_t enginePlaySoundAt(const char* path, float x,y,z)`        | positional one-shot |
 | `void engineStopSound(uint32_t handle)`                            | stop a voice |
 
+## Animation
+
+Skeletal animation control for entities with a `SkinnedMesh` + `Animator`.
+Clip paths are project-relative (or absolute) animation files; the host binds
+them to the entity's skeleton by bone name and caches the result, so repeat
+plays are cheap. Switching clips crossfades automatically on the runtime's
+blend path (ozz `BlendingJob`).
+
+| Function | Purpose |
+|---|---|
+| `bool engineAnimPlay(EngineEntity e, const char* clipPath, float fadeSeconds)` | bind + play a clip; crossfades from the current one over `fadeSeconds` (`0` = hard cut, `<0` = keep the Animator's fade). Returns `false` if the entity has no skeleton or the clip fails to bind |
+| `void engineAnimSetSpeed(EngineEntity e, float speed)`     | playback rate (negative = reverse) |
+| `void engineAnimSetLooping(EngineEntity e, bool looping)`  | loop vs clamp at the end |
+| `void engineAnimSetPlaying(EngineEntity e, bool playing)`  | pause / resume |
+| `bool engineAnimIsPlaying(EngineEntity e)`                 | currently advancing? |
+| `float engineAnimTime(EngineEntity e)`                     | current clip time (s) |
+| `float engineAnimDuration(EngineEntity e)`                 | bound clip duration (s), `0` if none |
+
 ## Assets (cooked binaries)
 
 Paths are **cooked** asset paths. Handles are `uint32_t` (`0` = invalid).

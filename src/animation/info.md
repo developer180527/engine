@@ -87,6 +87,17 @@ chains), so the no-clip bind pose renders through the raw-matrix path
 (`computeBindPoseWorldMatrices`, guaranteeing `IBM * world_bind ≈ identity`)
 rather than any SQT round-trip.
 
+## Crossfade (AnimatorSystem)
+Changing `Animator.clip` while a clip is already bound auto-starts a crossfade
+over `Animator.fade` seconds (0 = hard cut). The outgoing clip keeps advancing
+during the fade; both are sampled per frame and mixed with ozz `BlendingJob`
+(rest pose as the fallback layer) before the single `LocalToModelJob`. Each
+entity holds two `SamplingJob::Context`s behind `unique_ptr` (the context type
+is not movable) that swap roles on a clip switch — the incoming clip pays one
+cold-cache frame, which is fine. `engineAnimPlay` is the C-API front door:
+resolve path → `ClipLibrary` bind (cached) → set `Animator.clip`, and the
+switch detection does the rest.
+
 ## Invariants
 - Max 128 bones (512 vec4 uniforms), 4 influences/vertex, weights sum to 1.
 - Bone indices stored as normalized uint8 in the vertex; decoded in the
@@ -95,8 +106,7 @@ rather than any SQT round-trip.
 - Animation ticks even when gameplay is paused (editor scrubbing).
 
 ## Future Work
-- Crossfade transitions + the engineAnim* C API (on ozz BlendingJob), then
-  data-driven state machines as a client of that.
+- Data-driven state machines as a client of the crossfade + engineAnim* API.
 - Animation cooker: emit ozz archives (skeleton/animation serialization) so
   the runtime loads pre-built data instead of bridging Assimp at import.
 - Cook skinned meshes (currently they always take the Assimp fallback path).

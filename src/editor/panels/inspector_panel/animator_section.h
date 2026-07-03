@@ -158,6 +158,11 @@ inline void drawAnimatorSection(EngineContext& ctx, flecs::entity e) {
         ImGui::Text("Speed"); ImGui::SameLine(100.0f); ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##animSpeed", &anim.speed, -2.0f, 4.0f, "%.2fx");
         propEdit(ctx, e, "animator", "Change animation speed");
+
+        // Crossfade duration (applies when the clip changes)
+        ImGui::Text("Fade"); ImGui::SameLine(100.0f); ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##animFade", &anim.fade, 0.0f, 1.0f, "%.2fs");
+        propEdit(ctx, e, "animator", "Change crossfade duration");
     }
 
     // Remove buttons

@@ -4,6 +4,11 @@
 #include <cstdint>
 #include "core/transform.h"
 #include "core/debug_draw.h"
+#include "components/animator.h"
+#include "components/skinned_mesh.h"
+#include "animation/skeleton_registry.h"
+#include "animation/clip_registry.h"
+#include "animation/clip_library.h"
 #include "components/name.h"
 #include "runtime/input/input.h"
 #include "runtime/input/input_event.h"
@@ -12,6 +17,7 @@
 #include "runtime/platform/platform.h"
 #include "runtime/world_query_cache.h"
 #include "runtime/services/asset_service.h"
+#include "project/project_context.h"
 #include "runtime/services/scene_service.h"
 
 // ── keyFromName ────────────────────────────────────────────────────────────
@@ -169,6 +175,63 @@ public:
     void setDebugDraw(dbg::DebugDraw* d) { m_debugDraw = d; }
     dbg::DebugDraw* debugDraw() const { return m_debugDraw; }
 
+    // ── Animation (engineAnim* / future Lua bindings) ──────────────────────
+    // The engine owns the machinery (ozz sampling/blending); this is the
+    // control surface gameplay code drives. Play crossfades automatically —
+    // AnimatorSystem fades from the previous clip over `fade` seconds.
+    void setAnimResources(SkeletonRegistry* skels, AnimClipRegistry* clips,
+                          ClipLibrary* lib, const ProjectContext* project) {
+        m_skelReg = skels; m_clipReg = clips; m_clipLib = lib; m_projectCtx = project;
+    }
+
+    bool animPlay(flecs::entity e, const char* clipPath, float fade) {
+        if (!e.is_alive() || !clipPath || !m_skelReg || !m_clipReg || !m_clipLib)
+            return false;
+        const SkinnedMesh* sm = e.try_get<SkinnedMesh>();
+        if (!sm || !sm->skeleton.valid()) return false;
+        const Skeleton* sk = m_skelReg->get(sm->skeleton);
+        if (!sk) return false;
+
+        std::filesystem::path p(clipPath);
+        if (p.is_relative() && m_projectCtx)
+            p = m_projectCtx->projectRoot / p;
+        AnimClipHandle h = m_clipLib->load(p.string(), sm->skeleton, *sk, *m_clipReg);
+        if (!h.valid()) return false;
+
+        Animator a = e.has<Animator>() ? e.get<Animator>() : Animator{};
+        if (fade >= 0.0f) a.fade = fade;
+        if (a.clip.id == h.id) return true;   // already playing this clip
+        a.clip     = h;
+        a.clipPath = p.string();
+        a.time     = 0.0f;
+        a.playing  = true;
+        e.set<Animator>(a);
+        return true;
+    }
+    void animSetSpeed(flecs::entity e, float s) {
+        if (Animator* a = mutAnimator(e)) a->speed = s;
+    }
+    void animSetLooping(flecs::entity e, bool loop) {
+        if (Animator* a = mutAnimator(e)) a->looping = loop;
+    }
+    void animSetPlaying(flecs::entity e, bool playing) {
+        if (Animator* a = mutAnimator(e)) a->playing = playing;
+    }
+    bool animIsPlaying(flecs::entity e) const {
+        const Animator* a = e.is_alive() ? e.try_get<Animator>() : nullptr;
+        return a && a->playing;
+    }
+    float animTime(flecs::entity e) const {
+        const Animator* a = e.is_alive() ? e.try_get<Animator>() : nullptr;
+        return a ? a->time : 0.0f;
+    }
+    float animDuration(flecs::entity e) const {
+        const Animator* a = e.is_alive() ? e.try_get<Animator>() : nullptr;
+        if (!a || !m_clipReg) return 0.0f;
+        const AnimClip* c = m_clipReg->get(a->clip);
+        return c ? c->duration : 0.0f;
+    }
+
     uint32_t assetLoadMesh(const char* cookedPath) {
         return m_assetService ? m_assetService->loadMesh(cookedPath).id : 0;
     }
@@ -234,6 +297,14 @@ private:
     IPlatform*       m_platform     = nullptr; // for cursor capture
     bool             m_cursorCaptured = false;
     dbg::DebugDraw*  m_debugDraw    = nullptr; // per-frame line collector (engineDraw*)
+    SkeletonRegistry*     m_skelReg    = nullptr; // animation control surface
+    AnimClipRegistry*     m_clipReg    = nullptr;
+    ClipLibrary*          m_clipLib    = nullptr;
+    const ProjectContext* m_projectCtx = nullptr;
+
+    Animator* mutAnimator(flecs::entity e) {
+        return e.is_alive() && e.has<Animator>() ? &e.get_mut<Animator>() : nullptr;
+    }
     IPhysicsService* m_physics      = nullptr; // null until Jolt service lands
     IAudioService*   m_audio        = nullptr; // null until miniaudio lands
     AssetService*    m_assetService = nullptr; // null until wired from EngineContext

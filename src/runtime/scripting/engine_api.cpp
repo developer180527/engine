@@ -177,6 +177,33 @@ bool engineUiCheckbox(const char* label, bool* v) {
 }
 void engineUiSeparator(void) { if (g_ui && g_ui->separator) g_ui->separator(); }
 
+// ── Animation ────────────────────────────────────────────────────────────────
+bool engineAnimPlay(EngineEntity e, const char* clipPath, float fadeSeconds) {
+    ScriptHost* h = hostWithWorld();
+    return (h && clipPath) ? h->animPlay(resolve(h, e), clipPath, fadeSeconds) : false;
+}
+void engineAnimSetSpeed(EngineEntity e, float s) {
+    if (ScriptHost* h = hostWithWorld()) h->animSetSpeed(resolve(h, e), s);
+}
+void engineAnimSetLooping(EngineEntity e, bool loop) {
+    if (ScriptHost* h = hostWithWorld()) h->animSetLooping(resolve(h, e), loop);
+}
+void engineAnimSetPlaying(EngineEntity e, bool playing) {
+    if (ScriptHost* h = hostWithWorld()) h->animSetPlaying(resolve(h, e), playing);
+}
+bool engineAnimIsPlaying(EngineEntity e) {
+    ScriptHost* h = hostWithWorld();
+    return h ? h->animIsPlaying(resolve(h, e)) : false;
+}
+float engineAnimTime(EngineEntity e) {
+    ScriptHost* h = hostWithWorld();
+    return h ? h->animTime(resolve(h, e)) : 0.0f;
+}
+float engineAnimDuration(EngineEntity e) {
+    ScriptHost* h = hostWithWorld();
+    return h ? h->animDuration(resolve(h, e)) : 0.0f;
+}
+
 // ── Debug draw ───────────────────────────────────────────────────────────────
 // Route to the runtime's per-frame line collector (via ScriptHost). No collector
 // (headless) => no-op.

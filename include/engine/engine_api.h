@@ -125,6 +125,19 @@ bool engineUiSliderFloat(const char* label, float* v, float lo, float hi);
 bool engineUiCheckbox   (const char* label, bool* v);
 void engineUiSeparator  (void);
 
+/* ── Animation ───────────────────────────────────────────────────────────────
+ * Control surface over the engine's animation machinery (ozz sampling +
+ * blending). Play binds a STANDALONE clip asset (project-relative or absolute
+ * path) to the entity's skeleton and starts it; switching clips crossfades
+ * automatically over `fadeSeconds` (0 = hard cut, <0 = keep current fade). */
+bool  engineAnimPlay      (EngineEntity e, const char* clipPath, float fadeSeconds);
+void  engineAnimSetSpeed  (EngineEntity e, float speed);
+void  engineAnimSetLooping(EngineEntity e, bool looping);
+void  engineAnimSetPlaying(EngineEntity e, bool playing);
+bool  engineAnimIsPlaying (EngineEntity e);
+float engineAnimTime      (EngineEntity e);
+float engineAnimDuration  (EngineEntity e);
+
 /* ── Debug draw (immediate-mode 3D lines/wireframes, THIS frame only) ─────────
  * A kit queues shapes from its per-frame code; the renderer draws them into the
  * world views and clears the queue next frame. Color is 0..1 RGB. Works in any

@@ -21,6 +21,7 @@ struct Animator {
     int            clipIndex = 0; // clip index within the mesh's source file
     float          time     = 0.0f;
     float          speed    = 1.0f;
+    float          fade     = 0.2f; // crossfade seconds when `clip` changes (0 = hard cut)
     bool           playing  = false;
     bool           looping  = true;
 };
