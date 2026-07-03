@@ -34,3 +34,6 @@
 [submodule "third_party/tlsf"]
 	path = third_party/tlsf
 	url = https://github.com/mattconte/tlsf.git
+[submodule "modules/hid"]
+	path = modules/hid
+	url = https://github.com/developer180527/hid.git
