@@ -33,6 +33,12 @@ constexpr const char* kDefaultConfig = R"({
   ]
 })";
 
+// Window-motion suppression window after raw motion. The GLFW echo of a raw
+// mouse arrives within a frame or two, so a short window kills double-counts;
+// a long one reads as trackpad lag on the raw->window handoff (user-felt at
+// 1s, imperceptible at 250ms).
+constexpr uint64_t kRawHandoffNs = 250000000ull;   // 250 ms
+
 uint64_t electKey(uint32_t physId, hid::EventType t) {
     return ((uint64_t)physId << 8) | (uint64_t)t;
 }
@@ -156,7 +162,7 @@ void InputManager::pump() {
                         LOG_INFO("Input", "motion source -> RAW (gaming mouse talking)");
                     }
                 } else if (motionKind && m_source &&
-                           hid::nowNs() - m_lastRawMotionNs < 1000000000ull) {
+                           hid::nowNs() - m_lastRawMotionNs < kRawHandoffNs) {
                     continue;   // raw mouse active — window motion is its echo
                 } else if (motionKind && m_rawMotionLive) {
                     m_rawMotionLive = false;
