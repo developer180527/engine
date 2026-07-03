@@ -48,18 +48,36 @@ namespace input {
 
 struct InputSnapshot {
     uint64_t tickEndNs   = 0;
-    uint64_t keys[4]     = {};   // HID-usage bitset (0..255)
-    uint32_t mouseButtons = 0;   // bit N = button N held
+    uint64_t keys[4]     = {};   // HID-usage bitset (0..255) — persists
+    // Per-tick TRANSITION masks: a press+release landing inside ONE tick
+    // leaves the held bitset unchanged (cur == prev) but must still fire
+    // edge-triggered actions — high-frequency taps are real at 8kHz input
+    // and 60Hz ticks. Reset every tick.
+    uint64_t keysPressed[4]  = {};
+    uint64_t keysReleased[4] = {};
+    uint32_t mouseButtons = 0;   // bit N = button N held — persists
+    uint32_t buttonsPressed = 0, buttonsReleased = 0;   // per-tick
     int32_t  mouseDx = 0, mouseDy = 0;   // raw counts within this tick
     int32_t  scrollX = 0, scrollY = 0;
+    uint32_t _pad = 0;   // explicit: snapshots are memcmp'd/hashed/wired —
+                         // NO indeterminate padding bytes allowed
 
     bool keyDown(uint16_t usage) const {
         return usage < 256 && (keys[usage >> 6] >> (usage & 63)) & 1;
+    }
+    bool keyPressed(uint16_t u) const {
+        return u < 256 && (keysPressed[u >> 6] >> (u & 63)) & 1;
+    }
+    bool keyReleased(uint16_t u) const {
+        return u < 256 && (keysReleased[u >> 6] >> (u & 63)) & 1;
     }
     bool buttonDown(uint16_t b) const {
         return b < 32 && (mouseButtons >> b) & 1;
     }
 };
+
+static_assert(sizeof(InputSnapshot) == 136,
+              "InputSnapshot must stay padding-free POD (memcmp/hash/wire)");
 
 enum class ActionType : uint8_t { Digital, Axis1, Axis2 };
 

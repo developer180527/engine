@@ -149,6 +149,35 @@ int main() {
         CHECK(m.actionDown("Jump"), "pop restores gameplay resolution");
     }
 
+    // ── Sub-tick tap: press+release inside ONE tick still fires edges ───────
+    {
+        InputManager m;
+        auto src = std::make_unique<ReplaySource>();
+        src->addDevice({3, hid::DeviceClass::Keyboard, 0, 0, 110, "kbd"});
+        src->addDevice({1, hid::DeviceClass::Mouse,    0, 0, 77,  "mouse"});
+        src->addEvent({1000000, 3, hid::EventType::Key,    0, 0x2C, 1, 0});
+        src->addEvent({2000000, 3, hid::EventType::Key,    0, 0x2C, 0, 0});
+        src->addEvent({1000000, 1, hid::EventType::Button, 0, 0,    1, 0});
+        src->addEvent({2000000, 1, hid::EventType::Button, 0, 0,    0, 0});
+        src->addEvent({3000000, 1, hid::EventType::Scroll, 0, 0,    2, -5});
+        m.initWithSource(std::move(src));
+        m.loadConfigText(R"({"contexts":[{"name":"G","actions":[
+            {"name":"Jump","type":"digital","bindings":["key:Space"]},
+            {"name":"Fire","type":"digital","bindings":["mouse:left"]},
+            {"name":"Pan","type":"axis2","bindings":["scroll"]}]}]})");
+        m.pump();
+        m.beginTick(10 * 1000000ull);   // everything inside one tick
+        CHECK(!m.snapshot().keyDown(0x2C), "tap: held state correctly clear");
+        CHECK(m.actionPressed("Jump"), "sub-tick key tap fires pressed edge");
+        CHECK(m.actionReleased("Jump"), "sub-tick key tap fires released edge");
+        CHECK(m.actionPressed("Fire") && m.actionReleased("Fire"),
+              "sub-tick click fires both button edges");
+        float px, py;
+        m.axis2("Pan", &px, &py);
+        CHECK(px == 2.0f && py == -5.0f,
+              "axis2 scroll binding reaches BOTH components (wheel not lost)");
+    }
+
     // ── Focus gate: unfocused drops presses, keeps releases ─────────────────
     {
         InputManager m;

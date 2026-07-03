@@ -145,6 +145,9 @@ void InputManager::beginTick(uint64_t tickEndNs) {
     m_prev = m_cur;
     m_cur.tickEndNs = tickEndNs;
     m_cur.mouseDx = m_cur.mouseDy = m_cur.scrollX = m_cur.scrollY = 0;
+    std::memset(m_cur.keysPressed,  0, sizeof(m_cur.keysPressed));
+    std::memset(m_cur.keysReleased, 0, sizeof(m_cur.keysReleased));
+    m_cur.buttonsPressed = m_cur.buttonsReleased = 0;
 
     size_t kept = 0;
     for (size_t i = 0; i < m_staging.size(); ++i) {
@@ -153,14 +156,20 @@ void InputManager::beginTick(uint64_t tickEndNs) {
         switch (e.type) {
         case hid::EventType::Key:
             if (e.code < 256) {
-                if (e.value) m_cur.keys[e.code >> 6] |=  (1ull << (e.code & 63));
-                else         m_cur.keys[e.code >> 6] &= ~(1ull << (e.code & 63));
+                const uint64_t bit = 1ull << (e.code & 63);
+                if (e.value) { m_cur.keys[e.code >> 6] |= bit;
+                               m_cur.keysPressed[e.code >> 6]  |= bit; }
+                else         { m_cur.keys[e.code >> 6] &= ~bit;
+                               m_cur.keysReleased[e.code >> 6] |= bit; }
             }
             break;
         case hid::EventType::Button:
             if (e.code < 32) {
-                if (e.value) m_cur.mouseButtons |=  (1u << e.code);
-                else         m_cur.mouseButtons &= ~(1u << e.code);
+                const uint32_t bit = 1u << e.code;
+                if (e.value) { m_cur.mouseButtons |= bit;
+                               m_cur.buttonsPressed  |= bit; }
+                else         { m_cur.mouseButtons &= ~bit;
+                               m_cur.buttonsReleased |= bit; }
             }
             break;
         case hid::EventType::MouseMotion:
@@ -205,7 +214,8 @@ float InputManager::evalAxis(const Action& a, const InputSnapshot& s,
     float v = 0.0f;
     for (const Binding& b : a.binds) {
         if (a.type == ActionType::Axis2 && b.comp != comp &&
-            b.kind != Binding::MouseMotion) continue;
+            b.kind != Binding::MouseMotion && b.kind != Binding::Scroll)
+            continue;   // motion/scroll are inherently 2D — query comp selects
         switch (b.kind) {
         case Binding::KeyUsage:
             if (s.keyDown(b.code)) v += b.scale;
@@ -230,13 +240,23 @@ bool InputManager::actionDown(const char* n) const {
 }
 bool InputManager::actionPressed(const char* n) const {
     const Action* a = resolve(n);
-    return a && a->type == ActionType::Digital &&
-           evalDigital(*a, m_cur) && !evalDigital(*a, m_prev);
+    if (!a || a->type != ActionType::Digital) return false;
+    if (evalDigital(*a, m_cur) && !evalDigital(*a, m_prev)) return true;
+    for (const Binding& b : a->binds) {   // sub-tick tap: transition mask
+        if (b.kind == Binding::KeyUsage    && m_cur.keyPressed(b.code)) return true;
+        if (b.kind == Binding::MouseButton && (m_cur.buttonsPressed >> b.code) & 1) return true;
+    }
+    return false;
 }
 bool InputManager::actionReleased(const char* n) const {
     const Action* a = resolve(n);
-    return a && a->type == ActionType::Digital &&
-           !evalDigital(*a, m_cur) && evalDigital(*a, m_prev);
+    if (!a || a->type != ActionType::Digital) return false;
+    if (!evalDigital(*a, m_cur) && evalDigital(*a, m_prev)) return true;
+    for (const Binding& b : a->binds) {
+        if (b.kind == Binding::KeyUsage    && m_cur.keyReleased(b.code)) return true;
+        if (b.kind == Binding::MouseButton && (m_cur.buttonsReleased >> b.code) & 1) return true;
+    }
+    return false;
 }
 float InputManager::axis1(const char* n) const {
     const Action* a = resolve(n);

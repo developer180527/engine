@@ -30,6 +30,8 @@ inline uint16_t usageFromGlfw(int key) {
         case 343: return 0xE3;   // LSuper
         case 344: return 0xE5;   // RShift
         case 345: return 0xE4;   // RCtrl
+        case 346: return 0xE6;   // RAlt
+        case 347: return 0xE7;   // RSuper
         default:  return 0;
     }
 }

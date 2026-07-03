@@ -68,14 +68,24 @@ public:
         size_t n = 0;
         auto push = [&](hid::Event e) { if (n < max) out[n++] = e; };
 
-        const float dx = in.mouseDeltaX(), dy = in.mouseDeltaY();
-        if (dx != 0.0f || dy != 0.0f)
-            push({t, 1, hid::EventType::MouseMotion, 0, 0,
-                  (int32_t)dx, (int32_t)dy});
-        const float sx = in.scrollDeltaX(), sy = in.scrollDeltaY();
-        if (sx != 0.0f || sy != 0.0f)
-            push({t, 1, hid::EventType::Scroll, 0, 0,
-                  (int32_t)sx, (int32_t)sy});
+        // Fractional carry: GLFW deltas are floats (retina sub-pixel, smooth
+        // trackpad scroll). Truncating each frame silently eats slow, precise
+        // aim adjustments — carry the remainder instead so every fraction
+        // eventually lands as a count.
+        auto quantize = [](float v, float& rem) {
+            v += rem;
+            const int32_t whole = (int32_t)v;   // toward zero
+            rem = v - (float)whole;
+            return whole;
+        };
+        const int32_t dx = quantize(in.mouseDeltaX(),  m_remX);
+        const int32_t dy = quantize(in.mouseDeltaY(),  m_remY);
+        if (dx || dy)
+            push({t, 1, hid::EventType::MouseMotion, 0, 0, dx, dy});
+        const int32_t sx = quantize(in.scrollDeltaX(), m_remSX);
+        const int32_t sy = quantize(in.scrollDeltaY(), m_remSY);
+        if (sx || sy)
+            push({t, 1, hid::EventType::Scroll, 0, 0, sx, sy});
         for (int b = 0; b < 8; ++b) {
             if (in.isMousePressed(b))
                 push({t, 1, hid::EventType::Button, 0, (uint16_t)b, 1, 0});
@@ -102,6 +112,9 @@ public:
         for (size_t i = 0; i < n; ++i) out[i] = kDevs[i];
         return n;
     }
+
+private:
+    float m_remX = 0, m_remY = 0, m_remSX = 0, m_remSY = 0;
 };
 
 // ── ReplaySource ────────────────────────────────────────────────────────────
