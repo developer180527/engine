@@ -26,6 +26,8 @@ using namespace assetlib;
 #include "animation/assimp_skeleton_loader.h"   // extractSkeleton/BoneWeights
 #include "animation/ozz_bridge.h"               // buildOzzSkeleton/Clip
 #include "animation/animation_clip.h"
+#include <assetlib/texture_asset.h>
+#include <stb_image.h>
 
 static constexpr unsigned kImportFlags =
     aiProcess_Triangulate | aiProcess_GenSmoothNormals |
@@ -169,6 +171,90 @@ static std::vector<uint8_t> drainOzzStream(ozz::io::MemoryStream& ms) {
     return out;
 }
 
+// ── Materials (shared by static + skinned cooks) ────────────────────────────
+// Embedded FBX textures have no on-disk source for the TextureCooker to see;
+// they are decoded HERE (stb) and written as sibling .ctex files (TextureAsset
+// format) next to the mesh's cooked output. CookedMaterial then references the
+// .ctex basename; the loader resolves that against the cooked file's own
+// directory — cooked skinned meshes render textured with zero Assimp.
+static std::string resolveCookTexture(const aiScene* scene, const aiString& tp,
+                                      const CookContext& ctx, int slot) {
+    const aiTexture* emb = scene->GetEmbeddedTexture(tp.C_Str());
+    if (!emb)
+        return std::filesystem::path(tp.C_Str()).filename().string();
+
+    assetlib::TextureAsset tex;
+    if (emb->mHeight == 0) {   // compressed (png/jpg bytes)
+        int w = 0, h = 0, ch = 0;
+        stbi_uc* px = stbi_load_from_memory(
+            reinterpret_cast<const stbi_uc*>(emb->pcData),
+            (int)emb->mWidth, &w, &h, &ch, 4);
+        if (!px) return {};
+        tex.header.width  = (uint32_t)w;
+        tex.header.height = (uint32_t)h;
+        tex.pixels.assign(px, px + (size_t)w * h * 4);
+        stbi_image_free(px);
+    } else {                    // raw BGRA texels
+        tex.header.width  = emb->mWidth;
+        tex.header.height = emb->mHeight;
+        tex.pixels.resize((size_t)emb->mWidth * emb->mHeight * 4);
+        for (size_t p = 0; p < (size_t)emb->mWidth * emb->mHeight; ++p) {
+            tex.pixels[p*4+0] = emb->pcData[p].r;
+            tex.pixels[p*4+1] = emb->pcData[p].g;
+            tex.pixels[p*4+2] = emb->pcData[p].b;
+            tex.pixels[p*4+3] = emb->pcData[p].a;
+        }
+    }
+    char name[64];
+    std::snprintf(name, sizeof(name), "%s_t%d.ctex",
+                  ctx.outputPath.stem().string().c_str(), slot);
+    const auto outPath = ctx.outputPath.parent_path() / name;
+    if (!assetlib::saveTexture(tex, outPath)) return {};
+    std::printf("[MeshCooker] embedded texture -> %s (%ux%u)\n",
+                name, tex.header.width, tex.header.height);
+    return name;
+}
+
+static void emitMaterials(const aiScene* scene, MeshAsset& asset,
+                          const CookContext& ctx) {
+    asset.materials.reserve(scene->mNumMaterials);
+    int texSlot = 0;
+    for (uint32_t m = 0; m < scene->mNumMaterials; ++m) {
+        const aiMaterial* aiMat = scene->mMaterials[m];
+        CookedMaterial cm{};
+        aiColor4D col{1.0f, 1.0f, 1.0f, 1.0f};
+        if (aiGetMaterialColor(aiMat, AI_MATKEY_COLOR_DIFFUSE, &col) == AI_SUCCESS) {
+            cm.baseColorFactor[0]=col.r; cm.baseColorFactor[1]=col.g;
+            cm.baseColorFactor[2]=col.b; cm.baseColorFactor[3]=col.a;
+        }
+        float rough = 0.7f, metal = 0.0f;
+        aiGetMaterialFloat(aiMat, AI_MATKEY_ROUGHNESS_FACTOR, &rough);
+        aiGetMaterialFloat(aiMat, AI_MATKEY_METALLIC_FACTOR,  &metal);
+        cm.roughness = rough; cm.metallic = metal;
+
+        aiString tp;
+        if (aiMat->GetTexture(aiTextureType_DIFFUSE, 0, &tp) == AI_SUCCESS ||
+            aiMat->GetTexture(aiTextureType_BASE_COLOR, 0, &tp) == AI_SUCCESS) {
+            const std::string fn = resolveCookTexture(scene, tp, ctx, texSlot++);
+            if (!fn.empty()) {
+                std::snprintf(cm.baseColorPath, sizeof(cm.baseColorPath), "%s", fn.c_str());
+                cm.flags |= kMatFlag_HasBaseColor;
+            }
+        }
+        aiString np;
+        if (aiMat->GetTexture(aiTextureType_NORMALS, 0, &np) == AI_SUCCESS ||
+            aiMat->GetTexture(aiTextureType_HEIGHT,  0, &np) == AI_SUCCESS) {
+            const std::string fn = resolveCookTexture(scene, np, ctx, texSlot++);
+            if (!fn.empty()) {
+                std::snprintf(cm.normalMapPath, sizeof(cm.normalMapPath), "%s", fn.c_str());
+                cm.flags |= kMatFlag_HasNormalMap;
+            }
+        }
+        asset.materials.push_back(cm);
+    }
+    asset.header.materialCount = (uint32_t)asset.materials.size();
+}
+
 // ── Skinned cook ─────────────────────────────────────────────────────────────
 // Vertices stay in MESH space (the skin matrices place them at runtime), so
 // node transforms are NOT baked. Import settings must match the runtime
@@ -271,6 +357,8 @@ static CookResult cookSkinned(const CookContext& ctx) {
         asset.header.boundsMin[i] = bMin[i];
         asset.header.boundsMax[i] = bMax[i];
     }
+
+    emitMaterials(scene, asset, ctx);
 
     // 3. Bones + ozz skeleton archive (opaque blob to assetlib).
     asset.bones.reserve(skel.bones.size());

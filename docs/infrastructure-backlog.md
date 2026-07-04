@@ -29,11 +29,9 @@ tier-3 game module.
    skeletons/clips (mmap-and-go, no Assimp at runtime). Kills the sync-parse
    hitch class permanently.
 7. **Async clip/asset bind** — jobs-pool IO path + "pending" clip state.
-8. ~~Skinned-mesh cooking~~ SHIPPED (v3 format: bones + ozz skeleton/clip
-   archives; zombie loads+animates with zero Assimp). REMAINING GAP:
-   **embedded FBX textures don't survive cooking** (material section stores
-   basenames only) — cooked skinned meshes render untextured until the
-   cooker extracts embedded textures into the payload/texture assets.
+8. ~~Skinned-mesh cooking~~ SHIPPED COMPLETE (v3: bones + ozz skeleton/clip
+   archives + embedded textures extracted to sibling .ctex files; zombie
+   renders textured + animated with zero runtime Assimp).
 9. **AsyncLoader onto the job pool IO channel**; parallel per-asset cooks.
 
 ## Phase C — Input completion

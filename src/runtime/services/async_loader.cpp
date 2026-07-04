@@ -336,14 +336,32 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                         std::memcpy(mg.baseColorFactor, cm.baseColorFactor, 16);
                         mg.roughness = cm.roughness;
                         mg.metallic  = cm.metallic;
+                        // .ctex = embedded texture the cooker extracted;
+                        // lives NEXT TO the cooked mesh, loads with no decode.
+                        auto loadCtexOr = [&](const char* p) -> TextureGPUData {
+                            const std::string sp = p;
+                            if (sp.size() > 5 &&
+                                sp.compare(sp.size() - 5, 5, ".ctex") == 0) {
+                                assetlib::TextureAsset t;
+                                if (assetlib::loadTexture(
+                                        t, cookedAbs.parent_path() / sp)) {
+                                    TextureGPUData g;
+                                    g.mem = bgfx::copy(t.pixels.data(),
+                                        (uint32_t)t.pixels.size());
+                                    g.w = (uint16_t)t.header.width;
+                                    g.h = (uint16_t)t.header.height;
+                                    return g;
+                                }
+                                return {};
+                            }
+                            return loadTextureGPU(nullptr, p, srcDir, stem,
+                                m_registry, m_projectRoot,
+                                m_projectRoot / ".cache");
+                        };
                         if (cm.flags & assetlib::kMatFlag_HasBaseColor)
-                            mg.baseColorTexture = loadTextureGPU(
-                                nullptr, cm.baseColorPath, srcDir, stem,
-                                m_registry, m_projectRoot, m_projectRoot / ".cache");
+                            mg.baseColorTexture = loadCtexOr(cm.baseColorPath);
                         if (cm.flags & assetlib::kMatFlag_HasNormalMap)
-                            mg.normalMapTexture = loadTextureGPU(
-                                nullptr, cm.normalMapPath, srcDir, stem,
-                                m_registry, m_projectRoot, m_projectRoot / ".cache");
+                            mg.normalMapTexture = loadCtexOr(cm.normalMapPath);
                         mg.baseColorName = (cm.flags & assetlib::kMatFlag_HasBaseColor) ? cm.baseColorPath : "";
                         mg.normalMapName = (cm.flags & assetlib::kMatFlag_HasNormalMap) ? cm.normalMapPath : "";
                         LOG_INFO("BinaryLoader", "Mat[%u] base=%s nm=%s",
