@@ -91,7 +91,9 @@ int main(int argc, char** argv) {
         // submeshes empty == single-draw (one material); else N ranges.
         const size_t subs = m->submeshes.empty() ? 1 : m->submeshes.size();
         CHECK(m->indexCount > 0, "mesh has geometry (%u indices)", m->indexCount);
-        std::printf("        submeshes=%zu\n", subs);
+        std::printf("        submeshes=%zu  bounds=(%.3f,%.3f,%.3f)..(%.3f,%.3f,%.3f)\n",
+                    subs, m->boundsMin.x, m->boundsMin.y, m->boundsMin.z,
+                    m->boundsMax.x, m->boundsMax.y, m->boundsMax.z);
 
         if (subs > 1) {
             ++multiSubmeshSeen;

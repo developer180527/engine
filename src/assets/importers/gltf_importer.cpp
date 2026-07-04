@@ -5,6 +5,7 @@
 #include <bgfx/bgfx.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -86,6 +87,37 @@ TextureHandle loadTexture(const cgltf_texture* cTex,
     return storage.textures.addTexture(std::move(tex));
 }
 
+// ── Node-transform baking ────────────────────────────────────────────────────
+// glTF places each mesh via its NODE's transform in the scene graph. Merging
+// raw mesh vertices without it collapses every part onto the origin (the
+// "slide stuck on the grip" bug). We bake the node's world matrix into the
+// vertices at import — positions by the full 4x4, normals by the 3x3
+// inverse-transpose (so non-uniform scale doesn't skew them). Column-major m.
+void xformPoint(const float m[16], const float p[3], float* o) {
+    o[0] = m[0]*p[0] + m[4]*p[1] + m[8]*p[2]  + m[12];
+    o[1] = m[1]*p[0] + m[5]*p[1] + m[9]*p[2]  + m[13];
+    o[2] = m[2]*p[0] + m[6]*p[1] + m[10]*p[2] + m[14];
+}
+// Inverse-transpose of the upper-left 3x3 (identity fallback on degenerate).
+void makeNormalMatrix(const float m[16], float n[9]) {
+    const float a=m[0],b=m[4],c=m[8], d=m[1],e=m[5],f=m[9], g=m[2],h=m[6],i=m[10];
+    const float A=e*i-f*h, B=f*g-d*i, C=d*h-e*g;
+    const float det=a*A+b*B+c*C;
+    if (std::fabs(det) < 1e-12f) { n[0]=n[4]=n[8]=1.0f; n[1]=n[2]=n[3]=n[5]=n[6]=n[7]=0.0f; return; }
+    const float s=1.0f/det;
+    // inverse (row-major), then transpose => normal matrix, stored row-major.
+    n[0]=A*s;             n[1]=B*s;             n[2]=C*s;
+    n[3]=(c*h-b*i)*s;     n[4]=(a*i-c*g)*s;     n[5]=(b*g-a*h)*s;
+    n[6]=(b*f-c*e)*s;     n[7]=(c*d-a*f)*s;     n[8]=(a*e-b*d)*s;
+}
+void xformNormal(const float n[9], const float v[3], float* o) {
+    o[0]=n[0]*v[0]+n[1]*v[1]+n[2]*v[2];
+    o[1]=n[3]*v[0]+n[4]*v[1]+n[5]*v[2];
+    o[2]=n[6]*v[0]+n[7]*v[1]+n[8]*v[2];
+    const float len=std::sqrt(o[0]*o[0]+o[1]*o[1]+o[2]*o[2]);
+    if (len > 1e-8f) { o[0]/=len; o[1]/=len; o[2]/=len; }
+}
+
 } // namespace
 
 bool GltfImporter::supports(std::string_view ext) const {
@@ -135,9 +167,10 @@ MeshImportResult GltfImporter::load(const std::string& path,
         return h;
     };
 
-    // MERGE every triangle primitive of every mesh into one shared VB/IB, one
-    // SubmeshRange (with its own material) per primitive. Reading only
-    // meshes[0].primitives[0] silently dropped the rest of the geometry.
+    // MERGE every triangle primitive into one shared VB/IB, one SubmeshRange
+    // (own material) per primitive. Iterate NODES (not meshes) so each part is
+    // baked at its scene-graph WORLD transform — reading meshes[0].primitives[0]
+    // raw dropped all but one part AND ignored placement (parts on the origin).
     std::vector<Vertex>       vertices;
     std::vector<uint32_t>     indices;
     std::vector<SubmeshRange> submeshes;
@@ -145,8 +178,12 @@ MeshImportResult GltfImporter::load(const std::string& path,
     bx::Vec3 bMax{-1e30f, -1e30f, -1e30f};
     bool anyDoubleSided = false;
 
-    for (cgltf_size mi = 0; mi < data->meshes_count; ++mi) {
-        const cgltf_mesh& mesh = data->meshes[mi];
+    for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
+        const cgltf_node* node = &data->nodes[ni];
+        if (!node->mesh) continue;
+        float world[16]; cgltf_node_transform_world(node, world);
+        float nmat[9];   makeNormalMatrix(world, nmat);
+        const cgltf_mesh& mesh = *node->mesh;
         for (cgltf_size pi = 0; pi < mesh.primitives_count; ++pi) {
             const cgltf_primitive& prim = mesh.primitives[pi];
             if (prim.type != cgltf_primitive_type_triangles) continue;
@@ -158,9 +195,11 @@ MeshImportResult GltfImporter::load(const std::string& path,
             const uint32_t vertBase = (uint32_t)vertices.size();
             for (size_t i = 0; i < posAcc->count; ++i) {
                 Vertex v{};
-                readFloats(posAcc, i, v.position, 3);
-                if (normalAcc && i < normalAcc->count) readFloats(normalAcc, i, v.normal, 3);
-                else v.normal[1] = 1.0f;
+                float p[3] = {0,0,0};  readFloats(posAcc, i, p, 3);
+                xformPoint(world, p, v.position);      // bake node placement
+                float nrm[3] = {0,1,0};
+                if (normalAcc && i < normalAcc->count) readFloats(normalAcc, i, nrm, 3);
+                xformNormal(nmat, nrm, v.normal);
                 if (uvAcc) readFloats(uvAcc, i, v.uv, 2);
                 bMin.x = std::min(bMin.x, v.position[0]); bMax.x = std::max(bMax.x, v.position[0]);
                 bMin.y = std::min(bMin.y, v.position[1]); bMax.y = std::max(bMax.y, v.position[1]);

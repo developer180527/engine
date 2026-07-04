@@ -222,21 +222,28 @@ static SubmeshRange appendIndices(const aiMesh* aiM, uint32_t vertBase,
     return r;
 }
 
-// Append one submesh's STATIC vertices into the shared buffer, growing bounds.
+// Append one submesh's STATIC vertices, BAKING the node's world transform so a
+// multi-part model assembles correctly (parts placed by scene-graph nodes, not
+// piled on the origin). Positions by the full matrix, normals by the 3x3
+// inverse-transpose (guarded against degenerate scale) — mirrors the cooker.
 static void appendStaticVerts(const aiMesh* aiM, std::vector<Vertex>& verts,
-                              Bounds& b) {
+                              Bounds& b, const aiMatrix4x4& world) {
+    aiMatrix3x3 nm(world);
+    const float det = nm.Determinant();
+    if (std::fabs(det) > 1e-12f) { nm.Inverse(); nm.Transpose(); }
+    else                         { nm = aiMatrix3x3(); }
     for (uint32_t v = 0; v < aiM->mNumVertices; ++v) {
         Vertex vtx{};
-        vtx.position[0]=aiM->mVertices[v].x; vtx.position[1]=aiM->mVertices[v].y;
-        vtx.position[2]=aiM->mVertices[v].z;
+        aiVector3D P = world * aiM->mVertices[v];
+        vtx.position[0]=P.x; vtx.position[1]=P.y; vtx.position[2]=P.z;
         if (aiM->HasNormals()) {
-            vtx.normal[0]=aiM->mNormals[v].x; vtx.normal[1]=aiM->mNormals[v].y;
-            vtx.normal[2]=aiM->mNormals[v].z;
+            aiVector3D N = nm * aiM->mNormals[v]; N.Normalize();
+            vtx.normal[0]=N.x; vtx.normal[1]=N.y; vtx.normal[2]=N.z;
         } else vtx.normal[1] = 1.0f;              // world-up fallback
         if (aiM->mTextureCoords[0]) {
             vtx.uv[0]=aiM->mTextureCoords[0][v].x; vtx.uv[1]=aiM->mTextureCoords[0][v].y;
         }
-        b.grow(vtx.position[0], vtx.position[1], vtx.position[2]);
+        b.grow(P.x, P.y, P.z);
         verts.push_back(vtx);
     }
 }
@@ -306,6 +313,28 @@ static MeshHandle finalizeMesh(const std::vector<VertT>& verts,
     }
     if (submeshes.size() > 1) mesh.submeshes = std::move(submeshes);
     return storage.meshes.addMesh(std::move(mesh));
+}
+
+// Walk the node tree accumulating world = parent * node.transform, appending
+// each node's static triangle meshes at that transform (like the cooker's
+// emitNode). A mesh instanced under several nodes is emitted once per node.
+static void emitStaticNode(const aiScene* s, const aiNode* node,
+                           const aiMatrix4x4& parentWorld,
+                           std::vector<Vertex>& verts, std::vector<uint32_t>& indices,
+                           std::vector<SubmeshRange>& submeshes, Bounds& b,
+                           const std::vector<MaterialHandle>& matHandles) {
+    const aiMatrix4x4 world = parentWorld * node->mTransformation;
+    for (unsigned i = 0; i < node->mNumMeshes; ++i) {
+        const aiMesh* m = s->mMeshes[node->mMeshes[i]];
+        if (!(m->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
+        MaterialHandle mh = (m->mMaterialIndex < matHandles.size())
+                            ? matHandles[m->mMaterialIndex] : MaterialHandle{};
+        const uint32_t vertBase = (uint32_t)verts.size();
+        appendStaticVerts(m, verts, b, world);
+        submeshes.push_back(appendIndices(m, vertBase, indices, mh));
+    }
+    for (unsigned c = 0; c < node->mNumChildren; ++c)
+        emitStaticNode(s, node->mChildren[c], world, verts, indices, submeshes, b, matHandles);
 }
 
 // -----------------------------------------------------------------------
@@ -397,17 +426,23 @@ MeshImportResult AssimpImporter::load(const std::string& path,
     std::vector<SubmeshRange>  submeshes;
     Bounds bounds;
 
-    for (uint32_t i = 0; i < scene->mNumMeshes; ++i) {
-        const aiMesh* m = scene->mMeshes[i];
-        if (!(m->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
-        MaterialHandle mh = (m->mMaterialIndex < matHandles.size())
-                            ? matHandles[m->mMaterialIndex] : MaterialHandle{};
-
-        const uint32_t vertBase = skinnedModel ? (uint32_t)skinnedVerts.size()
-                                               : (uint32_t)staticVerts.size();
-        if (skinnedModel) appendSkinnedVerts(m, skeleton, skinnedVerts, bounds);
-        else              appendStaticVerts(m, staticVerts, bounds);
-        submeshes.push_back(appendIndices(m, vertBase, indices, mh));
+    if (skinnedModel) {
+        // Skinned: the skeleton's bind pose + bones place the verts, so merge
+        // meshes flat (no node bake — that would double-transform the bind pose).
+        for (uint32_t i = 0; i < scene->mNumMeshes; ++i) {
+            const aiMesh* m = scene->mMeshes[i];
+            if (!(m->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
+            MaterialHandle mh = (m->mMaterialIndex < matHandles.size())
+                                ? matHandles[m->mMaterialIndex] : MaterialHandle{};
+            const uint32_t vertBase = (uint32_t)skinnedVerts.size();
+            appendSkinnedVerts(m, skeleton, skinnedVerts, bounds);
+            submeshes.push_back(appendIndices(m, vertBase, indices, mh));
+        }
+    } else {
+        // Static: walk the node tree so each part lands at its scene-graph
+        // world transform instead of collapsing onto the origin.
+        emitStaticNode(scene, scene->mRootNode, aiMatrix4x4(),
+                       staticVerts, indices, submeshes, bounds, matHandles);
     }
 
     if (indices.empty())
