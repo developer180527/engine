@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <vector>
 #include <filesystem>
 #include <utility>
@@ -178,45 +179,57 @@ MeshImportResult GltfImporter::load(const std::string& path,
     bx::Vec3 bMax{-1e30f, -1e30f, -1e30f};
     bool anyDoubleSided = false;
 
-    for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
-        const cgltf_node* node = &data->nodes[ni];
-        if (!node->mesh) continue;
-        float world[16]; cgltf_node_transform_world(node, world);
-        float nmat[9];   makeNormalMatrix(world, nmat);
-        const cgltf_mesh& mesh = *node->mesh;
-        for (cgltf_size pi = 0; pi < mesh.primitives_count; ++pi) {
-            const cgltf_primitive& prim = mesh.primitives[pi];
-            if (prim.type != cgltf_primitive_type_triangles) continue;
-            const cgltf_accessor* posAcc    = findAttribute(&prim, cgltf_attribute_type_position);
-            const cgltf_accessor* normalAcc = findAttribute(&prim, cgltf_attribute_type_normal);
-            const cgltf_accessor* uvAcc     = findAttribute(&prim, cgltf_attribute_type_texcoord);
-            if (!posAcc || !prim.indices) continue;   // unusable primitive — skip
+    // Visit one node: bake its world transform into its mesh's primitives, then
+    // recurse into children. Walked from the ACTIVE SCENE's roots so nodes not
+    // in the scene (alternate variants, editor junk) are never imported.
+    std::function<void(const cgltf_node*)> visitNode = [&](const cgltf_node* node) {
+        if (node->mesh) {
+            float world[16]; cgltf_node_transform_world(node, world);
+            float nmat[9];   makeNormalMatrix(world, nmat);
+            const cgltf_mesh& mesh = *node->mesh;
+            for (cgltf_size pi = 0; pi < mesh.primitives_count; ++pi) {
+                const cgltf_primitive& prim = mesh.primitives[pi];
+                if (prim.type != cgltf_primitive_type_triangles) continue;
+                const cgltf_accessor* posAcc    = findAttribute(&prim, cgltf_attribute_type_position);
+                const cgltf_accessor* normalAcc = findAttribute(&prim, cgltf_attribute_type_normal);
+                const cgltf_accessor* uvAcc     = findAttribute(&prim, cgltf_attribute_type_texcoord);
+                if (!posAcc || !prim.indices) continue;   // unusable primitive — skip
 
-            const uint32_t vertBase = (uint32_t)vertices.size();
-            for (size_t i = 0; i < posAcc->count; ++i) {
-                Vertex v{};
-                float p[3] = {0,0,0};  readFloats(posAcc, i, p, 3);
-                xformPoint(world, p, v.position);      // bake node placement
-                float nrm[3] = {0,1,0};
-                if (normalAcc && i < normalAcc->count) readFloats(normalAcc, i, nrm, 3);
-                xformNormal(nmat, nrm, v.normal);
-                if (uvAcc) readFloats(uvAcc, i, v.uv, 2);
-                bMin.x = std::min(bMin.x, v.position[0]); bMax.x = std::max(bMax.x, v.position[0]);
-                bMin.y = std::min(bMin.y, v.position[1]); bMax.y = std::max(bMax.y, v.position[1]);
-                bMin.z = std::min(bMin.z, v.position[2]); bMax.z = std::max(bMax.z, v.position[2]);
-                vertices.push_back(v);
+                const uint32_t vertBase = (uint32_t)vertices.size();
+                for (size_t i = 0; i < posAcc->count; ++i) {
+                    Vertex v{};
+                    float p[3] = {0,0,0};  readFloats(posAcc, i, p, 3);
+                    xformPoint(world, p, v.position);      // bake node placement
+                    float nrm[3] = {0,1,0};
+                    if (normalAcc && i < normalAcc->count) readFloats(normalAcc, i, nrm, 3);
+                    xformNormal(nmat, nrm, v.normal);
+                    if (uvAcc) readFloats(uvAcc, i, v.uv, 2);
+                    bMin.x = std::min(bMin.x, v.position[0]); bMax.x = std::max(bMax.x, v.position[0]);
+                    bMin.y = std::min(bMin.y, v.position[1]); bMax.y = std::max(bMax.y, v.position[1]);
+                    bMin.z = std::min(bMin.z, v.position[2]); bMax.z = std::max(bMax.z, v.position[2]);
+                    vertices.push_back(v);
+                }
+                const uint32_t idxStart = (uint32_t)indices.size();
+                for (size_t i = 0; i < prim.indices->count; ++i)
+                    indices.push_back(vertBase + (uint32_t)cgltf_accessor_read_index(prim.indices, i));
+
+                SubmeshRange r;
+                r.indexOffset = idxStart;
+                r.indexCount  = (uint32_t)indices.size() - idxStart;
+                r.material    = resolveMaterial(prim.material);
+                submeshes.push_back(r);
+                if (prim.material && prim.material->double_sided) anyDoubleSided = true;
             }
-            const uint32_t idxStart = (uint32_t)indices.size();
-            for (size_t i = 0; i < prim.indices->count; ++i)
-                indices.push_back(vertBase + (uint32_t)cgltf_accessor_read_index(prim.indices, i));
-
-            SubmeshRange r;
-            r.indexOffset = idxStart;
-            r.indexCount  = (uint32_t)indices.size() - idxStart;
-            r.material    = resolveMaterial(prim.material);
-            submeshes.push_back(r);
-            if (prim.material && prim.material->double_sided) anyDoubleSided = true;
         }
+        for (cgltf_size c = 0; c < node->children_count; ++c) visitNode(node->children[c]);
+    };
+
+    if (data->scene) {
+        for (cgltf_size i = 0; i < data->scene->nodes_count; ++i)
+            visitNode(data->scene->nodes[i]);
+    } else {                                    // no default scene — walk roots
+        for (cgltf_size i = 0; i < data->nodes_count; ++i)
+            if (!data->nodes[i].parent) visitNode(&data->nodes[i]);
     }
 
     if (indices.empty())
