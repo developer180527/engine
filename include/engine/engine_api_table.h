@@ -41,8 +41,9 @@ extern "C" {
 #define ENGINE_API_AUDIO_V   1
 #define ENGINE_API_ASSETS_V  1  /* cooked assets + scenes                  */
 #define ENGINE_API_ANIM_V    1
-#define ENGINE_API_UI_V      1  /* editor-UI facade + debug draw           */
+#define ENGINE_API_UI_V      1  /* editor-UI WIDGETS (negotiated; 0 headless)*/
 #define ENGINE_API_NAV_V     1  /* navmesh path queries (Recast/Detour)    */
+#define ENGINE_API_DRAW_V    1  /* immediate-mode debug draw (any renderer)*/
 
 typedef struct EngineApiCoreV1 {
     uint32_t version;
@@ -127,6 +128,10 @@ typedef struct EngineApiAnimV1 {
     float (*duration)(EngineEntity);
 } EngineApiAnimV1;
 
+/* Editor-UI WIDGETS only — capability-negotiated (version 0 when no widget
+ * backend, i.e. engine_host). Debug DRAW moved to its own group below: it's a
+ * RENDERER capability, present wherever there's a renderer (editor + host),
+ * and must not be gated behind the editor widget backend. */
 typedef struct EngineApiUiV1 {
     uint32_t version;
     void (*text)(const char*);   /* PRE-FORMATTED — the client shim printf's */
@@ -134,6 +139,13 @@ typedef struct EngineApiUiV1 {
     bool (*sliderFloat)(const char*, float*, float, float);
     bool (*checkbox)(const char*, bool*);
     void (*separator)(void);
+} EngineApiUiV1;
+
+/* Immediate-mode debug draw (3D lines/shapes, THIS frame). A renderer
+ * capability, not an editor one — always published; the calls no-op safely in a
+ * truly headless host (no renderer), like physics/audio without a backend. */
+typedef struct EngineApiDrawV1 {
+    uint32_t version;
     void (*drawLine)(float, float, float, float, float, float,
                      float, float, float);
     void (*drawSphere)(float, float, float, float, float, float, float);
@@ -141,7 +153,7 @@ typedef struct EngineApiUiV1 {
                     float, float, float);
     void (*drawDisk)(float, float, float, float, float, float, float,
                      float, float, float);
-} EngineApiUiV1;
+} EngineApiDrawV1;
 
 /* Navigation: pathfinding over the engine's baked navmesh (NavService). Kits
  * never link Recast/Detour — they receive world-space straight-path waypoints.
@@ -166,6 +178,7 @@ typedef struct EngineApiTableV1 {
     EngineApiAnimV1    anim;
     EngineApiUiV1      ui;
     EngineApiNavV1     nav;   /* appended — bumps structSize; modules rebuild */
+    EngineApiDrawV1    draw;  /* debug draw, split out of ui (renderer capability) */
 } EngineApiTableV1;
 
 /* Host-side: the filled table (engine_api_table.cpp). */

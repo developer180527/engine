@@ -28,10 +28,10 @@
 
 /* Module-local state — one per dylib, invisible outside it. */
 static const EngineApiTableV1* g_eapi = nullptr;
-static bool g_eapiOk[8] = {};         /* core,input,physics,audio,assets,anim,ui,nav */
+static bool g_eapiOk[9] = {};         /* core,input,physics,audio,assets,anim,ui,nav,draw */
 
 enum { EAPI_CORE, EAPI_INPUT, EAPI_PHYSICS, EAPI_AUDIO,
-       EAPI_ASSETS, EAPI_ANIM, EAPI_UI, EAPI_NAV, EAPI_COUNT };
+       EAPI_ASSETS, EAPI_ANIM, EAPI_UI, EAPI_NAV, EAPI_DRAW, EAPI_COUNT };
 
 /* Capability query — true when the group is bound AND version-compatible.
  * Groups published with version 0 are ABSENT by convention. */
@@ -71,6 +71,7 @@ void engineModuleBindApiV1(const EngineApiTableV1* t) {
         { EAPI_ANIM,    t->anim.version,    ENGINE_API_ANIM_V,    "anim"    },
         { EAPI_UI,      t->ui.version,      ENGINE_API_UI_V,      "ui"      },
         { EAPI_NAV,     t->nav.version,     ENGINE_API_NAV_V,     "nav"     },
+        { EAPI_DRAW,    t->draw.version,    ENGINE_API_DRAW_V,    "draw"    },
     };
     for (auto& c : checks) {
         g_eapiOk[c.idx] = (c.have == c.want);
@@ -208,21 +209,22 @@ bool engineUiButton(const char* l) { return eapiGuard(EAPI_UI,"button") && g_eap
 bool engineUiSliderFloat(const char* l, float* v, float lo, float hi) { return eapiGuard(EAPI_UI,"sliderFloat") && g_eapi->ui.sliderFloat(l, v, lo, hi); }
 bool engineUiCheckbox(const char* l, bool* v) { return eapiGuard(EAPI_UI,"checkbox") && g_eapi->ui.checkbox(l, v); }
 void engineUiSeparator(void) { if (eapiGuard(EAPI_UI,"separator")) g_eapi->ui.separator(); }
+/* draw (debug draw — its own group, works in any host with a renderer) */
 void engineDrawLine(float x0, float y0, float z0, float x1, float y1, float z1,
                     float r, float g, float b) {
-    if (eapiGuard(EAPI_UI,"drawLine")) g_eapi->ui.drawLine(x0, y0, z0, x1, y1, z1, r, g, b);
+    if (eapiGuard(EAPI_DRAW,"drawLine")) g_eapi->draw.drawLine(x0, y0, z0, x1, y1, z1, r, g, b);
 }
 void engineDrawSphere(float cx, float cy, float cz, float rad,
                       float r, float g, float b) {
-    if (eapiGuard(EAPI_UI,"drawSphere")) g_eapi->ui.drawSphere(cx, cy, cz, rad, r, g, b);
+    if (eapiGuard(EAPI_DRAW,"drawSphere")) g_eapi->draw.drawSphere(cx, cy, cz, rad, r, g, b);
 }
 void engineDrawBox(float cx, float cy, float cz, float hx, float hy, float hz,
                    float r, float g, float b) {
-    if (eapiGuard(EAPI_UI,"drawBox")) g_eapi->ui.drawBox(cx, cy, cz, hx, hy, hz, r, g, b);
+    if (eapiGuard(EAPI_DRAW,"drawBox")) g_eapi->draw.drawBox(cx, cy, cz, hx, hy, hz, r, g, b);
 }
 void engineDrawDisk(float cx, float cy, float cz, float nx, float ny, float nz,
                     float rad, float r, float g, float b) {
-    if (eapiGuard(EAPI_UI,"drawDisk")) g_eapi->ui.drawDisk(cx, cy, cz, nx, ny, nz, rad, r, g, b);
+    if (eapiGuard(EAPI_DRAW,"drawDisk")) g_eapi->draw.drawDisk(cx, cy, cz, nx, ny, nz, rad, r, g, b);
 }
 
 } /* extern "C" */

@@ -54,10 +54,11 @@ const EngineApiTableV1* engineApiHostTable(void) {
           engineAnimTime, engineAnimDuration },
         { ENGINE_API_UI_V,
           uiTextPlain, engineUiButton, engineUiSliderFloat,
-          engineUiCheckbox, engineUiSeparator,
-          engineDrawLine, engineDrawSphere, engineDrawBox, engineDrawDisk },
+          engineUiCheckbox, engineUiSeparator },
         { ENGINE_API_NAV_V,
           engineNavFindPath, engineNavProject, engineNavReady },
+        { ENGINE_API_DRAW_V,
+          engineDrawLine, engineDrawSphere, engineDrawBox, engineDrawDisk },
     };
     // Re-published on every call: absent (0) until a UI backend registers.
     t.ui.version = engineUiHasBackend() ? ENGINE_API_UI_V : 0;
