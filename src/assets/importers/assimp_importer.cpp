@@ -193,150 +193,118 @@ static MaterialHandle importMaterial(const aiScene*    scene,
     return storage.materials.addMaterial(std::move(mat));
 }
 
-// Build index buffer — shared between static and skinned paths
-static bgfx::IndexBufferHandle buildIndexBuffer(const aiMesh* aiM, uint32_t& outCount) {
-    const bool use32 = aiM->mNumVertices > 65535;
-    if (use32) {
-        std::vector<uint32_t> idx;
-        idx.reserve(aiM->mNumFaces * 3);
-        for (uint32_t f = 0; f < aiM->mNumFaces; ++f)
-            for (uint32_t i = 0; i < aiM->mFaces[f].mNumIndices; ++i)
-                idx.push_back(aiM->mFaces[f].mIndices[i]);
-        outCount = (uint32_t)idx.size();
-        return bgfx::createIndexBuffer(
-            bgfx::copy(idx.data(), outCount * 4), BGFX_BUFFER_INDEX32);
-    } else {
-        std::vector<uint16_t> idx;
-        idx.reserve(aiM->mNumFaces * 3);
-        for (uint32_t f = 0; f < aiM->mNumFaces; ++f)
-            for (uint32_t i = 0; i < aiM->mFaces[f].mNumIndices; ++i)
-                idx.push_back((uint16_t)aiM->mFaces[f].mIndices[i]);
-        outCount = (uint32_t)idx.size();
-        return bgfx::createIndexBuffer(
-            bgfx::copy(idx.data(), outCount * 2));
+// A running AABB grown vertex-by-vertex while submeshes are appended.
+struct Bounds {
+    float mn[3] = { 1e30f,  1e30f,  1e30f};
+    float mx[3] = {-1e30f, -1e30f, -1e30f};
+    void grow(float x, float y, float z) {
+        mn[0]=std::min(mn[0],x); mx[0]=std::max(mx[0],x);
+        mn[1]=std::min(mn[1],y); mx[1]=std::max(mx[1],y);
+        mn[2]=std::min(mn[2],z); mx[2]=std::max(mx[2],z);
     }
+    bool valid() const { return mn[0] <= mx[0]; }
+};
+
+// Append faces of one submesh into a shared 32-bit index buffer, offsetting
+// each index by the running vertex base so they address the merged VB. Returns
+// the SubmeshRange spanning what was just appended.
+static SubmeshRange appendIndices(const aiMesh* aiM, uint32_t vertBase,
+                                  std::vector<uint32_t>& indices,
+                                  MaterialHandle mat) {
+    const uint32_t start = (uint32_t)indices.size();
+    for (uint32_t f = 0; f < aiM->mNumFaces; ++f)
+        for (uint32_t i = 0; i < aiM->mFaces[f].mNumIndices; ++i)
+            indices.push_back(vertBase + aiM->mFaces[f].mIndices[i]);
+    SubmeshRange r;
+    r.indexOffset = start;
+    r.indexCount  = (uint32_t)indices.size() - start;
+    r.material    = mat;
+    return r;
 }
 
-// Compute AABB bounds for frustum culling
-static void computeBounds(const aiMesh* aiM, Mesh& mesh) {
-    if (aiM->mNumVertices == 0) return;
-    float mnX = aiM->mVertices[0].x, mxX = mnX;
-    float mnY = aiM->mVertices[0].y, mxY = mnY;
-    float mnZ = aiM->mVertices[0].z, mxZ = mnZ;
-    for (uint32_t v = 1; v < aiM->mNumVertices; ++v) {
-        mnX = std::min(mnX, aiM->mVertices[v].x);
-        mxX = std::max(mxX, aiM->mVertices[v].x);
-        mnY = std::min(mnY, aiM->mVertices[v].y);
-        mxY = std::max(mxY, aiM->mVertices[v].y);
-        mnZ = std::min(mnZ, aiM->mVertices[v].z);
-        mxZ = std::max(mxZ, aiM->mVertices[v].z);
-    }
-    mesh.boundsMin = {mnX, mnY, mnZ};
-    mesh.boundsMax = {mxX, mxY, mxZ};
-}
-
-static MeshHandle importMesh(const aiMesh*      aiM,
-                              const aiMaterial*  aiMat,
-                              MaterialHandle     matH,
-                              const std::string& sourcePath,
-                              AssetStorage&      storage) {
-    // Build vertex buffer (static — no bone data)
-    std::vector<Vertex> verts;
-    verts.reserve(aiM->mNumVertices);
-
+// Append one submesh's STATIC vertices into the shared buffer, growing bounds.
+static void appendStaticVerts(const aiMesh* aiM, std::vector<Vertex>& verts,
+                              Bounds& b) {
     for (uint32_t v = 0; v < aiM->mNumVertices; ++v) {
         Vertex vtx{};
-        vtx.position[0] = aiM->mVertices[v].x;
-        vtx.position[1] = aiM->mVertices[v].y;
-        vtx.position[2] = aiM->mVertices[v].z;
-
+        vtx.position[0]=aiM->mVertices[v].x; vtx.position[1]=aiM->mVertices[v].y;
+        vtx.position[2]=aiM->mVertices[v].z;
         if (aiM->HasNormals()) {
-            vtx.normal[0] = aiM->mNormals[v].x;
-            vtx.normal[1] = aiM->mNormals[v].y;
-            vtx.normal[2] = aiM->mNormals[v].z;
-        } else {
-            vtx.normal[1] = 1.0f; // world-up fallback
-        }
-
+            vtx.normal[0]=aiM->mNormals[v].x; vtx.normal[1]=aiM->mNormals[v].y;
+            vtx.normal[2]=aiM->mNormals[v].z;
+        } else vtx.normal[1] = 1.0f;              // world-up fallback
         if (aiM->mTextureCoords[0]) {
-            vtx.uv[0] = aiM->mTextureCoords[0][v].x;
-            vtx.uv[1] = aiM->mTextureCoords[0][v].y;
+            vtx.uv[0]=aiM->mTextureCoords[0][v].x; vtx.uv[1]=aiM->mTextureCoords[0][v].y;
         }
+        b.grow(vtx.position[0], vtx.position[1], vtx.position[2]);
         verts.push_back(vtx);
     }
-
-    uint32_t indexCount = 0;
-    bgfx::IndexBufferHandle ibh = buildIndexBuffer(aiM, indexCount);
-
-    bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(
-        bgfx::copy(verts.data(), (uint32_t)(verts.size() * sizeof(Vertex))),
-        Vertex::layout());
-
-    Mesh mesh(vbh, ibh, indexCount);
-    mesh.material = matH;
-    computeBounds(aiM, mesh);
-
-    return storage.meshes.addMesh(std::move(mesh));
 }
 
-// Skinned mesh path — uses SkinnedVertex with bone indices + weights
-static MeshHandle importSkinnedMesh(const aiMesh*      aiM,
-                                     MaterialHandle     matH,
-                                     const Skeleton&    skel,
-                                     AssetStorage&      storage) {
-    // Extract per-vertex bone weights
+// Append one submesh's SKINNED vertices. A submesh with no bones (rare in a
+// skinned model) would collapse to the origin under zero weights, so bind those
+// verts rigidly to bone 0 (weight 1) rather than lose the geometry.
+static void appendSkinnedVerts(const aiMesh* aiM, const Skeleton& skel,
+                               std::vector<SkinnedVertex>& verts, Bounds& b) {
     auto boneData = anim::extractBoneWeights(aiM, skel);
-
-    std::vector<SkinnedVertex> verts;
-    verts.reserve(aiM->mNumVertices);
-
+    const bool hasBones = aiM->mNumBones > 0;
     for (uint32_t v = 0; v < aiM->mNumVertices; ++v) {
         SkinnedVertex vtx{};
-        vtx.position[0] = aiM->mVertices[v].x;
-        vtx.position[1] = aiM->mVertices[v].y;
-        vtx.position[2] = aiM->mVertices[v].z;
-
+        vtx.position[0]=aiM->mVertices[v].x; vtx.position[1]=aiM->mVertices[v].y;
+        vtx.position[2]=aiM->mVertices[v].z;
         if (aiM->HasNormals()) {
-            vtx.normal[0] = aiM->mNormals[v].x;
-            vtx.normal[1] = aiM->mNormals[v].y;
-            vtx.normal[2] = aiM->mNormals[v].z;
-        } else {
-            vtx.normal[1] = 1.0f;
-        }
-
+            vtx.normal[0]=aiM->mNormals[v].x; vtx.normal[1]=aiM->mNormals[v].y;
+            vtx.normal[2]=aiM->mNormals[v].z;
+        } else vtx.normal[1] = 1.0f;
         if (aiM->HasTangentsAndBitangents()) {
-            vtx.tangent[0] = aiM->mTangents[v].x;
-            vtx.tangent[1] = aiM->mTangents[v].y;
-            vtx.tangent[2] = aiM->mTangents[v].z;
-            vtx.tangent[3] = 1.0f;
+            vtx.tangent[0]=aiM->mTangents[v].x; vtx.tangent[1]=aiM->mTangents[v].y;
+            vtx.tangent[2]=aiM->mTangents[v].z; vtx.tangent[3]=1.0f;
         }
-
         if (aiM->mTextureCoords[0]) {
-            vtx.uv[0] = aiM->mTextureCoords[0][v].x;
-            vtx.uv[1] = aiM->mTextureCoords[0][v].y;
+            vtx.uv[0]=aiM->mTextureCoords[0][v].x; vtx.uv[1]=aiM->mTextureCoords[0][v].y;
         }
-
-        // Bone data
-        std::memcpy(vtx.joints,  boneData[v].joints,  4);
-        std::memcpy(vtx.weights, boneData[v].weights, sizeof(float) * 4);
-
+        if (hasBones) {
+            std::memcpy(vtx.joints,  boneData[v].joints,  4);
+            std::memcpy(vtx.weights, boneData[v].weights, sizeof(float) * 4);
+        } else {
+            vtx.joints[0]=0; vtx.weights[0]=1.0f;  // rigid to root — don't collapse
+        }
+        b.grow(vtx.position[0], vtx.position[1], vtx.position[2]);
         verts.push_back(vtx);
     }
+}
 
-    uint32_t indexCount = 0;
-    bgfx::IndexBufferHandle ibh = buildIndexBuffer(aiM, indexCount);
-
+// Finalize a merged mesh: one VB (static or skinned) + one 32/16-bit IB, with
+// per-submesh ranges. A single submesh stays on the simple single-draw path
+// (mesh.material set, submeshes left empty) so common models are unchanged.
+template <class VertT>
+static MeshHandle finalizeMesh(const std::vector<VertT>& verts,
+                               const std::vector<uint32_t>& indices,
+                               std::vector<SubmeshRange> submeshes,
+                               const Bounds& b, const std::string& sourcePath,
+                               AssetStorage& storage) {
+    const bool use32 = verts.size() > 65535;
+    bgfx::IndexBufferHandle ibh;
+    if (use32) {
+        ibh = bgfx::createIndexBuffer(
+            bgfx::copy(indices.data(), (uint32_t)(indices.size()*4)), BGFX_BUFFER_INDEX32);
+    } else {
+        std::vector<uint16_t> idx16(indices.begin(), indices.end());
+        ibh = bgfx::createIndexBuffer(
+            bgfx::copy(idx16.data(), (uint32_t)(idx16.size()*2)));
+    }
     bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(
-        bgfx::copy(verts.data(), (uint32_t)(verts.size() * sizeof(SkinnedVertex))),
-        SkinnedVertex::layout());
+        bgfx::copy(verts.data(), (uint32_t)(verts.size()*sizeof(VertT))),
+        VertT::layout());
 
-    Mesh mesh(vbh, ibh, indexCount);
-    mesh.material = matH;
-    computeBounds(aiM, mesh);
-
-    LOG_INFO("Assimp", "Skinned mesh: %u verts, %u bones",
-             aiM->mNumVertices, aiM->mNumBones);
-
+    Mesh mesh(vbh, ibh, (uint32_t)indices.size());
+    mesh.material   = submeshes.empty() ? MaterialHandle{} : submeshes.front().material;
+    mesh.sourcePath = sourcePath;
+    if (b.valid()) {
+        mesh.boundsMin = {b.mn[0], b.mn[1], b.mn[2]};
+        mesh.boundsMax = {b.mx[0], b.mx[1], b.mx[2]};
+    }
+    if (submeshes.size() > 1) mesh.submeshes = std::move(submeshes);
     return storage.meshes.addMesh(std::move(mesh));
 }
 
@@ -415,31 +383,47 @@ MeshImportResult AssimpImporter::load(const std::string& path,
     for (uint32_t i = 0; i < scene->mNumMaterials; ++i)
         matHandles[i] = importMaterial(scene, scene->mMaterials[i], dir, baseName, storage);
 
-    // Meshes
-    MeshHandle first{};
+    // Meshes — MERGE every triangle submesh into ONE mesh with a shared VB/IB
+    // and a SubmeshRange per source mesh (each carrying its own material). This
+    // is the representation the cooked path + renderer already use; importing
+    // one Mesh per submesh (and returning only the first) silently dropped all
+    // the rest. The whole model is skinned iff it has a skeleton — a merged
+    // buffer needs one vertex format, and characters weight every submesh.
+    const bool skinnedModel = !skeleton.bones.empty();
+
+    std::vector<Vertex>        staticVerts;
+    std::vector<SkinnedVertex> skinnedVerts;
+    std::vector<uint32_t>      indices;
+    std::vector<SubmeshRange>  submeshes;
+    Bounds bounds;
+
     for (uint32_t i = 0; i < scene->mNumMeshes; ++i) {
         const aiMesh* m = scene->mMeshes[i];
         if (!(m->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
         MaterialHandle mh = (m->mMaterialIndex < matHandles.size())
                             ? matHandles[m->mMaterialIndex] : MaterialHandle{};
-        const aiMaterial* aiMat = (m->mMaterialIndex < scene->mNumMaterials)
-                                  ? scene->mMaterials[m->mMaterialIndex] : nullptr;
 
-        MeshHandle h;
-        if (m->mNumBones > 0 && !skeleton.bones.empty()) {
-            h = importSkinnedMesh(m, mh, skeleton, storage);
-        } else {
-            h = importMesh(m, aiMat, mh, path, storage);
-        }
-        if (h.valid() && !first.valid()) first = h;
+        const uint32_t vertBase = skinnedModel ? (uint32_t)skinnedVerts.size()
+                                               : (uint32_t)staticVerts.size();
+        if (skinnedModel) appendSkinnedVerts(m, skeleton, skinnedVerts, bounds);
+        else              appendStaticVerts(m, staticVerts, bounds);
+        submeshes.push_back(appendIndices(m, vertBase, indices, mh));
     }
 
-    if (!first.valid())
+    if (indices.empty())
         return MeshImportResult::fail("Assimp: no triangle meshes in file");
+
+    const size_t subCount = submeshes.size();
+    MeshHandle merged = skinnedModel
+        ? finalizeMesh(skinnedVerts, indices, std::move(submeshes), bounds, path, storage)
+        : finalizeMesh(staticVerts,  indices, std::move(submeshes), bounds, path, storage);
+
+    LOG_INFO("Assimp", "Merged mesh: %zu submesh(es), %u indices%s",
+             subCount, (uint32_t)indices.size(), skinnedModel ? " [skinned]" : "");
 
     MeshImportResult result;
     result.success  = true;
-    result.mesh     = first;
+    result.mesh     = merged;
     result.skeleton = skelHandle;
     result.clips    = std::move(clipHandles);
     return result;

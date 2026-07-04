@@ -261,37 +261,45 @@ public:
 
         for (uint32_t idx : m_visible) {
             const RenderItem& it = v.items[idx];
-            const Material* mat  = it.mat;
-            const Texture*  nm   = (mat && mat->normalMapTexture.valid())
-                                 ? ctx.textures.getTexture(mat->normalMapTexture) : nullptr;
-            const float rough = mat ? mat->roughness : 0.7f;
-            const float metal = mat ? mat->metallic  : 0.0f;
-            float params[4] = { it.tex ? 1.0f : 0.0f, rough, metal, nm ? 1.0f : 0.0f };
-            float factor[4] = { 1, 1, 1, 1 };
-            if (mat) { factor[0]=mat->baseColorFactor[0]; factor[1]=mat->baseColorFactor[1];
-                       factor[2]=mat->baseColorFactor[2]; factor[3]=mat->baseColorFactor[3]; }
             const uint64_t state = it.mesh->doubleSided
                 ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
                    BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA)
                 : (BGFX_STATE_DEFAULT | BGFX_STATE_CULL_CCW);
-            const bgfx::TextureHandle base = it.tex ? it.tex->handle : ctx.whiteTex;
-            const bgfx::TextureHandle norm = nm    ? nm->handle      : ctx.flatNormalTex;
 
             // Select skinned or static program
             const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
             const bgfx::ProgramHandle prog = skinned ? m_skinnedProgram : m_program;
 
-            if (it.mesh->submeshes.empty()) {
+            // Resolve ONE material handle to its uniforms/textures + bind. Runs
+            // per submesh, so a merged multi-material mesh draws each range with
+            // its OWN material (falling back to the item's material when unset)
+            // instead of the whole mesh sharing a single material.
+            auto bindMaterial = [&](MaterialHandle mh) {
+                const Material* mat = mh.valid() ? ctx.materials.getMaterial(mh) : nullptr;
+                const Texture*  tex = (mat && mat->hasTexture())
+                                    ? ctx.textures.getTexture(mat->baseColorTexture) : nullptr;
+                const Texture*  nm  = (mat && mat->normalMapTexture.valid())
+                                    ? ctx.textures.getTexture(mat->normalMapTexture) : nullptr;
+                const float rough = mat ? mat->roughness : 0.7f;
+                const float metal = mat ? mat->metallic  : 0.0f;
+                float params[4] = { tex ? 1.0f : 0.0f, rough, metal, nm ? 1.0f : 0.0f };
+                float factor[4] = { 1, 1, 1, 1 };
+                if (mat) { factor[0]=mat->baseColorFactor[0]; factor[1]=mat->baseColorFactor[1];
+                           factor[2]=mat->baseColorFactor[2]; factor[3]=mat->baseColorFactor[3]; }
+                const bgfx::TextureHandle base = tex ? tex->handle : ctx.whiteTex;
+                const bgfx::TextureHandle norm = nm  ? nm->handle  : ctx.flatNormalTex;
                 if (skinned)
                     bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
                 bind(params, factor, base, norm, state, it);
+            };
+
+            if (it.mesh->submeshes.empty()) {
+                bindMaterial(it.material);
                 bgfx::setIndexBuffer(it.mesh->ibh);
                 bgfx::submit(id, prog);
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
-                    if (skinned)
-                        bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
-                    bind(params, factor, base, norm, state, it);
+                    bindMaterial(sub.material.valid() ? sub.material : it.material);
                     bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
                     bgfx::submit(id, prog);
                 }

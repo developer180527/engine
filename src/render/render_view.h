@@ -42,10 +42,14 @@ struct LightItem {
 struct RenderItem {
     Mat4            model;
     const Mesh*     mesh = nullptr;
-    const Material* mat  = nullptr;
+    const Material* mat  = nullptr;   // resolved fallback material (see `material`)
     const Texture*  tex  = nullptr;
     uint32_t        meshKey = 0;
     uint32_t        matKey  = 0;
+    // Fallback material HANDLE for this draw (per-entity override, else the
+    // mesh's own material). Submesh ranges carry their own material and fall
+    // back to this when unset — resolved per range at draw time, not here.
+    MaterialHandle  material;
 
     // Non-null when this item has a SkinnedMesh component.
     // Points to SkinnedMesh::skinMatrices (kMaxBones * 16 floats).

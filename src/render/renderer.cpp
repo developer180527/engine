@@ -250,6 +250,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         it.mesh = mesh;
         MaterialHandle mh = mr.materialOverride.valid()
                             ? mr.materialOverride : mesh->material;
+        it.material = mh;                    // fallback for submesh ranges
         it.mat = mh.valid() ? m_materials->getMaterial(mh) : nullptr;
         it.tex = (it.mat && it.mat->hasTexture())
                  ? m_textures->getTexture(it.mat->baseColorTexture) : nullptr;

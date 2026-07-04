@@ -31,6 +31,17 @@ importer): `GltfImporter` (cgltf) for glTF/GLB; `AssimpImporter` for FBX,
 OBJ, COLLADA, 3DS, PLY, STL, Blend. FBX uses `PRESERVE_PIVOTS=false`
 (see `src/animation/info.md` for the precision consequences).
 
+Both importers MERGE every submesh/primitive of a source file into ONE `Mesh`
+— a shared VB/IB (base-vertex-offset indices) with a `SubmeshRange` per source
+part carrying its own material — the representation the cooker + renderer
+already use. (Historically glTF read only `meshes[0].primitives[0]` and Assimp
+returned only the first submesh, silently dropping the rest — see the resolved
+`importers/issues.md`.) A single-submesh model stays on the simple single-draw
+path (mesh.material set, `submeshes` empty). The whole model is skinned iff it
+has a skeleton (one merged vertex format); a bone-less submesh inside a skinned
+model binds rigidly to bone 0 so it can't collapse. Verified headless by
+`tools/import_test.cpp` (bgfx Noop backend).
+
 ## Cookers (`cookers/`)
 `assetlib::ICooker` implementations + `CookService`:
 - `MeshCooker` — imports via Assimp directly, writes vertex/index buffers +

@@ -283,6 +283,13 @@ target_link_libraries(mem_test PRIVATE engine_core)
 add_executable(input_test tools/input_test.cpp)
 target_link_libraries(input_test PRIVATE engine_runtime)
 
+# ── import_test — multi-submesh import gauntlet (bgfx Noop, headless) ────────
+add_executable(import_test tools/import_test.cpp)
+target_link_libraries(import_test PRIVATE engine_runtime)
+set_target_properties(import_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # ── event_test — EventSweeper lifecycle/mark-sweep gauntlet ─────────────────
 add_executable(event_test tools/event_test.cpp)
 target_link_libraries(event_test PRIVATE engine_runtime)
