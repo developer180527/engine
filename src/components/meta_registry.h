@@ -11,6 +11,7 @@
 #include "components/collision_events.h"
 #include "components/script_component.h"
 #include "components/entity_id.h"
+#include "components/event_component.h"
 #include "core/logger.h"
 
 // ── MetaRegistry ───────────────────────────────────────────────────────────
@@ -27,6 +28,12 @@ namespace MetaRegistry {
 
 inline void registerAll(flecs::world& ecs) {
     ecs.component<SerdeTransient>();   // serde-skip marker (see its header)
+    // Event machinery: the type tag + the staleness relation, and the sweeper's
+    // registry singleton so kits can events::declare<T>() the moment they load
+    // (their onSimulationStart runs after this on every sim world).
+    ecs.component<EventComponent>();
+    ecs.component<EventStale>();
+    ecs.ensure<EventRegistry>();
     // ── Primitive math types ───────────────────────────────────────────────
     // Register bx vector/quaternion types so component members that use
     // them are fully described in the meta schema.

@@ -283,6 +283,13 @@ target_link_libraries(mem_test PRIVATE engine_core)
 add_executable(input_test tools/input_test.cpp)
 target_link_libraries(input_test PRIVATE engine_runtime)
 
+# ── event_test — EventSweeper lifecycle/mark-sweep gauntlet ─────────────────
+add_executable(event_test tools/event_test.cpp)
+target_link_libraries(event_test PRIVATE engine_runtime)
+set_target_properties(event_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # ── anim_pose_test — numeric skin-matrix diagnosis for standalone clips ─────
 add_executable(anim_pose_test tools/anim_pose_test.cpp)
 target_link_libraries(anim_pose_test PRIVATE engine_runtime)

@@ -457,6 +457,7 @@ void EngineRuntime::stopSimulation() {
     // The snapshot world dies below — drop every cached query against it
     // (a future world could reuse the same address and false-match).
     m_cameraFinder.reset();
+    m_eventSweeper.reset();                     // release queries before world dies
     m_animatorSystem.resetWorldCache();
     m_renderer.resetWorldCaches();
     m_scriptHost->setPhysicsService(nullptr);
@@ -494,6 +495,10 @@ void EngineRuntime::tickSimulation(float dt) {
     if (m_simAccumulator > 4.0f * kSimDt) m_simAccumulator = 4.0f * kSimDt;
     while (m_simAccumulator >= kSimDt) {
         m_simAccumulator -= kSimDt;
+        // Age event components BEFORE any broadcast: a message written last tick
+        // is guaranteed present for this whole tick regardless of who wrote or
+        // reads it first (see event_sweeper.h), decoupling kits from load order.
+        { ENGINE_PROFILE_SCOPE("Sim.events"); m_eventSweeper.sweep(w); }
         // Interpolation snapshot: remember where everything WAS before this
         // step so rendering can lerp. Cameras are excluded — their rotation
         // is late-latched at render rate (onFrame) and must not lag.

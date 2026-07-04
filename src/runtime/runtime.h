@@ -22,6 +22,7 @@
 #include "render/renderer.h"
 #include "runtime/plugin_registry.h"
 #include "runtime/kit_host.h"
+#include "runtime/event_sweeper.h"
 #include "core/transform.h"
 #include "components/spinner.h"
 #include "systems/animator_system.h"
@@ -247,6 +248,7 @@ private:
     std::string                   m_simSnapshot;
     double                        m_simElapsed = 0.0;  // script-facing sim clock
     uint64_t                      m_simFrame   = 0;
+    EventSweeper                  m_eventSweeper;      // ages event components / tick
 
     bool initRenderer(const EngineConfig& cfg);
     bool initSystems(const EngineConfig& cfg);
