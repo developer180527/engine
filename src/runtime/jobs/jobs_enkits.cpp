@@ -33,7 +33,13 @@ struct RunTask final : public enki::ITaskSet {
     RunTask(const char* n, std::function<void()> f)
         : enki::ITaskSet(1), name(n), fn(std::move(f)) {}
     void ExecuteRange(enki::TaskSetPartition, uint32_t) override {
-        ENGINE_PROFILE_SCOPE(name);
+        // NO profiler scope here, on purpose: run() jobs are ASYNC and may
+        // span profiler frame boundaries, but TimerChannel::beginFrame
+        // clears every thread's sample vectors assuming all scopes closed
+        // (the "frame boundary is a sync point" invariant). An open scope
+        // racing that clear corrupts the vectors — multi-second clear()
+        // stalls and an unresponsive app. parallelFor keeps its scope: it
+        // BLOCKS, so its scopes always close within the frame.
         fn();
     }
 };

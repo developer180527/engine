@@ -31,6 +31,12 @@
 //   * Job functions are std::function; the facade preallocates nothing per
 //     job today (enkiTS allocates once at init). Keep job bodies coarse —
 //     this is a task scheduler, not an instruction-level parallelizer.
+//   * PROFILER RULE: run() bodies must NOT open ENGINE_PROFILE_SCOPEs —
+//     async jobs span profiler frame boundaries, and TimerChannel's
+//     beginFrame clears per-thread buffers assuming every scope closed
+//     (open scope vs clear = data race, corrupted vectors, seconds-long
+//     stalls). parallelFor bodies MAY scope: it blocks, so its scopes
+//     always close inside the frame.
 //
 // See docs/engine-api.md (Jobs) — kits do NOT get this header; parallelism
 // inside kits goes through the C API once that surface exists.
