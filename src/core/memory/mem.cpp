@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <pthread.h>
 
 #include "tlsf.h"
 
@@ -66,6 +67,22 @@ void* mapAligned(size_t size) {
     return (void*)base;
 }
 
+// ── Immortal locking ────────────────────────────────────────────────────────
+// The manager must outlive STATIC DESTRUCTION: destructors of other statics
+// allocate/free through the routed global new/delete after main() returns.
+// std::mutex has a real destructor — plain static TagHeaps therefore died at
+// exit and the next lock() threw from libc++ (the cmd+q SIGSEGV). POSIX
+// mutexes with PTHREAD_MUTEX_INITIALIZER are trivially destructible POD:
+// "destroying" them is a no-op, so post-exit allocations keep working.
+// (Windows port: swap for SRWLOCK, same triviality — see backlog F.)
+struct ImmortalLock {
+    explicit ImmortalLock(pthread_mutex_t& m) : m_m(&m) { pthread_mutex_lock(m_m); }
+    ~ImmortalLock() { pthread_mutex_unlock(m_m); }
+    ImmortalLock(const ImmortalLock&)            = delete;
+    ImmortalLock& operator=(const ImmortalLock&) = delete;
+    pthread_mutex_t* m_m;
+};
+
 // ── Block registry — "is this pointer ours?" ────────────────────────────────
 // Open-addressing table of live block bases. Inserts/erases are rare (heap
 // growth, large alloc/free) and mutex'd; lookups are lock-free atomic probes
@@ -73,14 +90,14 @@ void* mapAligned(size_t size) {
 constexpr size_t    kRegSlots = size_t(1) << 15;
 constexpr uintptr_t kTombstone = 1;
 std::atomic<uintptr_t> g_registry[kRegSlots];   // zero-init: empty
-std::mutex             g_regMu;
+pthread_mutex_t        g_regMu = PTHREAD_MUTEX_INITIALIZER;
 
 inline size_t regHash(uintptr_t base) {
     return size_t(((base >> kBlockShift) * 0x9E3779B97F4A7C15ull) >> 49);
 }
 
 void regInsert(uintptr_t base) {
-    std::lock_guard<std::mutex> lk(g_regMu);
+    ImmortalLock lk(g_regMu);
     size_t i = regHash(base);
     for (;;) {
         uintptr_t v = g_registry[i].load(std::memory_order_relaxed);
@@ -93,7 +110,7 @@ void regInsert(uintptr_t base) {
 }
 
 void regErase(uintptr_t base) {
-    std::lock_guard<std::mutex> lk(g_regMu);
+    ImmortalLock lk(g_regMu);
     size_t i = regHash(base);
     for (;;) {
         uintptr_t v = g_registry[i].load(std::memory_order_relaxed);
@@ -118,7 +135,7 @@ inline bool regHas(uintptr_t base) {
 
 // ── TagHeap — TLSF growing 2MB at a time ────────────────────────────────────
 struct TagHeap {
-    std::mutex            mu;
+    pthread_mutex_t       mu = PTHREAD_MUTEX_INITIALIZER;   // immortal (above)
     tlsf_t                tlsf = nullptr;
     std::atomic<uint64_t> cur{0}, peak{0}, allocs{0}, frees{0};
     std::atomic<uint64_t> budget{0};
@@ -138,7 +155,7 @@ struct TagHeap {
     }
 
     void* allocate(Tag tag, size_t size, size_t align) {
-        std::lock_guard<std::mutex> lk(mu);
+        ImmortalLock lk(mu);
         if (!tlsf && !grow(tag)) return nullptr;
         void* p = align <= 8 ? tlsf_malloc(tlsf, size)
                              : tlsf_memalign(tlsf, align, size);
@@ -153,7 +170,7 @@ struct TagHeap {
     }
 
     void release(void* p) {
-        std::lock_guard<std::mutex> lk(mu);
+        ImmortalLock lk(mu);
         const uint64_t sz = tlsf_block_size(p);
         tlsf_free(tlsf, p);
         cur.fetch_sub(sz, std::memory_order_relaxed);
@@ -161,7 +178,7 @@ struct TagHeap {
     }
 
     size_t liveSize(void* p) {
-        std::lock_guard<std::mutex> lk(mu);
+        ImmortalLock lk(mu);
         return tlsf_block_size(p);
     }
 

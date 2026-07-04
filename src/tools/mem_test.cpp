@@ -15,6 +15,21 @@
 #include "core/memory/mem.h"
 
 static int  g_failures = 0;
+
+// ── Post-main gauntlet ──────────────────────────────────────────────────────
+// Static destructors run AFTER main() and may allocate/free through the
+// routed global new/delete — the cmd+q crash class: heaps with std::mutex
+// members died at static destruction and the next lock() threw. With the
+// immortal (trivially-destructible) locks this must work; if it regresses,
+// this destructor crashes the process and the harness sees a bad exit code.
+struct PostMainAllocProbe {
+    ~PostMainAllocProbe() {
+        volatile int* p = new int[256];
+        p[0] = 42; p[255] = 7;
+        delete[] p;
+        std::printf("  ok    post-main static-destructor allocation survives\n");
+    }
+} g_postMainProbe;
 #define CHECK(cond, ...) do {                                        \
     if (!(cond)) {                                                   \
         std::printf("  FAIL  " __VA_ARGS__);                         \
