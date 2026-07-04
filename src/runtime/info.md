@@ -64,6 +64,17 @@ serializes the world and simulates a fresh copy (editor Play; Stop restores
 the editing world untouched). `simWorld()` returns whichever is active.
 The game-facing `tick(dt)` overload runs systems + simulation + a primary-
 camera render to the backbuffer (`renderToBackbuffer`, invalid FB target).
+Each fixed sim step opens with `EventSweeper::sweep` (`event_sweeper.h`) —
+ages every `events::declare`'d component so a message is observable for a
+full tick regardless of plugin order — then the interpolation snapshot,
+`beginTick`, and the update/physics/post broadcasts. `stopSimulation` calls
+`m_eventSweeper.reset()` alongside the other cached-query releases before the
+sim world is destroyed (query-outlives-world crash class).
+
+Services (`scripting/script_services.h`: IPhysicsService, IAnimService) take
+an explicit `(flecs::world&, flecs::entity_t)` rather than a world-bundling
+`flecs::entity`. ScriptHost splits the pair at the boundary from its bound
+`m_world`; its public API, the C API, and Lua keep `flecs::entity`.
 
 ## Kits (project plug-ins)
 Kits are reusable C++ gameplay systems built ON the engine (FPS controller, IK,

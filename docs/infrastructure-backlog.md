@@ -56,12 +56,22 @@ tier-3 game module.
     the header + warn-once at runtime. InputSystem remains editor-internal.
 
 ## Phase D — Event model + service architecture (from the API reviews)
-16. **Explicit event model** — transient ECS components formalized (declare,
-    auto-clear, ownership rules) replacing convention (DamageInbox pattern).
-17. **entity_t normalization** in service interfaces; continue ScriptHost →
-    coordinator (extract Asset/Scene service fronts as they grow).
-18. **Live capability negotiation** — headless hosts publish absent API
-    groups (version 0); modules adapt via engineApiHas.
+16. ~~Explicit event model~~ SHIPPED — EventComponent + EventSweeper mark/
+    sweep (components/event_component.h, runtime/event_sweeper.h): events::
+    declare<T> (implies SerdeTransient), a message written anywhere in a tick
+    is guaranteed observable for the whole NEXT tick regardless of broadcast
+    order, drains via events::consume<T> (no orphaned staleness marker),
+    self-expires unconsumed. DamageInbox migrated; Died stays transient STATE.
+    event_test proves the lifecycle incl. re-fire-after-drain.
+17. ~~entity_t normalization~~ SHIPPED — IPhysicsService/IAnimService take an
+    explicit (flecs::world&, flecs::entity_t) instead of a world-bundling
+    flecs::entity; ScriptHost splits at the boundary (public API + C API + Lua
+    unchanged), Jolt/AnimService impls updated. (Continue ScriptHost →
+    coordinator / extract Asset/Scene service fronts as they grow — remaining.)
+18. ~~Live capability negotiation~~ SHIPPED — engineApiHostTable re-publishes
+    ui.version per bind (backend present ? UI_V : 0); v0 = ABSENT is now a
+    silent, expected state at bind (no false "version mismatch" warning);
+    modules adapt via engineApiHas. ui is the exemplar for optional groups.
 19. **Kit param editor UI**; menubar/context-menu contribution API;
     engineKitAnnounce for embedded kits (registry-of-record).
 20. **Lua parity** — action + anim bindings mirroring the C API.

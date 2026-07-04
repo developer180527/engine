@@ -16,6 +16,15 @@ No logic beyond trivial helpers — systems and plugins own behavior.
 - `script_component.h` — Lua script path (consumed by LuaScriptPlugin).
 - `spinner.h` — demo component (default scene cubes).
 - `entity_id.h` — stable serialization identity.
+- `serde_transient.h` — `SerdeTransient` type tag: runtime state, never saved.
+- `event_component.h` — the EVENT model. `events::declare<T>(world)` marks a
+  component type a one-shot message (implies SerdeTransient) that the runtime's
+  `EventSweeper` (runtime/event_sweeper.h) keeps observable for a full tick
+  after it's written, regardless of plugin broadcast order, then auto-expires.
+  Drain a handled event with `events::consume<T>(entity)` — never a bare
+  `remove<T>()` (leaves an orphaned `(EventStale, T)` staleness marker). Events
+  are MESSAGES; persistent-within-session markers (e.g. combat::Died) stay
+  plain SerdeTransient STATE, cleared by their owner.
 
 ## Rules
 - Components must stay POD-ish and serializable: every field either round-
