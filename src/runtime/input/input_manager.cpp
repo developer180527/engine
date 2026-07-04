@@ -119,6 +119,7 @@ void InputManager::shutdown() {
     m_window.reset();
     m_lastRawMotionNs = 0;
     m_endpoints.clear(); m_elected.clear();
+    m_lastDeviceGen = 0;   // force a hotplug re-snapshot on the next pump
     m_staging.clear(); m_contexts.clear(); m_stack.clear();
     m_cur = m_prev = {};
     m_lookTotalX = m_lookTotalY = 0.0;
@@ -138,15 +139,12 @@ void InputManager::refreshEndpoints() {
 }
 
 bool InputManager::accept(const hid::Event& e) {
-    // Hotplug maintains the endpoint table; the events pass through too so
-    // consumers watching connects still see them staged.
-    if (e.type == hid::EventType::DeviceAdded) { refreshEndpoints(); return true; }
-    if (e.type == hid::EventType::DeviceRemoved) {
-        refreshEndpoints();
-        for (auto it = m_elected.begin(); it != m_elected.end();)
-            it = (it->second == e.device) ? m_elected.erase(it) : ++it;
-        return true;
-    }
+    // Device lifecycle (add/remove) is reconciled RELIABLY in pump() via the
+    // undroppable generation counter — not here, where a dropped ring event
+    // could be missed. These just pass through so consumers watching for
+    // connects still see them staged.
+    if (e.type == hid::EventType::DeviceAdded ||
+        e.type == hid::EventType::DeviceRemoved) return true;
 
     auto it = m_endpoints.find(e.device);
     const uint32_t phys = it != m_endpoints.end() ? it->second.physId : e.device;
@@ -169,6 +167,23 @@ bool InputManager::accept(const hid::Event& e) {
 
 // ── Frame flow ──────────────────────────────────────────────────────────────
 void InputManager::pump() {
+    // Reliable hotplug reconcile BEFORE draining. The ring's DeviceAdded/
+    // DeviceRemoved are best-effort (droppable on a hitch); a lost DeviceRemoved
+    // would otherwise leave a disconnected device ELECTED as an event type's
+    // owner, silently rejecting its replacement. The device generation counter
+    // is undroppable — when it changes we re-snapshot the authoritative device
+    // list and evict any elected endpoint that's no longer present. Cheap: one
+    // atomic load per frame; the snapshot happens only on an actual change.
+    uint64_t gen = 0;
+    if (m_source) gen += m_source->deviceGeneration();
+    if (m_window) gen += m_window->deviceGeneration();
+    if (gen != m_lastDeviceGen) {
+        m_lastDeviceGen = gen;
+        refreshEndpoints();
+        for (auto it = m_elected.begin(); it != m_elected.end();)
+            it = (m_endpoints.count(it->second) == 0) ? m_elected.erase(it) : ++it;
+    }
+
     hid::Event ev[512];
     auto drain = [&](IInputSource* src, bool isRaw) {
         if (!src) return;

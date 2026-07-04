@@ -37,6 +37,9 @@ public:
     virtual bool rawMotionOnly() const { return false; }
     virtual size_t poll(hid::Event* out, size_t max) = 0;
     virtual size_t devices(hid::DeviceInfo* out, size_t max) const = 0;
+    // Monotonic hotplug counter (see hid::Context::deviceGeneration). Default 0
+    // for sources with a fixed device set (window/replay never hotplug).
+    virtual uint64_t deviceGeneration() const { return 0; }
 };
 
 // ── HidSource ───────────────────────────────────────────────────────────────
@@ -53,6 +56,7 @@ public:
     size_t devices(hid::DeviceInfo* out, size_t max) const override {
         return m_ctx.devices(out, max);
     }
+    uint64_t deviceGeneration() const override { return m_ctx.deviceGeneration(); }
 
 private:
     hid::Context m_ctx;
@@ -128,8 +132,16 @@ private:
 // ── ReplaySource ────────────────────────────────────────────────────────────
 class ReplaySource final : public IInputSource {
 public:
-    void addDevice(const hid::DeviceInfo& d) { m_devs.push_back(d); }
+    void addDevice(const hid::DeviceInfo& d) { m_devs.push_back(d); ++m_gen; }
     void addEvent(const hid::Event& e) { m_events.push_back(e); }
+    // Simulate an unplug WITHOUT emitting a DeviceRemoved event — models a
+    // ring-dropped removal, which the generation reconcile must still catch.
+    void removeDevice(hid::DeviceId id) {
+        for (size_t i = 0; i < m_devs.size(); ++i)
+            if (m_devs[i].id == id) { m_devs.erase(m_devs.begin() + (long)i); break; }
+        ++m_gen;
+    }
+    uint64_t deviceGeneration() const override { return m_gen; }
 
     const char* name() const override { return "replay"; }
     size_t poll(hid::Event* out, size_t max) override {
@@ -150,6 +162,7 @@ private:
     std::vector<hid::DeviceInfo> m_devs;
     std::vector<hid::Event>      m_events;
     size_t                       m_cursor = 0;
+    uint64_t                     m_gen    = 0;
 };
 
 } // namespace input

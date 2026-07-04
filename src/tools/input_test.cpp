@@ -110,6 +110,34 @@ int main() {
         CHECK(lx == 0.0f && ly == 0.0f, "look accumulator drains on read");
     }
 
+    // ── Reliable hotplug: a DROPPED DeviceRemoved must not wedge election ───
+    // A device elected for a type, then unplugged with its DeviceRemoved event
+    // lost (ring overflow), must be evicted so a replacement with the same
+    // physId can take over. Without the generation reconcile the stale election
+    // rejects the replacement's motion forever.
+    {
+        auto src = std::make_unique<ReplaySource>();
+        ReplaySource* raw = src.get();
+        raw->addDevice({1, hid::DeviceClass::Mouse, 0x1, 0x1, 77, "mouse"});
+        raw->addEvent({1'000'000ull, 1, hid::EventType::MouseMotion, 0, 0, 5, 0});
+
+        InputManager m;
+        m.initWithSource(std::move(src));
+        m.loadConfigText(kTestConfig);
+        m.pump(); m.beginTick(1'000'000ull);
+        CHECK(m.snapshot().mouseDx == 5, "device 1 elected for motion");
+
+        // Unplug device 1 (gen++) and connect a replacement sharing physId 77
+        // (gen++) — but deliver NO DeviceRemoved event, as if the ring dropped
+        // it. Then the replacement moves.
+        raw->removeDevice(1);
+        raw->addDevice({4, hid::DeviceClass::Mouse, 0x1, 0x1, 77, "mouse'"});
+        raw->addEvent({2'000'000ull, 4, hid::EventType::MouseMotion, 0, 0, 7, 0});
+        m.pump(); m.beginTick(2'000'000ull);
+        CHECK(m.snapshot().mouseDx == 7,
+              "replacement (same physId) elected after a dropped DeviceRemoved");
+    }
+
     // ── Determinism: same stream twice -> bit-identical snapshots ───────────
     {
         InputSnapshot a[2], b[2];

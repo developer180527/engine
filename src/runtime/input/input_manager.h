@@ -211,6 +211,7 @@ private:
     struct Endpoint { uint32_t physId; hid::DeviceClass cls; };
     std::unordered_map<uint32_t, Endpoint> m_endpoints;          // DeviceId ->
     std::unordered_map<uint64_t, uint32_t> m_elected;            // physId|type ->
+    uint64_t m_lastDeviceGen = 0;   // last reconciled hotplug generation
 
     std::vector<hid::Event> m_staging;   // pumped, not yet ticked
     InputSnapshot m_cur, m_prev;
