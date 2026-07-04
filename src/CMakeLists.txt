@@ -112,6 +112,7 @@ add_library(engine_runtime STATIC
     runtime/services/async_loader.cpp
     runtime/services/asset_service.cpp
     runtime/services/scene_service.cpp
+    runtime/services/nav_service.cpp
     runtime/scripting/engine_api.cpp
     runtime/scripting/engine_api_table.cpp
     runtime/jobs/jobs_enkits.cpp
@@ -283,6 +284,13 @@ target_link_libraries(mem_test PRIVATE engine_core)
 # ── input_test — InputManager determinism/election/action gauntlet ──────────
 add_executable(input_test tools/input_test.cpp)
 target_link_libraries(input_test PRIVATE engine_runtime)
+
+# ── nav_test — NavService bake + Detour path-query gauntlet (headless) ──────
+add_executable(nav_test tools/nav_test.cpp)
+target_link_libraries(nav_test PRIVATE engine_runtime)
+set_target_properties(nav_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 
 # ── import_test — multi-submesh import gauntlet (bgfx Noop, headless) ────────
 add_executable(import_test tools/import_test.cpp)
