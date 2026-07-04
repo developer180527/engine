@@ -31,7 +31,10 @@ public:
         m_clipLib = lib;   m_projectCtx = project;
     }
 
-    bool play(flecs::entity e, const char* clipPath, float fade) override {
+    // Resolve the (world, id) pair back into a flecs::entity for component
+    // access — this service is all about the entity's Animator/SkinnedMesh.
+    bool play(flecs::world& w, flecs::entity_t eId, const char* clipPath, float fade) override {
+        flecs::entity e = w.entity(eId);
         if (!e.is_alive() || !clipPath || !m_skelReg || !m_clipReg || !m_clipLib)
             return false;
         const SkinnedMesh* sm = e.try_get<SkinnedMesh>();
@@ -55,24 +58,27 @@ public:
         e.set<Animator>(a);
         return true;
     }
-    void setSpeed(flecs::entity e, float s) override {
-        if (Animator* a = mut(e)) a->speed = s;
+    void setSpeed(flecs::world& w, flecs::entity_t eId, float s) override {
+        if (Animator* a = mut(w.entity(eId))) a->speed = s;
     }
-    void setLooping(flecs::entity e, bool loop) override {
-        if (Animator* a = mut(e)) a->looping = loop;
+    void setLooping(flecs::world& w, flecs::entity_t eId, bool loop) override {
+        if (Animator* a = mut(w.entity(eId))) a->looping = loop;
     }
-    void setPlaying(flecs::entity e, bool playing) override {
-        if (Animator* a = mut(e)) a->playing = playing;
+    void setPlaying(flecs::world& w, flecs::entity_t eId, bool playing) override {
+        if (Animator* a = mut(w.entity(eId))) a->playing = playing;
     }
-    bool isPlaying(flecs::entity e) const override {
+    bool isPlaying(flecs::world& w, flecs::entity_t eId) const override {
+        flecs::entity e = w.entity(eId);
         const Animator* a = e.is_alive() ? e.try_get<Animator>() : nullptr;
         return a && a->playing;
     }
-    float time(flecs::entity e) const override {
+    float time(flecs::world& w, flecs::entity_t eId) const override {
+        flecs::entity e = w.entity(eId);
         const Animator* a = e.is_alive() ? e.try_get<Animator>() : nullptr;
         return a ? a->time : 0.0f;
     }
-    float duration(flecs::entity e) const override {
+    float duration(flecs::world& w, flecs::entity_t eId) const override {
+        flecs::entity e = w.entity(eId);
         const Animator* a = e.is_alive() ? e.try_get<Animator>() : nullptr;
         if (!a || !m_clipReg) return 0.0f;
         const AnimClip* c = m_clipReg->get(a->clip);

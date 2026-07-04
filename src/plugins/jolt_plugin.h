@@ -239,25 +239,27 @@ public:
     static constexpr float fixedTimestep() { return kFixedDt; }
 
     // ── IPhysicsService (scripts reach these through ScriptHost) ────────
-    void applyImpulse(flecs::entity e, float x, float y, float z) override {
+    // Bodies are keyed by entity_t, so these need only the id — the world
+    // arg is unused here (a backend that touched components would resolve it).
+    void applyImpulse(flecs::world&, flecs::entity_t e, float x, float y, float z) override {
         if (!m_physics) return;
-        auto it = m_entityToBody.find(e.id());
+        auto it = m_entityToBody.find(e);
         if (it == m_entityToBody.end()) return;
         auto& bi = m_physics->GetBodyInterface();
         bi.ActivateBody(it->second);
         bi.AddImpulse(it->second, JPH::Vec3(x, y, z));
     }
-    void setVelocity(flecs::entity e, float x, float y, float z) override {
+    void setVelocity(flecs::world&, flecs::entity_t e, float x, float y, float z) override {
         if (!m_physics) return;
-        auto it = m_entityToBody.find(e.id());
+        auto it = m_entityToBody.find(e);
         if (it == m_entityToBody.end()) return;
         auto& bi = m_physics->GetBodyInterface();
         bi.ActivateBody(it->second);
         bi.SetLinearVelocity(it->second, JPH::Vec3(x, y, z));
     }
-    bool getVelocity(flecs::entity e, float& x, float& y, float& z) override {
+    bool getVelocity(flecs::world&, flecs::entity_t e, float& x, float& y, float& z) override {
         if (!m_physics) return false;
-        auto it = m_entityToBody.find(e.id());
+        auto it = m_entityToBody.find(e);
         if (it == m_entityToBody.end()) return false;
         JPH::Vec3 v = m_physics->GetBodyInterface().GetLinearVelocity(it->second);
         x = v.GetX(); y = v.GetY(); z = v.GetZ();
@@ -291,16 +293,16 @@ public:
     }
 
     // ── Character controller service (scripts -> ScriptHost -> here) ────
-    void charMove(flecs::entity e, float vx, float vz) override {
-        auto it = m_charState.find(e.id());
+    void charMove(flecs::world&, flecs::entity_t e, float vx, float vz) override {
+        auto it = m_charState.find(e);
         if (it != m_charState.end()) it->second.desiredHoriz = JPH::Vec3(vx, 0, vz);
     }
-    void charJump(flecs::entity e, float speed) override {
-        auto it = m_charState.find(e.id());
+    void charJump(flecs::world&, flecs::entity_t e, float speed) override {
+        auto it = m_charState.find(e);
         if (it != m_charState.end() && it->second.grounded) it->second.vertVel = speed;
     }
-    bool charIsGrounded(flecs::entity e) override {
-        auto it = m_charState.find(e.id());
+    bool charIsGrounded(flecs::world&, flecs::entity_t e) override {
+        auto it = m_charState.find(e);
         return it != m_charState.end() && it->second.grounded;
     }
 

@@ -20,33 +20,35 @@ struct RaycastHit {
     float    distance  = 0.0f;
 };
 
-// Animation control surface (implemented by the runtime's AnimService).
-// NOTE: services still traffic in flecs::entity for consistency with the
-// existing interfaces; normalizing to entity_t handles is queued for the
-// full service-model pass (API review, July 2026).
+// Services take an EXPLICIT (world&, entity_t) rather than a flecs::entity.
+// A flecs::entity silently bundles a world pointer; passing the bare 64-bit id
+// plus the caller's world keeps a backend from depending on which world an
+// entity happened to be wrapped against, and matches the C API, which already
+// trades in EngineEntity ids. A backend calls world.entity(e) only where it
+// needs component access. (Audio takes no entity — its interface is unchanged.)
 struct IAnimService {
     virtual ~IAnimService() = default;
-    virtual bool  play(flecs::entity e, const char* clipPath, float fade) = 0;
-    virtual void  setSpeed(flecs::entity e, float s)        = 0;
-    virtual void  setLooping(flecs::entity e, bool loop)    = 0;
-    virtual void  setPlaying(flecs::entity e, bool playing) = 0;
-    virtual bool  isPlaying(flecs::entity e) const          = 0;
-    virtual float time(flecs::entity e) const               = 0;
-    virtual float duration(flecs::entity e) const           = 0;
+    virtual bool  play(flecs::world& w, flecs::entity_t e, const char* clipPath, float fade) = 0;
+    virtual void  setSpeed(flecs::world& w, flecs::entity_t e, float s)        = 0;
+    virtual void  setLooping(flecs::world& w, flecs::entity_t e, bool loop)    = 0;
+    virtual void  setPlaying(flecs::world& w, flecs::entity_t e, bool playing) = 0;
+    virtual bool  isPlaying(flecs::world& w, flecs::entity_t e) const          = 0;
+    virtual float time(flecs::world& w, flecs::entity_t e) const               = 0;
+    virtual float duration(flecs::world& w, flecs::entity_t e) const           = 0;
 };
 
 struct IPhysicsService {
     virtual ~IPhysicsService() = default;
-    virtual void applyImpulse(flecs::entity e, float x, float y, float z)        = 0;
-    virtual void setVelocity (flecs::entity e, float x, float y, float z)        = 0;
-    virtual bool getVelocity (flecs::entity e, float& x, float& y, float& z)     = 0;
+    virtual void applyImpulse(flecs::world& w, flecs::entity_t e, float x, float y, float z)    = 0;
+    virtual void setVelocity (flecs::world& w, flecs::entity_t e, float x, float y, float z)    = 0;
+    virtual bool getVelocity (flecs::world& w, flecs::entity_t e, float& x, float& y, float& z) = 0;
     virtual RaycastHit raycast(float ox, float oy, float oz,
                                float dx, float dy, float dz, float maxDist)      = 0;
 
     // Character controller (default no-op so non-Jolt backends compile as-is)
-    virtual void charMove (flecs::entity /*e*/, float /*vx*/, float /*vz*/)        {}
-    virtual void charJump (flecs::entity /*e*/, float /*speed*/)                   {}
-    virtual bool charIsGrounded(flecs::entity /*e*/)                               { return false; }
+    virtual void charMove (flecs::world& /*w*/, flecs::entity_t /*e*/, float /*vx*/, float /*vz*/) {}
+    virtual void charJump (flecs::world& /*w*/, flecs::entity_t /*e*/, float /*speed*/)            {}
+    virtual bool charIsGrounded(flecs::world& /*w*/, flecs::entity_t /*e*/)                        { return false; }
 };
 
 struct IAudioService {

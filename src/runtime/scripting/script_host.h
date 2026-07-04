@@ -156,9 +156,11 @@ public:
     // The optional services fail safe but not silent: the first call against
     // an unbound service logs once, so "my impulse does nothing" is a log
     // line away from "is JoltPlugin attached / is the simulation running?".
-    void applyImpulse(flecs::entity e, float x, float y, float z) { if (auto* p = physicsOrWarn()) p->applyImpulse(e,x,y,z); }
-    void setVelocity (flecs::entity e, float x, float y, float z) { if (auto* p = physicsOrWarn()) p->setVelocity(e,x,y,z); }
-    bool getVelocity (flecs::entity e, float& x, float& y, float& z) { auto* p = physicsOrWarn(); return p ? p->getVelocity(e,x,y,z) : false; }
+    // Split the incoming entity into the (world, id) pair the services take —
+    // sourced from the host's bound world, not the entity's bundled one.
+    void applyImpulse(flecs::entity e, float x, float y, float z) { if (auto* p = physicsOrWarn()) p->applyImpulse(*m_world,e.id(),x,y,z); }
+    void setVelocity (flecs::entity e, float x, float y, float z) { if (auto* p = physicsOrWarn()) p->setVelocity(*m_world,e.id(),x,y,z); }
+    bool getVelocity (flecs::entity e, float& x, float& y, float& z) { auto* p = physicsOrWarn(); return p ? p->getVelocity(*m_world,e.id(),x,y,z) : false; }
     RaycastHit raycast(float ox,float oy,float oz, float dx,float dy,float dz, float maxDist) {
         auto* p = physicsOrWarn();
         return p ? p->raycast(ox,oy,oz,dx,dy,dz,maxDist) : RaycastHit{};
@@ -166,9 +168,9 @@ public:
     void setPhysicsService(IPhysicsService* s) { m_physics = s; if (s) m_warnedPhysics = false; }
 
     // Character controller (same warn-once contract)
-    void charMove(flecs::entity e, float vx, float vz) { if (auto* p = physicsOrWarn()) p->charMove(e,vx,vz); }
-    void charJump(flecs::entity e, float speed)        { if (auto* p = physicsOrWarn()) p->charJump(e,speed); }
-    bool charGrounded(flecs::entity e)                 { auto* p = physicsOrWarn(); return p ? p->charIsGrounded(e) : false; }
+    void charMove(flecs::entity e, float vx, float vz) { if (auto* p = physicsOrWarn()) p->charMove(*m_world,e.id(),vx,vz); }
+    void charJump(flecs::entity e, float speed)        { if (auto* p = physicsOrWarn()) p->charJump(*m_world,e.id(),speed); }
+    bool charGrounded(flecs::entity e)                 { auto* p = physicsOrWarn(); return p ? p->charIsGrounded(*m_world,e.id()) : false; }
 
     // ── Audio (no-op + ONE warning until a service is registered) ───────
     uint32_t playSound  (const char* path)                          { auto* a = audioOrWarn(); return a ? a->play(path) : 0; }
@@ -204,14 +206,14 @@ public:
     void setAnimService(IAnimService* s) { m_anim = s; }
 
     bool animPlay(flecs::entity e, const char* clipPath, float fade) {
-        return m_anim && m_anim->play(e, clipPath, fade);
+        return m_anim && m_anim->play(*m_world, e.id(), clipPath, fade);
     }
-    void animSetSpeed(flecs::entity e, float s)    { if (m_anim) m_anim->setSpeed(e, s); }
-    void animSetLooping(flecs::entity e, bool l)   { if (m_anim) m_anim->setLooping(e, l); }
-    void animSetPlaying(flecs::entity e, bool p)   { if (m_anim) m_anim->setPlaying(e, p); }
-    bool animIsPlaying(flecs::entity e) const      { return m_anim && m_anim->isPlaying(e); }
-    float animTime(flecs::entity e) const          { return m_anim ? m_anim->time(e) : 0.0f; }
-    float animDuration(flecs::entity e) const      { return m_anim ? m_anim->duration(e) : 0.0f; }
+    void animSetSpeed(flecs::entity e, float s)    { if (m_anim) m_anim->setSpeed(*m_world, e.id(), s); }
+    void animSetLooping(flecs::entity e, bool l)   { if (m_anim) m_anim->setLooping(*m_world, e.id(), l); }
+    void animSetPlaying(flecs::entity e, bool p)   { if (m_anim) m_anim->setPlaying(*m_world, e.id(), p); }
+    bool animIsPlaying(flecs::entity e) const      { return m_anim && m_anim->isPlaying(*m_world, e.id()); }
+    float animTime(flecs::entity e) const          { return m_anim ? m_anim->time(*m_world, e.id()) : 0.0f; }
+    float animDuration(flecs::entity e) const      { return m_anim ? m_anim->duration(*m_world, e.id()) : 0.0f; }
 
     uint32_t assetLoadMesh(const char* cookedPath) {
         return m_assetService ? m_assetService->loadMesh(cookedPath).id : 0;
