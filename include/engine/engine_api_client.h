@@ -28,15 +28,15 @@
 
 /* Module-local state — one per dylib, invisible outside it. */
 static const EngineApiTableV1* g_eapi = nullptr;
-static bool g_eapiOk[7] = {};         /* core,input,physics,audio,assets,anim,ui */
+static bool g_eapiOk[8] = {};         /* core,input,physics,audio,assets,anim,ui,nav */
 
 enum { EAPI_CORE, EAPI_INPUT, EAPI_PHYSICS, EAPI_AUDIO,
-       EAPI_ASSETS, EAPI_ANIM, EAPI_UI };
+       EAPI_ASSETS, EAPI_ANIM, EAPI_UI, EAPI_NAV, EAPI_COUNT };
 
 /* Capability query — true when the group is bound AND version-compatible.
  * Groups published with version 0 are ABSENT by convention. */
 static inline bool engineApiHas(int group) {
-    return g_eapi && group >= 0 && group < 7 && g_eapiOk[group];
+    return g_eapi && group >= 0 && group < EAPI_COUNT && g_eapiOk[group];
 }
 
 static bool eapiGuard(int group, const char* name) {
@@ -70,6 +70,7 @@ void engineModuleBindApiV1(const EngineApiTableV1* t) {
         { EAPI_ASSETS,  t->assets.version,  ENGINE_API_ASSETS_V,  "assets"  },
         { EAPI_ANIM,    t->anim.version,    ENGINE_API_ANIM_V,    "anim"    },
         { EAPI_UI,      t->ui.version,      ENGINE_API_UI_V,      "ui"      },
+        { EAPI_NAV,     t->nav.version,     ENGINE_API_NAV_V,     "nav"     },
     };
     for (auto& c : checks) {
         g_eapiOk[c.idx] = (c.have == c.want);
@@ -162,6 +163,13 @@ bool engineCharGrounded(EngineEntity e) { return eapiGuard(EAPI_PHYSICS,"charGro
 uint32_t enginePlaySound(const char* p) { return eapiGuard(EAPI_AUDIO,"playSound") ? g_eapi->audio.playSound(p) : 0; }
 uint32_t enginePlaySoundAt(const char* p, float x, float y, float z) { return eapiGuard(EAPI_AUDIO,"playSoundAt") ? g_eapi->audio.playSoundAt(p, x, y, z) : 0; }
 void     engineStopSound(uint32_t h) { if (eapiGuard(EAPI_AUDIO,"stopSound")) g_eapi->audio.stopSound(h); }
+
+/* nav */
+int  engineNavFindPath(float sx, float sy, float sz, float ex, float ey, float ez, float* out, int maxPoints) {
+    return eapiGuard(EAPI_NAV,"navFindPath") ? g_eapi->nav.findPath(sx,sy,sz,ex,ey,ez,out,maxPoints) : 0; }
+bool engineNavProject(float x, float y, float z, float* out) {
+    return eapiGuard(EAPI_NAV,"navProject") && g_eapi->nav.project(x,y,z,out); }
+bool engineNavReady(void) { return eapiGuard(EAPI_NAV,"navReady") && g_eapi->nav.ready(); }
 
 /* assets + scenes */
 uint32_t engineAssetLoadMesh(const char* p)     { return eapiGuard(EAPI_ASSETS,"loadMesh") ? g_eapi->assets.loadMesh(p) : 0; }

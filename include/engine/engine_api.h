@@ -104,6 +104,18 @@ void engineCharMove(EngineEntity e, float vx, float vz);
 void engineCharJump(EngineEntity e, float speed);
 bool engineCharGrounded(EngineEntity e);
 
+/* ── Navigation (no-op until a navmesh is baked) ──────────────────────────────
+ * Path queries over the engine's navmesh (Recast/Detour) — kits get world-space
+ * waypoints without linking a nav library. engineNavFindPath fills out (xyz
+ * triples, capacity maxPoints) with the straight-path corridor and returns the
+ * waypoint count (0 = no path / no navmesh). engineNavProject snaps a point onto
+ * walkable ground (out[3]); engineNavReady reports whether a navmesh exists. */
+int  engineNavFindPath(float sx, float sy, float sz,
+                       float ex, float ey, float ez,
+                       float* out, int maxPoints);
+bool engineNavProject (float x, float y, float z, float* out);
+bool engineNavReady   (void);
+
 /* ── Audio (no-op until an audio plugin is attached) ─────────────────────── */
 uint32_t enginePlaySound  (const char* path);
 uint32_t enginePlaySoundAt(const char* path, float x, float y, float z);

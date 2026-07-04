@@ -6,6 +6,7 @@
 #include "render/primitive_library.h"
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
+#include "runtime/services/nav_service.h"
 #include "animation/skeleton_registry.h"
 #include "animation/clip_registry.h"
 #include <chrono>
@@ -223,6 +224,7 @@ private:
     std::unique_ptr<MemoryChannel>  m_memChannel;   // profiler memory channel
     std::unique_ptr<ClipLibrary>    m_clipLibrary;  // standalone-clip loader/cache
     std::unique_ptr<AnimService>    m_animService;  // gameplay anim control (IAnimService)
+    nav::NavService                 m_nav;          // engine navmesh (Recast/Detour)
     std::unique_ptr<RuntimeContext> m_ctx;
 
     // Render subsystem — owns the device + all render state. Declared after the

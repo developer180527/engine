@@ -42,6 +42,7 @@ extern "C" {
 #define ENGINE_API_ASSETS_V  1  /* cooked assets + scenes                  */
 #define ENGINE_API_ANIM_V    1
 #define ENGINE_API_UI_V      1  /* editor-UI facade + debug draw           */
+#define ENGINE_API_NAV_V     1  /* navmesh path queries (Recast/Detour)    */
 
 typedef struct EngineApiCoreV1 {
     uint32_t version;
@@ -142,6 +143,19 @@ typedef struct EngineApiUiV1 {
                      float, float, float);
 } EngineApiUiV1;
 
+/* Navigation: pathfinding over the engine's baked navmesh (NavService). Kits
+ * never link Recast/Detour — they receive world-space straight-path waypoints.
+ * findPath returns the waypoint count written to out (xyz triples, maxPoints
+ * capacity); project snaps a point onto walkable ground; ready() is true once a
+ * navmesh has been baked (else the queries no-op to 0/false). */
+typedef struct EngineApiNavV1 {
+    uint32_t version;
+    int  (*findPath)(float sx, float sy, float sz, float ex, float ey, float ez,
+                     float* out, int maxPoints);
+    bool (*project)(float x, float y, float z, float* out);
+    bool (*ready)(void);
+} EngineApiNavV1;
+
 typedef struct EngineApiTableV1 {
     uint32_t structSize;   /* = sizeof(EngineApiTableV1) — hard gate */
     EngineApiCoreV1    core;
@@ -151,6 +165,7 @@ typedef struct EngineApiTableV1 {
     EngineApiAssetsV1  assets;
     EngineApiAnimV1    anim;
     EngineApiUiV1      ui;
+    EngineApiNavV1     nav;   /* appended — bumps structSize; modules rebuild */
 } EngineApiTableV1;
 
 /* Host-side: the filled table (engine_api_table.cpp). */

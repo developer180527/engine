@@ -56,6 +56,8 @@ const EngineApiTableV1* engineApiHostTable(void) {
           uiTextPlain, engineUiButton, engineUiSliderFloat,
           engineUiCheckbox, engineUiSeparator,
           engineDrawLine, engineDrawSphere, engineDrawBox, engineDrawDisk },
+        { ENGINE_API_NAV_V,
+          engineNavFindPath, engineNavProject, engineNavReady },
     };
     // Re-published on every call: absent (0) until a UI backend registers.
     t.ui.version = engineUiHasBackend() ? ENGINE_API_UI_V : 0;

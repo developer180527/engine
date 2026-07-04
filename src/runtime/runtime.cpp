@@ -252,6 +252,7 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_animService = std::make_unique<AnimService>();
     m_animService->init(&m_skeletons, &m_clips, m_clipLibrary.get(), &m_project);
     m_scriptHost->setAnimService(m_animService.get());
+    m_scriptHost->setNavService(&m_nav);   // engine navmesh over the nav C-API
 
     // Input: raw hid source when available (Input Monitoring on macOS),
     // window fallback otherwise. Bindings from the project's input.json.

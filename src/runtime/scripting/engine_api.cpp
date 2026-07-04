@@ -146,6 +146,17 @@ uint32_t enginePlaySoundAt(const char* p, float x, float y, float z) {
 }
 void engineStopSound(uint32_t handle) { if (g_host) g_host->stopSound(handle); }
 
+/* ── Navigation ─────────────────────────────────────────────────────────── */
+int engineNavFindPath(float sx, float sy, float sz, float ex, float ey, float ez,
+                      float* out, int maxPoints) {
+    return (g_host && out && maxPoints > 0)
+        ? g_host->navFindPath(sx, sy, sz, ex, ey, ez, out, maxPoints) : 0;
+}
+bool engineNavProject(float x, float y, float z, float* out) {
+    return g_host && out && g_host->navProject(x, y, z, out);
+}
+bool engineNavReady(void) { return g_host && g_host->navReady(); }
+
 // ── Assets ───────────────────────────────────────────────────────────────────
 uint32_t engineAssetLoadMesh(const char* p)       { return (g_host && p) ? g_host->assetLoadMesh(p) : 0; }
 bool     engineAssetUnloadMesh(uint32_t id)       { return g_host ? g_host->assetUnloadMesh(id) : false; }

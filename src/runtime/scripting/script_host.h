@@ -15,6 +15,7 @@
 #include "runtime/services/asset_service.h"
 #include "project/project_context.h"
 #include "runtime/services/scene_service.h"
+#include "runtime/services/nav_service.h"
 
 // ── keyFromName ────────────────────────────────────────────────────────────
 // Map a script-facing key name ("W", "Space", "Left") to a Key. Key mirrors
@@ -178,6 +179,18 @@ public:
     void     stopSound  (uint32_t handle)                           { if (auto* a = audioOrWarn()) a->stop(handle); }
     void     setAudioService(IAudioService* s) { m_audio = s; if (s) m_warnedAudio = false; }
 
+    // ── Navigation (engine-owned NavService; no-op until a navmesh is baked) ──
+    void setNavService(nav::NavService* n) { m_nav = n; }
+    int  navFindPath(float sx, float sy, float sz, float ex, float ey, float ez,
+                     float* out, int maxPoints) const {
+        return m_nav ? m_nav->findPath((const float[3]){sx,sy,sz},
+                                       (const float[3]){ex,ey,ez}, out, maxPoints) : 0;
+    }
+    bool navProject(float x, float y, float z, float* out) const {
+        return m_nav && m_nav->projectPoint((const float[3]){x,y,z}, out);
+    }
+    bool navReady() const { return m_nav && m_nav->ready(); }
+
     // ── Assets (sync cooked-asset loading via AssetService) ────────────
     // Returns uint32_t handle IDs (0 = invalid) for FFI compatibility.
     // All load calls are synchronous — they do file I/O + bgfx handle
@@ -283,6 +296,7 @@ private:
     IAnimService*         m_anim       = nullptr; // runtime-owned AnimService
     IPhysicsService* m_physics      = nullptr; // null until Jolt service lands
     IAudioService*   m_audio        = nullptr; // null until miniaudio lands
+    nav::NavService* m_nav          = nullptr; // engine-owned; set at init
     AssetService*    m_assetService = nullptr; // null until wired from EngineContext
     SceneService*    m_sceneService = nullptr; // null until wired from EngineContext
     IPhysicsService* physicsOrWarn() {
