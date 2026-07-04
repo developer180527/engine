@@ -37,3 +37,6 @@
 [submodule "modules/hid"]
 	path = modules/hid
 	url = https://github.com/developer180527/hid.git
+[submodule "third_party/recastnavigation"]
+	path = third_party/recastnavigation
+	url = https://github.com/recastnavigation/recastnavigation.git

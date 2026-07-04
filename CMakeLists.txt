@@ -72,6 +72,15 @@ set(ENABLE_OBJECT_STREAM     OFF CACHE BOOL "" FORCE)
 set(CPP_RTTI_ENABLED         ON  CACHE BOOL "" FORCE)
 add_subdirectory(third_party/JoltPhysics/Build)
 
+# ── recastnavigation — navmesh (Recast build + Detour runtime query) ──────
+# Engine-owned navigation infrastructure (like Jolt for physics): the NavService
+# bakes a navmesh from static collision geometry and answers path queries; kits
+# consume it only through the nav C-API group. Demo/tests/examples off.
+set(RECASTNAVIGATION_DEMO     OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_TESTS    OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/recastnavigation)
+
 add_subdirectory(third_party/lua)
 
 # ── ozz-animation — skeletal animation backbone ──────────────────────────

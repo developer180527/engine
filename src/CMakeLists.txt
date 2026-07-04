@@ -158,6 +158,7 @@ target_link_libraries(engine_runtime PUBLIC
     ozz_animation ozz_animation_offline   # skeletal animation backbone (+ import-time builders)
     enkiTS                                # task scheduler behind engine::jobs (facade-only include)
     hid                                   # raw-input module (modules/hid submodule)
+    Recast Detour                         # navmesh build + runtime path query (NavService)
 )
 
 if(APPLE)
