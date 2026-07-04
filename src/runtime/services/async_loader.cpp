@@ -10,6 +10,7 @@
 #include <ozz/base/io/archive.h>
 #include <ozz/base/io/stream.h>
 #include "core/memory/mem.h"
+#include "runtime/jobs/jobs.h"
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -683,16 +684,26 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
 }
 
 // -----------------------------------------------------------------------
-// Worker thread lifecycle
+// Worker lifecycle — ON THE ENGINE JOB POOL (backlog #9)
+// No dedicated loader thread anymore: each pending request becomes one
+// pool job, chained one-at-a-time (parse serialization matches the old
+// single worker — registry access stays single-consumer) but scheduled on
+// the shared pool. Hosts without jobs::init (bare tools) degrade to
+// inline synchronous loads via the jobs facade fallback.
 // -----------------------------------------------------------------------
-AsyncLoader::AsyncLoader() {
-    m_worker = std::thread([this] { workerLoop(); });
-}
+AsyncLoader::AsyncLoader() = default;
 
 AsyncLoader::~AsyncLoader() {
-    m_running = false;
-    m_pendingCV.notify_all();
-    if (m_worker.joinable()) m_worker.join();
+    // Wait out an in-flight parse job (it holds `this`). The pool survives
+    // us in normal host order; if jobs already shut down, chained runs were
+    // inline and m_jobBusy is already false.
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> lk(m_pendingMtx);
+            if (!m_jobBusy) break;
+        }
+        std::this_thread::yield();
+    }
     // Drain pending uploads — bgfx::Memory refs released by bgfx at shutdown
     std::lock_guard<std::mutex> lk(m_readyMtx);
     while (!m_ready.empty()) m_ready.pop();
@@ -718,7 +729,7 @@ void AsyncLoader::load(const std::string& path, const std::string& name, OnLoade
         m_inFlight.insert(normalizeKey(path));
         m_pending.push({path, name, std::move(cb)});
     }
-    m_pendingCV.notify_one();
+    armWorker();
 }
 
 void AsyncLoader::unload(const std::string& path) {
@@ -740,32 +751,26 @@ int AsyncLoader::pendingCount() const {
     return (int)(m_pending.size() + m_inFlight.size());
 }
 
-void AsyncLoader::workerLoop() {
-    // Everything the loader thread allocates (Assimp scenes, vertex staging,
-    // ozz builders' scratch) is asset work — tag the whole thread.
-    MEM_SCOPE(mem::Tag::Assets);
-    while (m_running) {
-        LoadRequest req;
-        {
-            std::unique_lock<std::mutex> lk(m_pendingMtx);
-            m_pendingCV.wait(lk, [this] {
-                return !m_pending.empty() || !m_running;
-            });
-            if (!m_running && m_pending.empty()) break;
-            req = std::move(m_pending.front());
-            m_pending.pop();
-        }
-
+void AsyncLoader::armWorker() {
+    LoadRequest req;
+    {
+        std::lock_guard<std::mutex> lk(m_pendingMtx);
+        if (m_jobBusy || m_pending.empty()) return;
+        m_jobBusy = true;
+        req = std::move(m_pending.front());
+        m_pending.pop();
+    }
+    jobs::run("io.assetLoad", [this, req = std::move(req)]() mutable {
+        // Asset work allocates under the Assets tag (Assimp scenes, vertex
+        // staging, ozz scratch) regardless of which pool thread runs it.
+        MEM_SCOPE(mem::Tag::Assets);
         LOG_INFO("Loader", "Worker started: %s", req.name.c_str());
         LoadedAsset asset = processFile(req.path, req.name);
-
         if (asset.success)
             LOG_SUCCESS("Loader", "Worker done: %s — ready to upload",
                         req.name.c_str());
         else
             LOG_ERROR("Loader", "Worker failed: %s", asset.error.c_str());
-
-        const bool succeeded = asset.success;
         {
             std::lock_guard<std::mutex> lk(m_readyMtx);
             m_ready.push({std::move(asset), std::move(req.cb)});
@@ -774,7 +779,12 @@ void AsyncLoader::workerLoop() {
         // drainOne() (main thread) sets the real handle then erases inFlight
         // atomically, closing the window where load() could find an invalid
         // placeholder handle and call a callback prematurely.
-    }
+        {
+            std::lock_guard<std::mutex> lk(m_pendingMtx);
+            m_jobBusy = false;
+        }
+        armWorker();   // chain the next pending request, if any
+    });
 }
 
 // -----------------------------------------------------------------------

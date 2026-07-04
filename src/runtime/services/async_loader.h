@@ -107,14 +107,12 @@ private:
     struct LoadRequest   { std::string path, name; OnLoaded cb; };
     struct UploadRequest { LoadedAsset asset;       OnLoaded cb; };
 
-    void        workerLoop();
+    void        armWorker();   // chain one pool job per pending request
     LoadedAsset processFile(const std::string& path, const std::string& name);
 
-    std::thread             m_worker;
-    std::atomic<bool>       m_running{true};
+    bool                    m_jobBusy = false;   // guarded by m_pendingMtx
 
     mutable std::mutex      m_pendingMtx;
-    std::condition_variable m_pendingCV;
     std::queue<LoadRequest> m_pending;
     std::set<std::string>   m_inFlight;
     // Callbacks queued while the same path was already in-flight.
