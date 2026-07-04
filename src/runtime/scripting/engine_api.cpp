@@ -186,6 +186,11 @@ void  engineLookTotal(double* x, double* y) {
 // (engine_host / headless) => no-op. The kit never sees ImGui.
 static const EngineUiBackend* g_ui = nullptr;
 void engineUiSetBackend(const EngineUiBackend* backend) { g_ui = backend; }
+// Host-internal: is a UI widget backend live right now? Drives live capability
+// negotiation — engineApiHostTable() publishes ui.version = 0 (group ABSENT)
+// when no backend is registered, so a kit binding in a headless host (engine_
+// host) sees ui as unavailable and skips building its tuning panel.
+bool engineUiHasBackend(void) { return g_ui != nullptr; }
 
 void engineUiText(const char* fmt, ...) {
     if (!g_ui || !g_ui->text || !fmt) return;

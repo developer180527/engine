@@ -73,7 +73,11 @@ void engineModuleBindApiV1(const EngineApiTableV1* t) {
     };
     for (auto& c : checks) {
         g_eapiOk[c.idx] = (c.have == c.want);
-        if (!g_eapiOk[c.idx] && t->core.logWarn) {
+        /* v0 is the ABSENT convention — the host doesn't offer this group at
+         * all (a headless host has no ui, etc.). That's negotiated capability,
+         * not breakage, so stay silent; the kit adapts via engineApiHas(). Only
+         * a NONZERO version that disagrees is a genuine skew worth warning on. */
+        if (!g_eapiOk[c.idx] && c.have != 0 && t->core.logWarn) {
             char buf[128];
             snprintf(buf, sizeof(buf),
                      "API group '%s' v%u != module's v%u — group disabled",
