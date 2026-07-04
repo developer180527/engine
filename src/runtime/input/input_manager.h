@@ -37,6 +37,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -121,6 +122,33 @@ public:
 
     // Bindings from JSON text (file loader + tests share this).
     bool loadConfigText(const std::string& jsonText);
+
+    // ── Recording (dev tool + determinism harness) ─────────────────────────
+    // Tees every ACCEPTED event (post-election/gates — what the sim actually
+    // consumed) plus tick boundaries to a binary .irec file. Replaying the
+    // stream through a fresh manager re-runs the same filters in the same
+    // order and must produce bit-identical snapshots — the determinism
+    // regression harness, and the seed of netcode input replay.
+    bool startRecording(const std::filesystem::path& path);
+    void stopRecording();
+    bool recording() const { return m_record != nullptr; }
+
+    // ── Latency stats (LatencyTracker channel reads + resets per frame) ────
+    // All values ns, over ACCEPTED events this frame. Window-source events
+    // are stamped at pump so they read ~0; real numbers come from the raw
+    // hid path's hardware timestamps.
+    struct LatencyStats {
+        uint64_t events      = 0;   // accepted this frame
+        uint64_t queueSumNs  = 0;   // sum(pumpTime - event.timeNs)
+        uint64_t queueMaxNs  = 0;
+        uint64_t tickLagNs   = 0;   // tickEnd - oldest event folded this tick
+        uint64_t lookLagNs   = 0;   // consumeLook time - newest motion event
+    };
+    LatencyStats takeLatencyStats() {
+        LatencyStats out = m_lat;
+        m_lat = {};
+        return out;
+    }
     // Load (or scaffold) projectRoot/input.json. init() calls this when a
     // project is known at boot; hosts that open a project LATER (the editor
     // boots projectless) must call it again on project open.
@@ -172,6 +200,10 @@ private:
     std::vector<size_t>  m_stack;        // indices into m_contexts, top=back
 
     bool m_focused = true, m_uiKb = false, m_uiMouse = false;
+
+    std::unique_ptr<std::ofstream> m_record;   // open = recording
+    LatencyStats m_lat;
+    uint64_t m_newestMotionNs = 0;             // for look-lag measurement
 };
 
 } // namespace input

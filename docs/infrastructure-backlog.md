@@ -35,10 +35,11 @@ tier-3 game module.
 9. **AsyncLoader onto the job pool IO channel**; parallel per-asset cooks.
 
 ## Phase C — Input completion
-10. **Input recorder + ReplaySource playback** — tee the staging stream to
-    disk; replay = determinism regression harness + netcode groundwork.
-11. **LatencyTracker profiler channel** — queue delay, device→sim,
-    device→camera (timestamps already carried end to end).
+10. ~~Input recorder~~ SHIPPED — .irec tee of accepted events + tick marks
+    (engine_host --record-input); replay through a fresh manager proves
+    bit-identical snapshots in input_test.
+11. ~~LatencyTracker~~ SHIPPED — InputLatencyChannel: queue avg/max,
+    device→tick, device→look per frame; engine_host periodic dump.
 12. **Sub-tick timestamps in InputSnapshot** (CS2-style fire timing).
 13. **Gamepad curation layer** — GCController/XInput → stable pad model over
     raw hid Axis events.

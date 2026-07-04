@@ -93,7 +93,14 @@ int main(int argc, char** argv) {
         return 2;
     }
     const fs::path projectDir = argv[1];
-    const bool     hasDevModule = argc >= 3;
+    // Optional: --record-input <file.irec> — tee accepted input + tick marks
+    // for the determinism/replay harness (see input_manager.h Recording).
+    fs::path recordPath;
+    for (int i = 2; i < argc - 0; ++i)
+        if (std::string(argv[i]) == "--record-input" && i + 1 < argc)
+            recordPath = argv[++i];
+    // argv[2] is the optional dev module ONLY if it isn't a --flag.
+    const bool     hasDevModule = argc >= 3 && argv[2][0] != '-';
     const fs::path modulePath  = hasDevModule ? fs::absolute(argv[2]) : fs::path{};
     if (hasDevModule && !fs::exists(modulePath)) {
         std::fprintf(stderr, "engine_host: module not found: %s\n",
@@ -154,6 +161,8 @@ int main(int argc, char** argv) {
         ctx.assetService, engine.project().projectRoot, &engine.assetLib(),
         &engine.clipLibrary());
 
+    if (!recordPath.empty())
+        engine.inputManager().startRecording(recordPath);
     engine.startSimulation(); // in-place: boot = play
 
     int profFrame = 0;
@@ -168,6 +177,8 @@ int main(int argc, char** argv) {
         if (ENGINE_PROFILE && ++profFrame % 300 == 0) {
             prof::Profiler::get().timer().logLastFrame("engine_host frame");
             mem::logStats("engine_host");   // tagged heaps + map-event total
+            if (engine.inputLatency())
+                engine.inputLatency()->logLastFrame("engine_host");
         }
     });
 

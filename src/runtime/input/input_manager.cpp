@@ -92,7 +92,28 @@ void InputManager::initWithSource(std::unique_ptr<IInputSource> src) {
     refreshEndpoints();
 }
 
+bool InputManager::startRecording(const std::filesystem::path& path) {
+    stopRecording();
+    auto f = std::make_unique<std::ofstream>(path, std::ios::binary);
+    if (!f->good()) {
+        LOG_ERROR("Input", "recording failed to open: %s", path.string().c_str());
+        return false;
+    }
+    const uint32_t magic = 0x43455249, version = 1;   // 'IREC'
+    f->write(reinterpret_cast<const char*>(&magic), 4);
+    f->write(reinterpret_cast<const char*>(&version), 4);
+    m_record = std::move(f);
+    LOG_SUCCESS("Input", "recording input -> %s", path.string().c_str());
+    return true;
+}
+
+void InputManager::stopRecording() {
+    if (m_record) LOG_INFO("Input", "input recording closed");
+    m_record.reset();
+}
+
 void InputManager::shutdown() {
+    stopRecording();
     m_source.reset();
     m_window.reset();
     m_lastRawMotionNs = 0;
@@ -177,7 +198,17 @@ void InputManager::pump() {
                 if (e.type == hid::EventType::MouseMotion) {
                     m_lookTotalX += e.value;    // cumulative — never reset;
                     m_lookTotalY += e.value2;   // consumers diff (see header)
+                    m_newestMotionNs = e.timeNs;
                 }
+                { // latency: how long the event sat between device and pump
+                    const uint64_t now = hid::nowNs();
+                    const uint64_t q = now > e.timeNs ? now - e.timeNs : 0;
+                    ++m_lat.events;
+                    m_lat.queueSumNs += q;
+                    if (q > m_lat.queueMaxNs) m_lat.queueMaxNs = q;
+                }
+                if (m_record)
+                    m_record->write(reinterpret_cast<const char*>(&e), sizeof(e));
             }
             if (n < 512) break;
         }
@@ -187,6 +218,16 @@ void InputManager::pump() {
 }
 
 void InputManager::beginTick(uint64_t tickEndNs) {
+    if (m_record) {   // tick boundary marker (type None, code 0xTCK)
+        hid::Event mark{tickEndNs, 0, hid::EventType::None, 0, 0x7C4, 0, 0};
+        m_record->write(reinterpret_cast<const char*>(&mark), sizeof(mark));
+        m_record->flush();   // dev tool: survive kills/crashes losslessly
+    }
+    uint64_t oldest = UINT64_MAX;
+    for (const hid::Event& e : m_staging)
+        if (e.timeNs <= tickEndNs && e.timeNs < oldest) oldest = e.timeNs;
+    if (oldest != UINT64_MAX && tickEndNs > oldest)
+        m_lat.tickLagNs = tickEndNs - oldest;
     m_prev = m_cur;
     m_cur.tickEndNs = tickEndNs;
     m_cur.mouseDx = m_cur.mouseDy = m_cur.scrollX = m_cur.scrollY = 0;
@@ -230,6 +271,11 @@ void InputManager::beginTick(uint64_t tickEndNs) {
 }
 
 void InputManager::consumeLook(float* dx, float* dy) {
+    if (m_newestMotionNs) {
+        const uint64_t now = hid::nowNs();
+        if (now > m_newestMotionNs)
+            m_lat.lookLagNs = now - m_newestMotionNs;
+    }
     if (dx) *dx = (float)(m_lookTotalX - m_lookCursorX);
     if (dy) *dy = (float)(m_lookTotalY - m_lookCursorY);
     m_lookCursorX = m_lookTotalX;

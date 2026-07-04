@@ -11,6 +11,7 @@
 //   * LATE-LATCH: consumeLook drains everything pumped, including events
 //     newer than the last tick, then reads zero.
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -196,6 +197,60 @@ int main() {
         m.beginTick(4 * 1000000ull);
         CHECK(!m.snapshot().keyDown(0x1A), "release applies while unfocused");
         CHECK(!m.snapshot().keyDown(0x2C), "press dropped while unfocused");
+    }
+
+    // ── Recorder round-trip: record -> replay -> bit-identical snapshots ────
+    {
+        const char* recPath = "/tmp/input_test_session.irec";
+        InputSnapshot recorded[2];
+        {
+            InputManager m;
+            m.initWithSource(makeSource(true));
+            m.loadConfigText(kTestConfig);
+            m.startRecording(recPath);
+            runStream(m, recorded);
+            CHECK(m.recording(), "recording active through the session");
+            const auto lat = m.takeLatencyStats();
+            CHECK(lat.events > 0, "latency tracker counted accepted events");
+            m.stopRecording();
+        }
+        // Read the .irec: header, events, tick markers (type None, code 0x7C4).
+        std::vector<hid::Event> evs;
+        std::vector<uint64_t>   ticks;
+        {
+            FILE* f = fopen(recPath, "rb");
+            CHECK(f != nullptr, "recording file exists");
+            uint32_t magic = 0, ver = 0;
+            fread(&magic, 4, 1, f); fread(&ver, 4, 1, f);
+            CHECK(magic == 0x43455249 && ver == 1, "IREC header valid");
+            hid::Event e;
+            while (fread(&e, sizeof(e), 1, f) == 1) {
+                if (e.type == hid::EventType::None && e.code == 0x7C4)
+                    ticks.push_back(e.timeNs);
+                else evs.push_back(e);
+            }
+            fclose(f);
+        }
+        CHECK(ticks.size() == 2, "two tick boundaries recorded");
+        // Replay through a FRESH manager: same filters, same order.
+        {
+            auto src = std::make_unique<ReplaySource>();
+            // Devices must exist for election parity with the live session.
+            src->addDevice({1, hid::DeviceClass::Mouse,    0x25a7, 0xfaa0, 77, "toad A"});
+            src->addDevice({2, hid::DeviceClass::Mouse,    0x25a7, 0xfaa0, 77, "toad B"});
+            src->addDevice({3, hid::DeviceClass::Keyboard, 0, 0, 110, "kbd"});
+            for (const auto& e : evs) src->addEvent(e);
+            InputManager m;
+            m.initWithSource(std::move(src));
+            m.loadConfigText(kTestConfig);
+            m.pump();
+            InputSnapshot replayed[2];
+            m.beginTick(ticks[0]); replayed[0] = m.snapshot();
+            m.beginTick(ticks[1]); replayed[1] = m.snapshot();
+            CHECK(std::memcmp(recorded, replayed, sizeof(recorded)) == 0,
+                  "REPLAY -> bit-identical snapshots (recorder harness works)");
+        }
+        std::remove(recPath);
     }
 
     if (g_failures) { std::printf("input_test: FAIL (%d)\n", g_failures); return 1; }

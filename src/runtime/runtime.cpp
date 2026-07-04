@@ -100,6 +100,8 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     prof::Profiler::get().setEnabled(cfg.enableProfiler);
     m_memChannel = std::make_unique<MemoryChannel>();
     prof::Profiler::get().addChannel(m_memChannel.get());
+    m_inputLatency = std::make_unique<InputLatencyChannel>(&m_input);
+    prof::Profiler::get().addChannel(m_inputLatency.get());
     prof::Profiler::get().beginFrame();   // boot = "frame 0"
     m_frameArena.init(4 * 1024 * 1024);   // 4 MB per-frame transient pool
     // Worker pool next — spawned exactly once for the engine's lifetime;
@@ -560,6 +562,8 @@ void EngineRuntime::shutdown() {
     m_initialized = false;
     if (m_memChannel) { prof::Profiler::get().removeChannel(m_memChannel.get());
                         m_memChannel.reset(); }
+    if (m_inputLatency) { prof::Profiler::get().removeChannel(m_inputLatency.get());
+                          m_inputLatency.reset(); }
     stopSimulation();      // broadcasts onSimulationStop if still running
     engineApiBindHost(nullptr);
     engineInputBindManager(nullptr);

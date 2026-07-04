@@ -18,6 +18,7 @@
 #include "runtime/camera_util.h"
 #include "runtime/runtime_context.h"
 #include "runtime/input/input_manager.h"
+#include "runtime/input/input_latency_channel.h"
 #include "render/renderer.h"
 #include "runtime/plugin_registry.h"
 #include "runtime/kit_host.h"
@@ -174,6 +175,7 @@ public:
     // Memory is valid ONLY within the current frame (see core/frame_arena.h).
     mem::FrameArena&  frameArena() { return m_frameArena; }
     input::InputManager& inputManager() { return m_input; }
+    InputLatencyChannel* inputLatency() { return m_inputLatency.get(); }
     // Immediate-mode debug lines — queue via engineDraw*/this, drawn this frame,
     // cleared at the next frameBegin.
     dbg::DebugDraw&   debugDraw()  { return m_debugDraw; }
@@ -234,6 +236,7 @@ private:
     PrimaryCameraFinder m_cameraFinder; // cached camera query (game tick)
     mem::FrameArena     m_frameArena;   // per-frame transient allocator
     input::InputManager m_input;        // action layer over raw input
+    std::unique_ptr<InputLatencyChannel> m_inputLatency;   // profiler channel
     static constexpr float kSimDt = 1.0f / 60.0f;   // fixed simulation step
     float m_simAccumulator = 0.0f;
     dbg::DebugDraw      m_debugDraw;     // per-frame debug lines (engineDraw*)
