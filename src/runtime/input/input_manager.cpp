@@ -24,6 +24,7 @@ constexpr const char* kDefaultConfig = R"({
         { "name": "Jump",     "type": "digital", "bindings": ["key:Space"] },
         { "name": "Sprint",   "type": "digital", "bindings": ["key:LShift"] },
         { "name": "Interact", "type": "digital", "bindings": ["key:F"] },
+        { "name": "ToggleCursor", "type": "digital", "bindings": ["key:Escape"] },
         { "name": "Move",     "type": "axis2",
           "bindings": ["key:W:+y", "key:S:-y", "key:D:+x", "key:A:-x"] },
         { "name": "Look",     "type": "axis2", "bindings": ["mouse:motion"] },
@@ -449,6 +450,14 @@ bool InputManager::parseBinding(const std::string& spec, ActionType type,
         if (type == ActionType::Axis2)
             return parts.size() >= 3 && axisSuffix(parts[2]);
         return true;
+    }
+    // TODO(#13 gamepad): "pad:button:N", "pad:axis:<usage>[:scale]" specs
+    // land here; hid already delivers raw Axis/Button events for
+    // DeviceClass::Gamepad — the curation layer (GCController/XInput -> a
+    // stable pad model with deadzones per binding) is the missing piece.
+    if (parts[0] == "pad") {
+        LOG_WARN("Input", "'pad:' bindings not implemented yet (backlog #13)");
+        return false;
     }
     if (parts[0] == "scroll") {
         out->kind  = Binding::Scroll;

@@ -45,7 +45,11 @@ void engineLogInfo (const char* msg);
 void engineLogWarn (const char* msg);
 void engineLogError(const char* msg);
 
-/* ── Input (key names: "W", "Space", "LeftShift", ... — GLFW-style) ──────── */
+/* ── Input — DEPRECATED (legacy polling; retired for gameplay use) ─────────
+ * Use ACTIONS below instead: bindings live in the project's input.json, the
+ * context stack + focus gates apply, devices stay swappable. These stubs
+ * keep old modules loading (table V1 slots are frozen) and warn once per
+ * process. Editor-internal polling uses InputSystem directly, not this. */
 bool  engineKeyDown   (const char* key);
 bool  engineKeyPressed(const char* key);
 float engineAxis      (const char* axisName);   /* bound via InputMap */

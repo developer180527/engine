@@ -124,10 +124,9 @@ int main(int argc, char** argv) {
     // Host-side input — what game modules and Lua reach through the C API /
     // ScriptHost. Default WASD bindings match the editor's.
     InputSystem::get().init(glfwPlat->glfwWindow());
-    auto& imap = InputMap::get();
-    imap.bindAxis("MoveForward", Key::W, Key::S);
-    imap.bindAxis("MoveRight",   Key::D, Key::A);
-    imap.bindAxis("MoveUp",      Key::E, Key::Q);
+    // (Legacy InputMap axis bindings removed: gameplay reads ACTIONS from
+    // the project's input.json — see docs/engine-api.md. InputSystem remains
+    // for editor/meta polling only.)
 
     // Stock plugins first — broadcast order puts game logic after scripts.
     engine.plugins().add(std::make_shared<JoltPlugin>());

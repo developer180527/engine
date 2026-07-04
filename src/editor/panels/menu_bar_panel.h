@@ -8,6 +8,7 @@
 struct PanelVisibility {
     bool sceneView = true, gameView = true, stats     = true;
     bool hierarchy = true, inspector = true, assets   = true, console = true;
+    bool inputBindings = false;   // View > Panels > Input Bindings
 };
 
 // Callbacks for menu items that require engine-level actions.
@@ -91,6 +92,7 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
             ImGui::MenuItem("Assets",     nullptr, &cb.panels->assets);
             ImGui::MenuItem("Console",    nullptr, &cb.panels->console);
             ImGui::MenuItem("Stats",      nullptr, &cb.panels->stats);
+            ImGui::MenuItem("Input Bindings", nullptr, &cb.panels->inputBindings);
             if (cb.showPlugins) ImGui::MenuItem("Plug-in Manager", nullptr, cb.showPlugins);
             ImGui::EndMenu();
         }

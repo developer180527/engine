@@ -63,4 +63,33 @@ inline uint16_t usageFromName(const char* n) {
     return 0;
 }
 
+// TODO(#13 gamepad): pad-facing tables land here — hid Axis usages
+// (GenericDesktop 0x30..0x39) -> stable pad-axis names, and the
+// GCController/XInput curation mapping. See docs/infrastructure-backlog.md.
+
+// GLFW keycode -> binding-spec key name (reverse of usageFromGlfw's subset).
+// Used by the editor's capture-a-key rebinding flow.
+inline const char* nameFromGlfw(int key) {
+    static char buf[2];
+    if (key >= 65 && key <= 90) { buf[0] = (char)key; buf[1] = 0; return buf; }
+    if (key >= 48 && key <= 57) { buf[0] = (char)key; buf[1] = 0; return buf; }
+    switch (key) {
+        case 32:  return "Space";
+        case 256: return "Escape";
+        case 257: return "Enter";
+        case 258: return "Tab";
+        case 259: return "Backspace";
+        case 262: return "Right";
+        case 263: return "Left";
+        case 264: return "Down";
+        case 265: return "Up";
+        case 340: return "LShift";
+        case 341: return "LCtrl";
+        case 342: return "LAlt";
+        case 290: return "F1"; case 291: return "F2"; case 292: return "F3";
+        case 293: return "F4"; case 294: return "F5"; case 295: return "F6";
+        default:  return nullptr;
+    }
+}
+
 } // namespace input

@@ -29,10 +29,14 @@ void engineLogError(const char* m) { if (g_host && m) g_host->logError(m); }
 
 // ── Input ────────────────────────────────────────────────────────────────────
 bool  engineKeyDown   (const char* k) { return g_host && k ? g_host->keyDown(k)    : false; }
-bool  engineKeyPressed(const char* k) { return g_host && k ? g_host->keyPressed(k) : false; }
+bool  engineKeyPressed(const char* k) {
+    static bool warned = []{ LOG_WARN("EngineApi", "engineKeyPressed is DEPRECATED — bind an action in input.json and use engineAction*"); return true; }();
+    (void)warned; return g_host && k ? g_host->keyPressed(k) : false; }
 float engineAxis      (const char* a) { return g_host && a ? g_host->axis(a)       : 0.0f; }
 bool  engineMouseDown (int b)         { return g_host ? g_host->mouseDown(b)       : false; }
 void  engineMouseDelta(float* dx, float* dy) {
+    static bool warned = []{ LOG_WARN("EngineApi", "engineMouseDelta is DEPRECATED — bind an action in input.json and use engineAction*"); return true; }();
+    (void)warned;
     float x = 0.0f, y = 0.0f;
     if (g_host) g_host->mouseDelta(x, y);
     if (dx) *dx = x;

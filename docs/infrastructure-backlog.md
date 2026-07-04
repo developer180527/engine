@@ -43,11 +43,17 @@ tier-3 game module.
 12. ~~Sub-tick timestamps~~ SHIPPED — SubTickEdge[16] per snapshot (us
     offsets from tick start) + actionPressedOffsetUs; microsecond-exact in
     input_test. C API exposure when a kit consumer exists (input v3).
-13. **Gamepad curation layer** — GCController/XInput → stable pad model over
-    raw hid Axis events.
-14. **Editor rebinding UI** over input.json.
-15. **Legacy retirement** — InputSystem/InputMap polling shrinks to
-    editor-internal; engineKey*/engineAxis deprecated in favor of actions.
+13. **Gamepad curation layer** (deferred by user; SEAMS MARKED: 'pad:'
+    binding parser stub in input_manager.cpp, keymap tables + capture flow
+    marked TODO(#13) in hid_keymap.h / input_bindings_panel.h; hid already
+    delivers raw Gamepad Axis/Button events).
+14. ~~Editor rebinding UI~~ SHIPPED — Input Bindings panel (View > Panels):
+    edits input.json with per-binding text + key-capture, Save & Apply
+    hot-reloads the manager mid-play.
+15. ~~Legacy retirement~~ SHIPPED — FPSKit 100% action-based (ToggleCursor
+    action replaces Escape polling; capture-click via Fire), hosts' dead
+    InputMap bindings removed, engineKey*/engineMouse* marked DEPRECATED in
+    the header + warn-once at runtime. InputSystem remains editor-internal.
 
 ## Phase D — Event model + service architecture (from the API reviews)
 16. **Explicit event model** — transient ECS components formalized (declare,

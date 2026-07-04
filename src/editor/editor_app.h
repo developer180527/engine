@@ -24,6 +24,7 @@
 #include "editor/editor_camera.h"
 #include "editor/panels/hierarchy_panel.h"
 #include "editor/panels/menu_bar_panel.h"
+#include "editor/panels/input_bindings_panel.h"
 #include "editor/panels/game_view_panel.h"
 #include "editor/panels/inspector_panel.h"
 #include "editor/panels/asset_browser_panel.h"
@@ -527,6 +528,9 @@ private:
         auto ctx = buildCtx();
 
         if (m_panels.sceneView) drawSceneViewPanel(view, proj, ctx);
+        if (m_panels.inputBindings)
+            drawInputBindingsPanel(m_projectRoot, m_rt.inputManager(),
+                                   &m_panels.inputBindings);
 
         // ── Game view ────────────────────────────────────────────
         float gameView[16], gameProj[16], gameClear[4];
