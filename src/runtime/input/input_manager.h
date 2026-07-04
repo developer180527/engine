@@ -63,6 +63,24 @@ struct InputSnapshot {
     uint32_t _pad = 0;   // explicit: snapshots are memcmp'd/hashed/wired —
                          // NO indeterminate padding bytes allowed
 
+    // ── SUB-TICK EDGES (CS2-style) ──────────────────────────────────────────
+    // Every key/button transition folded into this tick, with its exact
+    // microsecond offset from tick START. Gameplay can apply fire/ability
+    // timing at the true moment inside the tick instead of snapping to the
+    // boundary — up to a full tick of hit-reg quantization removed. Fixed
+    // capacity, zeroed each tick (memcmp determinism); overflow drops the
+    // extras (humans produce nowhere near 16 edges per 16ms).
+    struct SubTickEdge {
+        uint16_t code;       // HID usage (kind=0) or button index (kind=1)
+        uint8_t  kind;       // 0 = key, 1 = mouse button
+        uint8_t  down;       // 1 = press, 0 = release
+        uint32_t offsetUs;   // microseconds since tick start
+    };
+    static constexpr uint32_t kMaxEdges = 16;
+    SubTickEdge edges[kMaxEdges] = {};
+    uint32_t    edgeCount = 0;
+    uint32_t    _pad2     = 0;
+
     bool keyDown(uint16_t usage) const {
         return usage < 256 && (keys[usage >> 6] >> (usage & 63)) & 1;
     }
@@ -77,7 +95,7 @@ struct InputSnapshot {
     }
 };
 
-static_assert(sizeof(InputSnapshot) == 136,
+static_assert(sizeof(InputSnapshot) == 136 + 16 * 8 + 8,
               "InputSnapshot must stay padding-free POD (memcmp/hash/wire)");
 
 enum class ActionType : uint8_t { Digital, Axis1, Axis2 };
@@ -112,6 +130,10 @@ public:
     }
 
     // ── Actions ────────────────────────────────────────────────────────────
+    // Sub-tick: microsecond offset (from tick start) of the FIRST press
+    // edge matching the action's bindings this tick; UINT32_MAX if none.
+    uint32_t actionPressedOffsetUs(const char* name) const;
+
     bool  actionDown(const char* name) const;
     bool  actionPressed(const char* name) const;
     bool  actionReleased(const char* name) const;

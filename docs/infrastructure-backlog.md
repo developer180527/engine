@@ -40,7 +40,9 @@ tier-3 game module.
     bit-identical snapshots in input_test.
 11. ~~LatencyTracker~~ SHIPPED — InputLatencyChannel: queue avg/max,
     device→tick, device→look per frame; engine_host periodic dump.
-12. **Sub-tick timestamps in InputSnapshot** (CS2-style fire timing).
+12. ~~Sub-tick timestamps~~ SHIPPED — SubTickEdge[16] per snapshot (us
+    offsets from tick start) + actionPressedOffsetUs; microsecond-exact in
+    input_test. C API exposure when a kit consumer exists (input v3).
 13. **Gamepad curation layer** — GCController/XInput → stable pad model over
     raw hid Axis events.
 14. **Editor rebinding UI** over input.json.

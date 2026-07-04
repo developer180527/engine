@@ -199,6 +199,35 @@ int main() {
         CHECK(!m.snapshot().keyDown(0x2C), "press dropped while unfocused");
     }
 
+    // ── Sub-tick edges: exact in-tick timing of presses (CS2-style) ─────────
+    {
+        InputManager m;
+        auto src = std::make_unique<ReplaySource>();
+        src->addDevice({3, hid::DeviceClass::Keyboard, 0, 0, 110, "kbd"});
+        src->addDevice({1, hid::DeviceClass::Mouse,    0, 0, 77,  "mouse"});
+        src->addEvent({ 3200000, 3, hid::EventType::Key,    0, 0x2C, 1, 0}); // 3.2ms
+        src->addEvent({ 7800000, 1, hid::EventType::Button, 0, 0,    1, 0}); // 7.8ms
+        src->addEvent({ 9100000, 1, hid::EventType::Button, 0, 0,    0, 0}); // 9.1ms
+        m.initWithSource(std::move(src));
+        m.loadConfigText(R"({"contexts":[{"name":"G","actions":[
+            {"name":"Jump","type":"digital","bindings":["key:Space"]},
+            {"name":"Fire","type":"digital","bindings":["mouse:left"]}]}]})");
+        m.pump();
+        m.beginTick(16 * 1000000ull);   // tick spans 0..16ms
+        const auto& s = m.snapshot();
+        CHECK(s.edgeCount == 3, "three sub-tick edges recorded");
+        CHECK(s.edges[0].offsetUs == 3200 && s.edges[0].down == 1,
+              "Space press at exactly 3200us into the tick");
+        CHECK(s.edges[1].offsetUs == 7800 && s.edges[1].kind == 1,
+              "Fire press at exactly 7800us");
+        CHECK(s.edges[2].offsetUs == 9100 && s.edges[2].down == 0,
+              "Fire release at exactly 9100us");
+        CHECK(m.actionPressedOffsetUs("Jump") == 3200,
+              "actionPressedOffsetUs resolves Jump to 3200us");
+        CHECK(m.actionPressedOffsetUs("Fire") == 7800,
+              "actionPressedOffsetUs resolves Fire to 7800us");
+    }
+
     // ── Recorder round-trip: record -> replay -> bit-identical snapshots ────
     {
         const char* recPath = "/tmp/input_test_session.irec";

@@ -218,6 +218,7 @@ void InputManager::pump() {
 }
 
 void InputManager::beginTick(uint64_t tickEndNs) {
+    const uint64_t tickStartNs = m_cur.tickEndNs;   // previous boundary
     if (m_record) {   // tick boundary marker (type None, code 0xTCK)
         hid::Event mark{tickEndNs, 0, hid::EventType::None, 0, 0x7C4, 0, 0};
         m_record->write(reinterpret_cast<const char*>(&mark), sizeof(mark));
@@ -234,6 +235,15 @@ void InputManager::beginTick(uint64_t tickEndNs) {
     std::memset(m_cur.keysPressed,  0, sizeof(m_cur.keysPressed));
     std::memset(m_cur.keysReleased, 0, sizeof(m_cur.keysReleased));
     m_cur.buttonsPressed = m_cur.buttonsReleased = 0;
+    std::memset(m_cur.edges, 0, sizeof(m_cur.edges));
+    m_cur.edgeCount = 0;
+    auto pushEdge = [&](uint16_t code, uint8_t kind, uint8_t down,
+                        uint64_t tNs) {
+        if (m_cur.edgeCount >= InputSnapshot::kMaxEdges) return;
+        const uint64_t off = tNs > tickStartNs ? tNs - tickStartNs : 0;
+        m_cur.edges[m_cur.edgeCount++] =
+            { code, kind, down, (uint32_t)(off / 1000ull) };
+    };
 
     size_t kept = 0;
     for (size_t i = 0; i < m_staging.size(); ++i) {
@@ -247,6 +257,7 @@ void InputManager::beginTick(uint64_t tickEndNs) {
                                m_cur.keysPressed[e.code >> 6]  |= bit; }
                 else         { m_cur.keys[e.code >> 6] &= ~bit;
                                m_cur.keysReleased[e.code >> 6] |= bit; }
+                pushEdge(e.code, 0, e.value ? 1 : 0, e.timeNs);
             }
             break;
         case hid::EventType::Button:
@@ -256,6 +267,7 @@ void InputManager::beginTick(uint64_t tickEndNs) {
                                m_cur.buttonsPressed  |= bit; }
                 else         { m_cur.mouseButtons &= ~bit;
                                m_cur.buttonsReleased |= bit; }
+                pushEdge(e.code, 1, e.value ? 1 : 0, e.timeNs);
             }
             break;
         case hid::EventType::MouseMotion:
@@ -329,6 +341,20 @@ float InputManager::evalAxis(const Action& a, const InputSnapshot& s,
         }
     }
     return v;
+}
+
+uint32_t InputManager::actionPressedOffsetUs(const char* n) const {
+    const Action* a = resolve(n);
+    if (!a || a->type != ActionType::Digital) return UINT32_MAX;
+    for (uint32_t i = 0; i < m_cur.edgeCount; ++i) {
+        const auto& e = m_cur.edges[i];
+        if (!e.down) continue;
+        for (const Binding& b : a->binds) {
+            if (b.kind == Binding::KeyUsage    && e.kind == 0 && b.code == e.code) return e.offsetUs;
+            if (b.kind == Binding::MouseButton && e.kind == 1 && b.code == e.code) return e.offsetUs;
+        }
+    }
+    return UINT32_MAX;
 }
 
 bool InputManager::actionDown(const char* n) const {
