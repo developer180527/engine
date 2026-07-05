@@ -5,6 +5,8 @@
 // grow with total work done, only with the live set) and confirms flecs +
 // the sweeper survive heavy structural churn without crashing.
 #include <cstdio>
+#include <cstdlib>
+#include <string>
 #include <vector>
 
 #include <flecs.h>
@@ -22,14 +24,24 @@ struct Ping { int n = 0; };            // event payload
 struct Tag2 {};
 struct Blob { double a, b, c, d; };
 
-int main() {
+int main(int argc, char** argv) {
     std::printf("stress_churn: spawn/destroy + event-sweeper churn\n");
 
     flecs::world w;
     events::declare<Ping>(w);
     EventSweeper sweeper;
 
-    constexpr int TICKS   = 8000;
+    // --soak [N]: marathon mode — run N ticks (default 200k) and sample memory
+    // across the run to catch a SLOW leak (a trend that a short run misses).
+    // Pass a big N to soak for hours; the trend print makes a leak obvious.
+    int  TICKS = 8000;
+    bool soak  = false;
+    for (int a = 1; a < argc; ++a) {
+        if (std::string(argv[a]) == "--soak") {
+            soak = true; TICKS = 200000;
+            if (a + 1 < argc && argv[a+1][0] != '-') TICKS = std::atoi(argv[a+1]);
+        }
+    }
     constexpr int PERTICK = 400;    // create+destroy this many per tick
     std::vector<flecs::entity_t> live;
     live.reserve(PERTICK * 4);
@@ -40,9 +52,18 @@ int main() {
     for (auto id : live) w.entity(id).destruct();
     live.clear();
     const uint64_t maps0 = mem::mapEventCount();
+    uint64_t soakMid = 0;   // map count at the run's midpoint (past warmup drift)
 
     uint32_t rng = 0x1234567u;
     for (int t = 0; t < TICKS; ++t) {
+        // Soak sampling: print the memory trend so a slow leak is visible.
+        if (soak && t % (TICKS / 10) == 0) {
+            const uint64_t m = mem::mapEventCount();
+            std::printf("        [soak %3d%%] live=%d  OS-maps=+%llu\n",
+                        t * 100 / TICKS, (int)w.count<Transform>(),
+                        (unsigned long long)(m - maps0));
+            if (t == TICKS / 2) soakMid = m;
+        }
         sweeper.sweep(w);                          // age events at tick start
         // Create a batch with mixed component sets (drives table variety).
         for (int i = 0; i < PERTICK; ++i) {
@@ -77,6 +98,13 @@ int main() {
           "no memory leak/runaway under %d structural ops (%llu maps)",
           TICKS*PERTICK*2, (unsigned long long)newMaps);
     CHECK(w.count<Transform>() == 0, "all churned entities reclaimed (0 live)");
+
+    if (soak) {   // the strong leak test: steady state adds ~0 over the 2nd half
+        const uint64_t secondHalf = mem::mapEventCount() - soakMid;
+        std::printf("        soak: 2nd-half OS maps +%llu (flat = no slow leak)\n",
+                    (unsigned long long)secondHalf);
+        CHECK(secondHalf < 512, "SOAK: memory flat over the run's second half");
+    }
 
     if (g_failures) { std::printf("stress_churn: FAIL — %d\n", g_failures); return 1; }
     std::printf("stress_churn: PASS — heavy churn, no leak, no crash\n");
