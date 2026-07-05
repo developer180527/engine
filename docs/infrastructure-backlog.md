@@ -12,11 +12,27 @@ tier-3 game module.
 
 ---
 
+## Navigation + AI (SHIPPED — engine nav infra + AIKit, July 2026)
+- **NavService** (runtime/services/nav_service.*): Recast bake + Detour
+  findPath/projectPoint; nav_test proves routing around obstacles. Exposed
+  to kits over the `nav` C-API group (engineNav*), capability-negotiated.
+- **AIKit** (Kits/AIKit, own repo): Faction/AiAgent contract, pluggable IBrain
+  + FsmBrain (Idle/Chase/Attack/Search), perception (raycast LOS) + nav-steering
+  (direct-steer until a mesh is baked) + melee via combat::dealDamage. Links
+  nothing — pure C API. Zombie wired with AiAgent + Faction + CharacterController
+  (the capsule doubles as its hitbox — fixes the old "shots hit scenery" issue).
+- **Debug-draw split**: its own `draw` C-API group (renderer capability), no
+  longer gated behind the editor widget backend.
+- REMAINING: navmesh bake from real scene geometry (source decision: Jolt
+  static bodies / nav-tagged meshes / offline cook); health bars; player
+  mortality + game-over; attack animation.
+
 ## Phase A — Gameplay loops (DEFERRED by user, July 2026 — infra first)
-1. **Kinematic hitbox follow** — push Transform → Jolt for kinematic bodies
-   each step (reverse of the existing writeback). Unblocks moving enemies.
-2. **Zombie chase AI + health bars** — seek-toward-player velocity + debug-
-   draw HP bars. Makes fps_shooter a game; exercises the whole stack.
+1. ~~Kinematic hitbox follow~~ SIDESTEPPED — the zombie uses a
+   CharacterController (Jolt CharacterVirtual), which both moves it and IS its
+   hitbox capsule; no separate kinematic-body follow needed for enemies.
+2. ~~Zombie chase AI~~ SHIPPED via the AIKit (see Navigation + AI above);
+   health bars still pending.
 3. **Editor scroll bug** — repro the intermittent trackpad/wheel scroll loss
    in the editor (suspect: ImGui NoMouse gate or hybrid scroll routing).
 4. **Inspector world-space shape preview** — show effective (scale-applied)
