@@ -298,6 +298,10 @@ add_executable(stress_churn tools/stress_churn.cpp)
 target_link_libraries(stress_churn PRIVATE engine_runtime)
 set_target_properties(stress_churn PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
+add_executable(stress_physics tools/stress_physics.cpp)
+target_link_libraries(stress_physics PRIVATE engine_runtime)
+set_target_properties(stress_physics PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # ── nav_test — NavService bake + Detour path-query gauntlet (headless) ──────
 add_executable(nav_test tools/nav_test.cpp)
 target_link_libraries(nav_test PRIVATE engine_runtime)
