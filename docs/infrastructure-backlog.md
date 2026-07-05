@@ -23,9 +23,9 @@ never exercised. Findings:
   Recast compute an INT_MAX² cell grid → OOM. NavService::build now rejects
   non-finite bounds / >64M-cell grids.
 - **stress_swarm** → MEASURED the deferred allocator-contention item (H #33):
-  12-thread concurrent alloc runs at **0.32× of single-thread** (per-tag
-  TagHeap lock). ECS scales fine (50k ents @ 0.6ms/tick). ← now a hard number;
-  TRIGGER for sharded/per-thread arenas is met.
+  12-thread concurrent alloc ran at **0.32×** (per-tag TagHeap lock). FIXED —
+  tag heaps now striped across 16 per-shard locks: 0.32x -> 0.87x, the ~3x
+  slowdown gone (mem.cpp). ECS scales fine (50k ents @ 0.6ms/tick).
 - **stress_physics** → STABLE: 2000-body pile, no NaN/tunnel; 22.8ms/step (Debug)
   = physics is the frame-budget wall at high body counts.
 - **stress_churn** (+ `--soak`) → CLEAN: 40M create/destroy ops, memory dead
