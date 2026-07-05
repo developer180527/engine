@@ -75,6 +75,18 @@ bool NavService::build(const float* verts, int vertCount,
     rcCalcBounds(verts, vertCount, cfg.bmin, cfg.bmax);
     rcCalcGridSize(cfg.bmin, cfg.bmax, cfg.cs, &cfg.width, &cfg.height);
 
+    // Reject degenerate input (NaN/Inf coords, or absurd extents) BEFORE Recast
+    // rasterizes a giant heightfield and hangs/OOMs the process. NaN bounds make
+    // rcCalcGridSize produce garbage grid dims — cap the cell count too.
+    if (!std::isfinite(cfg.bmin[0]) || !std::isfinite(cfg.bmin[1]) || !std::isfinite(cfg.bmin[2]) ||
+        !std::isfinite(cfg.bmax[0]) || !std::isfinite(cfg.bmax[1]) || !std::isfinite(cfg.bmax[2]) ||
+        cfg.width <= 0 || cfg.height <= 0 ||
+        (int64_t)cfg.width * (int64_t)cfg.height > 64'000'000) {
+        LOG_WARN("Nav", "build rejected — degenerate bounds / %dx%d grid too large",
+                 cfg.width, cfg.height);
+        return false;
+    }
+
     // Scratch structures — freed at the end regardless of success.
     rcHeightfield*        solid = rcAllocHeightfield();
     rcCompactHeightfield* chf   = rcAllocCompactHeightfield();
