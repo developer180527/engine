@@ -17,5 +17,10 @@ struct CharacterController {
     float stepHeight   = 0.3f;   // max stair step it can climb
     float mass         = 70.0f;  // used when pushing dynamic bodies
     float gravityScale = 1.0f;   // multiplier on world gravity
+    // Render origin sits this far ABOVE the physics feet. 0 for models whose
+    // origin is already at the feet; set it for models whose origin is higher
+    // (e.g. Mixamo characters), so the mesh doesn't sink into the ground when
+    // the controller drives the transform to the settled foot position.
+    float footOffset   = 0.0f;
     bool  grounded     = false;  // runtime-only mirror (inspector readout)
 };

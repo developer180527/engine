@@ -480,8 +480,11 @@ public:
         settings.mMaxSlopeAngle = JPH::DegreesToRadians(cc.maxSlopeDeg);
         settings.mMass          = cc.mass;
 
+        // The entity's transform is the RENDER origin; the character reference
+        // is the FEET, footOffset below it (so a model whose origin isn't at
+        // the feet spawns with its feet on the ground, not floating/sunk).
         JPH::Ref<JPH::CharacterVirtual> ch = new JPH::CharacterVirtual(
-            &settings, JPH::RVec3(wm[12], wm[13], wm[14]),
+            &settings, JPH::RVec3(wm[12], wm[13] - cc.footOffset, wm[14]),
             JPH::Quat::sIdentity(), m_physics.get());
 
         m_characters[e.id()] = ch;
@@ -522,16 +525,20 @@ public:
                 auto it = m_characters.find(e.id());
                 if (it == m_characters.end()) return;
                 JPH::RVec3 p = it->second->GetPosition();
+                // Lift the render origin back above the feet by footOffset.
+                const float rx = (float)p.GetX();
+                const float ry = (float)p.GetY() + cc.footOffset;
+                const float rz = (float)p.GetZ();
                 flecs::entity par = e.target(flecs::ChildOf);
                 if (par && par.is_alive() && par.has<Transform>()) {
                     float world[16]; bx::mtxIdentity(world);
-                    world[12]=(float)p.GetX(); world[13]=(float)p.GetY(); world[14]=(float)p.GetZ();
+                    world[12]=rx; world[13]=ry; world[14]=rz;
                     float parentWorld[16]; getWorldMatrix(par, parentWorld);
                     float parentInv[16];   safeInvert(parentInv, parentWorld);
                     float local[16];       bx::mtxMul(local, world, parentInv);
                     t.position = {local[12], local[13], local[14]};
                 } else {
-                    t.position = {(float)p.GetX(), (float)p.GetY(), (float)p.GetZ()};
+                    t.position = {rx, ry, rz};
                 }
                 auto sit = m_charState.find(e.id());
                 cc.grounded = (sit != m_charState.end()) && sit->second.grounded;
