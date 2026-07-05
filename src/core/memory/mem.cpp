@@ -27,7 +27,15 @@ constexpr size_t    kHeaderSize = 64;                        // one cache line
 constexpr size_t    kLargeMin   = kBlockSize / 2;            // >=1MB: direct map
 constexpr uint32_t  kMagic      = 0x4D454D42;                // 'BMEM'
 
-struct TagHeap;
+struct Shard;
+
+// Per-tag pools are STRIPED across kShards, each with its own lock. A thread
+// picks a shard once (round-robin) and allocates there — so N threads spread
+// across N locks instead of serializing on one per-tag mutex (the measured
+// stress_swarm contention: 0.32x under 12 threads). A block routes to its
+// owning shard on free, so cross-thread frees stay correct. Bigger N = less
+// contention but more idle 2MB pools; 16 gives each engine worker its own.
+constexpr int kShards = 16;
 
 // Lives at the base of every 2MB-aligned region we own. For any user pointer
 // p, (p & kBlockMask) finds it — that is the entire provenance scheme.
@@ -38,7 +46,7 @@ struct BlockHeader {
     uint16_t _pad;
     size_t   mapBytes;    // whole mapping (large spans may exceed kBlockSize)
     size_t   userBytes;   // large only: the caller's requested size
-    TagHeap* heap;        // pool blocks only: owning heap
+    Shard*   shard;       // pool blocks only: owning shard (for free routing)
 };
 static_assert(sizeof(BlockHeader) <= kHeaderSize, "header must fit the line");
 
@@ -133,54 +141,40 @@ inline bool regHas(uintptr_t base) {
     }
 }
 
-// ── TagHeap — TLSF growing 2MB at a time ────────────────────────────────────
-struct TagHeap {
-    pthread_mutex_t       mu = PTHREAD_MUTEX_INITIALIZER;   // immortal (above)
-    tlsf_t                tlsf = nullptr;
-    std::atomic<uint64_t> cur{0}, peak{0}, allocs{0}, frees{0};
-    std::atomic<uint64_t> budget{0};
-    std::atomic<bool>     budgetWarned{false};
+struct TagHeap;
+inline TagHeap& heap(Tag t);
+
+// ── Shard — one striped TLSF pool + its own lock ────────────────────────────
+// Only mu (immortal PTHREAD) + tlsf: both trivially constant-initializable, so
+// g_heaps stays safe to touch from the first static-init allocation. The tag
+// flows in per call (or from the block header) so no self-referential setup.
+struct Shard {
+    pthread_mutex_t mu   = PTHREAD_MUTEX_INITIALIZER;
+    tlsf_t          tlsf = nullptr;
 
     bool grow(Tag tag) {
         void* b = mapAligned(kBlockSize);
         if (!b) return false;
         auto* h = (BlockHeader*)b;
         h->magic = kMagic; h->tag = (uint8_t)tag; h->isLarge = 0;
-        h->mapBytes = kBlockSize; h->userBytes = 0; h->heap = this;
+        h->mapBytes = kBlockSize; h->userBytes = 0; h->shard = this;
         void* pool = (char*)b + kHeaderSize;
         if (!tlsf) tlsf = tlsf_create_with_pool(pool, kBlockSize - kHeaderSize);
         else       tlsf_add_pool(tlsf, pool, kBlockSize - kHeaderSize);
         regInsert((uintptr_t)b);
         return true;
     }
+    void*  allocate(Tag tag, size_t size, size_t align);   // needs heap() → below
+    void   release(Tag tag, void* p);
+    size_t liveSize(void* p) { ImmortalLock lk(mu); return tlsf_block_size(p); }
+};
 
-    void* allocate(Tag tag, size_t size, size_t align) {
-        ImmortalLock lk(mu);
-        if (!tlsf && !grow(tag)) return nullptr;
-        void* p = align <= 8 ? tlsf_malloc(tlsf, size)
-                             : tlsf_memalign(tlsf, align, size);
-        if (!p) {   // fragmented pools: one fresh 2MB block always fits <1MB
-            if (!grow(tag)) return nullptr;
-            p = align <= 8 ? tlsf_malloc(tlsf, size)
-                           : tlsf_memalign(tlsf, align, size);
-            if (!p) return nullptr;
-        }
-        bump(tlsf_block_size(p));
-        return p;
-    }
-
-    void release(void* p) {
-        ImmortalLock lk(mu);
-        const uint64_t sz = tlsf_block_size(p);
-        tlsf_free(tlsf, p);
-        cur.fetch_sub(sz, std::memory_order_relaxed);
-        frees.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    size_t liveSize(void* p) {
-        ImmortalLock lk(mu);
-        return tlsf_block_size(p);
-    }
+// ── TagHeap — kShards striped pools + tag-level stats ───────────────────────
+struct TagHeap {
+    Shard                 shards[kShards];
+    std::atomic<uint64_t> cur{0}, peak{0}, allocs{0}, frees{0};
+    std::atomic<uint64_t> budget{0};
+    std::atomic<bool>     budgetWarned{false};
 
     void bump(uint64_t sz) {
         const uint64_t c = cur.fetch_add(sz, std::memory_order_relaxed) + sz;
@@ -193,12 +187,43 @@ struct TagHeap {
                          "(budget %llu B) — see mem::logStats\n",
                          (unsigned long long)c, (unsigned long long)b);
     }
+    void drop(uint64_t sz) {
+        cur.fetch_sub(sz, std::memory_order_relaxed);
+        frees.fetch_add(1, std::memory_order_relaxed);
+    }
 };
 
 // Constant-initialized: safe to touch from the first static-init allocation.
 TagHeap g_heaps[(size_t)Tag::Count];
-
 inline TagHeap& heap(Tag t) { return g_heaps[(size_t)t]; }
+
+// Round-robin a shard to each thread once, so N threads spread across N locks.
+std::atomic<uint32_t> g_shardCounter{0};
+thread_local int      t_shard = -1;
+inline int myShard() {
+    if (t_shard < 0)
+        t_shard = (int)(g_shardCounter.fetch_add(1, std::memory_order_relaxed) % kShards);
+    return t_shard;
+}
+
+// Shard methods that touch tag-level stats — defined after heap()/TagHeap.
+void* Shard::allocate(Tag tag, size_t size, size_t align) {
+    ImmortalLock lk(mu);
+    if (!tlsf && !grow(tag)) return nullptr;
+    void* p = align <= 8 ? tlsf_malloc(tlsf, size) : tlsf_memalign(tlsf, align, size);
+    if (!p) {   // fragmented shard: a fresh 2MB block always fits a <1MB request
+        if (!grow(tag)) return nullptr;
+        p = align <= 8 ? tlsf_malloc(tlsf, size) : tlsf_memalign(tlsf, align, size);
+        if (!p) return nullptr;
+    }
+    heap(tag).bump(tlsf_block_size(p));
+    return p;
+}
+void Shard::release(Tag tag, void* p) {
+    uint64_t sz;
+    { ImmortalLock lk(mu); sz = tlsf_block_size(p); tlsf_free(tlsf, p); }
+    heap(tag).drop(sz);
+}
 
 // ── Thread-local tag scope stack (no allocation, fixed depth) ───────────────
 constexpr int kScopeDepth = 16;
@@ -215,7 +240,7 @@ void* largeAlloc(Tag tag, size_t size, size_t align) {
     if (!base) return nullptr;
     auto* h = (BlockHeader*)base;
     h->magic = kMagic; h->tag = (uint8_t)tag; h->isLarge = 1;
-    h->mapBytes = total; h->userBytes = size; h->heap = nullptr;
+    h->mapBytes = total; h->userBytes = size; h->shard = nullptr;
     regInsert((uintptr_t)base);
     heap(tag).bump(size);
     return (char*)base + offset;
@@ -250,7 +275,7 @@ void* alloc(size_t size, size_t align, Tag tag) {
     if (size == 0) size = 1;
     if (align < 8) align = 8;
     if (size + align >= kLargeMin) return largeAlloc(tag, size, align);
-    return heap(tag).allocate(tag, size, align);
+    return heap(tag).shards[myShard()].allocate(tag, size, align);
 }
 void* alloc(size_t size, size_t align) {
     return alloc(size, align, currentTag());
@@ -261,7 +286,7 @@ void free(void* p) {
     BlockHeader* h = headerOf(p);
     if (!h) { std::free(p); return; }   // foreign: pre-routing / kit-side new
     if (h->isLarge) largeFree(h);
-    else            h->heap->release(p);
+    else            h->shard->release((Tag)h->tag, p);
 }
 
 void* realloc(void* p, size_t newSize) {
@@ -270,7 +295,7 @@ void* realloc(void* p, size_t newSize) {
     BlockHeader* h = headerOf(p);
     if (!h) return std::realloc(p, newSize);   // foreign provenance stays std
     const Tag tag = (Tag)h->tag;
-    const size_t oldSize = h->isLarge ? h->userBytes : h->heap->liveSize(p);
+    const size_t oldSize = h->isLarge ? h->userBytes : h->shard->liveSize(p);
     if (newSize <= oldSize) return p;          // shrink: keep in place
     void* np = alloc(newSize, 8, tag);
     if (!np) return nullptr;
@@ -285,7 +310,7 @@ size_t allocSize(void* p) {
     if (!p) return 0;
     BlockHeader* h = headerOf(p);
     if (!h) return 0;
-    return h->isLarge ? h->userBytes : h->heap->liveSize(p);
+    return h->isLarge ? h->userBytes : h->shard->liveSize(p);
 }
 
 TagStats stats(Tag t) {
