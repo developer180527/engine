@@ -12,6 +12,27 @@ tier-3 game module.
 
 ---
 
+## Ragebait stress-test suite (SHIPPED — src/tools/stress_*, July 2026)
+Adversarial load/torture harnesses to find vulnerabilities the happy-path FPS
+never exercised. Findings:
+- **stress_deep_tree** → FOUND + FIXED a crash: flecs HARD-ABORTS on a ChildOf
+  chain deeper than FLECS_DAG_DEPTH_MAX (128). Fixed with `safeReparent`
+  (cycle + depth guard) on every parenting site — a deep scene/script can't
+  crash the engine.
+- **stress_assets** → FOUND + FIXED a crash: NaN/astronomical nav geometry made
+  Recast compute an INT_MAX² cell grid → OOM. NavService::build now rejects
+  non-finite bounds / >64M-cell grids.
+- **stress_swarm** → MEASURED the deferred allocator-contention item (H #33):
+  12-thread concurrent alloc runs at **0.32× of single-thread** (per-tag
+  TagHeap lock). ECS scales fine (50k ents @ 0.6ms/tick). ← now a hard number;
+  TRIGGER for sharded/per-thread arenas is met.
+- **stress_physics** → STABLE: 2000-body pile, no NaN/tunnel; 22.8ms/step (Debug)
+  = physics is the frame-budget wall at high body counts.
+- **stress_churn** (+ `--soak`) → CLEAN: 40M create/destroy ops, memory dead
+  flat, zero leak. Memory manager + flecs + event sweeper robust under churn.
+- TODO (measurable, not yet built): live GPU swarm to measure the no-instancing
+  draw-call cliff (headless can't see it).
+
 ## Navigation + AI (SHIPPED — engine nav infra + AIKit, July 2026)
 - **NavService** (runtime/services/nav_service.*): Recast bake + Detour
   findPath/projectPoint; nav_test proves routing around obstacles. Exposed
