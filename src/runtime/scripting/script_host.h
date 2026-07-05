@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdint>
 #include "core/transform.h"
+#include "core/transform_utils.h"   // safeReparent (depth/cycle-guarded parenting)
 #include "core/debug_draw.h"
 #include "components/name.h"
 #include "runtime/input/input.h"
@@ -114,15 +115,7 @@ public:
     }
     bool          isAlive(flecs::entity e) const      { return e.is_alive(); }
     void          setParent(flecs::entity c, flecs::entity p) {
-        if (!c.is_alive() || !p.is_alive() || c == p) return;
-        // Refuse cycles: if p is a descendant of c, parenting would make c
-        // its own ancestor and getWorldMatrix would infinite-recurse.
-        int guard = 0;
-        for (flecs::entity a = p; a && a.is_alive() && guard < 4096;
-             a = a.target(flecs::ChildOf), ++guard)
-            if (a == c) return;
-        c.remove(flecs::ChildOf, flecs::Wildcard);
-        c.add(flecs::ChildOf, p);
+        safeReparent(c, p);   // refuses cycles + over-deep chains (flecs abort)
     }
     void          clearParent(flecs::entity c)        { if (c.is_alive()) c.remove(flecs::ChildOf, flecs::Wildcard); }
 

@@ -285,6 +285,11 @@ target_link_libraries(mem_test PRIVATE engine_core)
 add_executable(input_test tools/input_test.cpp)
 target_link_libraries(input_test PRIVATE engine_runtime)
 
+# ── stress_* — adversarial load/torture tests (find vulnerabilities) ────────
+add_executable(stress_deep_tree tools/stress_deep_tree.cpp)
+target_link_libraries(stress_deep_tree PRIVATE engine_runtime)
+set_target_properties(stress_deep_tree PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # ── nav_test — NavService bake + Detour path-query gauntlet (headless) ──────
 add_executable(nav_test tools/nav_test.cpp)
 target_link_libraries(nav_test PRIVATE engine_runtime)

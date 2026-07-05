@@ -8,6 +8,7 @@
 #include "core/logger.h"
 
 #include "core/transform.h"
+#include "core/transform_utils.h"   // safeReparent (depth/cycle-guarded)
 #include "core/entity_id_util.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
@@ -235,10 +236,7 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
         if (info.parentId == 0) continue;
         auto pit = byOriginalId.find(info.parentId);
         if (pit == byOriginalId.end()) continue;
-        flecs::entity child  = info.entity;
-        flecs::entity parent = pit->second;
-        if (child.is_alive() && parent.is_alive() && child != parent)
-            child.add(flecs::ChildOf, parent);
+        safeReparent(info.entity, pit->second);   // cycle + depth guarded
     }
 
     uint32_t handle = m_nextHandle++;

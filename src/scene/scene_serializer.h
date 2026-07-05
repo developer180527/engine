@@ -54,11 +54,9 @@ inline void restoreParents(flecs::world& w, const nlohmann::json& scene) {
         auto ci = byId.find(cid);
         auto pi = byId.find(pid);
         if (ci == byId.end() || pi == byId.end()) continue;
-        flecs::entity child  = ci->second;
-        flecs::entity parent = pi->second;
-        if (child.is_alive() && parent.is_alive() && child != parent
-            && !isAncestorOf(child, parent))
-            child.add(flecs::ChildOf, parent);
+        // safeReparent guards cycles AND over-deep chains (flecs aborts past
+        // FLECS_DAG_DEPTH_MAX) — a malformed scene can't crash the engine.
+        safeReparent(ci->second, pi->second);
     }
 }
 

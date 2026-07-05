@@ -10,7 +10,41 @@
 #include <cstring>
 #include <cmath>
 #include "core/transform.h"
+#include "core/logger.h"
 #include "components/prev_transform.h"
+
+// ── Hierarchy depth guard ────────────────────────────────────────────────────
+// flecs HARD-ABORTS the process on a ChildOf chain deeper than
+// FLECS_DAG_DEPTH_MAX (128) — it caches per-entity depth for query ordering.
+// So an over-deep scene/script hierarchy would crash the engine. Keep engine-
+// created parenting below a margin of that, and refuse (not abort) past it.
+constexpr int kMaxHierarchyDepth = 120;
+
+// Depth of e in the ChildOf tree (0 = root); bounded so a stray cycle can't spin.
+inline int hierarchyDepth(flecs::entity e) {
+    int d = 0;
+    for (flecs::entity a = e.target(flecs::ChildOf);
+         a && a.is_alive() && d < 4096; a = a.target(flecs::ChildOf)) ++d;
+    return d;
+}
+
+// Reparent child under parent, refusing CYCLES (child would be its own ancestor
+// → getWorldMatrix infinite-recurses) and OVER-DEEP chains (flecs would abort).
+// Returns false with a logged reason instead of crashing. The single safe entry
+// point for every engine parenting site.
+inline bool safeReparent(flecs::entity child, flecs::entity parent) {
+    if (!child.is_alive() || !parent.is_alive() || child == parent) return false;
+    for (flecs::entity a = parent; a && a.is_alive(); a = a.target(flecs::ChildOf))
+        if (a == child) { LOG_WARN("Scene", "reparent refused — would create a cycle"); return false; }
+    if (hierarchyDepth(parent) + 1 >= kMaxHierarchyDepth) {
+        LOG_WARN("Scene", "reparent refused — hierarchy deeper than %d (flecs would abort)",
+                 kMaxHierarchyDepth);
+        return false;
+    }
+    child.remove(flecs::ChildOf, flecs::Wildcard);
+    child.add(flecs::ChildOf, parent);
+    return true;
+}
 
 // ── quatFromMatrix ─────────────────────────────────────────────────────────
 // Extract quaternion from the upper-left 3x3 of a bgfx row-major matrix.
