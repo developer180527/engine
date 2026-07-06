@@ -760,6 +760,10 @@ void AsyncLoader::armWorker() {
         req = std::move(m_pending.front());
         m_pending.pop();
     }
+    dispatch(std::move(req));
+}
+
+void AsyncLoader::dispatch(LoadRequest req) {
     jobs::run("io.assetLoad", [this, req = std::move(req)]() mutable {
         // Asset work allocates under the Assets tag (Assimp scenes, vertex
         // staging, ozz scratch) regardless of which pool thread runs it.
@@ -779,11 +783,26 @@ void AsyncLoader::armWorker() {
         // drainOne() (main thread) sets the real handle then erases inFlight
         // atomically, closing the window where load() could find an invalid
         // placeholder handle and call a callback prematurely.
+        //
+        // Chain the next request WITHOUT dropping m_jobBusy first. The old code
+        // set m_jobBusy=false then called armWorker() (re-locking m_pendingMtx +
+        // maybe spawning a job) — but ~AsyncLoader frees us the instant it sees
+        // !m_jobBusy, so armWorker() could run on a destroyed `this` (shutdown
+        // UAF). Decide under ONE lock: keep busy=true while chaining; clearing
+        // it when idle is our LAST access to `this`.
+        LoadRequest next;
+        bool chain = false;
         {
             std::lock_guard<std::mutex> lk(m_pendingMtx);
-            m_jobBusy = false;
+            if (m_pending.empty()) {
+                m_jobBusy = false;                    // idle → dtor may free us now
+            } else {
+                next  = std::move(m_pending.front()); // stay busy: next job holds `this`
+                m_pending.pop();
+                chain = true;
+            }
         }
-        armWorker();   // chain the next pending request, if any
+        if (chain) dispatch(std::move(next));         // no `this` access after !busy
     });
 }
 

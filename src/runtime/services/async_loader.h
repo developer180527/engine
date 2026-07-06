@@ -107,7 +107,8 @@ private:
     struct LoadRequest   { std::string path, name; OnLoaded cb; };
     struct UploadRequest { LoadedAsset asset;       OnLoaded cb; };
 
-    void        armWorker();   // chain one pool job per pending request
+    void        armWorker();          // pop one pending request onto the pool
+    void        dispatch(LoadRequest req);   // run one load job, then self-chain
     LoadedAsset processFile(const std::string& path, const std::string& name);
 
     bool                    m_jobBusy = false;   // guarded by m_pendingMtx
