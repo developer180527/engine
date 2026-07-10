@@ -119,8 +119,9 @@ public:
     // running sim world. Call early in tickSimulation, before the broadcasts,
     // so the registry is stable while they iterate.
     void poll(float dt, PluginRegistry& reg, RuntimeContext& ctx, flecs::world& world) {
-        for (auto& e : m_loaded) {
-            if (!e->watcher.changed(dt)) continue;
+        for (size_t i = 0; i < m_loaded.size(); /* stepped below */) {
+            auto& e = m_loaded[i];
+            if (!e->watcher.changed(dt)) { ++i; continue; }
 
             e->plugin->onSimulationStop();        // stop old code
             e->plugin->onDetach();
@@ -129,14 +130,30 @@ public:
             e->lib.unload();
 
             if (!e->lib.load(e->path)) {          // bring up new code
-                LOG_ERROR("Kit", "reload failed: '%s'", e->name.c_str());
-                continue;
+                // Audit C.2: the old `continue` left this Entry in m_loaded
+                // with plugin == nullptr — stop() then null-derefed on the
+                // next Stop, isLoaded() reported the dead kit healthy (so
+                // loadOne() no-oped forever), and the status UI froze on
+                // "Loaded". The kit is fully torn down at this point, so
+                // make that the recorded reality: erase the entry, surface
+                // LoadFailed. A fixed rebuild comes back via loadOne().
+                LOG_ERROR("Kit", "reload failed: '%s' — kit unloaded "
+                          "(fix the module, then load it again)",
+                          e->name.c_str());
+                setStatus(e->name, e->path, KitStatus::State::LoadFailed,
+                          "reload failed — ABI mismatch or bad module "
+                          "(see console); kit unloaded");
+                m_loaded.erase(m_loaded.begin() + (long)i);
+                continue;                          // same index: next entry
             }
             e->plugin = e->lib.plugin();
             reg.add(e->plugin);
             e->plugin->onAttach(ctx);
             e->plugin->onSimulationStart(world);  // no broadcast mid-sim — start it here
             LOG_SUCCESS("Kit", "reloaded '%s'", e->name.c_str());
+            setStatus(e->name, e->path, KitStatus::State::Loaded,
+                      e->plugin->version());
+            ++i;
         }
     }
 

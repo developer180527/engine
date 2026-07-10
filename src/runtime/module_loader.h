@@ -269,6 +269,13 @@ public:
         if (m_table && m_destroy) m_destroy(m_table);  // module-side delete
         m_table   = nullptr;
         m_destroy = nullptr;
+        // Audit C.2: drop our adapter reference too. The adapter's raw table
+        // pointer just died above; on a successful reload load() overwrites
+        // m_plugin anyway, but after a FAILED reload the old code left a
+        // stale adapter here — any future plugin() caller would get a live
+        // shared_ptr into freed module memory. plugin() must never return
+        // an adapter whose table is known-destroyed.
+        m_plugin.reset();
         if (m_handle) { graveyard().push_back(m_handle); m_handle = nullptr; }
         // The temp copy stays on disk while the image is mapped (Windows can't
         // delete a loaded DLL; keep POSIX uniform). The OS temp cleaner owns it.
