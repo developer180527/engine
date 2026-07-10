@@ -112,7 +112,9 @@ add_library(engine_runtime STATIC
     runtime/runtime_sim.cpp
     runtime/platform/glfw_platform.cpp
     render/renderer.cpp
-    runtime/services/async_loader.cpp
+    runtime/services/async_loader/loader.cpp
+    runtime/services/async_loader/parse.cpp
+    runtime/services/async_loader/upload.cpp
     runtime/services/asset_service.cpp
     runtime/services/scene_service.cpp
     runtime/services/nav_service.cpp
