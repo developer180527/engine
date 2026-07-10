@@ -32,6 +32,7 @@
 #  include <windows.h>
 #else
 #  include <dlfcn.h>
+#  include <unistd.h>   // getpid — temp module names are PID-unique (M.4)
 #endif
 
 namespace modload {
@@ -47,6 +48,7 @@ using LibHandle = HMODULE;
 inline LibHandle libOpen(const fs::path& p) { return ::LoadLibraryW(p.c_str()); }
 inline void*     libSym(LibHandle h, const char* n) { return (void*)::GetProcAddress(h, n); }
 inline void      libClose(LibHandle h) { if (h) ::FreeLibrary(h); }
+inline unsigned long osProcessId() { return (unsigned long)::GetCurrentProcessId(); }
 inline std::string libError() {
     DWORD e = ::GetLastError();
     if (!e) return {};
@@ -64,6 +66,7 @@ inline LibHandle libOpen(const fs::path& p) { return ::dlopen(p.c_str(), RTLD_NO
 inline void*     libSym(LibHandle h, const char* n) { return ::dlsym(h, n); }
 inline void      libClose(LibHandle h) { if (h) ::dlclose(h); }
 inline std::string libError() { const char* e = ::dlerror(); return e ? e : ""; }
+inline unsigned long osProcessId() { return (unsigned long)::getpid(); }
 #endif
 
 // ── Host-side adapter ────────────────────────────────────────────────────────
@@ -136,8 +139,13 @@ public:
 
     bool load(const fs::path& sourcePath) {
         std::error_code ec;
+        // PID in the name: the per-process counter alone collides across
+        // concurrent engine instances (two editors, a CI matrix) sharing the
+        // system temp dir — one process's copy_file racing another's libOpen
+        // on the identical path (audit M.4).
         m_tempPath = fs::temp_directory_path()
-                   / ("engine_module_" + std::to_string(nextTempId())
+                   / ("engine_module_" + std::to_string(osProcessId()) + "_"
+                      + std::to_string(nextTempId())
                       + sourcePath.extension().string());
         fs::copy_file(sourcePath, m_tempPath,
                       fs::copy_options::overwrite_existing, ec);
@@ -204,8 +212,10 @@ public:
         // the versioned function table instead of dynamic-lookup symbols
         // (per-subsystem versions checked module-side; see engine_api_table.h).
         // Optional symbol — older modules keep resolving dynamically.
+        // libSym, not raw dlsym: dlsym is POSIX-only and this file's own
+        // portable wrapper exists precisely for this call (audit H.3).
         if (auto bindApi = (EngineModuleBindApiV1Fn)
-                dlsym(m_handle, "engineModuleBindApiV1"))
+                libSym(m_handle, "engineModuleBindApiV1"))
             bindApi(engineApiHostTable());
 
         // Kit-to-kit CONTRACTS (shared component headers): flecs matches them
