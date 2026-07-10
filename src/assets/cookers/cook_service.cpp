@@ -33,6 +33,19 @@ CookService::Stats CookService::stats() const {
     return m_stats.load();
 }
 
+// A source file counts as "settled" once its mtime is at least this old.
+// External DCC tools (Blender, Substance, Photoshop) write big exports over
+// hundreds of ms; cooking a file mid-write reads a truncated asset — false
+// cook failures or corrupt output (cooker audit: "Race Condition on
+// Unfinished File Writes"). Deferred files trigger a follow-up pass.
+static bool fileSettled(const std::filesystem::path& p) {
+    std::error_code ec;
+    const auto mtime = std::filesystem::last_write_time(p, ec);
+    if (ec) return false;                        // vanished mid-scan — skip
+    const auto age = std::filesystem::file_time_type::clock::now() - mtime;
+    return age >= std::chrono::milliseconds(750);
+}
+
 void CookService::cookLoop() {
     while (m_running) {
         // Wait for a cook request
@@ -44,7 +57,22 @@ void CookService::cookLoop() {
             if (!m_running) break;
             --m_pendingRequests;
         }
-        runOneCookPass();
+        // Exception net (cooker audit: "Unwrapped Worker Thread Exception
+        // Paths"): a throw escaping this std::thread is std::terminate for
+        // the whole editor. Third-party code inside the pass (Assimp, JSON,
+        // sqlite, allocations) can throw on corrupt input — log, keep the
+        // service alive, wait for the next request.
+        try {
+            runOneCookPass();
+        } catch (const std::exception& e) {
+            LOG_ERROR("CookService", "cook pass crashed: %s — service "
+                      "still alive, will retry on next refresh", e.what());
+            m_stats.active = false;
+        } catch (...) {
+            LOG_ERROR("CookService", "cook pass crashed (non-std exception) "
+                      "— service still alive");
+            m_stats.active = false;
+        }
     }
 }
 
@@ -71,16 +99,22 @@ void CookService::runOneCookPass() {
     int cooked = 0;
     int failed = 0;
 
-    // Count cookable stale assets (skip unsupported extensions + missing files)
-    auto isCookable = [&](const assetlib::AssetRecord& rec) {
+    // Collect cookable stale assets ONCE (skip unsupported extensions +
+    // missing files). Files still being written by an external tool are
+    // DEFERRED — cooked on a follow-up pass once their mtime settles.
+    int deferred = 0;
+    std::vector<assetlib::UUID> todo;
+    todo.reserve(all.size());
+    for (auto& rec : all) {
         auto ext = std::filesystem::path(rec.sourcePath).extension().string();
-        if (!pipeline.hasCookerFor(ext)) return false;
+        if (!pipeline.hasCookerFor(ext)) continue;
         auto src = m_projectRoot / rec.sourcePath;
-        if (!std::filesystem::exists(src)) return false;
-        return pipeline.isStale(rec);
-    };
-    for (auto& rec : all)
-        if (isCookable(rec)) ++total;
+        if (!std::filesystem::exists(src)) continue;
+        if (!pipeline.isStale(rec)) continue;
+        if (!fileSettled(src)) { ++deferred; continue; }
+        todo.push_back(rec.uuid);
+    }
+    total = (int)todo.size();
 
     // Assets that failed at the current cook version are NOT retried (that
     // would loop forever) — but they must not be silently reported as "up to
@@ -102,25 +136,21 @@ void CookService::runOneCookPass() {
     if (total == 0) {
         if (standingFailures > 0)
             LOG_WARN("CookService", "Up to date, but %d asset(s) in FAILED state", standingFailures);
-        else
+        else if (deferred == 0)
             LOG_INFO("CookService", "All assets up to date");
         // Still check for stale scenes even when no mesh/texture changed —
         // the user may have edited scene JSON directly.
-        cookSceneFiles(registry, false);
+        cookSceneFiles(registry);
+        requeueIfDeferred(deferred);
         return;
     }
 
     LOG_INFO("CookService", "Cooking %d asset(s) in background (parallel)...", total);
 
-    // Collect cookable stale UUIDs and cook them across all cores. cookMany
-    // does registry I/O on this thread and runs only cook() on the pool, so
-    // the single registry connection stays single-threaded. The callback
-    // (serialized) drives progress; shouldContinue stops dispatch on shutdown.
-    std::vector<assetlib::UUID> todo;
-    todo.reserve(all.size());
-    for (auto& rec : all)
-        if (isCookable(rec)) todo.push_back(rec.uuid);
-
+    // Cook the collected UUIDs across the cores. cookMany does registry I/O
+    // on this thread and runs only cook() on the pool, so the single
+    // registry connection stays single-threaded. The callback (serialized)
+    // drives progress; shouldContinue stops dispatch on shutdown.
     pipeline.cookMany(todo,
         [&](const std::string& src, bool ok) {
             if (ok) {
@@ -146,11 +176,22 @@ void CookService::runOneCookPass() {
     // Scenes are NOT DB-tracked assets — they live in scenes/ as JSON.
     // After individual assets are cooked (so cooked paths are available in
     // the DB), convert any stale JSON scenes into binary .cooked files.
-    cookSceneFiles(registry, cooked > 0);
+    cookSceneFiles(registry);
+    requeueIfDeferred(deferred);
 }
 
-void CookService::cookSceneFiles(assetlib::AssetRegistry& registry,
-                                 bool assetsChanged) {
+void CookService::requeueIfDeferred(int deferred) {
+    if (deferred <= 0 || !m_running) return;
+    LOG_INFO("CookService", "%d file(s) still being written — retrying "
+             "shortly", deferred);
+    // Give the external writer time to finish, then run another pass. The
+    // settle check converges: once mtimes stop moving, the follow-up pass
+    // cooks them and defers nothing.
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    requestRefresh();
+}
+
+void CookService::cookSceneFiles(assetlib::AssetRegistry& registry) {
     namespace fs = std::filesystem;
     fs::path scenesDir    = m_projectRoot / "scenes";
     fs::path sceneCacheDir = m_cacheRoot  / "scenes";
@@ -168,17 +209,27 @@ void CookService::cookSceneFiles(assetlib::AssetRegistry& registry,
         fs::path outPath = sceneCacheDir
             / (entry.path().stem().string() + ".cooked");
 
+        // A scene mid-save by the editor/user gets the same settle
+        // treatment as assets — never cook a half-written JSON.
+        if (!fileSettled(entry.path())) continue;   // next pass picks it up
+
         // Stale if binary doesn't exist or is older than the JSON source
         bool stale = !fs::exists(outPath);
+        std::filesystem::file_time_type outTime{};
         if (!stale) {
             std::error_code ec2;
             auto srcTime = fs::last_write_time(entry.path(), ec2);
-            auto outTime = fs::last_write_time(outPath, ec2);
+            outTime      = fs::last_write_time(outPath, ec2);
             if (!ec2) stale = (srcTime > outTime);
         }
-        // If any mesh/texture was cooked this pass, their cooked paths may
-        // have changed — re-cook all scenes so they pick up the new paths.
-        if (!stale && assetsChanged) stale = true;
+        // Per-scene dependency check (replaces the global assetsChanged
+        // flag, which re-cooked EVERY scene in the workspace whenever ANY
+        // single asset changed — cooker audit): only re-cook this scene if
+        // one of ITS OWN referenced assets has a newer cooked output.
+        if (!stale && sceneDependsOnNewerAssets(entry.path(), outTime,
+                                                &registry, m_projectRoot,
+                                                m_cacheRoot))
+            stale = true;
 
         if (!stale) continue;
 

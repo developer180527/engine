@@ -197,7 +197,21 @@ int CookPipeline::cookMany(const std::vector<UUID>& uuids,
             ctx.sourcePath    = w.sourcePath;
             ctx.outputPath    = w.outputPath;
             ctx.addDependency = [&w](const UUID& dep) { w.deps.push_back(dep); };
-            w.result = w.cooker->cook(ctx);
+            // Exception net: cook() runs third-party parsers (Assimp, stb,
+            // json) on a corrupt file away from any try/catch — a throw
+            // here (bad_alloc, parse_error, out_of_range) would terminate
+            // this std::thread and take the whole host process with it
+            // (cooker audit: "Unwrapped Worker Thread Exception Paths").
+            // Convert to a per-asset failure and keep the worker alive.
+            try {
+                w.result = w.cooker->cook(ctx);
+            } catch (const std::exception& e) {
+                w.result = {.success = false,
+                            .error = std::string("cooker threw: ") + e.what()};
+            } catch (...) {
+                w.result = {.success = false,
+                            .error = "cooker threw a non-std exception"};
+            }
             if (onResult) {
                 std::lock_guard<std::mutex> lk(cbMtx);
                 onResult(w.sourceRel, w.result.success || w.result.skipped);

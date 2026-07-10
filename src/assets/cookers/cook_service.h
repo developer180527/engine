@@ -48,7 +48,13 @@ public:
 private:
     void cookLoop();
     void runOneCookPass();
-    void cookSceneFiles(assetlib::AssetRegistry& registry, bool assetsChanged);
+    // Scene staleness is PER-SCENE: source-JSON mtime vs cooked binary, plus
+    // sceneDependsOnNewerAssets() (only the scenes whose OWN referenced
+    // assets changed re-cook — the old global assetsChanged flag re-cooked
+    // every scene in the workspace on any single asset change).
+    void cookSceneFiles(assetlib::AssetRegistry& registry);
+    // Files mid-write by external tools defer to a follow-up pass.
+    void requeueIfDeferred(int deferred);
 
     std::filesystem::path m_dbPath;
     std::filesystem::path m_projectRoot;

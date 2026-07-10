@@ -11,6 +11,8 @@
 #include <cmath>
 #include <algorithm>
 #include <filesystem>
+#include <semaphore>
+#include <thread>
 
 // MeshCooker::cook is a pure function: it owns its Assimp importer and writes a
 // single unique output file, sharing no mutable state. That — and nothing more
@@ -71,14 +73,34 @@ static void countNode(const aiScene* s, const aiNode* node,
         countNode(s, node->mChildren[c], verts, indices);
 }
 
+aiMatrix3x3 cookNormalMatrix(const aiMatrix4x4& world) {
+    aiMatrix3x3 nm(world);
+    // Scale-INVARIANT singularity test (cooker audit "Determinant Trap"):
+    // a bare |det| > 1e-12 check collapses for small uniform scales —
+    // 0.0001^3 IS 1e-12, so perfectly valid heavily-scaled-down assets were
+    // flagged degenerate and had their normal matrix replaced with identity:
+    // normals stopped following node rotation, breaking shading at runtime.
+    // Normalizing by the row-norm product makes uniform scale s give a
+    // ratio of ~1 at ANY s; only genuinely flattened/collinear bases (true
+    // singularity) approach 0. Normals are re-normalized after transform,
+    // so the inverse's large magnitudes at tiny scales are harmless.
+    const float r0 = std::sqrt(nm.a1*nm.a1 + nm.a2*nm.a2 + nm.a3*nm.a3);
+    const float r1 = std::sqrt(nm.b1*nm.b1 + nm.b2*nm.b2 + nm.b3*nm.b3);
+    const float r2 = std::sqrt(nm.c1*nm.c1 + nm.c2*nm.c2 + nm.c3*nm.c3);
+    const float det     = nm.Determinant();
+    const float normPrd = r0 * r1 * r2;
+    if (normPrd > 0.0f && std::fabs(det) > 1e-6f * normPrd) {
+        nm.Inverse(); nm.Transpose();
+        return nm;
+    }
+    return aiMatrix3x3();   // genuinely singular — identity fallback
+}
+
 static void emitMesh(const aiMesh* mesh, const aiMatrix4x4& world, EmitState& st) {
     if (!mesh->HasPositions()) return;
 
     const aiMatrix3x3 w3(world);                 // linear part — directions
-    aiMatrix3x3 nm(world);                        // normals — inverse-transpose,
-    float det = nm.Determinant();                 // guarded against degenerate scale
-    if (std::fabs(det) > 1e-12f) { nm.Inverse(); nm.Transpose(); }
-    else                         { nm = aiMatrix3x3(); }
+    const aiMatrix3x3 nm = cookNormalMatrix(world); // normals — see helper
 
     const bool hasN  = mesh->HasNormals();
     const bool hasT  = mesh->HasTangentsAndBitangents();
@@ -406,7 +428,33 @@ static CookResult cookSkinned(const CookContext& ctx) {
     return {.success = true};
 }
 
+// ── Assimp concurrency gate ──────────────────────────────────────────────────
+// cookMany fans cook() across every core; each mesh cook stands up a full
+// Assimp import (node hierarchies, split vertex channels, JoinIdenticalVertices
+// caches — routinely several × the file size in RAM). A dozen concurrent
+// high-poly FBX imports multiply that peak into OOM territory (cooker audit:
+// "Assimp Parallel Memory Explosion"). Heavy mesh imports serialize through
+// this gate — hw/4 permits, clamped to [2,4] — while texture/scene cooks
+// keep scaling across all cores. Blocking a worker here is fine: it just
+// becomes ordering, not lost parallelism, since the gate IS the bottleneck
+// resource (RAM).
+namespace {
+std::counting_semaphore<8>& assimpGate() {
+    static std::counting_semaphore<8> gate{(std::ptrdiff_t)std::clamp(
+        std::thread::hardware_concurrency() / 4u, 2u, 4u)};
+    return gate;
+}
+struct AssimpGatePass {
+    AssimpGatePass()  { assimpGate().acquire(); }
+    ~AssimpGatePass() { assimpGate().release(); }
+};
+} // namespace
+
 CookResult MeshCooker::cook(const CookContext& ctx) {
+    // One permit covers the whole cook, including the skinned re-import —
+    // both Assimp scenes of this asset count as ONE resident import.
+    AssimpGatePass gate;
+
     Assimp::Importer imp;   // isolated per cook — safe inside the worker pool
     imp.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE,
                            aiPrimitiveType_POINT | aiPrimitiveType_LINE);

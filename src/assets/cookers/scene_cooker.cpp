@@ -6,6 +6,38 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <string>
+#include <unordered_map>
+
+// Resolve a meshRenderer JSON record to its asset-DB record: UUID first
+// (survives renames), then project-relative source path. Shared by the cook
+// pass and the per-scene dependency staleness check.
+static std::optional<assetlib::AssetRecord> resolveMeshRecord(
+        const nlohmann::json& mr,
+        assetlib::AssetRegistry* assetLib,
+        const std::filesystem::path& projectRoot) {
+    if (!assetLib) return std::nullopt;
+    std::string srcUuid = mr.value("asset", std::string{});
+    std::string srcPath = mr.value("path", std::string{});
+    if (srcPath.empty())
+        srcPath = mr.value("sourcePath", std::string{});
+    if (srcPath.rfind("engine://", 0) == 0) return std::nullopt;
+
+    std::optional<assetlib::AssetRecord> rec;
+    if (!srcUuid.empty())
+        rec = assetLib->findByUUID(assetlib::UUID::fromString(srcUuid));
+    if (!rec && !srcPath.empty() && !projectRoot.empty()) {
+        std::string rel = srcPath;
+        if (std::filesystem::path(srcPath).is_absolute()) {
+            std::error_code ec;
+            auto r = std::filesystem::relative(srcPath, projectRoot, ec);
+            if (ec || r.empty()) rel.clear();
+            else rel = r.generic_string();
+        }
+        if (!rel.empty())
+            rec = assetLib->findBySourcePath(rel);
+    }
+    return rec;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // cookSceneFile — JSON scene → binary scene
@@ -36,6 +68,21 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
 
     assetlib::SceneAsset cooked;
     const auto entities = scene.value("entities", nlohmann::json::array());
+
+    // Deduplicating string interner. stringTableAppend is pure append —
+    // without this, N entities sharing one mesh path stored the path N
+    // times (a 10k-prop scene bloated its table by ~megabytes of repeats;
+    // cooker audit's "string table" finding — the O(N²) claim there was
+    // wrong, the real defect was duplicate bloat). O(1) per lookup.
+    std::unordered_map<std::string, std::pair<uint32_t, uint32_t>> interned;
+    auto intern = [&](const std::string& s) -> std::pair<uint32_t, uint32_t> {
+        if (s.empty()) return {0xFFFFFFFF, 0};
+        auto it = interned.find(s);
+        if (it != interned.end()) return it->second;
+        auto entry = assetlib::stringTableAppend(cooked.stringTable, s);
+        interned.emplace(s, entry);
+        return entry;
+    };
 
     for (const auto& je : entities) {
         assetlib::SceneEntity ent{};
@@ -69,7 +116,7 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
             ent.componentMask |= assetlib::kComp_Name;
             std::string name = je["name"].is_string()
                 ? je["name"].get<std::string>() : "Entity";
-            auto [off, len] = assetlib::stringTableAppend(cooked.stringTable, name);
+            auto [off, len] = intern(name);
             ent.nameOffset = off;
             ent.nameLength = len;
         }
@@ -81,31 +128,16 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
             // New format: "asset" (uuid) + "path" (project-relative).
             // Legacy: "sourcePath" (absolute). The cooked binary stores an
             // absolute-or-relative source path string for the runtime loader.
-            std::string srcUuid    = mr.value("asset", std::string{});
             std::string srcPath    = mr.value("path", std::string{});
             if (srcPath.empty())
                 srcPath = mr.value("sourcePath", std::string{});
             std::string srcType    = mr.value("sourceType", std::string{});
             std::string cookedPath = mr.value("cookedPath", std::string{});
 
-            // Resolve cookedPath via the asset DB: UUID first (survives
-            // renames), then source-relative path.
-            if (cookedPath.empty() && assetLib
-                    && srcPath.rfind("engine://", 0) != 0) {
-                std::optional<assetlib::AssetRecord> rec;
-                if (!srcUuid.empty())
-                    rec = assetLib->findByUUID(assetlib::UUID::fromString(srcUuid));
-                if (!rec && !srcPath.empty() && !projectRoot.empty()) {
-                    std::string rel = srcPath;
-                    if (std::filesystem::path(srcPath).is_absolute()) {
-                        std::error_code ec;
-                        auto r = std::filesystem::relative(srcPath, projectRoot, ec);
-                        if (ec || r.empty()) rel.clear();
-                        else rel = r.generic_string();
-                    }
-                    if (!rel.empty())
-                        rec = assetLib->findBySourcePath(rel);
-                }
+            // Resolve cookedPath via the asset DB (shared resolver — same
+            // logic drives the dependency staleness check).
+            if (cookedPath.empty()) {
+                auto rec = resolveMeshRecord(mr, assetLib, projectRoot);
                 if (rec && rec->state == assetlib::AssetState::Ready
                         && !rec->cookedPath.empty()) {
                     cookedPath = rec->cookedPath;
@@ -114,10 +146,10 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
                 }
             }
 
-            auto [coff, clen] = assetlib::stringTableAppend(cooked.stringTable, cookedPath);
+            auto [coff, clen] = intern(cookedPath);
             ent.meshCookedOffset = coff;
             ent.meshCookedLength = clen;
-            auto [soff, slen] = assetlib::stringTableAppend(cooked.stringTable, srcPath);
+            auto [soff, slen] = intern(srcPath);
             ent.meshSourceOffset = soff;
             ent.meshSourceLength = slen;
             ent.meshSourceType   = (srcType == "primitive") ? 1 : 0;
@@ -163,7 +195,7 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
         if (je.contains("script")) {
             ent.componentMask |= assetlib::kComp_Script;
             std::string path = je["script"].value("path", std::string{});
-            auto [off, len] = assetlib::stringTableAppend(cooked.stringTable, path);
+            auto [off, len] = intern(path);
             ent.scriptPathOffset = off;
             ent.scriptPathLength = len;
         }
@@ -212,4 +244,32 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
                 cooked.entities.size(), outPath.filename().string().c_str(),
                 cooked.stringTable.size());
     return true;
+}
+
+bool sceneDependsOnNewerAssets(const std::filesystem::path& jsonPath,
+                               std::filesystem::file_time_type cookedTime,
+                               assetlib::AssetRegistry* assetLib,
+                               const std::filesystem::path& projectRoot,
+                               const std::filesystem::path& cacheRoot) {
+    if (!assetLib) return false;
+
+    nlohmann::json scene;
+    try {
+        std::ifstream f(jsonPath);
+        scene = nlohmann::json::parse(f);
+    } catch (const std::exception&) {
+        return false;   // broken scene: surfaced by the cook itself, not here
+    }
+
+    for (const auto& je : scene.value("entities", nlohmann::json::array())) {
+        if (!je.contains("meshRenderer")) continue;
+        auto rec = resolveMeshRecord(je["meshRenderer"], assetLib, projectRoot);
+        if (!rec || rec->cookedPath.empty()) continue;
+
+        std::error_code ec;
+        auto depTime = std::filesystem::last_write_time(
+            cacheRoot / rec->cookedPath, ec);
+        if (!ec && depTime > cookedTime) return true;   // THIS scene's dep moved
+    }
+    return false;
 }
