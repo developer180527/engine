@@ -317,13 +317,27 @@ bool SceneService::isSceneReady(const char* cookedPath) const {
     auto it = m_preloads.find(absPath);
     if (it == m_preloads.end()) return false;
 
-    // Check if all queued meshes have finished loading
-    for (const auto& path : it->second.meshPaths) {
-        if (m_assets.queryMesh(path.c_str()) == 0
-            && m_assets.isLoading(path.c_str()))
+    // Ready means EVERY mesh actually has a handle. The old check ("no
+    // handle AND still loading") let a FAILED load fall through as ready —
+    // no handle, no longer loading, silently missing forever (audit H.6).
+    // Callers distinguish "still loading" from "doomed" via
+    // sceneLoadFailed().
+    for (const auto& path : it->second.meshPaths)
+        if (m_assets.queryMesh(path.c_str()) == 0)
             return false;
-    }
     return true;
+}
+
+bool SceneService::sceneLoadFailed(const char* cookedPath) const {
+    if (!cookedPath) return false;
+    std::string absPath = resolvePath(cookedPath);
+    auto it = m_preloads.find(absPath);
+    if (it == m_preloads.end()) return false;
+
+    for (const auto& path : it->second.meshPaths)
+        if (m_assets.loadFailed(path.c_str()))
+            return true;
+    return false;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

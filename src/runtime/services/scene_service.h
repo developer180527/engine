@@ -65,8 +65,15 @@ public:
     // to poll, then loadScene() once ready (assets will already be cached).
     void preloadScene(const char* cookedPath);
 
-    // Returns true if all assets for the given scene are loaded.
+    // Returns true only when EVERY asset for the given scene is loaded.
+    // A scene with a failed asset is never "ready" — poll sceneLoadFailed()
+    // to distinguish "still loading" from "will never be ready" and bail.
     bool isSceneReady(const char* cookedPath) const;
+
+    // True if any of the scene's preloaded assets failed to load (the scene
+    // will never become ready without a retry). Audit H.6: failed assets
+    // used to silently report as ready.
+    bool sceneLoadFailed(const char* cookedPath) const;
 
     // ── Query ──
     uint32_t sceneEntityCount(uint32_t sceneHandle) const;

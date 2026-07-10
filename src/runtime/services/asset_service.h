@@ -70,6 +70,11 @@ public:
     uint32_t queryMesh(const char* cookedPath)    const;
     uint32_t queryTexture(const char* cookedPath) const;
     bool     isLoading(const char* cookedPath)    const;
+    // True if the last async load of this path FAILED (parse error, missing
+    // file, GPU buffer failure). Distinguishes "will never load" from "still
+    // loading" — without it a failed asset is indistinguishable from a
+    // never-requested one (audit H.6). A new load*Async() clears it (retry).
+    bool     loadFailed(const char* cookedPath)   const;
     int      pendingCount()                       const;
 
     // ----- Drain -----

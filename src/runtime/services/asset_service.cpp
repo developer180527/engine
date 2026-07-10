@@ -96,6 +96,12 @@ struct AssetService::AsyncState {
     mutable std::mutex                              loadedMtx;
     std::unordered_map<std::string, MeshHandle>     loadedMeshes;
     std::unordered_map<std::string, TextureHandle>  loadedTextures;
+    // Keys whose load FAILED (parse error, bad file, bgfx buffer failure).
+    // Without this a failed asset has no handle and is no longer in flight —
+    // indistinguishable from "never requested" to pollers like isSceneReady,
+    // which then reported scenes containing assets that will never appear
+    // (audit H.6). A fresh load*Async() request clears the key (retry).
+    std::set<std::string>                           failedKeys;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -465,10 +471,12 @@ void AssetService::loadMeshAsync(const char* cookedPath) {
 
     std::string key = resolvePath(cookedPath);
 
-    // Already loaded?
+    // Already loaded? (A fresh request also clears any recorded failure —
+    // explicit retry semantics.)
     {
         std::lock_guard<std::mutex> lk(m_async->loadedMtx);
         if (m_async->loadedMeshes.count(key)) return;
+        m_async->failedKeys.erase(key);
     }
     // Already in-flight?
     {
@@ -489,6 +497,7 @@ void AssetService::loadTextureAsync(const char* cookedPath) {
     {
         std::lock_guard<std::mutex> lk(m_async->loadedMtx);
         if (m_async->loadedTextures.count(key)) return;
+        m_async->failedKeys.erase(key);              // retry semantics
     }
     {
         std::lock_guard<std::mutex> lk(m_async->pendingMtx);
@@ -524,6 +533,13 @@ bool AssetService::isLoading(const char* cookedPath) const {
     std::string key = resolvePath(cookedPath);
     std::lock_guard<std::mutex> lk(m_async->pendingMtx);
     return m_async->inFlight.count(key) > 0;
+}
+
+bool AssetService::loadFailed(const char* cookedPath) const {
+    if (!m_async || !cookedPath) return false;
+    std::string key = resolvePath(cookedPath);
+    std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+    return m_async->failedKeys.count(key) > 0;
 }
 
 int AssetService::pendingCount() const {
@@ -562,6 +578,8 @@ bool AssetService::drainUploads() {
     if (!item.success) {
         LOG_ERROR("AssetService", "Async load failed: %s — %s",
                   item.key.c_str(), item.error.c_str());
+        { std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+          m_async->failedKeys.insert(item.key); }   // pollers must see this
         return true; // consumed an item even on failure
     }
 
@@ -578,6 +596,8 @@ bool AssetService::drainUploads() {
             if (bgfx::isValid(ibh)) bgfx::destroy(ibh);
             LOG_ERROR("AssetService", "Async bgfx buffer creation failed: %s",
                       item.key.c_str());
+            { std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+              m_async->failedKeys.insert(item.key); }
             return true;
         }
 
