@@ -12,7 +12,11 @@
 #include <atomic>
 #include <cstdint>
 
-#include <bgfx/bgfx.h>
+// bgfx::Memory is only ever held BY POINTER in this header — forward-declared
+// so AsyncLoader's interface stops being a transitive gateway to the whole
+// bgfx API for every consumer (audit A.4). The .cpp includes bgfx properly.
+namespace bgfx { struct Memory; }
+
 #include "assets/asset_storage.h"
 #include "animation/skeleton.h"
 #include "animation/animation_clip.h"

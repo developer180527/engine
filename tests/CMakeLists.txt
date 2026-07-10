@@ -48,6 +48,14 @@ endfunction()
 # proves the fallback backend still resolves the whole Context contract.
 add_test(NAME hid_null_link_check COMMAND hid_null_link_check)
 set_tests_properties(hid_null_link_check PROPERTIES LABELS unit TIMEOUT 30)
+
+# ── sim-purity gauntlet — compiling IS the test (audit A.1–A.4) ───────────────
+# Poisoned bgfx/assimp headers sit FIRST on the include path: a sim-facing
+# header that transitively includes either fails the build with a message
+# naming the violation. See tests/sim_purity_check.cpp for the header list.
+engine_test(sim_purity_check TIMEOUT 30)
+target_include_directories(sim_purity_check BEFORE PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/poison)
 engine_test(mem_test       LIB engine_core)
 engine_test(arena_test     LIB engine_core)
 engine_test(profiler_test  LIB engine_core)

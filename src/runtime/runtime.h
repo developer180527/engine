@@ -14,7 +14,6 @@
 #include <functional>
 #include <memory>
 #include <string>
-#include <bgfx/bgfx.h>
 #include "runtime/platform/platform.h"
 #include "runtime/camera_util.h"
 #include "runtime/runtime_context.h"
@@ -142,8 +141,8 @@ public:
     void resize(int w, int h);
     void createSceneFB(int w, int h) { m_renderer.createSceneFB(w, h); }
 
-    bgfx::TextureHandle sceneColorTexture() const { return m_renderer.sceneColorTexture(); }
-    bgfx::TextureHandle gameColorTex()      const { return m_renderer.gameColorTex(); }
+    // GPU-typed accessors (scene/game color textures, etc.) live on
+    // renderer() — EngineRuntime's own API names no bgfx types (audit A.1).
     void renderGameView(const float view[16], const float proj[16],
                         const float clearColor[4], flecs::world* gameWorld = nullptr) {
         m_renderer.renderGameView(view, proj, clearColor, gameWorld);

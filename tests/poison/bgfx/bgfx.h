@@ -1,0 +1,1 @@
+#error "SIM-PURITY VIOLATION: bgfx leaked into a sim-facing header. A header on the sim_purity_check list (tests/sim_purity_check.cpp) must stay GPU-free — dedicated servers and headless sims include these. Route GPU types through Renderer or forward-declare (see audit A.1-A.4)."

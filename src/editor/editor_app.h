@@ -431,7 +431,7 @@ private:
         m_desiredSceneW = std::max((int)avail.x, 64);
         m_desiredSceneH = std::max((int)avail.y, 64);
 
-        ImTextureID tid = (ImTextureID)(uintptr_t)m_rt.sceneColorTexture().idx;
+        ImTextureID tid = (ImTextureID)(uintptr_t)m_rt.renderer().sceneColorTexture().idx;
         ImVec2 cursorPos = ImGui::GetCursorScreenPos();
         ImGui::Image(tid, avail);
         const ImVec2 dispSize = avail;
@@ -542,12 +542,13 @@ private:
                            && m_rt.simulating();
         flecs::world& camWorld = inSim ? m_rt.simWorld() : m_rt.ctx().ecs;
         bool hasCam = m_cameraFinder.find(camWorld, gameView, gameProj,
-                                          aspect, gameClear);
+                                          aspect, gameClear,
+                                          bgfx::getCaps()->homogeneousDepth);
         if (hasCam) {
             flecs::world* renderWorld = inSim ? &m_rt.simWorld() : nullptr;
             m_rt.renderGameView(gameView, gameProj, gameClear, renderWorld);
         }
-        drawGameViewPanel(m_rt.gameColorTex(), hasCam,
+        drawGameViewPanel(m_rt.renderer().gameColorTex(), hasCam,
                          m_editor.simState,
                          m_rt.sceneW(), m_rt.sceneH(),
                          [this]{ onPlay(); },

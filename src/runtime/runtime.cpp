@@ -240,8 +240,15 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     // startSimulation). Kits register their own at attach/sim-start.
     MetaRegistry::registerAll(m_ecs);
     m_clipLibrary = std::make_unique<ClipLibrary>();
-    m_importers.registerImporter(std::make_unique<GltfImporter>());
-    m_importers.registerImporter(std::make_unique<AssimpImporter>());
+    // Source-format importers exist to produce GPU meshes — headless runs
+    // (dedicated server, CI sim) have no device to feed, so don't stand up
+    // the offline import stack (Assimp is a large, editor-facing parsing
+    // library; audit A.3 — it was registered unconditionally for every
+    // runtime instance including shipped games' headless paths).
+    if (!m_headless) {
+        m_importers.registerImporter(std::make_unique<GltfImporter>());
+        m_importers.registerImporter(std::make_unique<AssimpImporter>());
+    }
 
     // AssetService — async mesh/texture loading for scripts + scene streaming.
     m_assetService = std::make_unique<AssetService>(AssetService::Config{
@@ -408,7 +415,8 @@ bool EngineRuntime::tick(float dt) {
     float view[16], proj[16], clear[4];
     const float aspect = m_height > 0
         ? float(m_width) / float(m_height) : 16.0f / 9.0f;
-    if (!m_cameraFinder.find(simWorld(), view, proj, aspect, clear))
+    if (!m_cameraFinder.find(simWorld(), view, proj, aspect, clear,
+                             bgfx::getCaps()->homogeneousDepth))
         return false;
 
     flecs::world* world = m_gameWorld ? m_gameWorld.get() : nullptr;

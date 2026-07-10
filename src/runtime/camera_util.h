@@ -2,7 +2,6 @@
 #include <cstring>
 #include <flecs.h>
 #include <bx/math.h>
-#include <bgfx/bgfx.h>
 
 #include "components/camera.h"
 #include "core/transform.h"
@@ -15,11 +14,17 @@
 // path, so the underlying flecs query is cached per world (WorldQueryCache).
 // Call reset() when a world you've queried gets destroyed (sim stop) — the
 // runtime does this for its own instance; the editor does it in onStop().
+//
+// PURE MATH header (audit A.2): homogeneousDepth is a PARAMETER — the render
+// path passes bgfx::getCaps()->homogeneousDepth. This header used to call
+// bgfx::getCaps() itself: a live query against an initialized GPU device
+// inside an otherwise sim-safe header.
 class PrimaryCameraFinder {
 public:
     bool find(flecs::world& world,
               float view[16], float proj[16],
-              float aspect, float clearColor[4]) {
+              float aspect, float clearColor[4],
+              bool homogeneousDepth) {
         bool found = false;
         m_query.get(world).each(
             [&](flecs::entity e, const Transform& t, const Camera& c) {
@@ -36,7 +41,7 @@ public:
                 bx::Vec3 fwd = bx::normalize({-wm[8], -wm[9], -wm[10]});
                 bx::Vec3 up  = bx::normalize({ wm[4],  wm[5],  wm[6]});
                 bx::mtxLookAt(view, pos, bx::add(pos, fwd), up);
-                const bool rhNdc = bgfx::getCaps()->homogeneousDepth;
+                const bool rhNdc = homogeneousDepth;
                 if (c.projection == ProjectionType::Perspective)
                     bx::mtxProj(proj, c.fov, aspect, c.nearPlane, c.farPlane, rhNdc);
                 else {
