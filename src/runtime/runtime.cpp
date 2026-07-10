@@ -429,6 +429,11 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     m_simulating = true;
     m_simElapsed = 0.0;
     m_simFrame   = 0;
+    // Fresh session, fresh accumulator: a stop mid-step left a stale
+    // fraction that fired the new session's first fixed step early and
+    // handed the renderer a non-zero interpolation alpha on frame one
+    // (visible jump) — audit H.5.
+    m_simAccumulator = 0.0f;
     // Bind the script surface to the sim world BEFORE plugins start — Lua
     // instantiates script instances during broadcastSimStart.
     m_scriptHost->setWorld(&simWorld());
