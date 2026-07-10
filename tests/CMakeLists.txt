@@ -44,6 +44,10 @@ function(engine_test name)
 endfunction()
 
 # ── unit lane — fast, hermetic, no external assets ───────────────────────────
+# Null hid backend link gauntlet (target lives in modules/hid) — running it
+# proves the fallback backend still resolves the whole Context contract.
+add_test(NAME hid_null_link_check COMMAND hid_null_link_check)
+set_tests_properties(hid_null_link_check PROPERTIES LABELS unit TIMEOUT 30)
 engine_test(mem_test       LIB engine_core)
 engine_test(arena_test     LIB engine_core)
 engine_test(profiler_test  LIB engine_core)
