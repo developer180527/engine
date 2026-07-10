@@ -121,6 +121,12 @@ void Renderer::resize(int w, int h) {
     bgfx::reset((uint32_t)w, (uint32_t)h, BGFX_RESET_VSYNC);
 }
 
+void Renderer::frame() { bgfx::frame(); }
+
+bool Renderer::homogeneousDepth() const {
+    return bgfx::getCaps()->homogeneousDepth;
+}
+
 void Renderer::createSceneFB(int w, int h) {
     if (bgfx::isValid(m_sceneFB))       bgfx::destroy(m_sceneFB);
     if (bgfx::isValid(m_sceneColorTex)) bgfx::destroy(m_sceneColorTex);

@@ -107,6 +107,9 @@ add_library(engine::core ALIAS engine_core)
 add_library(engine_runtime STATIC
     # Runtime core — platform, frame loop, renderer, services
     runtime/runtime.cpp
+    runtime/runtime_boot.cpp
+    runtime/runtime_frame.cpp
+    runtime/runtime_sim.cpp
     runtime/platform/glfw_platform.cpp
     render/renderer.cpp
     runtime/services/async_loader.cpp

@@ -36,6 +36,12 @@ public:
     void resize(int w, int h);          // bgfx::reset
     void createSceneFB(int w, int h);   // (re)create the offscreen scene framebuffer
 
+    // Frame flip + device caps — the runtime orchestrates THROUGH these so
+    // runtime*.cpp never touches bgfx directly (the Renderer owns the whole
+    // GPU device lifecycle; audit A.1).
+    void frame();                       // bgfx::frame()
+    bool homogeneousDepth() const;      // bgfx::getCaps()->homogeneousDepth
+
     void renderScene(const float view[16], const float proj[16]);
     void renderGameView(const float view[16], const float proj[16],
                         const float clearColor[4], flecs::world* gameWorld);
