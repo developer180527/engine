@@ -31,7 +31,12 @@
 
 // Normalize path separators → forward slashes for consistent cache keys.
 // On Windows, string() returns backslashes; generic_string() returns /.
-// Using a single canonical form prevents cache misses on the same asset.
+// INVARIANT (audit C.4): every store/lookup/erase on m_loadedResults,
+// m_inFlight and m_waiters goes through this — no raw path may ever be a
+// map key. Half-normalized keying structurally defeated the cache (store
+// raw, look up normalized → every load reprocessed) and DROPPED waiter
+// callbacks queued under the normalized key that completion looked up raw.
+// Raw paths are kept only for actual filesystem access (processFile).
 static std::string normalizeKey(std::string p) {
     std::replace(p.begin(), p.end(), '\\', '/');
     return p;
@@ -710,10 +715,11 @@ AsyncLoader::~AsyncLoader() {
 }
 
 void AsyncLoader::load(const std::string& path, const std::string& name, OnLoaded cb) {
+    const std::string key = normalizeKey(path);
     // Fast path: already fully loaded — return cached result immediately
     {
         std::lock_guard<std::mutex> lk(m_loadedMtx);
-        auto it = m_loadedResults.find(normalizeKey(path));
+        auto it = m_loadedResults.find(key);
         if (it != m_loadedResults.end()) {
             if (cb) cb(it->second, name);
             return;
@@ -722,28 +728,28 @@ void AsyncLoader::load(const std::string& path, const std::string& name, OnLoade
     // In-flight: queue callback for when current load completes
     {
         std::lock_guard<std::mutex> lk(m_pendingMtx);
-        if (m_inFlight.count(normalizeKey(path))) {
-            m_waiters[normalizeKey(path)].push_back(std::move(cb));
+        if (m_inFlight.count(key)) {
+            m_waiters[key].push_back(std::move(cb));
             return;
         }
-        m_inFlight.insert(normalizeKey(path));
-        m_pending.push({path, name, std::move(cb)});
+        m_inFlight.insert(key);
+        m_pending.push({path, name, std::move(cb)});   // raw path: fs access
     }
     armWorker();
 }
 
 void AsyncLoader::unload(const std::string& path) {
     std::lock_guard<std::mutex> lk(m_loadedMtx);
-    m_loadedResults.erase(path);
+    m_loadedResults.erase(normalizeKey(path));
 }
 bool AsyncLoader::isLoading(const std::string& path) const {
     std::lock_guard<std::mutex> lk(m_pendingMtx);
-    return m_inFlight.count(path) > 0;
+    return m_inFlight.count(normalizeKey(path)) > 0;
 }
 
 bool AsyncLoader::isLoaded(const std::string& path) const {
     std::lock_guard<std::mutex> lk(m_loadedMtx);
-    return m_loadedResults.count(path) > 0;
+    return m_loadedResults.count(normalizeKey(path)) > 0;
 }
 
 int AsyncLoader::pendingCount() const {
@@ -820,10 +826,12 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
         m_ready.pop();
     }
 
+    const std::string key = normalizeKey(req.asset.path);
+
     if (!req.asset.success) {
         // Erase from inFlight so the path can be retried or waited on cleanly
         { std::lock_guard<std::mutex> lk(m_pendingMtx);
-          m_inFlight.erase(normalizeKey(req.asset.path)); }
+          m_inFlight.erase(key); }
         LOG_ERROR("Loader", "Upload skipped (parse failed): %s",
                   req.asset.name.c_str());
         AsyncLoadResult failResult{};
@@ -832,7 +840,7 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
         std::vector<OnLoaded> failWaiters;
         {
             std::lock_guard<std::mutex> lk(m_pendingMtx);
-            auto it = m_waiters.find(req.asset.path);
+            auto it = m_waiters.find(key);
             if (it != m_waiters.end()) {
                 failWaiters = std::move(it->second);
                 m_waiters.erase(it);
@@ -932,7 +940,7 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
 
     {
         std::lock_guard<std::mutex> lk(m_loadedMtx);
-        m_loadedResults[req.asset.path] = result;
+        m_loadedResults[key] = result;
     }
 
     if (req.cb) req.cb(result, req.asset.name);
@@ -940,12 +948,12 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
     std::vector<OnLoaded> waiters;
     {
         std::lock_guard<std::mutex> lk(m_pendingMtx);
-        auto it = m_waiters.find(req.asset.path);
+        auto it = m_waiters.find(key);
         if (it != m_waiters.end()) {
             waiters = std::move(it->second);
             m_waiters.erase(it);
         }
-        m_inFlight.erase(normalizeKey(req.asset.path)); // clear in-flight on success
+        m_inFlight.erase(key);                          // clear in-flight on success
     }
     for (auto& w : waiters)
         if (w) w(result, req.asset.name);

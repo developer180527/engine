@@ -50,6 +50,7 @@ engine_test(profiler_test  LIB engine_core)
 engine_test(event_test)
 engine_test(input_test)
 engine_test(script_host_test)
+engine_test(async_loader_test)
 engine_test(nav_test)
 engine_test(import_test)
 
