@@ -277,8 +277,7 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     m_ctx->clipLibrary   = m_clipLibrary.get();
     m_ctx->scriptHost    = m_scriptHost.get();
 
-    // Gameplay-tick query (editor world) — render queries live in Renderer.
-    m_spinnerQuery = m_ecs.query_builder<Transform, const Spinner>().build();
+    // (Spinner query is a lazy WorldQueryCache on simWorld() — see tickSystems.)
 
     // Animation system — samples clips and writes bone palettes each frame.
     m_animatorSystem.init(m_ecs, m_skeletons, m_clips);
@@ -466,6 +465,7 @@ void EngineRuntime::stopSimulation() {
     m_eventSweeper.reset();                     // release queries before world dies
     m_animatorSystem.resetWorldCache();
     m_renderer.resetWorldCaches();
+    m_spinnerQuery.reset();          // sim-world query — world dies below
     m_scriptHost->setPhysicsService(nullptr);
     m_scriptHost->setAudioService(nullptr);
     m_gameWorld.reset();
@@ -553,7 +553,11 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
     m_input.pump();
     if (!m_simulating) m_input.beginTick(hid::nowNs());
     if (!paused) {
-        m_spinnerQuery
+        // Spin in the world the user is LOOKING AT: the snapshot game world
+        // during Play, the edit world otherwise. The old query was built
+        // once on m_ecs, so Snapshot-play spinners froze while the hidden
+        // edit world kept animating (audit H.2).
+        m_spinnerQuery.get(simWorld())
             .each([dt](flecs::entity, Transform& t, const Spinner& s) {
                 const bx::Quaternion qY =
                     bx::fromAxisAngle({0,1,0}, s.speedYaw   * dt);
@@ -563,8 +567,14 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
             });
     }
     // Animation runs even when gameplay systems are paused — the editor
-    // scrubber and preview should always animate.
-    { ENGINE_PROFILE_SCOPE("Animation");   m_animatorSystem.tick(dt); }
+    // scrubber and preview should always animate. During Snapshot play the
+    // game world is animated per fixed step in tickSimulation; sampling the
+    // hidden edit world's animators too was pure waste (audit H.2).
+    { ENGINE_PROFILE_SCOPE("Animation");
+      if (!m_gameWorld) m_animatorSystem.tick(dt); }
+    // Edit world stays serviced even during Snapshot play — editor panels
+    // still operate on it (deferred ops, observers); progress when idle is
+    // near-free. The game world progresses at fixed dt in tickSimulation.
     { ENGINE_PROFILE_SCOPE("ECS.progress"); m_ecs.progress(); }
 }
 

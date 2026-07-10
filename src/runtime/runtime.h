@@ -231,8 +231,11 @@ private:
     // systems it borrows, so it is destroyed before them.
     Renderer m_renderer;
 
-    // Gameplay-tick query (editor world); NOT a render concern — stays here.
-    flecs::query<Transform, const Spinner> m_spinnerQuery;
+    // Gameplay-tick query on the RENDERED world (simWorld(): the game world
+    // during Snapshot play, the edit world otherwise). Cached per world and
+    // reset in stopSimulation like the other world caches (audit H.2 — a
+    // query built once on m_ecs left Snapshot-play spinners frozen).
+    WorldQueryCache<Transform, const Spinner> m_spinnerQuery;
     AnimatorSystem m_animatorSystem;
     PluginRegistry m_plugins;
     KitHost        m_kits;              // project kits — dlopened lazily at Play
