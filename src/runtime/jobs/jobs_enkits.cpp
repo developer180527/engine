@@ -24,9 +24,11 @@ enki::TaskScheduler g_ts;
 std::atomic<bool>   g_init{false};
 std::thread::id     g_mainThread;
 
-// run() control block. Owned by the in-flight registry below; swept by
-// pumpMain() once complete. This is why handles must not be stashed across
-// frames (documented in jobs.h) — the block is gone after the sweep.
+// run() control block. Shared between the in-flight registry below and any
+// caller-held JobHandles: pumpMain()'s sweep drops the REGISTRY's reference
+// once complete, but a stashed handle keeps the block alive, so wait() on
+// an old handle is always safe (audit C.5 — the raw-pointer handle was a
+// use-after-free once the sweep freed the block).
 struct RunTask final : public enki::ITaskSet {
     const char*           name;
     std::function<void()> fn;
@@ -45,7 +47,7 @@ struct RunTask final : public enki::ITaskSet {
 };
 
 std::mutex                            g_inflightMu;
-std::vector<std::unique_ptr<RunTask>> g_inflight;
+std::vector<std::shared_ptr<RunTask>> g_inflight;
 
 std::mutex                         g_mainMu;
 std::vector<std::function<void()>> g_mainQueue;
@@ -108,14 +110,13 @@ JobHandle run(const char* name, std::function<void()> fn) {
     // "already complete", so callers' wait() is still correct.
     if (!g_init.load()) { fn(); return {}; }
 
-    auto task = std::make_unique<RunTask>(name, std::move(fn));
-    RunTask* raw = task.get();
+    auto task = std::make_shared<RunTask>(name, std::move(fn));
     {
         std::lock_guard<std::mutex> lk(g_inflightMu);
-        g_inflight.push_back(std::move(task));
+        g_inflight.push_back(task);
     }
-    g_ts.AddTaskSetToPipe(raw);
-    return {raw};
+    g_ts.AddTaskSetToPipe(task.get());
+    return {task};   // handle co-owns the block — stashing is safe
 }
 
 void parallelFor(const char* name, uint32_t count, uint32_t grain,
@@ -136,7 +137,10 @@ void parallelFor(const char* name, uint32_t count, uint32_t grain,
 
 void wait(JobHandle h) {
     if (!h.valid() || !g_init.load()) return;
-    g_ts.WaitforTask(static_cast<RunTask*>(h.opaque));
+    // h co-owns the RunTask: even if pumpMain() swept it from g_inflight
+    // long ago, the block is alive and WaitforTask on a completed task
+    // returns immediately.
+    g_ts.WaitforTask(static_cast<RunTask*>(h.opaque.get()));
 }
 
 void onMain(std::function<void()> fn) {
@@ -157,8 +161,9 @@ void pumpMain() {
     for (auto& fn : g_mainScratch) fn();
     g_mainScratch.clear();
 
-    // Sweep finished run() tasks. Completed blocks die here — the once-per-
-    // frame cadence is the handle-lifetime rule in jobs.h.
+    // Sweep finished run() tasks: drop the registry's reference. Blocks
+    // whose handles were discarded die here; stashed handles keep theirs
+    // alive (shared ownership — see jobs.h lifetime note).
     {
         std::lock_guard<std::mutex> lk(g_inflightMu);
         for (size_t i = g_inflight.size(); i-- > 0;) {

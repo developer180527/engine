@@ -43,14 +43,22 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 
 namespace jobs {
 
 // Opaque completion counter. Copyable; all copies refer to the same counter.
 // A default-constructed handle is "already complete".
+//
+// LIFETIME: the handle shares ownership of the backend's completion object,
+// so it is safe to stash across frames — wait() on an old handle returns
+// immediately once the job completed, never dereferences freed memory.
+// (Audit C.5: the previous raw-pointer handle dangled after pumpMain()'s
+// sweep freed completed jobs; wait() on a stashed handle was a UAF.) A held
+// handle pins a small control block, so drop handles when done with them.
 struct JobHandle {
-    void* opaque = nullptr;
-    bool  valid() const { return opaque != nullptr; }
+    std::shared_ptr<void> opaque;   // backend completion object (type-erased)
+    bool valid() const { return opaque != nullptr; }
 };
 
 // Spawn the worker pool (hardware_concurrency - 1 workers + the calling
