@@ -31,7 +31,7 @@ Each fix landed with a regression test proven to catch the pre-fix bug
 | M.6 | **FIXED** | Hook sequenced via member-init before m_ecs; idempotent |
 | M.7 | **FIXED** | Tables reunified; `keymap_test` round-trips all 65 mapped keys |
 | L.1–L.8 | TRACKED | Low-severity; revisit at their documented trigger points |
-| A.1–A.4 | IN PROGRESS | Headless sim target (compile-enforced purity) — the durable fix |
+| A.1–A.4 | **FIXED (seams) + ENFORCED** | Passthrough GPU accessors moved behind renderer(); camera_util pure (caps parameterized); importers gated headless; async_loader.h forward-declares. `sim_purity_check` compiles 16 sim-facing headers against poisoned bgfx/assimp stubs — future leaks fail the build. Full engine_sim lib split lands with engine_player/server (backlog G) |
 
 ---
 
