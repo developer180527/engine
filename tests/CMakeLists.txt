@@ -100,6 +100,12 @@ else()
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
 
+# ── soak lane — continuous-run endurance (trends, not just crashes) ──────────
+# CI smoke: 1 minute. The real thing: SOAK_MINUTES=2880 ./build/soak_engine
+# (2 days), ideally one lane on Release for trends + one on the TSan build
+# for the millions-of-operations sync bugs.
+engine_test(soak_engine LABEL soak TIMEOUT 300 ARGS 1)
+
 # ── stress lane — adversarial load/torture (find vulnerabilities) ────────────
 engine_test(stress_deep_tree LABEL stress TIMEOUT 600)
 engine_test(stress_swarm     LABEL stress TIMEOUT 600)
