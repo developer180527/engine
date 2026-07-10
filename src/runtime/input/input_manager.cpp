@@ -1,5 +1,7 @@
 #include "runtime/input/input_manager.h"
 
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -418,6 +420,28 @@ void InputManager::popContext() {
     if (m_stack.size() > 1) m_stack.pop_back();   // bottom context stays
 }
 
+// Exception-free numeric parses (audit H.4): a typo'd scale or button index
+// in a hand-edited input.json must degrade to a warned-and-skipped binding,
+// not an uncaught std::stof/stoi throw out of engine boot or a hot-reload.
+static bool parseScale(const std::string& s, float* out) {
+    if (s.empty()) return false;
+    errno = 0;
+    char* end = nullptr;
+    float v = std::strtof(s.c_str(), &end);
+    if (end != s.c_str() + s.size() || errno == ERANGE) return false;
+    *out = v;
+    return true;
+}
+static bool parseButtonIndex(const std::string& s, uint16_t* out) {
+    if (s.empty()) return false;
+    errno = 0;
+    char* end = nullptr;
+    unsigned long v = std::strtoul(s.c_str(), &end, 10);
+    if (end != s.c_str() + s.size() || errno == ERANGE || v > 0xFFFF) return false;
+    *out = (uint16_t)v;
+    return true;
+}
+
 // ── Binding specs ───────────────────────────────────────────────────────────
 //   "key:W"          digital / axis contribution (axis: "key:W:+y")
 //   "mouse:left|right|middle|N"       buttons
@@ -448,20 +472,23 @@ bool InputManager::parseBinding(const std::string& spec, ActionType type,
         if (!out->code) return false;
         if (type == ActionType::Axis2)
             return parts.size() >= 3 && axisSuffix(parts[2]);
-        if (parts.size() >= 3) out->scale = std::stof(parts[2]);
+        if (parts.size() >= 3 && !parseScale(parts[2], &out->scale))
+            return false;
         return true;
     }
     if (parts[0] == "mouse" && parts.size() >= 2) {
         if (parts[1] == "motion") {
             out->kind  = Binding::MouseMotion;
-            out->scale = parts.size() >= 3 ? std::stof(parts[2]) : 1.0f;
+            out->scale = 1.0f;
+            if (parts.size() >= 3 && !parseScale(parts[2], &out->scale))
+                return false;
             return true;
         }
         out->kind = Binding::MouseButton;
         if      (parts[1] == "left")   out->code = 0;
         else if (parts[1] == "right")  out->code = 1;
         else if (parts[1] == "middle") out->code = 2;
-        else                           out->code = (uint16_t)std::stoi(parts[1]);
+        else if (!parseButtonIndex(parts[1], &out->code)) return false;
         if (type == ActionType::Axis2)
             return parts.size() >= 3 && axisSuffix(parts[2]);
         return true;
@@ -476,7 +503,9 @@ bool InputManager::parseBinding(const std::string& spec, ActionType type,
     }
     if (parts[0] == "scroll") {
         out->kind  = Binding::Scroll;
-        out->scale = parts.size() >= 2 ? std::stof(parts[1]) : 1.0f;
+        out->scale = 1.0f;
+        if (parts.size() >= 2 && !parseScale(parts[1], &out->scale))
+            return false;
         return true;
     }
     return false;
@@ -487,27 +516,44 @@ bool InputManager::loadConfigText(const std::string& jsonText) {
     if (j.is_discarded() || !j.contains("contexts")) return false;
 
     m_contexts.clear(); m_stack.clear();
-    for (const auto& jc : j["contexts"]) {
-        Context c;
-        c.name       = jc.value("name", "unnamed");
-        c.blockLower = jc.value("blockLower", false);
-        for (const auto& ja : jc.value("actions", nlohmann::json::array())) {
-            Action a;
-            a.name = ja.value("name", "");
-            const std::string t = ja.value("type", "digital");
-            a.type = t == "axis2" ? ActionType::Axis2
-                   : t == "axis1" ? ActionType::Axis1 : ActionType::Digital;
-            for (const auto& jb : ja.value("bindings", nlohmann::json::array())) {
-                Binding b{};
-                if (parseBinding(jb.get<std::string>(), a.type, &b))
-                    a.binds.push_back(b);
-                else
-                    LOG_WARN("Input", "bad binding '%s' on action '%s'",
-                             jb.get<std::string>().c_str(), a.name.c_str());
+    // try/catch backstop (audit H.4): the field accesses below use value()
+    // defaults for MISSING keys, but a key PRESENT with the wrong type
+    // (e.g. "name": [1,2]) still throws nlohmann::type_error. A typo or bad
+    // merge in a hand-edited config must fail the load, not crash the boot
+    // or an editor hot-reload.
+    try {
+        for (const auto& jc : j["contexts"]) {
+            Context c;
+            c.name       = jc.value("name", "unnamed");
+            c.blockLower = jc.value("blockLower", false);
+            for (const auto& ja : jc.value("actions", nlohmann::json::array())) {
+                Action a;
+                a.name = ja.value("name", "");
+                const std::string t = ja.value("type", "digital");
+                a.type = t == "axis2" ? ActionType::Axis2
+                       : t == "axis1" ? ActionType::Axis1 : ActionType::Digital;
+                for (const auto& jb : ja.value("bindings", nlohmann::json::array())) {
+                    if (!jb.is_string()) {
+                        LOG_WARN("Input", "non-string binding on action '%s' — skipped",
+                                 a.name.c_str());
+                        continue;
+                    }
+                    Binding b{};
+                    const std::string spec = jb.get<std::string>();
+                    if (parseBinding(spec, a.type, &b))
+                        a.binds.push_back(b);
+                    else
+                        LOG_WARN("Input", "bad binding '%s' on action '%s'",
+                                 spec.c_str(), a.name.c_str());
+                }
+                if (!a.name.empty()) c.actions.push_back(std::move(a));
             }
-            if (!a.name.empty()) c.actions.push_back(std::move(a));
+            m_contexts.push_back(std::move(c));
         }
-        m_contexts.push_back(std::move(c));
+    } catch (const std::exception& ex) {
+        LOG_ERROR("Input", "malformed input config: %s — config rejected", ex.what());
+        m_contexts.clear(); m_stack.clear();
+        return false;
     }
     if (!m_contexts.empty()) m_stack.push_back(0);   // first context = base
     LOG_INFO("Input", "%zu context(s) loaded, base '%s'",

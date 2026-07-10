@@ -56,6 +56,7 @@ engine_test(input_test)
 engine_test(script_host_test)
 engine_test(async_loader_test)
 engine_test(jobs_test)
+engine_test(input_config_test)
 engine_test(nav_test)
 engine_test(import_test)
 
