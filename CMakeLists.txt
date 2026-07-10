@@ -6,6 +6,27 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# ── Sanitizer lanes (tests/docs/engine-compiler-test-sheet.md §3) ───────────
+# Whole-program instrumentation: applied before every subdirectory so vendored
+# libraries are covered too (mixing instrumented/uninstrumented code hides
+# bugs at the boundary). Use a SEPARATE build dir per lane:
+#   cmake -B build-asan -DENGINE_SANITIZE=address,undefined
+#   cmake -B build-tsan -DENGINE_SANITIZE=thread     (can't combine with ASan)
+set(ENGINE_SANITIZE "" CACHE STRING
+    "Sanitizers to instrument with (address,undefined | thread | leak)")
+if(ENGINE_SANITIZE)
+    add_compile_options(-fsanitize=${ENGINE_SANITIZE} -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=${ENGINE_SANITIZE})
+    message(STATUS "engine: sanitizer lane active: ${ENGINE_SANITIZE}")
+    # Heap sanitizers need allocations to keep SYSTEM provenance — the tagged
+    # TLSF pools would hide use-after-free/overflow inside recycled pool
+    # memory. mem_counters.cpp documents this switch; flip it automatically.
+    if(ENGINE_SANITIZE MATCHES "address|leak|memory")
+        add_compile_definitions(ENGINE_MEM_ROUTE=0)
+        message(STATUS "engine: ENGINE_MEM_ROUTE=0 (heap sanitizer owns allocations)")
+    endif()
+endif()
+
 # ── Third-party dependencies (vendored) ─────────────────────────────────────
 
 set(BGFX_BUILD_EXAMPLES OFF CACHE BOOL "")
@@ -130,6 +151,13 @@ target_include_directories(
 #   editor          — executable: ImGui editor application on top of the SDK.
 #   engine_cook     — CLI asset cooker.
 add_subdirectory(src)
+
+# ── Tests — CTest-registered gauntlets + stress suite (tests/CMakeLists.txt) ─
+# Lanes: ctest -L unit (fast) / -L stress (torture) / -L asset (needs content).
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
 
 # ── Samples — prove the SDK builds games without the editor ─────────────────
 add_executable(sample_minimal samples/minimal_game/main.cpp)

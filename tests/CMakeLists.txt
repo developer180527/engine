@@ -1,0 +1,88 @@
+# ── Engine test suite ────────────────────────────────────────────────────────
+# Every test is a standalone headless executable (bgfx Noop where GPU types
+# are needed) registered with CTest. Lanes:
+#
+#   ctest -L unit     fast correctness gauntlets — run on every change
+#   ctest -L stress   adversarial load/torture   — nightly or before a commit
+#                     that touches memory/ECS/physics/assets
+#   ctest -L asset    tests needing real game assets (skipped if absent)
+#   ctest             everything
+#
+# Sanitizer lanes: configure a separate build dir with
+#   cmake -B build-asan -DENGINE_SANITIZE=address,undefined && ctest
+#   cmake -B build-tsan -DENGINE_SANITIZE=thread            && ctest
+# (option lives in the root CMakeLists; it instruments engine + third_party.)
+
+# engine_test(<name> [LIB engine_core|engine_runtime] [EXPORTS]
+#             [LABEL unit|stress|asset] [TIMEOUT sec] [ARGS ...])
+#   EXPORTS: test loads real kit .so modules that resolve engine symbols
+#   from the executable (ENABLE_EXPORTS).
+function(engine_test name)
+    cmake_parse_arguments(ET "EXPORTS" "LIB;LABEL;TIMEOUT" "ARGS" ${ARGN})
+    if(NOT ET_LIB)
+        set(ET_LIB engine_runtime)
+    endif()
+    if(NOT ET_LABEL)
+        set(ET_LABEL unit)
+    endif()
+    if(NOT ET_TIMEOUT)
+        set(ET_TIMEOUT 120)
+    endif()
+
+    add_executable(${name} ${name}.cpp)
+    target_link_libraries(${name} PRIVATE ${ET_LIB})
+    set_target_properties(${name} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    if(ET_EXPORTS)
+        set_target_properties(${name} PROPERTIES ENABLE_EXPORTS ON)
+    endif()
+
+    add_test(NAME ${name} COMMAND ${name} ${ET_ARGS})
+    set_tests_properties(${name} PROPERTIES
+        LABELS ${ET_LABEL}
+        TIMEOUT ${ET_TIMEOUT})
+endfunction()
+
+# ── unit lane — fast, hermetic, no external assets ───────────────────────────
+engine_test(mem_test       LIB engine_core)
+engine_test(arena_test     LIB engine_core)
+engine_test(profiler_test  LIB engine_core)
+engine_test(event_test)
+engine_test(input_test)
+engine_test(nav_test)
+engine_test(import_test)
+
+# ── kit lifecycle — loads the project's real combat kit mid-play ─────────────
+set(KIT_TEST_PROJECT ${CMAKE_SOURCE_DIR}/fps_shooter)
+if(EXISTS ${KIT_TEST_PROJECT}/project.json)
+    engine_test(kit_lifecycle_test EXPORTS ARGS ${KIT_TEST_PROJECT})
+else()
+    # Still build it (catches API drift) even when the project is absent.
+    add_executable(kit_lifecycle_test kit_lifecycle_test.cpp)
+    target_link_libraries(kit_lifecycle_test PRIVATE engine_runtime)
+    set_target_properties(kit_lifecycle_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} ENABLE_EXPORTS ON)
+endif()
+
+# ── asset lane — needs real FBX content; registered only when present ────────
+set(ZOMBIE_DIR "${CMAKE_SOURCE_DIR}/fps_shooter/assets/Animations/Zombie Anim Pack")
+if(EXISTS "${ZOMBIE_DIR}/Warzombie F Pedroso.fbx")
+    engine_test(clip_binding_test LABEL asset
+        ARGS "${ZOMBIE_DIR}/Warzombie F Pedroso.fbx" "${ZOMBIE_DIR}/zombie walk.fbx")
+    engine_test(anim_pose_test LABEL asset
+        ARGS "${ZOMBIE_DIR}/Warzombie F Pedroso.fbx" "${ZOMBIE_DIR}/zombie walk.fbx")
+else()
+    add_executable(clip_binding_test clip_binding_test.cpp)
+    target_link_libraries(clip_binding_test PRIVATE engine_runtime)
+    add_executable(anim_pose_test anim_pose_test.cpp)
+    target_link_libraries(anim_pose_test PRIVATE engine_runtime)
+    set_target_properties(clip_binding_test anim_pose_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
+
+# ── stress lane — adversarial load/torture (find vulnerabilities) ────────────
+engine_test(stress_deep_tree LABEL stress TIMEOUT 600)
+engine_test(stress_swarm     LABEL stress TIMEOUT 600)
+engine_test(stress_churn     LABEL stress TIMEOUT 600)
+engine_test(stress_physics   LABEL stress TIMEOUT 600)
+engine_test(stress_assets    LABEL stress TIMEOUT 600)
