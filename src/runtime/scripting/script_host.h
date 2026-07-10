@@ -1,5 +1,6 @@
 #pragma once
 #include <unordered_map>
+#include <memory>
 #include <flecs.h>
 #include <cctype>
 #include <cstdint>
@@ -59,19 +60,38 @@ class ScriptHost {
 public:
     explicit ScriptHost(flecs::world* world) : m_world(world) {}
     void setWorld(flecs::world* w) {                // bound per Play
+        // Destroy the PREVIOUS bind's observers first. "Observers die with
+        // the world" is only true if the world dies before the next bind —
+        // false in InPlace mode, where every Play/Stop re-binds the immortal
+        // m_ecs (2 leaked observers per cycle), and lethal at shutdown: the
+        // OnRemove lambda captures `this`, and ~EngineRuntime destroys the
+        // ScriptHost BEFORE m_ecs (reverse member order), so m_ecs tearing
+        // down Name entities would fire into a freed host. Call sites keep
+        // the outgoing world alive across this call (stopSimulation unbinds
+        // before m_gameWorld.reset()), making destruct() safe here.
+        if (m_nameObsSet)    { m_nameObsSet.destruct();    m_nameObsSet    = flecs::entity(); }
+        if (m_nameObsRemove) { m_nameObsRemove.destruct(); m_nameObsRemove = flecs::entity(); }
+        // Belt-and-braces: if a host is ever destroyed while still bound
+        // (destruct() above never ran), surviving lambdas must go inert
+        // instead of touching the dead host. They hold a weak token; the
+        // token dies with the host (and is renewed per bind).
+        m_aliveToken = std::make_shared<char>();
         m_world = w;
         m_nameQuery.reset();   // old world may be destroyed — drop its query
         // Name index: O(1) find() (the linear Name scan was a sleeper once
-        // spawners exist). Observers keep it fresh; observers die with the
-        // world, so re-register per bind. Primed with pre-existing names.
+        // spawners exist). Observers keep it fresh. Primed with pre-existing
+        // names.
         m_nameIndex.clear();
         if (!w) return;
-        w->observer<const Name>().event(flecs::OnSet)
-            .each([this](flecs::entity e, const Name& n) {
+        std::weak_ptr<char> alive = m_aliveToken;
+        m_nameObsSet = w->observer<const Name>().event(flecs::OnSet)
+            .each([this, alive](flecs::entity e, const Name& n) {
+                if (alive.expired()) return;   // host died while bound
                 m_nameIndex[n.value] = e.id();
             });
-        w->observer<const Name>().event(flecs::OnRemove)
-            .each([this](flecs::entity e, const Name& n) {
+        m_nameObsRemove = w->observer<const Name>().event(flecs::OnRemove)
+            .each([this, alive](flecs::entity e, const Name& n) {
+                if (alive.expired()) return;   // world outlived the host
                 auto it = m_nameIndex.find(n.value);
                 if (it != m_nameIndex.end() && it->second == e.id())
                     m_nameIndex.erase(it);
@@ -315,6 +335,9 @@ private:
     bool m_warnedAudio   = false;
     WorldQueryCache<const Name> m_nameQuery;
     std::unordered_map<std::string, flecs::entity_t> m_nameIndex; // O(1) find
+    flecs::entity m_nameObsSet{};     // observer entities, owned: destructed
+    flecs::entity m_nameObsRemove{};  // on re-bind (see setWorld comment)
+    std::shared_ptr<char> m_aliveToken = std::make_shared<char>();
     float    m_dt      = 0.0f;
     double   m_elapsed = 0.0;
     uint64_t m_frame   = 0;

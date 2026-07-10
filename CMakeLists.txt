@@ -41,6 +41,22 @@ add_subdirectory(modules/hid)       # raw-input module (devices + timestamped ev
 
 add_subdirectory(third_party/bgfx.cmake)
 
+# Sanitizer lanes instrument the whole tree — but bgfx's HOST BUILD TOOLS
+# (shaderc + its compiler stack) run at build time and abort under ASan on a
+# vendored stack overflow inside glslang, killing the build before any engine
+# code runs. We're testing the engine, not bgfx's offline shader compiler:
+# strip instrumentation from tool-only targets (the engine links bgfx/bx/bimg,
+# never these).
+if(ENGINE_SANITIZE)
+    foreach(t bin2c fcpp glsl-optimizer glslang shaderc spirv-cross spirv-opt)
+        if(TARGET ${t})
+            # Compile-time strip only: the tools still link instrumented bx,
+            # so the sanitizer runtime must stay in their link line.
+            target_compile_options(${t} PRIVATE -fno-sanitize=all)
+        endif()
+    endforeach()
+endif()
+
 # flecs - ECS framework
 set(FLECS_STATIC ON CACHE BOOL "")
 set(FLECS_SHARED OFF CACHE BOOL "")
