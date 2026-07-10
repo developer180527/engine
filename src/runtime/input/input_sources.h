@@ -45,7 +45,13 @@ public:
 // ── HidSource ───────────────────────────────────────────────────────────────
 class HidSource final : public IInputSource {
 public:
-    bool init() { return m_ctx.init({}); }
+    // Mouse only (audit M.1): the hybrid drain discards raw Key/Button
+    // events outright and gamepad Axis events die in staging, yet they all
+    // competed for the same 4096-entry ring as the raw mouse motion this
+    // source exists to protect — and polluted InputLatencyChannel's numbers
+    // with events nobody consumes. Re-enable gamepad when curation lands
+    // (backlog #13).
+    bool init() { return m_ctx.init({.keyboard = false, .gamepad = false}); }
     const char* lastError() const { return m_ctx.lastError(); }
 
     const char* name() const override { return "hid(raw)"; }

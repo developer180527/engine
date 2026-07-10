@@ -4,6 +4,7 @@
 // the ONLY place the engine translates: GLFW keycodes -> usages (fallback
 // WindowSource) and binding-spec key names -> usages (input.json).
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 
 namespace input {
@@ -52,7 +53,9 @@ inline uint16_t usageFromName(const char* n) {
         {"Space",0x2C},{"Enter",0x28},{"Escape",0x29},{"Tab",0x2B},
         {"Backspace",0x2A},{"Right",0x4F},{"Left",0x50},{"Down",0x51},
         {"Up",0x52},{"LShift",0xE1},{"LCtrl",0xE0},{"LAlt",0xE2},
-        {"LSuper",0xE3},{"RShift",0xE5},{"RCtrl",0xE4},
+        {"LSuper",0xE3},{"RShift",0xE5},{"RCtrl",0xE4},{"RAlt",0xE6},
+        {"RSuper",0xE7},   // RAlt/RSuper were missing — a hand-written
+                           // "key:RAlt" binding silently failed (audit M.7)
     };
     for (const Named& k : kNamed)
         if (!std::strcmp(n, k.name)) return k.usage;
@@ -67,8 +70,11 @@ inline uint16_t usageFromName(const char* n) {
 // (GenericDesktop 0x30..0x39) -> stable pad-axis names, and the
 // GCController/XInput curation mapping. See docs/infrastructure-backlog.md.
 
-// GLFW keycode -> binding-spec key name (reverse of usageFromGlfw's subset).
-// Used by the editor's capture-a-key rebinding flow.
+// GLFW keycode -> binding-spec key name (FULL reverse of usageFromGlfw —
+// audit M.7: F7-F12 and the right-side/Super modifiers were missing, so the
+// editor's capture-a-key rebind flow silently dropped those keys while the
+// forward maps supported them; a round-trip unit test now pins all three
+// tables together — see tests/keymap_test.cpp).
 inline const char* nameFromGlfw(int key) {
     static char buf[2];
     if (key >= 65 && key <= 90) { buf[0] = (char)key; buf[1] = 0; return buf; }
@@ -86,8 +92,15 @@ inline const char* nameFromGlfw(int key) {
         case 340: return "LShift";
         case 341: return "LCtrl";
         case 342: return "LAlt";
-        case 290: return "F1"; case 291: return "F2"; case 292: return "F3";
-        case 293: return "F4"; case 294: return "F5"; case 295: return "F6";
+        case 343: return "LSuper";
+        case 344: return "RShift";
+        case 345: return "RCtrl";
+        case 346: return "RAlt";
+        case 347: return "RSuper";
+        case 290: return "F1";  case 291: return "F2";  case 292: return "F3";
+        case 293: return "F4";  case 294: return "F5";  case 295: return "F6";
+        case 296: return "F7";  case 297: return "F8";  case 298: return "F9";
+        case 299: return "F10"; case 300: return "F11"; case 301: return "F12";
         default:  return nullptr;
     }
 }

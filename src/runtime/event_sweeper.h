@@ -43,8 +43,10 @@ public:
 
         // (Re)build the per-type queries when the world or the event set
         // changed. Building queries every tick is measurable waste, so they're
-        // cached; a new sim world (or a newly declared event) invalidates them.
-        if (w.c_ptr() != m_world || reg->types.size() != m_queries.size())
+        // cached. Compared by CONTENT, not count (audit M.3): unregister one
+        // type + register another and the size stays equal while every cached
+        // query silently points at the wrong component.
+        if (w.c_ptr() != m_world || reg->types != m_cachedTypes)
             rebuild(w, *reg);
 
         const flecs::entity_t staleRel = w.component<EventStale>();
@@ -68,7 +70,7 @@ public:
     }
 
     // Drop cached queries. Call before the world they were built against dies.
-    void reset() { m_queries.clear(); m_world = nullptr; }
+    void reset() { m_queries.clear(); m_cachedTypes.clear(); m_world = nullptr; }
 
 private:
     void rebuild(flecs::world& w, const EventRegistry& reg) {
@@ -76,9 +78,11 @@ private:
         m_queries.reserve(reg.types.size());
         for (flecs::entity_t tid : reg.types)
             m_queries.push_back(w.query_builder().with(tid).build());
+        m_cachedTypes = reg.types;   // identity of what the queries match
         m_world = w.c_ptr();
     }
 
-    std::vector<flecs::query<>> m_queries;
-    const flecs::world_t*       m_world = nullptr;
+    std::vector<flecs::query<>>  m_queries;
+    std::vector<flecs::entity_t> m_cachedTypes; // rebuild trigger (M.3)
+    const flecs::world_t*        m_world = nullptr;
 };

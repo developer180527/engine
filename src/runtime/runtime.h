@@ -28,6 +28,11 @@
 #include "components/spinner.h"
 #include "systems/animator_system.h"
 
+// Hooks flecs' allocator into the tagged memory manager (idempotent).
+// Called from EngineRuntime's member-init sequence so it always precedes
+// m_ecs's construction — see runtime.cpp (audit M.6).
+namespace engine_detail { bool ensureFlecsAllocatorHooked(); }
+
 class ScriptHost;    // runtime-owned scripting surface (scripting/script_host.h)
 class MemoryChannel; // profiler memory channel (runtime/mem_channel.h)
 class AnimService;   // runtime/services/anim_service.h (pulls ClipLibrary/Assimp)
@@ -206,6 +211,9 @@ private:
 
     // Content systems — stable addresses, declared before m_ctx and m_renderer.
     PrimitiveLibrary m_primitives;
+    // Declared IMMEDIATELY before m_ecs: member-init order sequences the
+    // flecs allocator hook ahead of the first world construction (M.6).
+    bool m_flecsHooked = engine_detail::ensureFlecsAllocatorHooked();
     flecs::world     m_ecs;
     AssetRegistry    m_assets;
     TextureRegistry  m_textures;

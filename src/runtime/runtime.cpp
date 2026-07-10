@@ -45,8 +45,6 @@ bool hookFlecsAllocator() {
     ecs_os_set_api(&api);
     return true;
 }
-[[maybe_unused]] const bool g_flecsHooked = hookFlecsAllocator();
-
 struct OzzMemAllocator final : ozz::memory::Allocator {
     void* Allocate(size_t size, size_t align) override {
         return mem::alloc(size, align, mem::Tag::Animation);
@@ -56,6 +54,18 @@ struct OzzMemAllocator final : ozz::memory::Allocator {
 OzzMemAllocator g_ozzAllocator;
 
 } // namespace
+
+namespace engine_detail {
+// Sequenced from EngineRuntime's member-init list, immediately before m_ecs
+// constructs — declaration order guarantees the hook precedes the first
+// world. The old TU-global initializer only ordered correctly because
+// EngineRuntime happened to be built inside main(); a static-duration
+// flecs::world in any other TU would have raced it (audit M.6). Idempotent.
+bool ensureFlecsAllocatorHooked() {
+    static const bool hooked = hookFlecsAllocator();
+    return hooked;
+}
+} // namespace engine_detail
 
 #include <cstdio>
 #include <utility>
@@ -413,6 +423,14 @@ bool EngineRuntime::startSimulation(SimMode mode) {
         return false;
     }
     if (m_simulating) return true;
+    // Lifecycle order is onAttach -> onSimulationStart; broadcasting sim
+    // start to plugins whose onAttach never ran silently violates it. The
+    // class enforces every other lifecycle rule loudly — this one too
+    // (audit M.5).
+    if (!m_pluginsAttached)
+        LOG_WARN("Sim", "startSimulation() before attachPlugins() — plugins "
+                 "will receive onSimulationStart without onAttach (lifecycle "
+                 "violation; call attachPlugins() first)");
 
     if (mode == SimMode::Snapshot) {
         AssetStorage storage{m_assets, m_textures, m_materials,
