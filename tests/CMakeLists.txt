@@ -75,6 +75,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     engine_test(async_loader_test)
     engine_test(cooker_test)
     engine_test(import_test)
+    engine_test(residency_test)   # cooks its own fixture via MeshCooker
 endif()
 
 # ── kit lifecycle — loads the project's real combat kit mid-play ─────────────

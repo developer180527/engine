@@ -62,6 +62,12 @@ struct EngineConfig {
     // Enable the frame/boot profiler. Defaults on when ENGINE_PROFILE is
     // compiled in (debug); shipping release builds compile it out entirely.
     bool enableProfiler = (ENGINE_PROFILE != 0);
+
+    // Residency budget for async-loaded cooked meshes, in MB. 0 = unbounded
+    // (editor default — keep everything). With a budget set, the runtime
+    // sweeps least-recently-used unreferenced meshes back to disk residency
+    // once per second (audit Q6: the loaded cache grew without bound).
+    int meshBudgetMB = 0;
 };
 
 // Frame coordinator: owns platform, the ECS world + content systems, plugin
@@ -207,6 +213,7 @@ private:
     // Frame-loop timing
     std::chrono::steady_clock::time_point m_lastFrameTime;
     bool m_firstFrame = true;
+    int  m_residencyTick = 0;   // frames since the last eviction sweep
 
     // Content systems — stable addresses, declared before m_ctx and m_renderer.
     PrimitiveLibrary m_primitives;

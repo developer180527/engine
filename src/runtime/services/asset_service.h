@@ -1,8 +1,10 @@
 #pragma once
 
 #include "core/handle.h"
+#include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <unordered_set>
 
 // Forward declarations — keeps include footprint small for consumers.
 class AssetRegistry;
@@ -108,6 +110,22 @@ public:
                                      : root / ".cache";
     }
 
+    // ----- Residency (audit Q6: the loaded-mesh cache grew without bound) --
+    // Byte budget for async-loaded cooked meshes. 0 = unbounded (default —
+    // the editor keeps everything). Streaming eviction only makes sense
+    // with a budget set (players, big worlds).
+    void     setResidencyBudget(uint64_t bytes);
+    uint64_t residentBytes() const;
+
+    // Evict least-recently-USED loaded meshes until under budget, skipping
+    // ids in `inUse` — assets a live MeshRenderer still references must
+    // never vanish under the renderer. The runtime calls this periodically
+    // with a scan of both worlds; queryMesh()/loadMeshAsync() stamp use.
+    // Evicted paths reload transparently on the next loadMeshAsync (the
+    // cooked file is still on disk — this frees GPU + registry residency,
+    // not the asset). Returns the number of meshes evicted.
+    size_t evictOverBudget(const std::unordered_set<uint32_t>& inUse);
+
 private:
     AssetRegistry&    m_meshes;
     TextureRegistry&  m_textures;
@@ -116,6 +134,7 @@ private:
     assetlib::AssetRegistry*  m_assetLib;
     std::filesystem::path     m_projectRoot;
     std::filesystem::path     m_cacheRoot;    // m_projectRoot / ".cache"
+    uint64_t                  m_residencyBudget = 0;   // bytes; 0 = unbounded
 
     // Sync helpers
     TextureHandle loadTextureFromCooked(const std::filesystem::path& absPath);

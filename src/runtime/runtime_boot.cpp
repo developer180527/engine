@@ -142,6 +142,9 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     // AssetService — async mesh/texture loading for scripts + scene streaming.
     m_assetService = std::make_unique<AssetService>(AssetService::Config{
         m_assets, m_textures, m_materials});
+    if (cfg.meshBudgetMB > 0)
+        m_assetService->setResidencyBudget(
+            (uint64_t)cfg.meshBudgetMB * 1024 * 1024);
 
     // SceneService — built on top of AssetService for binary scene loading.
     m_sceneService = std::make_unique<SceneService>(SceneService::Config{

@@ -92,10 +92,18 @@ struct AssetService::AsyncState {
     std::mutex              readyMtx;
     std::queue<ReadyAsset>  ready;
 
-    // Loaded cache — written by main thread in drain, read by query*()
+    // Loaded cache — written by main thread in drain, read by query*().
+    // Meshes carry residency bookkeeping (bytes + LRU stamp) so
+    // evictOverBudget can keep the cache bounded (audit Q6).
+    struct MeshResidency {
+        MeshHandle h;
+        uint64_t   bytes   = 0;
+        uint64_t   lastUse = 0;
+    };
     mutable std::mutex                              loadedMtx;
-    std::unordered_map<std::string, MeshHandle>     loadedMeshes;
+    std::unordered_map<std::string, MeshResidency>  loadedMeshes;
     std::unordered_map<std::string, TextureHandle>  loadedTextures;
+    uint64_t                                        useClock = 0;   // LRU ticks
     // Keys whose load FAILED (parse error, bad file, bgfx buffer failure).
     // Without this a failed asset has no handle and is no longer in flight —
     // indistinguishable from "never requested" to pollers like isSceneReady,
@@ -472,10 +480,14 @@ void AssetService::loadMeshAsync(const char* cookedPath) {
     std::string key = resolvePath(cookedPath);
 
     // Already loaded? (A fresh request also clears any recorded failure —
-    // explicit retry semantics.)
+    // explicit retry semantics — and stamps use for the LRU.)
     {
         std::lock_guard<std::mutex> lk(m_async->loadedMtx);
-        if (m_async->loadedMeshes.count(key)) return;
+        if (auto it = m_async->loadedMeshes.find(key);
+            it != m_async->loadedMeshes.end()) {
+            it->second.lastUse = ++m_async->useClock;
+            return;
+        }
         m_async->failedKeys.erase(key);
     }
     // Already in-flight?
@@ -517,7 +529,9 @@ uint32_t AssetService::queryMesh(const char* cookedPath) const {
     std::string key = resolvePath(cookedPath);
     std::lock_guard<std::mutex> lk(m_async->loadedMtx);
     auto it = m_async->loadedMeshes.find(key);
-    return (it != m_async->loadedMeshes.end()) ? it->second.id : 0;
+    if (it == m_async->loadedMeshes.end()) return 0;
+    it->second.lastUse = ++m_async->useClock;   // a query IS a use (LRU)
+    return it->second.h.id;
 }
 
 uint32_t AssetService::queryTexture(const char* cookedPath) const {
@@ -526,6 +540,62 @@ uint32_t AssetService::queryTexture(const char* cookedPath) const {
     std::lock_guard<std::mutex> lk(m_async->loadedMtx);
     auto it = m_async->loadedTextures.find(key);
     return (it != m_async->loadedTextures.end()) ? it->second.id : 0;
+}
+
+void AssetService::setResidencyBudget(uint64_t bytes) {
+    m_residencyBudget = bytes;
+}
+
+uint64_t AssetService::residentBytes() const {
+    if (!m_async) return 0;
+    std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+    uint64_t sum = 0;
+    for (const auto& [k, e] : m_async->loadedMeshes) sum += e.bytes;
+    return sum;
+}
+
+size_t AssetService::evictOverBudget(const std::unordered_set<uint32_t>& inUse) {
+    if (!m_async || m_residencyBudget == 0) return 0;
+
+    // Collect eviction candidates under the lock; destroy registry entries
+    // OUTSIDE it (Mesh dtors issue bgfx::destroy — keep lock scopes tight).
+    struct Victim { std::string key; MeshHandle h; uint64_t bytes; };
+    std::vector<Victim> victims;
+    {
+        std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+        uint64_t total = 0;
+        for (const auto& [k, e] : m_async->loadedMeshes) total += e.bytes;
+        if (total <= m_residencyBudget) return 0;
+
+        // LRU order: oldest stamp first.
+        std::vector<const std::pair<const std::string,
+                                    AsyncState::MeshResidency>*> byAge;
+        byAge.reserve(m_async->loadedMeshes.size());
+        for (const auto& kv : m_async->loadedMeshes) byAge.push_back(&kv);
+        std::sort(byAge.begin(), byAge.end(),
+                  [](auto* a, auto* b) {
+                      return a->second.lastUse < b->second.lastUse;
+                  });
+
+        for (auto* kv : byAge) {
+            if (total <= m_residencyBudget) break;
+            // A live MeshRenderer still points at this handle — evicting
+            // would yank the mesh out from under the renderer. Skip; it
+            // ages out naturally once nothing references it.
+            if (inUse.count(kv->second.h.id)) continue;
+            victims.push_back({kv->first, kv->second.h, kv->second.bytes});
+            total -= kv->second.bytes;
+        }
+        for (const auto& v : victims) m_async->loadedMeshes.erase(v.key);
+    }
+
+    for (const auto& v : victims) {
+        m_meshes.removeMesh(v.h);           // frees GPU buffers (Mesh dtor)
+        LOG_INFO("AssetService", "Evicted LRU mesh: %s (%.2f MB) — reloads "
+                 "on next request", v.key.c_str(),
+                 v.bytes / (1024.0 * 1024.0));
+    }
+    return victims.size();
 }
 
 bool AssetService::isLoading(const char* cookedPath) const {
@@ -650,8 +720,15 @@ bool AssetService::drainUploads() {
 
         MeshHandle h = m_meshes.addMesh(std::move(mesh));
         {
+            // Residency bookkeeping: GPU-side byte cost + fresh LRU stamp.
+            // (bgfx releases the staging Memory at frame end — reading the
+            // sizes here, microseconds after handle creation, is safe.)
+            const uint64_t bytes =
+                (item.vertexMem ? item.vertexMem->size : 0u) +
+                (item.indexMem  ? item.indexMem->size  : 0u);
             std::lock_guard<std::mutex> lk(m_async->loadedMtx);
-            m_async->loadedMeshes[item.key] = h;
+            m_async->loadedMeshes[item.key] =
+                {h, bytes, ++m_async->useClock};
         }
         LOG_SUCCESS("AssetService", "Async mesh ready: %s (handle=%u)",
                     item.key.c_str(), h.id);

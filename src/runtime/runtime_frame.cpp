@@ -7,8 +7,10 @@
 #include "core/logger.h"
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
+#include "components/mesh_renderer.h"
 
 #include <chrono>
+#include <unordered_set>
 
 bool EngineRuntime::frameBegin(float& dt) {
     if (!m_initialized) {
@@ -50,6 +52,25 @@ bool EngineRuntime::frameBegin(float& dt) {
     // Drain async asset uploads (main-thread GPU upload)
     { ENGINE_PROFILE_SCOPE("AsyncDrain");
       if (m_assetService) m_assetService->drainUploads(); }
+
+    // Residency sweep (audit Q6: the loaded-mesh cache grew without bound):
+    // once per ~second, evict least-recently-used cooked meshes over the
+    // configured budget — but never one a live MeshRenderer still points
+    // at, in EITHER world (yanking a mesh under the renderer = broken
+    // draws). No budget configured (editor default) = no sweep.
+    if (m_assetService && ++m_residencyTick >= 60) {
+        m_residencyTick = 0;
+        ENGINE_PROFILE_SCOPE("AssetResidency");
+        std::unordered_set<uint32_t> used;
+        auto collect = [&](flecs::world& w) {
+            w.each([&](flecs::entity, const MeshRenderer& mr) {
+                if (mr.mesh.valid()) used.insert(mr.mesh.id);
+            });
+        };
+        collect(m_ecs);
+        if (m_gameWorld) collect(*m_gameWorld);
+        m_assetService->evictOverBudget(used);
+    }
 
     return true;
 }
