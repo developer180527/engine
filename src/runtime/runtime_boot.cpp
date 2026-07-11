@@ -19,8 +19,13 @@
 #include <cstdio>
 #include <utility>
 
+// Shipping builds (ENGINE_WITH_SOURCE_IMPORTERS=0) compile the source-format
+// import stack out entirely: cooked binaries are the ONLY content path and
+// Assimp is never linked. Dev trees keep drag-drop import.
+#if ENGINE_WITH_SOURCE_IMPORTERS
 #include "assets/importers/gltf_importer.h"
 #include "assets/importers/assimp_importer.h"
+#endif
 #include "animation/clip_library.h"
 #include "components/meta_registry.h"
 #include "components/name.h"
@@ -125,11 +130,14 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     // (dedicated server, CI sim) have no device to feed, so don't stand up
     // the offline import stack (Assimp is a large, editor-facing parsing
     // library; audit A.3 — it was registered unconditionally for every
-    // runtime instance including shipped games' headless paths).
+    // runtime instance including shipped games' headless paths). Shipping
+    // builds compile them out entirely (ENGINE_WITH_SOURCE_IMPORTERS=0).
+#if ENGINE_WITH_SOURCE_IMPORTERS
     if (!m_headless) {
         m_importers.registerImporter(std::make_unique<GltfImporter>());
         m_importers.registerImporter(std::make_unique<AssimpImporter>());
     }
+#endif
 
     // AssetService — async mesh/texture loading for scripts + scene streaming.
     m_assetService = std::make_unique<AssetService>(AssetService::Config{

@@ -62,15 +62,19 @@ engine_test(profiler_test  LIB engine_core)
 engine_test(event_test)
 engine_test(input_test)
 engine_test(script_host_test)
-engine_test(async_loader_test)
 engine_test(jobs_test)
 engine_test(input_config_test)
 engine_test(asset_ready_test)
-engine_test(cooker_test)
 engine_test(sim_world_test)
 engine_test(keymap_test)
 engine_test(nav_test)
-engine_test(import_test)
+# Importer-dependent tests — dev posture only (the shipping build compiles
+# the source-import stack out; these have nothing to exercise there).
+if(ENGINE_WITH_SOURCE_IMPORTERS)
+    engine_test(async_loader_test)
+    engine_test(cooker_test)
+    engine_test(import_test)
+endif()
 
 # ── kit lifecycle — loads the project's real combat kit mid-play ─────────────
 set(KIT_TEST_PROJECT ${CMAKE_SOURCE_DIR}/fps_shooter)
@@ -86,7 +90,9 @@ endif()
 
 # ── asset lane — needs real FBX content; registered only when present ────────
 set(ZOMBIE_DIR "${CMAKE_SOURCE_DIR}/fps_shooter/assets/Animations/Zombie Anim Pack")
-if(EXISTS "${ZOMBIE_DIR}/Warzombie F Pedroso.fbx")
+if(NOT ENGINE_WITH_SOURCE_IMPORTERS)
+    # FBX-parsing tests can't run in the shipping posture.
+elseif(EXISTS "${ZOMBIE_DIR}/Warzombie F Pedroso.fbx")
     engine_test(clip_binding_test LABEL asset
         ARGS "${ZOMBIE_DIR}/Warzombie F Pedroso.fbx" "${ZOMBIE_DIR}/zombie walk.fbx")
     engine_test(anim_pose_test LABEL asset
@@ -111,4 +117,6 @@ engine_test(stress_deep_tree LABEL stress TIMEOUT 600)
 engine_test(stress_swarm     LABEL stress TIMEOUT 600)
 engine_test(stress_churn     LABEL stress TIMEOUT 600)
 engine_test(stress_physics   LABEL stress TIMEOUT 600)
-engine_test(stress_assets    LABEL stress TIMEOUT 600)
+if(ENGINE_WITH_SOURCE_IMPORTERS)
+    engine_test(stress_assets LABEL stress TIMEOUT 600)   # importer fuzz
+endif()

@@ -168,3 +168,27 @@ never exercised. Findings:
 - **H items have explicit triggers** — building them early is speculation,
   and the reviews agreed speculation is how god objects and dead layers
   are born.
+
+## Export milestone (SHIPPED — engine_player + engine_build, July 2026)
+- **engine_player** (tools/engine_player.cpp): the shipped-game runtime —
+  cooked content only, no dev machinery. Under the shipping posture
+  (ENGINE_WITH_SOURCE_IMPORTERS=OFF) it links ZERO Assimp: 5.1MB Release
+  binary, 0 assimp symbols (dev Debug: 32MB, 19,259).
+- **engine_build** (tools/engine_build.cpp): cook → shipping player → kits
+  REBUILT Release (kit binaries are per-config artifacts: Debug kits
+  reference debug-only symbols like ecs_assert_log_ — mixing configs fails
+  at dlopen, verified) → reference-walked dist assembly. fps_shooter:
+  3,422MB naive copy → 38.7MB closure. Game RUNS from dist (4/4 kits,
+  FPSKit firing, sim live).
+- **flecs + hot-reload ABI**: FLECS_NO_ALWAYS_INLINE on flecs_static —
+  always_inline API fns with bodies in flecs.c emit no out-of-line copy at
+  -O2, so Release hosts lacked symbols kits dlopen (ecs_children_w_rel).
+- REMAINING (found BY the pipeline, tracked):
+  1. MeshCooker has no .gltf support (cgltf-based cook) — gltf scene meshes
+     (pistol, warehouse) invisible in ship builds until cooked.
+  2. AssetService cooked streaming rejects skinned meshes (stride 68 vs 48)
+     — the zombie streams via the editor's AsyncLoader path only. Add
+     SkinnedVertex layout to the cooked-stream loader.
+  3. Cooked textures are raw RGBA32 (64MB per 4k texture) with no runtime
+     consumer — BCn compression + material binding when the texture
+     pipeline matures.

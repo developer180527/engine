@@ -6,6 +6,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# ── Shipping posture: source importers in or out ────────────────────────────
+# ON  (default): dev tree — editor, cookers, Assimp/FBX import, all tools.
+# OFF (shipping): a fully-cooked runtime. Assimp is not compiled OR linked
+#   anywhere; dev-only targets (editor, engine_cook, engine_host, import
+#   tools/tests) are skipped. engine_player is the intended consumer:
+#     cmake -B build-ship -DENGINE_WITH_SOURCE_IMPORTERS=OFF
+#     cmake --build build-ship --target engine_player
+#   This is the "runtime never parses FBX" rule (cookers/problems.md) made
+#   into a build fact instead of a convention.
+option(ENGINE_WITH_SOURCE_IMPORTERS
+    "Compile source-format import (Assimp) into the engine" ON)
+
 # ── Sanitizer lanes (tests/docs/engine-compiler-test-sheet.md §3) ───────────
 # Whole-program instrumentation: applied before every subdirectory so vendored
 # libraries are covered too (mixing instrumented/uninstrumented code hides
@@ -68,6 +80,14 @@ add_subdirectory(third_party/flecs)
 set_target_properties(flecs_static PROPERTIES
     C_VISIBILITY_PRESET   default
     CXX_VISIBILITY_PRESET default)
+# Same reason, second mechanism: flecs marks hot API functions
+# FLECS_ALWAYS_INLINE with bodies in flecs.c — at -O2 Clang emits no
+# out-of-line copy, so a RELEASE host lacks symbols a dlopen'd kit calls
+# (verified: _ecs_children_w_rel absent from the Release player; kit load
+# failed). Kits resolve flecs from the host, so every API function must be
+# a real exported symbol. Cost: an inline hint on a few calls — irrelevant
+# next to a working module ABI.
+target_compile_definitions(flecs_static PUBLIC FLECS_NO_ALWAYS_INLINE)
 
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "")
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "")
@@ -96,7 +116,9 @@ set(ASSIMP_BUILD_3DS_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_PLY_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_STL_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_BLEND_IMPORTER   ON CACHE BOOL "" FORCE)
-add_subdirectory(third_party/assimp)
+if(ENGINE_WITH_SOURCE_IMPORTERS)
+    add_subdirectory(third_party/assimp)
+endif()
 
 # ── JoltPhysics ──────────────────────────────────────────────────────────
 set(JOLT_BUILD_SHARED_LIBS   OFF CACHE BOOL "" FORCE)
@@ -188,10 +210,14 @@ add_subdirectory(samples/hot_reload_game)
 # Produces a relocatable SDK: lib/ (engine + bundled third-party archives),
 # include/ (public umbrellas + engine headers + third-party headers), and a
 # hand-written package config so consumers just find_package(EngineRuntime).
-install(TARGETS engine_runtime engine_core assetlib assimp bgfx bimg bx glfw
+install(TARGETS engine_runtime engine_core assetlib bgfx bimg bx glfw
                 flecs_static Jolt lua
         ARCHIVE DESTINATION lib)
-install(TARGETS engine_cook RUNTIME DESTINATION bin)
+if(ENGINE_WITH_SOURCE_IMPORTERS)
+    # Dev SDK only — shipping posture has no assimp target and no cooker CLI.
+    install(TARGETS assimp ARCHIVE DESTINATION lib)
+    install(TARGETS engine_cook RUNTIME DESTINATION bin)
+endif()
 
 # Engine headers: public umbrellas + the src tree they re-export.
 install(DIRECTORY include/ DESTINATION include)
@@ -220,7 +246,10 @@ install(DIRECTORY third_party/lua/src/ DESTINATION include
 # with exactly the definitions the libraries were built with — the installed
 # config replays them. Generator expressions resolve for this build's config,
 # which matches the single set of archives we install.
-set(_sdk_def_targets Jolt bx bgfx bimg flecs_static glfw assimp lua assetlib)
+set(_sdk_def_targets Jolt bx bgfx bimg flecs_static glfw lua assetlib)
+if(ENGINE_WITH_SOURCE_IMPORTERS)
+    list(APPEND _sdk_def_targets assimp)   # dev SDK only — no assimp when shipping
+endif()
 set(_sdk_defs_genex "")
 foreach(_t ${_sdk_def_targets})
     string(APPEND _sdk_defs_genex "$<TARGET_PROPERTY:${_t},INTERFACE_COMPILE_DEFINITIONS>;")

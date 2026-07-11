@@ -56,12 +56,24 @@ set(ENGINE_SHADER_SOURCES
 # Pure-CPU code: asset cooking, single-header library implementations. No
 # bgfx, no GLFW, no window — links into CLI tools (engine_cook) and servers
 # without dragging in graphics or platform libraries.
+# Source-format import stack (Assimp cookers/importers) — compiled only in
+# dev trees. ENGINE_WITH_SOURCE_IMPORTERS=OFF is the shipping posture: a
+# fully-cooked runtime that never parses FBX and never links Assimp.
+if(ENGINE_WITH_SOURCE_IMPORTERS)
+    set(ENGINE_COOKER_SOURCES
+        assets/cookers/mesh_cooker.cpp
+        assets/cookers/scene_cooker.cpp
+        assets/cookers/texture_cooker.cpp
+        assets/cookers/cook_service.cpp)
+else()
+    set(ENGINE_COOKER_SOURCES "")
+    message(STATUS "engine: SHIPPING posture — Assimp/cookers compiled out; "
+                   "dev-only targets skipped")
+endif()
+
 add_library(engine_core STATIC
-    # Asset cook pipeline (Assimp/stb in, cooked binaries out)
-    assets/cookers/mesh_cooker.cpp
-    assets/cookers/scene_cooker.cpp
-    assets/cookers/texture_cooker.cpp
-    assets/cookers/cook_service.cpp
+    # Asset cook pipeline (Assimp/stb in, cooked binaries out) — dev only
+    ${ENGINE_COOKER_SOURCES}
 
     # Project management — scaffolding new projects (canonical v2 layout)
     project/project_scaffold.cpp
@@ -92,11 +104,15 @@ target_include_directories(engine_core PUBLIC
 
 target_link_libraries(engine_core PUBLIC
     assetlib
-    assimp
     ozz_animation ozz_animation_offline   # skinned-mesh cooker (skeleton/clip archives)
 )
+if(ENGINE_WITH_SOURCE_IMPORTERS)
+    target_link_libraries(engine_core PUBLIC assimp)
+endif()
 target_compile_definitions(engine_core PUBLIC
     BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>   # bx headers (cooker skeleton types)
+    # Headers gate their Assimp paths on this (clip_library.h cook-on-miss).
+    ENGINE_WITH_SOURCE_IMPORTERS=$<BOOL:${ENGINE_WITH_SOURCE_IMPORTERS}>
 )
 
 add_library(engine::core ALIAS engine_core)
@@ -112,9 +128,6 @@ add_library(engine_runtime STATIC
     runtime/runtime_sim.cpp
     runtime/platform/glfw_platform.cpp
     render/renderer.cpp
-    runtime/services/async_loader/loader.cpp
-    runtime/services/async_loader/parse.cpp
-    runtime/services/async_loader/upload.cpp
     runtime/services/asset_service.cpp
     runtime/services/scene_service.cpp
     runtime/services/nav_service.cpp
@@ -122,10 +135,6 @@ add_library(engine_runtime STATIC
     runtime/scripting/engine_api_table.cpp
     runtime/jobs/jobs_enkits.cpp
     runtime/input/input_manager.cpp
-
-    # Source-format importers (produce GPU meshes — main thread)
-    assets/importers/gltf_importer.cpp
-    assets/importers/assimp_importer.cpp
 
     # Cooked-binary loaders
     assets/loaders/mesh_loader.cpp
@@ -136,6 +145,18 @@ add_library(engine_runtime STATIC
     # Shaders (HEADER_FILE_ONLY — listed to trigger compilation)
     ${ENGINE_SHADER_SOURCES}
 )
+
+# Source-format import (dev trees only): the editor's drag-drop AsyncLoader
+# + the glTF/Assimp importers. Shipping builds load cooked binaries only.
+if(ENGINE_WITH_SOURCE_IMPORTERS)
+    target_sources(engine_runtime PRIVATE
+        runtime/services/async_loader/loader.cpp
+        runtime/services/async_loader/parse.cpp
+        runtime/services/async_loader/upload.cpp
+        assets/importers/gltf_importer.cpp
+        assets/importers/assimp_importer.cpp
+    )
+endif()
 
 set_source_files_properties(
     ${ENGINE_SHADER_SOURCES}
@@ -232,6 +253,20 @@ target_compile_definitions(engine_headers INTERFACE
 target_compile_features(engine_headers INTERFACE cxx_std_20)
 add_library(engine::headers ALIAS engine_headers)
 
+# ── engine_player — the shipped-game runtime ─────────────────────────────────
+# What a game actually ships: cooked content only, no dev machinery. Built in
+# BOTH postures; under ENGINE_WITH_SOURCE_IMPORTERS=OFF it links zero Assimp.
+# ENABLE_EXPORTS: project kits resolve engine symbols from this executable.
+add_executable(engine_player tools/engine_player.cpp)
+target_link_libraries(engine_player PRIVATE engine_runtime)
+set_target_properties(engine_player PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    ENABLE_EXPORTS ON
+)
+
+# ── Dev-only targets: skipped in the shipping posture ────────────────────────
+if(ENGINE_WITH_SOURCE_IMPORTERS)
+
 add_subdirectory(editor)
 
 # ── engine_cook — CLI asset cooker ───────────────────────────────────────────
@@ -241,6 +276,16 @@ add_subdirectory(editor)
 add_executable(engine_cook tools/engine_cook.cpp)
 target_link_libraries(engine_cook PRIVATE engine_core)
 set_target_properties(engine_cook PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ── engine_build — package a project into a shippable dist/ ─────────────────
+# Cook -> shipping player (Assimp-free) -> kits rebuilt Release -> assemble.
+add_executable(engine_build tools/engine_build.cpp)
+target_link_libraries(engine_build PRIVATE engine_core)
+target_compile_definitions(engine_build PRIVATE
+    ENGINE_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+set_target_properties(engine_build PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
@@ -285,3 +330,5 @@ target_link_libraries(scene_resave PRIVATE engine_runtime)
 set_target_properties(scene_resave PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+endif() # ENGINE_WITH_SOURCE_IMPORTERS (dev-only targets)

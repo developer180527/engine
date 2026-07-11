@@ -26,9 +26,15 @@
 #include "core/handle.h"
 #include "core/logger.h"
 
+// Shipping builds (ENGINE_WITH_SOURCE_IMPORTERS=0) keep the cooked fast
+// path (ozz archive deserialize — sub-millisecond, no Assimp) and compile
+// the cook-on-miss Assimp parse out: a cache miss is an ERROR ("clip not
+// cooked"), because shipped runtimes never parse FBX.
+#if ENGINE_WITH_SOURCE_IMPORTERS
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
+#endif
 
 #include <ozz/animation/runtime/animation.h>
 #include <ozz/animation/runtime/skeleton.h>
@@ -72,6 +78,16 @@ public:
             return h;
         }
 
+#if !ENGINE_WITH_SOURCE_IMPORTERS
+        // Shipping runtime: cooked-only. Landing here means the project was
+        // packaged without cooking this clip — a packaging bug, not a
+        // runtime fallback opportunity.
+        (void)t0;
+        LOG_ERROR("Anim", "clip not cooked: %s — shipping builds never parse "
+                  "FBX; re-run engine_build / cook in the editor", sourcePath.c_str());
+        return {};
+    }
+#else
         Assimp::Importer imp;
         // MUST match the skinned-mesh import (async_loader.cpp): pivots baked,
         // not split into $AssimpFbx$ helper nodes — otherwise rotation tracks
@@ -134,6 +150,7 @@ public:
         saveCooked(sourcePath, skeleton, *clips.get(h));
         return h;
     }
+#endif // ENGINE_WITH_SOURCE_IMPORTERS
 
     // Registries reset (project switch / registry clear) — drop stale handles.
     void clear() { m_cache.clear(); }

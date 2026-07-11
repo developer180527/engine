@@ -22,7 +22,12 @@
 #include "animation/animation_clip.h"
 #include "core/logger.h"
 
+// buildOzzClip consumes aiAnimation — import-side only. Shipping builds
+// (ENGINE_WITH_SOURCE_IMPORTERS=0) keep the assimp-free half of this bridge
+// (restTransform, buildOzzSkeleton) and compile the clip builder out.
+#if ENGINE_WITH_SOURCE_IMPORTERS
 #include <assimp/anim.h>
+#endif
 #include <ozz/animation/offline/animation_builder.h>
 #include <ozz/animation/offline/raw_animation.h>
 #include <ozz/animation/offline/raw_skeleton.h>
@@ -104,6 +109,7 @@ inline bool buildOzzSkeleton(Skeleton& skel) {
     return true;
 }
 
+#if ENGINE_WITH_SOURCE_IMPORTERS
 // Build a compressed ozz Animation from an Assimp animation, bound to `skel`.
 // Track bone-names resolve through the skeleton; unmapped source channels are
 // skipped (counted in the clip's diagnostics); joints without channels get one
@@ -189,5 +195,6 @@ inline AnimClip buildOzzClip(const aiAnimation* src, const Skeleton& skel,
         built.release(), ozz::Deleter<ozz::animation::Animation>());
     return clip;
 }
+#endif // ENGINE_WITH_SOURCE_IMPORTERS
 
 } // namespace anim
