@@ -200,6 +200,23 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
             ent.scriptPathLength = len;
         }
 
+        // Animator (v2) — skeletal clip selection must survive the cook or
+        // shipped skinned meshes T-pose (clip binding is runtime-resolved
+        // from clipPath / embedded clipIndex; handles never serialize).
+        if (je.contains("animator")) {
+            ent.componentMask |= assetlib::kComp_Animator;
+            const auto& a = je["animator"];
+            ent.animClipIndex = (int16_t)a.value("clipIndex", 0);
+            ent.animSpeed     = a.value("speed", 1.0f);
+            ent.animFade      = a.value("fade", 0.2f);
+            ent.animPlaying   = a.value("playing", false) ? 1 : 0;
+            ent.animLooping   = a.value("looping", true) ? 1 : 0;
+            std::string clipPath = a.value("path", std::string{});
+            auto [off, len] = intern(clipPath);
+            ent.animClipPathOffset = off;
+            ent.animClipPathLength = len;
+        }
+
         // CharacterController
         if (je.contains("characterController")) {
             ent.componentMask |= assetlib::kComp_CharacterController;

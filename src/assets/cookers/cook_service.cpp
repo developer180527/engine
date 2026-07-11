@@ -3,6 +3,8 @@
 #include "assets/cookers/texture_cooker.h"
 #include "assets/cookers/scene_cooker.h"
 #include "core/logger.h"
+#include <assetlib/scene_asset.h>   // header peek: version-aware staleness
+#include <fstream>
 
 CookService::CookService(const std::filesystem::path& dbPath,
                          const std::filesystem::path& projectRoot,
@@ -193,14 +195,23 @@ void CookService::requeueIfDeferred(int deferred) {
 
 void CookService::cookSceneFiles(assetlib::AssetRegistry& registry) {
     namespace fs = std::filesystem;
-    fs::path scenesDir    = m_projectRoot / "scenes";
-    fs::path sceneCacheDir = m_cacheRoot  / "scenes";
+    fs::path sceneCacheDir = m_cacheRoot / "scenes";
 
-    if (!fs::exists(scenesDir) || !fs::is_directory(scenesDir)) return;
+    // Scenes live in either <project>/scenes (canonical v2 layout) or
+    // <assets>/scenes (editor-authored projects — fps_shooter's layout).
+    // Scanning only the former silently skipped the latter: those scenes
+    // were only ever cooked by editor saves, so format upgrades never
+    // reached them.
+    std::vector<fs::path> sceneDirs;
+    for (fs::path d : {m_projectRoot / "scenes", m_assetsRoot / "scenes"})
+        if (fs::exists(d) && fs::is_directory(d))
+            sceneDirs.push_back(std::move(d));
+    if (sceneDirs.empty()) return;
 
     std::error_code ec;
     int scenesCooked = 0;
 
+    for (const auto& scenesDir : sceneDirs)
     for (const auto& entry : fs::directory_iterator(scenesDir, ec)) {
         if (!m_running) break;
         if (!entry.is_regular_file()) continue;
@@ -213,7 +224,9 @@ void CookService::cookSceneFiles(assetlib::AssetRegistry& registry) {
         // treatment as assets — never cook a half-written JSON.
         if (!fileSettled(entry.path())) continue;   // next pass picks it up
 
-        // Stale if binary doesn't exist or is older than the JSON source
+        // Stale if binary doesn't exist, is older than the JSON source, or
+        // was cooked by an older FORMAT version (header peek is cheap and
+        // means a version bump re-cooks the workspace automatically).
         bool stale = !fs::exists(outPath);
         std::filesystem::file_time_type outTime{};
         if (!stale) {
@@ -221,6 +234,14 @@ void CookService::cookSceneFiles(assetlib::AssetRegistry& registry) {
             auto srcTime = fs::last_write_time(entry.path(), ec2);
             outTime      = fs::last_write_time(outPath, ec2);
             if (!ec2) stale = (srcTime > outTime);
+        }
+        if (!stale) {
+            std::ifstream f(outPath, std::ios::binary);
+            assetlib::SceneHeader hdr{};
+            f.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
+            if (!f || hdr.magic != assetlib::kSceneMagic
+                   || hdr.version != assetlib::kSceneVersion)
+                stale = true;
         }
         // Per-scene dependency check (replaces the global assetsChanged
         // flag, which re-cooked EVERY scene in the workspace whenever ANY

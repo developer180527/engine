@@ -18,6 +18,11 @@
 #include "components/character_controller.h"
 #include "components/entity_id.h"
 #include "components/light.h"
+#include "components/skinned_mesh.h"
+#include "components/animator.h"
+#include "animation/clip_library.h"        // standalone clipPath binding
+#include "animation/skeleton_registry.h"
+#include "animation/clip_registry.h"
 
 #include <assetlib/scene_asset.h>
 
@@ -36,6 +41,9 @@ SceneService::SceneService(Config cfg)
     , m_materials(cfg.materials)
     , m_world(cfg.world)
     , m_primitives(cfg.primitives)
+    , m_clipLibrary(cfg.clipLibrary)
+    , m_skeletons(cfg.skeletons)
+    , m_clips(cfg.clips)
 {}
 
 SceneService::~SceneService() = default;
@@ -117,12 +125,13 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
         // MeshRenderer
         if (se.componentMask & assetlib::kComp_MeshRenderer) {
             MeshHandle mh{};
+            AssetService::MeshSkin skin;
 
             // Try cooked path first (fast runtime path)
             std::string meshCooked = assetlib::stringTableRead(
                 st, se.meshCookedOffset, se.meshCookedLength);
             if (!meshCooked.empty()) {
-                mh = m_assets.loadMesh(meshCooked.c_str());
+                mh = m_assets.loadMesh(meshCooked.c_str(), &skin);
             }
 
             // Fallback: primitive
@@ -140,6 +149,42 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
                 if (se.matOverrideId > 0) mr.materialOverride.id = se.matOverrideId;
                 e.set<MeshRenderer>(mr);
                 loaded.meshHandles.push_back(mh);
+
+                // Skinned wiring (mirrors the editor's async-load callback in
+                // scene_serializer.h): SkinnedMesh gets the fresh skeleton
+                // handle; the Animator binds its clip at spawn — standalone
+                // clipPath through the ClipLibrary (cooked-clip cache in
+                // ship builds), else the mesh's embedded clip by index.
+                if (skin.skeleton.valid()) {
+                    SkinnedMesh sm;
+                    sm.skeleton = skin.skeleton;
+                    e.set<SkinnedMesh>(sm);
+
+                    Animator anim;
+                    if (se.componentMask & assetlib::kComp_Animator) {
+                        anim.clipIndex = se.animClipIndex;
+                        anim.speed     = se.animSpeed;
+                        anim.fade      = se.animFade;
+                        anim.playing   = se.animPlaying != 0;
+                        anim.looping   = se.animLooping != 0;
+                        anim.clipPath  = assetlib::stringTableRead(
+                            st, se.animClipPathOffset, se.animClipPathLength);
+                    }
+                    if (!anim.clipPath.empty() && m_clipLibrary
+                            && m_skeletons && m_clips) {
+                        if (const Skeleton* sk = m_skeletons->get(skin.skeleton)) {
+                            AnimClipHandle h = m_clipLibrary->load(
+                                anim.clipPath, skin.skeleton, *sk, *m_clips);
+                            if (h.valid()) anim.clip = h;
+                        }
+                    } else if (!skin.clips.empty()) {  // embedded clip
+                        int idx = anim.clipIndex;
+                        if (idx < 0 || idx >= (int)skin.clips.size()) idx = 0;
+                        anim.clipIndex = idx;
+                        anim.clip      = skin.clips[idx];
+                    }
+                    e.set<Animator>(anim);
+                }
             } else {
                 std::string src = assetlib::stringTableRead(
                     st, se.meshSourceOffset, se.meshSourceLength);

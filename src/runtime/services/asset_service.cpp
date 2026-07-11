@@ -7,6 +7,10 @@
 #include "render/texture.h"
 #include "render/material.h"
 #include "render/vertex.h"
+#include "render/skinned_vertex.h"
+#include "animation/cooked_skin.h"        // v3 skinned payload decode
+#include "animation/skeleton_registry.h"
+#include "animation/clip_registry.h"
 #include "core/logger.h"
 
 #include <assetlib/mesh_asset.h>
@@ -120,6 +124,8 @@ AssetService::AssetService(Config cfg)
     : m_meshes(cfg.meshes)
     , m_textures(cfg.textures)
     , m_materials(cfg.materials)
+    , m_skeletons(cfg.skeletons)
+    , m_clips(cfg.clips)
     , m_assetLib(cfg.assetLib)
     , m_projectRoot(cfg.projectRoot)
     , m_cacheRoot(cfg.projectRoot.empty() ? std::filesystem::path{}
@@ -187,7 +193,7 @@ static TexGPU resolveTextureGPU(const char* texPath,
 // Sync loadMesh
 // ═══════════════════════════════════════════════════════════════════════════
 
-MeshHandle AssetService::loadMesh(const char* cookedPath) {
+MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin) {
     if (!cookedPath || cookedPath[0] == '\0') return {};
 
     std::filesystem::path absPath(cookedPath);
@@ -201,10 +207,19 @@ MeshHandle AssetService::loadMesh(const char* cookedPath) {
     }
 
     const auto& hdr = asset.header;
-    if (hdr.vertexStride != sizeof(Vertex)) {
+    // Static (48B Vertex) or v3 skinned (68B SkinnedVertex + bones + ozz
+    // archives). Anything else is a stale cook.
+    const bool skinned = hdr.version >= 3 && hdr.boneCount > 0
+                      && hdr.vertexStride == sizeof(SkinnedVertex);
+    if (hdr.vertexStride != sizeof(Vertex) && !skinned) {
         LOG_ERROR("AssetService",
             "Stride mismatch: cooked=%u runtime=%zu — re-cook needed: %s",
             hdr.vertexStride, sizeof(Vertex), cookedPath);
+        return {};
+    }
+    if (skinned && (!m_skeletons || !m_clips)) {
+        LOG_ERROR("AssetService", "skinned cooked mesh but no skeleton/clip "
+                  "registries wired: %s", cookedPath);
         return {};
     }
 
@@ -214,7 +229,7 @@ MeshHandle AssetService::loadMesh(const char* cookedPath) {
                                   static_cast<uint32_t>(asset.indexData.size()));
 
     bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(vertexMem,
-                                                              Vertex::layout());
+        skinned ? SkinnedVertex::layout() : Vertex::layout());
     bgfx::IndexBufferHandle  ibh = (hdr.indexStride == 4)
         ? bgfx::createIndexBuffer(indexMem, BGFX_BUFFER_INDEX32)
         : bgfx::createIndexBuffer(indexMem);
@@ -270,6 +285,27 @@ MeshHandle AssetService::loadMesh(const char* cookedPath) {
     }
 
     MeshHandle result = m_meshes.addMesh(std::move(mesh));
+
+    // Skinned payload: decode + register the skeleton and embedded clips
+    // (shared decode with the editor's AsyncLoader — animation/cooked_skin.h).
+    if (skinned) {
+        Skeleton skel = anim::decodeCookedSkeleton(asset);
+        if (!skel.ozz) {
+            LOG_WARN("AssetService", "cooked skeleton blob unreadable — "
+                     "bind pose only: %s", cookedPath);
+        } else {
+            SkeletonHandle sh = m_skeletons->add(std::move(skel));
+            MeshSkin skin;
+            skin.skeleton = sh;
+            for (auto& clip : anim::decodeCookedClips(asset))
+                skin.clips.push_back(m_clips->add(std::move(clip)));
+            LOG_SUCCESS("AssetService", "COOKED skinned: %s — %u bones, "
+                        "%zu clip(s), no source parse", cookedPath,
+                        hdr.boneCount, skin.clips.size());
+            if (outSkin) *outSkin = std::move(skin);
+        }
+    }
+
     LOG_SUCCESS("AssetService", "Loaded mesh: %s (handle=%u verts=%u idx=%u mats=%zu)",
                 cookedPath, result.id,
                 hdr.vertexCount, hdr.indexCount, asset.materials.size());

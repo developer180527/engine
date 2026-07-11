@@ -24,7 +24,7 @@ namespace assetlib {
 // ═══════════════════════════════════════════════════════════════════════════
 
 static constexpr uint32_t kSceneMagic   = 0x53434E45;  // "SCNE"
-static constexpr uint32_t kSceneVersion = 1;
+static constexpr uint32_t kSceneVersion = 2;           // v2: Animator block
 
 // Component presence flags (bitfield for SceneEntity::componentMask)
 enum SceneComponentBit : uint32_t {
@@ -36,6 +36,7 @@ enum SceneComponentBit : uint32_t {
     kComp_Script              = 1u << 5,
     kComp_CharacterController = 1u << 6,
     kComp_Light               = 1u << 7,
+    kComp_Animator            = 1u << 8,   // v2
 };
 
 struct SceneHeader {
@@ -120,8 +121,17 @@ struct SceneEntity {
     float    lightSpotOuter    = 35.0f;
     float    lightTemperatureK = 6500.0f;
 
-    // Padding to reach exactly 256 bytes
-    uint8_t  _reserved[20]     = {};
+    // ── Animator (v2, 20 bytes — carved exactly from the former pad) ──
+    // Without this, cooked scenes silently dropped skeletal animation:
+    // shipped skinned meshes T-posed because clip selection never survived
+    // the cook. clipPath = standalone clip source ("" = embedded clipIndex).
+    float    animSpeed          = 1.0f;
+    float    animFade           = 0.2f;
+    uint32_t animClipPathOffset = 0xFFFFFFFF;   // into string table
+    uint32_t animClipPathLength = 0;
+    int16_t  animClipIndex      = 0;
+    uint8_t  animPlaying        = 0;
+    uint8_t  animLooping        = 1;
 };
 static_assert(sizeof(SceneEntity) == 256, "SceneEntity must be exactly 256 bytes");
 

@@ -179,10 +179,30 @@ private:
         return h;
     }
 
+    // Cache key path: PROJECT-RELATIVE and separator-normalized. Hashing the
+    // raw string made cache filenames machine-specific — a clip cooked on a
+    // dev machine (absolute /Users/.../assets/x.fbx) could never be found by
+    // a shipped build running from dist/ (different root, or the relative
+    // "assets/x.fbx" the scene stores). Relative keys travel with the
+    // project. projectRoot derives from the cache dir (<root>/.cache/anim).
+    std::string cacheKeyPath(const std::string& sourcePath) const {
+        std::filesystem::path p(sourcePath);
+        if (p.is_absolute() && !m_cacheRoot.empty()) {
+            const auto projectRoot =
+                m_cacheRoot.parent_path().parent_path();
+            std::error_code ec;
+            auto rel = std::filesystem::relative(p, projectRoot, ec);
+            if (!ec && !rel.empty() && rel.native()[0] != '.')
+                p = rel;
+        }
+        return p.generic_string();
+    }
+
     std::filesystem::path cookedPath(const std::string& sourcePath,
                                      uint64_t skelSig) const {
+        const std::string key = cacheKeyPath(sourcePath);
         uint64_t h = 1469598103934665603ull;
-        for (char c : sourcePath) h = (h ^ (uint64_t)(uint8_t)c) * 1099511628211ull;
+        for (char c : key) h = (h ^ (uint64_t)(uint8_t)c) * 1099511628211ull;
         h ^= skelSig;
         char name[32];
         std::snprintf(name, sizeof(name), "%016llx.ozzclip",
@@ -206,8 +226,12 @@ private:
                               AnimClipRegistry& clips) {
         if (m_cacheRoot.empty() || !skeleton.ozz) return {};
         const auto t0 = std::chrono::steady_clock::now();
-        uint64_t srcSize; int64_t srcMtime;
-        if (!srcStat(sourcePath, &srcSize, &srcMtime)) return {};
+        // Source stat is for INVALIDATION (dev iteration). A shipped build
+        // deliberately doesn't carry source FBX — an absent source means
+        // the cooked clip IS the asset: trust it. (Stat-fail used to reject
+        // outright, which broke every shipped clip.)
+        uint64_t srcSize = 0; int64_t srcMtime = 0;
+        const bool haveSrc = srcStat(sourcePath, &srcSize, &srcMtime);
         const uint64_t sig = skeletonSig(skeleton);
         const auto path = cookedPath(sourcePath, sig);
 
@@ -216,9 +240,10 @@ private:
         CookedHeader hdr{};
         if (file.Read(&hdr, sizeof(hdr)) != sizeof(hdr)) return {};
         if (hdr.magic != kCookMagic || hdr.version != kCookVersion ||
-            hdr.srcSize != srcSize || hdr.srcMtime != srcMtime ||
             hdr.skelSig != sig)
-            return {};   // stale — Assimp path re-cooks
+            return {};   // wrong format/rig — dev re-cooks
+        if (haveSrc && (hdr.srcSize != srcSize || hdr.srcMtime != srcMtime))
+            return {};   // source changed — dev re-cooks
 
         ozz::io::IArchive archive(&file);
         if (!archive.TestTag<ozz::animation::Animation>()) return {};

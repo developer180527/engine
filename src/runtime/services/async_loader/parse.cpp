@@ -13,6 +13,7 @@
 #include "render/texture.h"
 #include "render/material.h"
 #include "animation/assimp_skeleton_loader.h"
+#include "animation/cooked_skin.h"
 #include "animation/ozz_bridge.h"
 #include <ozz/base/io/archive.h>
 #include <ozz/base/io/stream.h>
@@ -255,66 +256,14 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                 out.meshes.push_back(std::move(gd));
 
                 // ── v3 skinned payload: skeleton + embedded clips, NO Assimp ─
+                // (shared decode with AssetService's cooked streaming path —
+                // animation/cooked_skin.h)
                 if (cookedSkinned) {
-                    Skeleton skel;
-                    skel.bones.reserve(asset.bones.size());
-                    for (const auto& cb : asset.bones) {
-                        Bone b;
-                        b.name        = cb.name;
-                        b.parentIndex = cb.parentIndex;
-                        b.bindPosition = {cb.bindPosition[0], cb.bindPosition[1],
-                                          cb.bindPosition[2]};
-                        b.bindRotation = {cb.bindRotation[0], cb.bindRotation[1],
-                                          cb.bindRotation[2], cb.bindRotation[3]};
-                        b.bindScale    = {cb.bindScale[0], cb.bindScale[1],
-                                          cb.bindScale[2]};
-                        std::memcpy(b.inverseBindMatrix, cb.inverseBindMatrix, 64);
-                        std::memcpy(b.localBindMatrix,   cb.localBindMatrix,   64);
-                        skel.bones.push_back(std::move(b));
-                    }
-                    // ozz skeleton from the opaque archive blob.
-                    {
-                        ozz::io::MemoryStream ms;
-                        ms.Write(asset.skeletonBlob.data(), asset.skeletonBlob.size());
-                        ms.Seek(0, ozz::io::Stream::kSet);
-                        ozz::io::IArchive ar(&ms);
-                        if (ar.TestTag<ozz::animation::Skeleton>()) {
-                            auto sk = ozz::make_unique<ozz::animation::Skeleton>();
-                            ar >> *sk;
-                            skel.ozz = std::shared_ptr<const ozz::animation::Skeleton>(
-                                sk.release(),
-                                ozz::Deleter<ozz::animation::Skeleton>());
-                        }
-                    }
+                    Skeleton skel = anim::decodeCookedSkeleton(asset);
                     if (skel.ozz) {
-                        // our-bone -> ozz-joint mapping by name (cheap).
-                        const auto names = skel.ozz->joint_names();
-                        skel.ozzJointOf.assign(skel.bones.size(), 0);
-                        for (size_t i = 0; i < skel.bones.size(); ++i)
-                            for (int j = 0; j < (int)names.size(); ++j)
-                                if (skel.bones[i].name == names[j]) {
-                                    skel.ozzJointOf[i] = j; break;
-                                }
                         out.skeleton    = std::move(skel);
                         out.hasSkeleton = true;
-                        for (const auto& cc : asset.clips) {
-                            ozz::io::MemoryStream ms;
-                            ms.Write(cc.blob.data(), cc.blob.size());
-                            ms.Seek(0, ozz::io::Stream::kSet);
-                            ozz::io::IArchive ar(&ms);
-                            if (!ar.TestTag<ozz::animation::Animation>()) continue;
-                            auto a = ozz::make_unique<ozz::animation::Animation>();
-                            ar >> *a;
-                            AnimClip clip;
-                            clip.name         = a->name();
-                            clip.duration     = a->duration();
-                            clip.mappedTracks = cc.mappedTracks;
-                            clip.totalTracks  = cc.totalTracks;
-                            clip.ozz = std::shared_ptr<const ozz::animation::Animation>(
-                                a.release(),
-                                ozz::Deleter<ozz::animation::Animation>());
-                            out.animClips.push_back(std::move(clip));
-                        }
+                        out.animClips   = anim::decodeCookedClips(asset);
                         LOG_SUCCESS("BinaryLoader",
                             "%s — COOKED skinned: %d bones, %zu clip(s), no Assimp",
                             name.c_str(), out.skeleton.boneCount(),

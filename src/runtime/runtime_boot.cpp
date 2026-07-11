@@ -140,15 +140,22 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
 #endif
 
     // AssetService — async mesh/texture loading for scripts + scene streaming.
+    // Skeleton/clip registries wired so SKINNED cooked meshes stream too
+    // (v3 payload: bones + ozz archives — no source parse, ship-safe).
     m_assetService = std::make_unique<AssetService>(AssetService::Config{
-        m_assets, m_textures, m_materials});
+        m_assets, m_textures, m_materials,
+        /*assetLib*/ nullptr, /*projectRoot*/ {},
+        &m_skeletons, &m_clips});
     if (cfg.meshBudgetMB > 0)
         m_assetService->setResidencyBudget(
             (uint64_t)cfg.meshBudgetMB * 1024 * 1024);
 
     // SceneService — built on top of AssetService for binary scene loading.
+    // ClipLibrary + registries enable skinned spawn wiring (SkinnedMesh +
+    // Animator with clip binding) for cooked scenes.
     m_sceneService = std::make_unique<SceneService>(SceneService::Config{
-        *m_assetService, m_assets, m_textures, m_materials, m_ecs, &m_primitives});
+        *m_assetService, m_assets, m_textures, m_materials, m_ecs,
+        &m_primitives, m_clipLibrary.get(), &m_skeletons, &m_clips});
 
     // ScriptHost — the canonical scripting surface. Lua, the C API
     // (engine_api.h, used by hot-reloaded game modules) and future language

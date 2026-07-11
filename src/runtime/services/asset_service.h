@@ -10,7 +10,11 @@
 class AssetRegistry;
 class TextureRegistry;
 class MaterialRegistry;
+class SkeletonRegistry;
+class AnimClipRegistry;
 namespace assetlib { class AssetRegistry; }
+
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // AssetService — flat, FFI-friendly API for loading and unloading cooked
@@ -37,6 +41,18 @@ public:
         MaterialRegistry& materials;
         assetlib::AssetRegistry* assetLib = nullptr;  // for texture path resolution
         std::filesystem::path    projectRoot;          // root of the game project
+        // Optional — enables SKINNED cooked streaming: v3 cooked meshes carry
+        // bones + ozz skeleton/clip archives, registered here on load. Null
+        // = skinned cooked meshes are rejected (bare tools).
+        SkeletonRegistry* skeletons = nullptr;
+        AnimClipRegistry* clips     = nullptr;
+    };
+
+    // Skinned payload of a loaded cooked mesh — what a spawner needs to wire
+    // SkinnedMesh + Animator on the entity (handles are session-local).
+    struct MeshSkin {
+        SkeletonHandle              skeleton;
+        std::vector<AnimClipHandle> clips;
     };
 
     explicit AssetService(Config cfg);
@@ -49,9 +65,11 @@ public:
 
     // Load a cooked mesh binary (.cooked), including any embedded materials
     // and their referenced textures. Relative paths are resolved against
-    // the project's .cache directory.
+    // the project's .cache directory. Skinned v3 meshes (bones + ozz
+    // archives) register their skeleton/clips when Config registries are
+    // wired; outSkin (optional) receives the handles for component wiring.
     // Returns a valid MeshHandle on success, invalid (id=0) on failure.
-    MeshHandle    loadMesh(const char* cookedPath);
+    MeshHandle    loadMesh(const char* cookedPath, MeshSkin* outSkin = nullptr);
 
     // Load a cooked texture binary (.cooked). Relative paths are resolved
     // against the project's .cache directory.
@@ -130,6 +148,8 @@ private:
     AssetRegistry&    m_meshes;
     TextureRegistry&  m_textures;
     MaterialRegistry& m_materials;
+    SkeletonRegistry* m_skeletons = nullptr;   // optional (skinned streaming)
+    AnimClipRegistry* m_clips     = nullptr;
 
     assetlib::AssetRegistry*  m_assetLib;
     std::filesystem::path     m_projectRoot;

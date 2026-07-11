@@ -13,6 +13,9 @@ class AssetRegistry;
 class TextureRegistry;
 class MaterialRegistry;
 class PrimitiveLibrary;
+class ClipLibrary;
+class SkeletonRegistry;
+class AnimClipRegistry;
 namespace flecs { struct world; }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -39,6 +42,13 @@ public:
         MaterialRegistry& materials;
         flecs::world&     world;
         PrimitiveLibrary* primitives = nullptr;
+        // Optional — enables skinned spawn wiring (SkinnedMesh + Animator)
+        // for v3 cooked meshes and v2 cooked scenes: standalone clipPath
+        // binding goes through the ClipLibrary (cooked-clip cache in ship
+        // builds), embedded clips come from the mesh itself.
+        ClipLibrary*      clipLibrary = nullptr;
+        SkeletonRegistry* skeletons   = nullptr;
+        AnimClipRegistry* clips       = nullptr;
     };
 
     explicit SceneService(Config cfg);
@@ -97,7 +107,10 @@ private:
     TextureRegistry&  m_textures;
     MaterialRegistry& m_materials;
     flecs::world&     m_world;
-    PrimitiveLibrary* m_primitives = nullptr;
+    PrimitiveLibrary* m_primitives  = nullptr;
+    ClipLibrary*      m_clipLibrary = nullptr;   // optional skinned wiring
+    SkeletonRegistry* m_skeletons   = nullptr;
+    AnimClipRegistry* m_clips       = nullptr;
     std::filesystem::path m_cacheRoot;
 
     uint32_t m_nextHandle = 1;
