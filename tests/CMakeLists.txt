@@ -68,6 +68,7 @@ engine_test(asset_ready_test)
 engine_test(sim_world_test)
 engine_test(keymap_test)
 engine_test(nav_test)
+engine_test(providers_test)
 # Importer-dependent tests — dev posture only (the shipping build compiles
 # the source-import stack out; these have nothing to exercise there).
 if(ENGINE_WITH_SOURCE_IMPORTERS)

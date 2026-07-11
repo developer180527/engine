@@ -14,9 +14,7 @@
 #include "runtime/plugin_registry.h"
 #include "runtime/input/input.h"
 #include "components/meta_registry.h"
-#include "plugins/jolt_plugin.h"
-#include "plugins/audio_plugin.h"
-#include "plugins/lua_script_plugin.h"
+#include "plugins/stock_plugins.h"
 #include "assets/cookers/cook_service.h"
 #include <assetlib/asset_registry.h>
 #include "editor/engine_context.h"
@@ -133,11 +131,9 @@ public:
 
         // Component meta schemas are registered by the RUNTIME (initSystems +
         // each fresh game world) — the reflection backbone is engine-owned now.
-        // Register plugins with the runtime — it owns their lifecycle.
-        // A standalone game does exactly this, minus the editor.
-        m_rt.plugins().add(std::make_shared<JoltPlugin>());
-        m_rt.plugins().add(std::make_shared<LuaScriptPlugin>());
-        m_rt.plugins().add(std::make_shared<AudioPlugin>());
+        // Providers by NAME from the project's "providers" block (see
+        // stock_plugins.h) — the editor runs whatever the game ships with.
+        addStockPlugins(m_rt);
         m_rt.attachPlugins();
     }
 

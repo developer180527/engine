@@ -19,9 +19,7 @@
 #include <filesystem>
 #include <string>
 
-#include "plugins/jolt_plugin.h"
-#include "plugins/lua_script_plugin.h"
-#include "plugins/audio_plugin.h"
+#include "plugins/stock_plugins.h"
 
 namespace fs = std::filesystem;
 
@@ -47,11 +45,9 @@ int main(int argc, char** argv) {
 
     InputSystem::get().init(glfwPlat->glfwWindow());
 
-    // Stock providers. (Selection moves to project.json's "engine" block —
-    // see the provider registry; hosts construct by name.)
-    engine.plugins().add(std::make_shared<JoltPlugin>());
-    engine.plugins().add(std::make_shared<LuaScriptPlugin>());
-    engine.plugins().add(std::make_shared<AudioPlugin>());
+    // Engine providers by NAME from project.json's "providers" block —
+    // swapping physics/audio is a project setting (stock_plugins.h).
+    addStockPlugins(engine);
     engine.attachPlugins();
 
     // COOKED scene only. The cooked binary carries cooked mesh paths that

@@ -25,9 +25,7 @@
 #include <filesystem>
 #include <string>
 
-#include "plugins/jolt_plugin.h"
-#include "plugins/lua_script_plugin.h"
-#include "plugins/audio_plugin.h"
+#include "plugins/stock_plugins.h"
 
 namespace fs = std::filesystem;
 
@@ -128,10 +126,9 @@ int main(int argc, char** argv) {
     // the project's input.json — see docs/engine-api.md. InputSystem remains
     // for editor/meta polling only.)
 
-    // Stock plugins first — broadcast order puts game logic after scripts.
-    engine.plugins().add(std::make_shared<JoltPlugin>());
-    engine.plugins().add(std::make_shared<LuaScriptPlugin>());
-    engine.plugins().add(std::make_shared<AudioPlugin>());
+    // Stock providers first (by NAME from project.json's "providers" block —
+    // see stock_plugins.h) — broadcast order puts game logic after scripts.
+    addStockPlugins(engine);
 
     // Optional dev module joins the registry before attach so it shares the
     // lifecycle with stock plugins. The watcher baseline is captured HERE — at

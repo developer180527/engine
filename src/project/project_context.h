@@ -27,12 +27,28 @@ struct ProjectContext {
         std::vector<std::string> requiresKits;
     };
 
+    // Engine service providers — WHICH implementation fills each engine
+    // service slot, as project data ("providers" in project.json). Swapping
+    // physics/audio/scripting is a project setting, not a host-code edit:
+    // hosts construct plugins by name via plugins/stock_plugins.h.
+    //   physics:   "jolt" (default) | "none"
+    //   scripting: "lua"  (default) | "none"
+    //   audio:     "miniaudio" (default) | "none"
+    // A custom engine-side provider = add its case to stock_plugins.h; a
+    // gameplay-level system = a kit, no engine change at all.
+    struct Providers {
+        std::string physics   = "jolt";
+        std::string scripting = "lua";
+        std::string audio     = "miniaudio";
+    };
+
     std::filesystem::path projectRoot;   // folder containing project.json
     std::filesystem::path assetsRoot;    // projectRoot/assets by default
     std::string           name          = "Untitled Project";
     std::string           lastScene     = "scenes/main.scene";
     int                   version       = 1;
     std::vector<Kit>      kits;          // plugged-in gameplay kits (see Kit)
+    Providers             providers;     // engine service selection (see above)
 
     bool valid() const {
         return !assetsRoot.empty()
@@ -73,6 +89,9 @@ struct ProjectContext {
             jk.push_back(std::move(e));
         }
         j["kits"] = std::move(jk);
+        j["providers"] = {{"physics",   providers.physics},
+                          {"scripting", providers.scripting},
+                          {"audio",     providers.audio}};
 
         std::ofstream f(projectRoot / "project.json");
         f << j.dump(2);
@@ -94,6 +113,11 @@ struct ProjectContext {
                 ctx.lastScene  = j.value("lastScene", "scenes/main.scene");
                 std::string ar = j.value("assetRoot", "assets");
                 ctx.assetsRoot = std::filesystem::weakly_canonical(ctx.projectRoot / ar);
+                if (auto p = j.find("providers"); p != j.end() && p->is_object()) {
+                    ctx.providers.physics   = p->value("physics",   ctx.providers.physics);
+                    ctx.providers.scripting = p->value("scripting", ctx.providers.scripting);
+                    ctx.providers.audio     = p->value("audio",     ctx.providers.audio);
+                }
                 if (auto it = j.find("kits"); it != j.end() && it->is_array()) {
                     for (const auto& jk : *it) {
                         Kit k;
