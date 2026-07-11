@@ -6,9 +6,9 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 9; // bumped: scale-invariant normal matrix
+    static constexpr uint32_t kVersion = 10; // bumped: glTF/GLB cook (cgltf)
     std::vector<std::string> extensions() const override {
-        return {".fbx",".obj",".dae",".ply",".stl"};
+        return {".fbx",".obj",".dae",".ply",".stl",".gltf",".glb"};
     }
     assetlib::CookResult cook(const assetlib::CookContext& ctx) override;
 };

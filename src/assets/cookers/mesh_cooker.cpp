@@ -5,12 +5,16 @@
 #include <assimp/config.h>
 #include <assimp/matrix4x4.h>
 #include <assimp/matrix3x3.h>
+#include <cgltf.h>   // glTF/GLB cook path (Assimp is built without glTF)
+
 #include <cstring>
 #include <cstdio>
 #include <cfloat>
 #include <cmath>
+#include <cctype>
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <semaphore>
 #include <thread>
 
@@ -450,7 +454,282 @@ struct AssimpGatePass {
 };
 } // namespace
 
+// ── glTF cook (cgltf) ────────────────────────────────────────────────────────
+// Assimp is deliberately built WITHOUT glTF (cgltf owns the format engine-
+// wide), so .gltf/.glb never reached the cooker: those scene meshes simply
+// didn't exist in shipped builds. Static-only for now (mirrors the runtime
+// GltfImporter's coverage); node world transforms are baked exactly like
+// the Assimp path.
+
+// Column-major world × point (glTF matrix convention).
+static void gltfXformPoint(const float m[16], const float p[3], float* o) {
+    o[0] = m[0]*p[0] + m[4]*p[1] + m[8]*p[2]  + m[12];
+    o[1] = m[1]*p[0] + m[5]*p[1] + m[9]*p[2]  + m[13];
+    o[2] = m[2]*p[0] + m[6]*p[1] + m[10]*p[2] + m[14];
+}
+static void gltfXformDir(const float m[16], const float v[3], float* o) {
+    o[0] = m[0]*v[0] + m[4]*v[1] + m[8]*v[2];
+    o[1] = m[1]*v[0] + m[5]*v[1] + m[9]*v[2];
+    o[2] = m[2]*v[0] + m[6]*v[1] + m[10]*v[2];
+}
+// Inverse-transpose of the upper 3x3 with the SAME scale-invariant
+// singularity guard as cookNormalMatrix (|det| vs row-norm product — a
+// bare epsilon collapses for small uniform scales; see the audit note).
+static void gltfNormalMatrix(const float m[16], float n[9]) {
+    const float a=m[0],b=m[4],c=m[8], d=m[1],e=m[5],f=m[9], g=m[2],h=m[6],i=m[10];
+    const float A=e*i-f*h, B=f*g-d*i, C=d*h-e*g;
+    const float det  = a*A + b*B + c*C;
+    const float r0   = std::sqrt(a*a + b*b + c*c);
+    const float r1   = std::sqrt(d*d + e*e + f*f);
+    const float r2   = std::sqrt(g*g + h*h + i*i);
+    const float norm = r0 * r1 * r2;
+    if (norm <= 0.0f || std::fabs(det) <= 1e-6f * norm) {
+        n[0]=n[4]=n[8]=1.0f; n[1]=n[2]=n[3]=n[5]=n[6]=n[7]=0.0f;
+        return;
+    }
+    const float s = 1.0f / det;
+    n[0]=A*s;         n[1]=B*s;         n[2]=C*s;
+    n[3]=(c*h-b*i)*s; n[4]=(a*i-c*g)*s; n[5]=(b*g-a*h)*s;
+    n[6]=(b*f-c*e)*s; n[7]=(c*d-a*f)*s; n[8]=(a*e-b*d)*s;
+}
+
+static const cgltf_accessor* gltfAttr(const cgltf_primitive* prim,
+                                      cgltf_attribute_type type) {
+    for (cgltf_size i = 0; i < prim->attributes_count; ++i)
+        if (prim->attributes[i].type == type && prim->attributes[i].index == 0)
+            return prim->attributes[i].data;
+    return nullptr;
+}
+
+// Cook a glTF image (external file or embedded buffer view) to a sibling
+// .ctex — same contract as the FBX embedded-texture flow above.
+static std::string gltfCookTexture(const cgltf_image* img,
+                                   const std::filesystem::path& gltfDir,
+                                   const CookContext& ctx, int slot) {
+    if (!img) return {};
+    int w = 0, h = 0, ch = 0;
+    stbi_uc* px = nullptr;
+    if (img->uri && std::strncmp(img->uri, "data:", 5) != 0) {
+        char decoded[1024];
+        cgltf_decode_uri(img->uri);   // %20 → ' ' etc. (in place)
+        std::snprintf(decoded, sizeof decoded, "%s", img->uri);
+        px = stbi_load((gltfDir / decoded).string().c_str(), &w, &h, &ch, 4);
+    } else if (img->buffer_view && img->buffer_view->buffer->data) {
+        const auto* bytes = (const stbi_uc*)img->buffer_view->buffer->data
+                          + img->buffer_view->offset;
+        px = stbi_load_from_memory(bytes, (int)img->buffer_view->size,
+                                   &w, &h, &ch, 4);
+    }
+    if (!px) return {};
+
+    assetlib::TextureAsset tex;
+    tex.header.width  = (uint32_t)w;
+    tex.header.height = (uint32_t)h;
+    tex.pixels.assign(px, px + (size_t)w * h * 4);
+    stbi_image_free(px);
+
+    char name[64];
+    std::snprintf(name, sizeof(name), "%s_t%d.ctex",
+                  ctx.outputPath.stem().string().c_str(), slot);
+    const auto outPath = ctx.outputPath.parent_path() / name;
+    if (!assetlib::saveTexture(tex, outPath)) return {};
+    std::printf("[MeshCooker] glTF texture -> %s (%dx%d)\n", name, w, h);
+    return name;
+}
+
+static CookResult cookGltf(const CookContext& ctx) {
+    cgltf_options options{};
+    cgltf_data*   data = nullptr;
+    const std::string src = ctx.sourcePath.string();
+    if (cgltf_parse_file(&options, src.c_str(), &data) != cgltf_result_success)
+        return {.success = false, .error = "cgltf: parse failed"};
+    struct Guard { cgltf_data* d; ~Guard() { cgltf_free(d); } } guard{data};
+    if (cgltf_load_buffers(&options, data, src.c_str()) != cgltf_result_success)
+        return {.success = false, .error = "cgltf: buffer load failed"};
+
+    const cgltf_scene* scene = data->scene ? data->scene
+                             : (data->scenes_count ? &data->scenes[0] : nullptr);
+    if (!scene) return {.success = false, .error = "cgltf: no scene"};
+
+    // Pass 1 — size buffers over the node tree (instancing-aware).
+    uint32_t totalVerts = 0, totalIndices = 0;
+    std::function<void(const cgltf_node*)> countN = [&](const cgltf_node* n) {
+        if (n->mesh)
+            for (cgltf_size pi = 0; pi < n->mesh->primitives_count; ++pi) {
+                const cgltf_primitive& prim = n->mesh->primitives[pi];
+                if (prim.type != cgltf_primitive_type_triangles) continue;
+                const cgltf_accessor* pos = gltfAttr(&prim, cgltf_attribute_type_position);
+                if (!pos || !prim.indices) continue;
+                totalVerts   += (uint32_t)pos->count;
+                totalIndices += (uint32_t)prim.indices->count;
+            }
+        for (cgltf_size c = 0; c < n->children_count; ++c) countN(n->children[c]);
+    };
+    for (cgltf_size i = 0; i < scene->nodes_count; ++i) countN(scene->nodes[i]);
+    if (totalVerts == 0)
+        return {.success = false, .error = "cgltf: no triangle geometry"};
+
+    MeshAsset asset;
+    asset.header.magic        = 0x4D455348;
+    asset.header.version      = 2;
+    asset.header.vertexFlags  = kCookFlags;
+    asset.header.vertexStride = sizeof(CookVertex);
+    std::memcpy(asset.header.uuid, ctx.uuid.bytes.data(), 16);
+
+    const bool use16 = (totalVerts <= 65535);
+    asset.header.indexStride = use16 ? 2 : 4;
+    asset.vertexData.resize((size_t)totalVerts   * sizeof(CookVertex));
+    asset.indexData.resize ((size_t)totalIndices * asset.header.indexStride);
+
+    auto* verts = reinterpret_cast<CookVertex*>(asset.vertexData.data());
+    uint8_t* idxBytes = asset.indexData.data();
+    uint32_t vWrite = 0, iByteOff = 0, vBase = 0;
+    float bMin[3] = { FLT_MAX,  FLT_MAX,  FLT_MAX};
+    float bMax[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+
+    // Pass 2 — bake node world transforms into the vertices.
+    std::function<void(const cgltf_node*)> emitN = [&](const cgltf_node* n) {
+        if (n->mesh) {
+            float world[16];
+            cgltf_node_transform_world(n, world);
+            float nm[9];
+            gltfNormalMatrix(world, nm);   // scale-invariant guard inside
+
+            for (cgltf_size pi = 0; pi < n->mesh->primitives_count; ++pi) {
+                const cgltf_primitive& prim = n->mesh->primitives[pi];
+                if (prim.type != cgltf_primitive_type_triangles) continue;
+                const cgltf_accessor* pos = gltfAttr(&prim, cgltf_attribute_type_position);
+                const cgltf_accessor* nrm = gltfAttr(&prim, cgltf_attribute_type_normal);
+                const cgltf_accessor* uv  = gltfAttr(&prim, cgltf_attribute_type_texcoord);
+                const cgltf_accessor* tan = gltfAttr(&prim, cgltf_attribute_type_tangent);
+                if (!pos || !prim.indices) continue;
+
+                for (cgltf_size v = 0; v < pos->count; ++v) {
+                    CookVertex& vtx = verts[vWrite++];
+                    float p[3] = {0,0,0}, o[3];
+                    cgltf_accessor_read_float(pos, v, p, 3);
+                    gltfXformPoint(world, p, o);
+                    vtx.px = o[0]; vtx.py = o[1]; vtx.pz = o[2];
+                    for (int k = 0; k < 3; ++k) {
+                        bMin[k] = std::min(bMin[k], o[k]);
+                        bMax[k] = std::max(bMax[k], o[k]);
+                    }
+
+                    float nv[3] = {0,1,0}, no[3] = {0,1,0};
+                    if (nrm && cgltf_accessor_read_float(nrm, v, nv, 3)) {
+                        no[0] = nm[0]*nv[0]+nm[1]*nv[1]+nm[2]*nv[2];
+                        no[1] = nm[3]*nv[0]+nm[4]*nv[1]+nm[5]*nv[2];
+                        no[2] = nm[6]*nv[0]+nm[7]*nv[1]+nm[8]*nv[2];
+                        const float l = std::sqrt(no[0]*no[0]+no[1]*no[1]+no[2]*no[2]);
+                        if (l > 1e-8f) { no[0]/=l; no[1]/=l; no[2]/=l; }
+                    }
+                    vtx.nx = no[0]; vtx.ny = no[1]; vtx.nz = no[2];
+
+                    float t4[4] = {1,0,0,1};
+                    if (tan && cgltf_accessor_read_float(tan, v, t4, 4)) {
+                        float to[3];
+                        gltfXformDir(world, t4, to);
+                        const float l = std::sqrt(to[0]*to[0]+to[1]*to[1]+to[2]*to[2]);
+                        if (l > 1e-8f) { to[0]/=l; to[1]/=l; to[2]/=l; }
+                        vtx.tx = to[0]; vtx.ty = to[1]; vtx.tz = to[2];
+                        vtx.tw = t4[3] < 0 ? -1.0f : 1.0f;
+                    } else {
+                        vtx.tx = 1.0f; vtx.ty = 0.0f; vtx.tz = 0.0f; vtx.tw = 1.0f;
+                    }
+
+                    float uvv[2] = {0,0};
+                    if (uv) cgltf_accessor_read_float(uv, v, uvv, 2);
+                    vtx.u = uvv[0]; vtx.v = uvv[1];
+                }
+
+                MeshSubmesh sub{};
+                sub.indexOffset   = iByteOff / asset.header.indexStride;
+                sub.indexCount    = (uint32_t)prim.indices->count;
+                sub.materialIndex = prim.material
+                    ? (uint32_t)(prim.material - data->materials) : 0;
+                if (use16) {
+                    auto* d = reinterpret_cast<uint16_t*>(&idxBytes[iByteOff]);
+                    for (cgltf_size i = 0; i < prim.indices->count; ++i)
+                        d[i] = (uint16_t)(cgltf_accessor_read_index(prim.indices, i) + vBase);
+                    iByteOff += sub.indexCount * 2;
+                } else {
+                    auto* d = reinterpret_cast<uint32_t*>(&idxBytes[iByteOff]);
+                    for (cgltf_size i = 0; i < prim.indices->count; ++i)
+                        d[i] = (uint32_t)(cgltf_accessor_read_index(prim.indices, i) + vBase);
+                    iByteOff += sub.indexCount * 4;
+                }
+                vBase += (uint32_t)pos->count;
+                asset.submeshes.push_back(sub);
+            }
+        }
+        for (cgltf_size c = 0; c < n->children_count; ++c) emitN(n->children[c]);
+    };
+    for (cgltf_size i = 0; i < scene->nodes_count; ++i) emitN(scene->nodes[i]);
+
+    asset.header.vertexCount  = totalVerts;
+    asset.header.indexCount   = totalIndices;
+    asset.header.submeshCount = (uint32_t)asset.submeshes.size();
+    for (int i = 0; i < 3; ++i) {
+        asset.header.boundsMin[i] = bMin[i];
+        asset.header.boundsMax[i] = bMax[i];
+    }
+
+    // Materials — submesh.materialIndex indexes data->materials order.
+    const auto gltfDir = ctx.sourcePath.parent_path();
+    int texSlot = 0;
+    for (cgltf_size m = 0; m < data->materials_count; ++m) {
+        const cgltf_material& gm = data->materials[m];
+        CookedMaterial cm{};
+        cm.baseColorFactor[0] = cm.baseColorFactor[1] =
+        cm.baseColorFactor[2] = cm.baseColorFactor[3] = 1.0f;
+        cm.roughness = 0.7f; cm.metallic = 0.0f;
+        if (gm.has_pbr_metallic_roughness) {
+            const auto& pbr = gm.pbr_metallic_roughness;
+            std::memcpy(cm.baseColorFactor, pbr.base_color_factor, 16);
+            cm.roughness = pbr.roughness_factor;
+            cm.metallic  = pbr.metallic_factor;
+            if (pbr.base_color_texture.texture) {
+                const std::string fn = gltfCookTexture(
+                    pbr.base_color_texture.texture->image, gltfDir, ctx, texSlot++);
+                if (!fn.empty()) {
+                    std::snprintf(cm.baseColorPath, sizeof(cm.baseColorPath),
+                                  "%s", fn.c_str());
+                    cm.flags |= kMatFlag_HasBaseColor;
+                }
+            }
+        }
+        if (gm.normal_texture.texture) {
+            const std::string fn = gltfCookTexture(
+                gm.normal_texture.texture->image, gltfDir, ctx, texSlot++);
+            if (!fn.empty()) {
+                std::snprintf(cm.normalMapPath, sizeof(cm.normalMapPath),
+                              "%s", fn.c_str());
+                cm.flags |= kMatFlag_HasNormalMap;
+            }
+        }
+        asset.materials.push_back(cm);
+    }
+    if (asset.materials.empty()) asset.materials.push_back(CookedMaterial{});
+    asset.header.materialCount = (uint32_t)asset.materials.size();
+
+    if (!saveMesh(asset, ctx.outputPath))
+        return {.success = false, .error = "saveMesh failed"};
+    std::printf("[MeshCooker] %s -> GLTF verts=%u idx=%u submeshes=%zu mats=%zu\n",
+                ctx.sourcePath.filename().string().c_str(),
+                totalVerts, totalIndices, asset.submeshes.size(),
+                asset.materials.size());
+    return {.success = true};
+}
+
 CookResult MeshCooker::cook(const CookContext& ctx) {
+    // glTF/GLB goes through cgltf — Assimp is built without those importers
+    // (cgltf owns the format engine-wide). Everything else: Assimp.
+    {
+        std::string ext = ctx.sourcePath.extension().string();
+        for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+        if (ext == ".gltf" || ext == ".glb") return cookGltf(ctx);
+    }
+
     // One permit covers the whole cook, including the skinned re-import —
     // both Assimp scenes of this asset count as ONE resident import.
     AssimpGatePass gate;

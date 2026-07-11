@@ -117,6 +117,65 @@ int main() {
         CHECK(allResolve, "every entity's interned path round-trips");
     }
 
+    // ── 2b. glTF cook (cgltf path): transforms bake, normals survive ─────
+    // One +Z triangle under a node rotated -90° about X and scaled 0.0001 —
+    // the determinant-trap scenario through the REAL glTF pipeline.
+    {
+        unsigned char buf[80] = {};
+        float pos[9] = {0,0,0, 1,0,0, 0,1,0};
+        float nrm[9] = {0,0,1, 0,0,1, 0,0,1};
+        uint16_t idx[3] = {0,1,2};
+        std::memcpy(buf,      pos, 36);
+        std::memcpy(buf + 36, nrm, 36);
+        std::memcpy(buf + 72, idx, 6);
+        static const char* tab =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string b64;
+        for (int i = 0; i < 80; i += 3) {
+            unsigned v = buf[i] << 16 | buf[i+1] << 8 | buf[i+2];
+            b64 += tab[(v >> 18) & 63]; b64 += tab[(v >> 12) & 63];
+            b64 += tab[(v >> 6) & 63];  b64 += tab[v & 63];
+        }
+        b64[b64.size()-1] = '=';   // 80 % 3 == 2 -> one pad char
+
+        char json[2048];
+        // -90 deg about X: quaternion (x,y,z,w) = (-sin45, 0, 0, cos45)
+        std::snprintf(json, sizeof json, R"({
+"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],
+"nodes":[{"mesh":0,"rotation":[-0.7071068,0,0,0.7071068],"scale":[0.0001,0.0001,0.0001]}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1},"indices":2}]}],
+"accessors":[
+ {"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},
+ {"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},
+ {"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}],
+"bufferViews":[
+ {"buffer":0,"byteOffset":0,"byteLength":36},
+ {"buffer":0,"byteOffset":36,"byteLength":36},
+ {"buffer":0,"byteOffset":72,"byteLength":6}],
+"buffers":[{"byteLength":80,"uri":"data:application/octet-stream;base64,%s"}]})",
+            b64.c_str());
+        fs::path src = dir / "tiny.gltf";
+        { std::ofstream f(src); f << json; }
+        fs::path out = dir / "tiny_gltf.cooked";
+        CHECK(cookMesh(src, out), "glTF cooks via cgltf path");
+
+        assetlib::MeshAsset asset;
+        CHECK(assetlib::loadMesh(asset, out), "cooked glTF loads");
+        CHECK(asset.header.vertexCount == 3 && asset.header.indexCount == 3,
+              "glTF geometry counts (v=%u i=%u)",
+              asset.header.vertexCount, asset.header.indexCount);
+        if (asset.vertexData.size() >= 48) {
+            struct V { float px,py,pz,nx,ny,nz,tx,ty,tz,tw,u,v; } v{};
+            std::memcpy(&v, asset.vertexData.data(), sizeof v);
+            // RotX(-90) maps +Z -> -Y in glTF's column-vector convention
+            // (q=(-sin45,0,0,cos45)); magnitude survives the 0.0001 scale.
+            CHECK(std::fabs(std::fabs(v.ny) - 1.0f) < 0.1f
+                  && std::fabs(v.nz) < 0.1f,
+                  "glTF normal rotated at scale 0.0001 (n=%.3f,%.3f,%.3f)",
+                  v.nx, v.ny, v.nz);
+        }
+    }
+
     // ── 3. Garbage in, failure out — never a crash ────────────────────────
     {
         fs::path garbage = dir / "corrupt.fbx";

@@ -75,7 +75,11 @@ private:
     std::filesystem::path       m_cacheRoot;
     std::vector<std::unique_ptr<ICooker>> m_cookers;
 
-    static constexpr uint32_t   kCurrentCookVersion = 10;
+    // THE staleness version — bump when ANY cooker's output changes so the
+    // workspace re-cooks. (Per-cooker kVersion constants exist but do NOT
+    // feed isStale(); this one does. 11: glTF/GLB cook + scale-invariant
+    // normal matrices.)
+    static constexpr uint32_t   kCurrentCookVersion = 11;
 };
 
 } // namespace assetlib
