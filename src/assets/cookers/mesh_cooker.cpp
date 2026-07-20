@@ -1,4 +1,5 @@
 #include "assets/cookers/mesh_cooker.h"
+#include "assets/cookers/texture_encode.h"   // BC7/BC5 + mips for .ctex
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
@@ -204,40 +205,46 @@ static std::vector<uint8_t> drainOzzStream(ozz::io::MemoryStream& ms) {
 // .ctex basename; the loader resolves that against the cooked file's own
 // directory — cooked skinned meshes render textured with zero Assimp.
 static std::string resolveCookTexture(const aiScene* scene, const aiString& tp,
-                                      const CookContext& ctx, int slot) {
+                                      const CookContext& ctx, int slot,
+                                      bool isNormalMap) {
     const aiTexture* emb = scene->GetEmbeddedTexture(tp.C_Str());
     if (!emb)
         return std::filesystem::path(tp.C_Str()).filename().string();
 
-    assetlib::TextureAsset tex;
+    std::vector<uint8_t> rgba;
+    uint32_t tw = 0, th = 0;
     if (emb->mHeight == 0) {   // compressed (png/jpg bytes)
         int w = 0, h = 0, ch = 0;
         stbi_uc* px = stbi_load_from_memory(
             reinterpret_cast<const stbi_uc*>(emb->pcData),
             (int)emb->mWidth, &w, &h, &ch, 4);
         if (!px) return {};
-        tex.header.width  = (uint32_t)w;
-        tex.header.height = (uint32_t)h;
-        tex.pixels.assign(px, px + (size_t)w * h * 4);
+        tw = (uint32_t)w; th = (uint32_t)h;
+        rgba.assign(px, px + (size_t)w * h * 4);
         stbi_image_free(px);
     } else {                    // raw BGRA texels
-        tex.header.width  = emb->mWidth;
-        tex.header.height = emb->mHeight;
-        tex.pixels.resize((size_t)emb->mWidth * emb->mHeight * 4);
-        for (size_t p = 0; p < (size_t)emb->mWidth * emb->mHeight; ++p) {
-            tex.pixels[p*4+0] = emb->pcData[p].r;
-            tex.pixels[p*4+1] = emb->pcData[p].g;
-            tex.pixels[p*4+2] = emb->pcData[p].b;
-            tex.pixels[p*4+3] = emb->pcData[p].a;
+        tw = emb->mWidth; th = emb->mHeight;
+        rgba.resize((size_t)tw * th * 4);
+        for (size_t p = 0; p < (size_t)tw * th; ++p) {
+            rgba[p*4+0] = emb->pcData[p].r;
+            rgba[p*4+1] = emb->pcData[p].g;
+            rgba[p*4+2] = emb->pcData[p].b;
+            rgba[p*4+3] = emb->pcData[p].a;
         }
     }
+
+    // Block-compress + mips: the material slot tells us the usage exactly
+    // (BC5 for normal maps, BC7 for color) — no filename guessing here.
+    assetlib::TextureAsset tex;
+    if (!cook::encodeTexture(rgba.data(), tw, th, isNormalMap, tex)) return {};
+
     char name[64];
     std::snprintf(name, sizeof(name), "%s_t%d.ctex",
                   ctx.outputPath.stem().string().c_str(), slot);
     const auto outPath = ctx.outputPath.parent_path() / name;
     if (!assetlib::saveTexture(tex, outPath)) return {};
-    std::printf("[MeshCooker] embedded texture -> %s (%ux%u)\n",
-                name, tex.header.width, tex.header.height);
+    std::printf("[MeshCooker] embedded texture -> %s (%ux%u %s, %u mips)\n",
+                name, tw, th, isNormalMap ? "BC5" : "BC7", tex.header.mipCount);
     return name;
 }
 
@@ -261,7 +268,8 @@ static void emitMaterials(const aiScene* scene, MeshAsset& asset,
         aiString tp;
         if (aiMat->GetTexture(aiTextureType_DIFFUSE, 0, &tp) == AI_SUCCESS ||
             aiMat->GetTexture(aiTextureType_BASE_COLOR, 0, &tp) == AI_SUCCESS) {
-            const std::string fn = resolveCookTexture(scene, tp, ctx, texSlot++);
+            const std::string fn = resolveCookTexture(scene, tp, ctx, texSlot++,
+                                                      /*isNormalMap*/ false);
             if (!fn.empty()) {
                 std::snprintf(cm.baseColorPath, sizeof(cm.baseColorPath), "%s", fn.c_str());
                 cm.flags |= kMatFlag_HasBaseColor;
@@ -270,7 +278,8 @@ static void emitMaterials(const aiScene* scene, MeshAsset& asset,
         aiString np;
         if (aiMat->GetTexture(aiTextureType_NORMALS, 0, &np) == AI_SUCCESS ||
             aiMat->GetTexture(aiTextureType_HEIGHT,  0, &np) == AI_SUCCESS) {
-            const std::string fn = resolveCookTexture(scene, np, ctx, texSlot++);
+            const std::string fn = resolveCookTexture(scene, np, ctx, texSlot++,
+                                                      /*isNormalMap*/ true);
             if (!fn.empty()) {
                 std::snprintf(cm.normalMapPath, sizeof(cm.normalMapPath), "%s", fn.c_str());
                 cm.flags |= kMatFlag_HasNormalMap;
@@ -505,7 +514,8 @@ static const cgltf_accessor* gltfAttr(const cgltf_primitive* prim,
 // .ctex — same contract as the FBX embedded-texture flow above.
 static std::string gltfCookTexture(const cgltf_image* img,
                                    const std::filesystem::path& gltfDir,
-                                   const CookContext& ctx, int slot) {
+                                   const CookContext& ctx, int slot,
+                                   bool isNormalMap) {
     if (!img) return {};
     int w = 0, h = 0, ch = 0;
     stbi_uc* px = nullptr;
@@ -522,18 +532,20 @@ static std::string gltfCookTexture(const cgltf_image* img,
     }
     if (!px) return {};
 
+    // Block-compress + mips — usage from the material slot (BC5 normals).
     assetlib::TextureAsset tex;
-    tex.header.width  = (uint32_t)w;
-    tex.header.height = (uint32_t)h;
-    tex.pixels.assign(px, px + (size_t)w * h * 4);
+    const bool ok = cook::encodeTexture(px, (uint32_t)w, (uint32_t)h,
+                                        isNormalMap, tex);
     stbi_image_free(px);
+    if (!ok) return {};
 
     char name[64];
     std::snprintf(name, sizeof(name), "%s_t%d.ctex",
                   ctx.outputPath.stem().string().c_str(), slot);
     const auto outPath = ctx.outputPath.parent_path() / name;
     if (!assetlib::saveTexture(tex, outPath)) return {};
-    std::printf("[MeshCooker] glTF texture -> %s (%dx%d)\n", name, w, h);
+    std::printf("[MeshCooker] glTF texture -> %s (%dx%d %s, %u mips)\n",
+                name, w, h, isNormalMap ? "BC5" : "BC7", tex.header.mipCount);
     return name;
 }
 
@@ -690,7 +702,8 @@ static CookResult cookGltf(const CookContext& ctx) {
             cm.metallic  = pbr.metallic_factor;
             if (pbr.base_color_texture.texture) {
                 const std::string fn = gltfCookTexture(
-                    pbr.base_color_texture.texture->image, gltfDir, ctx, texSlot++);
+                    pbr.base_color_texture.texture->image, gltfDir, ctx,
+                    texSlot++, /*isNormalMap*/ false);
                 if (!fn.empty()) {
                     std::snprintf(cm.baseColorPath, sizeof(cm.baseColorPath),
                                   "%s", fn.c_str());
@@ -700,7 +713,8 @@ static CookResult cookGltf(const CookContext& ctx) {
         }
         if (gm.normal_texture.texture) {
             const std::string fn = gltfCookTexture(
-                gm.normal_texture.texture->image, gltfDir, ctx, texSlot++);
+                gm.normal_texture.texture->image, gltfDir, ctx,
+                texSlot++, /*isNormalMap*/ true);
             if (!fn.empty()) {
                 std::snprintf(cm.normalMapPath, sizeof(cm.normalMapPath),
                               "%s", fn.c_str());

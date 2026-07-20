@@ -8,6 +8,7 @@
 #include "render/material.h"
 #include "render/vertex.h"
 #include "render/skinned_vertex.h"
+#include "render/cooked_texture.h"   // format-aware BC upload
 #include "animation/cooked_skin.h"        // v3 skinned payload decode
 #include "animation/skeleton_registry.h"
 #include "animation/clip_registry.h"
@@ -32,11 +33,32 @@
 // Async internals — GPU-ready intermediate types + worker state
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Pre-copied texture pixels (bgfx::copy on worker thread, handle on main)
+// Pre-copied texture pixels (bgfx::copy on worker thread, handle on main).
+// Carries the cooked format + mip count so block-compressed (BC7/BC5)
+// payloads upload as-is — the runtime never decodes texels.
 struct TexGPU {
     const bgfx::Memory* mem = nullptr;
     uint16_t w = 0, h = 0;
+    uint32_t format = 0;      // assetlib::TextureFormatId
+    uint32_t mips   = 1;
 };
+
+// Worker side: stage a cooked texture's payload for main-thread creation.
+static TexGPU stageTexGPU(const assetlib::TextureAsset& t) {
+    TexGPU out;
+    out.mem    = bgfx::copy(t.pixels.data(), (uint32_t)t.pixels.size());
+    out.w      = (uint16_t)t.header.width;
+    out.h      = (uint16_t)t.header.height;
+    out.format = t.header.format;
+    out.mips   = t.header.mipCount ? t.header.mipCount : 1;
+    return out;
+}
+
+// Main thread: one create path for every cooked-texture drain site.
+static bgfx::TextureHandle createTexFromGPU(const TexGPU& t) {
+    return bgfx::createTexture2D(t.w, t.h, t.mips > 1, 1,
+                                 cookedTexBgfxFormat(t.format), 0, t.mem);
+}
 
 // Pre-copied material data ready for main-thread finalization
 struct MatGPU {
@@ -180,13 +202,7 @@ static TexGPU resolveTextureGPU(const char* texPath,
 
     assetlib::TextureAsset texAsset;
     if (!assetlib::loadTexture(texAsset, cookedAbs)) return {};
-
-    TexGPU out;
-    out.mem = bgfx::copy(texAsset.pixels.data(),
-                          static_cast<uint32_t>(texAsset.pixels.size()));
-    out.w   = static_cast<uint16_t>(texAsset.header.width);
-    out.h   = static_cast<uint16_t>(texAsset.header.height);
-    return out;
+    return stageTexGPU(texAsset);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -349,13 +365,8 @@ TextureHandle AssetService::loadTextureFromCooked(
         return {};
     }
 
-    auto* mem = bgfx::copy(texAsset.pixels.data(),
-                            static_cast<uint32_t>(texAsset.pixels.size()));
-
-    bgfx::TextureHandle th = bgfx::createTexture2D(
-        static_cast<uint16_t>(texAsset.header.width),
-        static_cast<uint16_t>(texAsset.header.height),
-        false, 1, bgfx::TextureFormat::RGBA8, 0, mem);
+    // Format-aware: BC7/BC5 blocks + mips upload as-is (render/cooked_texture.h).
+    bgfx::TextureHandle th = createCookedTexture(texAsset);
 
     if (!bgfx::isValid(th)) {
         LOG_ERROR("AssetService", "bgfx texture creation failed: %s",
@@ -484,10 +495,7 @@ void AssetService::workerLoop() {
             if (!assetlib::loadTexture(texAsset, req.absPath)) {
                 result.error = "Failed to load cooked texture";
             } else {
-                result.texData.mem = bgfx::copy(texAsset.pixels.data(),
-                                     static_cast<uint32_t>(texAsset.pixels.size()));
-                result.texData.w   = static_cast<uint16_t>(texAsset.header.width);
-                result.texData.h   = static_cast<uint16_t>(texAsset.header.height);
+                result.texData = stageTexGPU(texAsset);
                 result.success = true;
                 LOG_INFO("AssetService", "Worker parsed texture: %s (%ux%u)",
                          req.key.c_str(), texAsset.header.width, texAsset.header.height);
@@ -724,17 +732,13 @@ bool AssetService::drainUploads() {
             mat.normalMapName = mg.normalMapName;
 
             if (mg.baseColor.mem) {
-                auto th = bgfx::createTexture2D(
-                    mg.baseColor.w, mg.baseColor.h,
-                    false, 1, bgfx::TextureFormat::RGBA8, 0, mg.baseColor.mem);
+                auto th = createTexFromGPU(mg.baseColor);   // format-aware
                 if (bgfx::isValid(th))
                     mat.baseColorTexture = m_textures.addTexture(
                         Texture(th, mg.baseColor.w, mg.baseColor.h));
             }
             if (mg.normalMap.mem) {
-                auto th = bgfx::createTexture2D(
-                    mg.normalMap.w, mg.normalMap.h,
-                    false, 1, bgfx::TextureFormat::RGBA8, 0, mg.normalMap.mem);
+                auto th = createTexFromGPU(mg.normalMap);
                 if (bgfx::isValid(th))
                     mat.normalMapTexture = m_textures.addTexture(
                         Texture(th, mg.normalMap.w, mg.normalMap.h));
@@ -771,9 +775,7 @@ bool AssetService::drainUploads() {
 
     } else {
         // ── Finalize texture ────────────────────────────────────────
-        bgfx::TextureHandle th = bgfx::createTexture2D(
-            item.texData.w, item.texData.h,
-            false, 1, bgfx::TextureFormat::RGBA8, 0, item.texData.mem);
+        bgfx::TextureHandle th = createTexFromGPU(item.texData);
 
         if (!bgfx::isValid(th)) {
             LOG_ERROR("AssetService", "Async bgfx texture creation failed: %s",

@@ -11,6 +11,7 @@
 #include "render/skinned_vertex.h"
 #include "render/texture.h"
 #include "render/material.h"
+#include "render/cooked_texture.h"   // format-aware BC upload
 
 #include <bgfx/bgfx.h>
 
@@ -57,21 +58,22 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
         const MaterialGPUData& mg = req.asset.materials[i];
         Material mat;
         std::memcpy(mat.baseColorFactor, mg.baseColorFactor, 16);
+        // Format-aware creates: BC7/BC5 blocks + pre-built mips upload
+        // exactly as cooked (mem already copied — instant).
+        auto createTex = [](const TextureGPUData& t) {
+            return bgfx::createTexture2D(t.w, t.h, t.mips > 1, 1,
+                                         cookedTexBgfxFormat(t.format),
+                                         0, t.mem);
+        };
         if (mg.baseColorTexture.mem) {
-            bgfx::TextureHandle th = bgfx::createTexture2D(
-                mg.baseColorTexture.w, mg.baseColorTexture.h,
-                false, 1, bgfx::TextureFormat::RGBA8,
-                0, mg.baseColorTexture.mem); // mem already copied — instant
+            bgfx::TextureHandle th = createTex(mg.baseColorTexture);
             if (bgfx::isValid(th)) {
                 Texture tex; tex.handle = th;
                 mat.baseColorTexture = storage.textures.addTexture(std::move(tex));
             }
         }
         if (mg.normalMapTexture.mem) {
-            bgfx::TextureHandle th = bgfx::createTexture2D(
-                mg.normalMapTexture.w, mg.normalMapTexture.h,
-                false, 1, bgfx::TextureFormat::RGBA8,
-                0, mg.normalMapTexture.mem);
+            bgfx::TextureHandle th = createTex(mg.normalMapTexture);
             if (bgfx::isValid(th)) {
                 Texture tex; tex.handle = th;
                 mat.normalMapTexture = storage.textures.addTexture(std::move(tex));

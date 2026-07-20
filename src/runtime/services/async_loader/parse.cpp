@@ -62,9 +62,11 @@ static TextureGPUData tryLoadCookedTexture(
     assetlib::TextureAsset asset;
     if (!assetlib::loadTexture(asset, cookedAbs)) return {};
     TextureGPUData out;
-    out.mem = bgfx::copy(asset.pixels.data(), (uint32_t)asset.pixels.size());
-    out.w   = (uint16_t)asset.header.width;
-    out.h   = (uint16_t)asset.header.height;
+    out.mem    = bgfx::copy(asset.pixels.data(), (uint32_t)asset.pixels.size());
+    out.w      = (uint16_t)asset.header.width;
+    out.h      = (uint16_t)asset.header.height;
+    out.format = asset.header.format;   // BC blocks upload as-is
+    out.mips   = asset.header.mipCount ? asset.header.mipCount : 1;
     return out;
 }
 
@@ -300,6 +302,9 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                                         (uint32_t)t.pixels.size());
                                     g.w = (uint16_t)t.header.width;
                                     g.h = (uint16_t)t.header.height;
+                                    g.format = t.header.format;   // BC as-is
+                                    g.mips = t.header.mipCount
+                                           ? t.header.mipCount : 1;
                                     return g;
                                 }
                                 return {};

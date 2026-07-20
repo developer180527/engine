@@ -23,11 +23,22 @@ bool loadTexture(TextureAsset& out, const std::filesystem::path& inPath) {
         return false;
     }
     out.header = h;
-    const size_t pixelBytes = h.width * h.height * h.channels;
-    out.pixels.resize(pixelBytes);
-    std::fread(out.pixels.data(), 1, pixelBytes, f);
+    if (out.header.mipCount == 0) out.header.mipCount = 1;   // v1 pad byte
+
+    // v1 / raw RGBA8: exact pixel size. v2 BC blocks + mips: the payload is
+    // everything after the header — sized by seek, zero CPU parsing.
+    size_t payload;
+    if (h.version <= 1 || h.format == kTexRGBA8) {
+        payload = (size_t)h.width * h.height * h.channels;
+    } else {
+        std::fseek(f, 0, SEEK_END);
+        payload = (size_t)std::ftell(f) - sizeof(TextureHeader);
+        std::fseek(f, (long)sizeof(TextureHeader), SEEK_SET);
+    }
+    out.pixels.resize(payload);
+    const size_t got = std::fread(out.pixels.data(), 1, payload, f);
     std::fclose(f);
-    return true;
+    return got == payload;
 }
 
 } // namespace assetlib

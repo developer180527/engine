@@ -47,6 +47,8 @@ struct MeshGPUData {
 struct TextureGPUData {
     const bgfx::Memory* mem = nullptr; // nullptr = no texture
     uint16_t w = 0, h = 0;
+    uint32_t format = 0;               // assetlib::TextureFormatId (0=RGBA8)
+    uint32_t mips   = 1;               // >1 = pre-mipped BC payload
 };
 
 struct MaterialGPUData {

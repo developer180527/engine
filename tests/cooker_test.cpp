@@ -17,9 +17,12 @@
 
 #include "assets/cookers/mesh_cooker.h"
 #include "assets/cookers/scene_cooker.h"
+#include "assets/cookers/texture_encode.h"
 #include <assetlib/mesh_asset.h>
 #include <assetlib/scene_asset.h>
+#include <assetlib/texture_asset.h>
 #include <assetlib/cook_pipeline.h>
+#include <vector>
 
 namespace fs = std::filesystem;
 namespace { int g_failures = 0; }
@@ -174,6 +177,57 @@ int main() {
                   "glTF normal rotated at scale 0.0001 (n=%.3f,%.3f,%.3f)",
                   v.nx, v.ny, v.nz);
         }
+    }
+
+    // ── 2c. BC texture encode: format, mips, packed size, v1 compat ──────
+    {
+        // 8x8 gradient — encodes to BC7 with a 4-level mip chain (8,4,2,1).
+        std::vector<uint8_t> rgba(8 * 8 * 4);
+        for (int i = 0; i < 8 * 8; ++i) {
+            rgba[i*4+0] = (uint8_t)(i * 4);
+            rgba[i*4+1] = (uint8_t)(255 - i * 4);
+            rgba[i*4+2] = 128; rgba[i*4+3] = 255;
+        }
+        assetlib::TextureAsset t;
+        CHECK(cook::encodeTexture(rgba.data(), 8, 8, false, t),
+              "BC7 encode succeeds");
+        CHECK(t.header.format == assetlib::kTexBC7 && t.header.mipCount == 4,
+              "BC7 + 4 mips (fmt=%u mips=%u)", t.header.format, t.header.mipCount);
+        // 8x8=4 blocks, 4x4=1, 2x2=1, 1x1=1 → 7 blocks × 16 B = 112 B
+        CHECK(t.pixels.size() == 112,
+              "packed mip chain is 112 B (%zu) — was 256 B raw, no mips",
+              t.pixels.size());
+
+        assetlib::TextureAsset n;
+        CHECK(cook::encodeTexture(rgba.data(), 8, 8, true, n)
+              && n.header.format == assetlib::kTexBC5,
+              "normal maps encode BC5");
+        CHECK(cook::looksLikeNormalMap("service_pistol_nor_gl_4k.jpg")
+              && !cook::looksLikeNormalMap("service_pistol_diff_4k.jpg"),
+              "normal-map filename heuristic");
+
+        // v2 round-trip + v1 back-compat through the same loader.
+        fs::path v2 = dir / "enc.ctex";
+        CHECK(assetlib::saveTexture(t, v2), "v2 texture saves");
+        assetlib::TextureAsset back;
+        CHECK(assetlib::loadTexture(back, v2)
+              && back.header.format == assetlib::kTexBC7
+              && back.header.mipCount == 4
+              && back.pixels.size() == 112,
+              "v2 texture round-trips (blocks + mips intact)");
+
+        assetlib::TextureAsset v1;
+        v1.header.version = 1; v1.header.format = 0; v1.header.mipCount = 0;
+        v1.header.width = 2; v1.header.height = 2;
+        v1.pixels.assign(16, 0x7F);
+        fs::path v1p = dir / "legacy.ctex";
+        CHECK(assetlib::saveTexture(v1, v1p), "v1 texture saves");
+        assetlib::TextureAsset v1b;
+        CHECK(assetlib::loadTexture(v1b, v1p)
+              && v1b.header.format == assetlib::kTexRGBA8
+              && v1b.header.mipCount == 1
+              && v1b.pixels.size() == 16,
+              "v1 legacy texture still loads (format 0, 1 mip)");
     }
 
     // ── 3. Garbage in, failure out — never a crash ────────────────────────

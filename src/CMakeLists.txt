@@ -64,6 +64,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         assets/cookers/mesh_cooker.cpp
         assets/cookers/scene_cooker.cpp
         assets/cookers/texture_cooker.cpp
+        assets/cookers/texture_encode.cpp
         assets/cookers/cook_service.cpp)
 else()
     set(ENGINE_COOKER_SOURCES "")
@@ -108,6 +109,11 @@ target_link_libraries(engine_core PUBLIC
 )
 if(ENGINE_WITH_SOURCE_IMPORTERS)
     target_link_libraries(engine_core PUBLIC assimp)
+    # BC7/BC5 texture encoding (texture_encode.cpp) — the same encoder
+    # texturec uses. Offline-only: shipped runtimes read blocks, never encode.
+    target_link_libraries(engine_core PRIVATE bimg_encode bimg bx)
+    target_include_directories(engine_core PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bimg/include)
 endif()
 target_compile_definitions(engine_core PUBLIC
     BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>   # bx headers (cooker skeleton types)
