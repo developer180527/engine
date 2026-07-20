@@ -14,10 +14,11 @@
 class CookService {
 public:
     struct Stats {
-        int  total   = 0;
-        int  cooked  = 0;
-        int  failed  = 0;
-        bool active  = false;
+        int  total    = 0;
+        int  cooked   = 0;
+        int  failed   = 0;
+        int  deferred = 0;   // files not-yet-settled this pass (mid-write)
+        bool active   = false;
         std::string currentAsset;
     };
 
@@ -30,12 +31,28 @@ public:
     // Launch background cook thread — call once after editor opens
     void start();
 
-    // Run a single synchronous cook pass on the calling thread — no
-    // background thread. For CLI tooling (engine_cook). Returns the number
+    // Run synchronous cook passes on the calling thread until they converge —
+    // no background thread. For CLI tooling (engine_cook). Returns the number
     // of assets that failed to cook (0 = success).
+    //
+    // Loops rather than running a single pass because fileSettled() defers any
+    // file whose (size, mtime) it hasn't seen stable across two polls — the
+    // burst-write guard. On a static disk a file settles on the very next pass;
+    // a real in-flight export settles once its writer stops. We keep going
+    // while a pass still cooks or defers work, with a short sleep so genuinely
+    // active writes can advance, and a hard cap so a perpetually-written file
+    // can't spin us forever.
     int cookOnce() {
-        runOneCookPass();
-        return m_stats.load().failed;
+        int totalFailed = 0;
+        for (int pass = 0; pass < 240; ++pass) {   // ~cap; static trees exit in 2
+            runOneCookPass();
+            const Stats s = m_stats.load();
+            totalFailed = s.failed;
+            if (s.deferred == 0 && s.cooked == 0) break;   // converged
+            if (s.deferred > 0)
+                std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        }
+        return totalFailed;
     }
 
     // Re-scan assets/ and cook anything new or stale.
@@ -69,6 +86,7 @@ private:
         std::atomic<int>  total{0};
         std::atomic<int>  cooked{0};
         std::atomic<int>  failed{0};
+        std::atomic<int>  deferred{0};
         std::atomic<bool> active{false};
         // currentAsset needs a mutex — strings aren't atomically copyable
         mutable std::mutex        nameMtx;
@@ -76,10 +94,11 @@ private:
 
         Stats load() const {
             Stats s;
-            s.total  = total.load();
-            s.cooked = cooked.load();
-            s.failed = failed.load();
-            s.active = active.load();
+            s.total    = total.load();
+            s.cooked   = cooked.load();
+            s.failed   = failed.load();
+            s.deferred = deferred.load();
+            s.active   = active.load();
             std::lock_guard<std::mutex> lk(nameMtx);
             s.currentAsset = currentAsset;
             return s;

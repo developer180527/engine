@@ -153,10 +153,11 @@ void CookService::runOneCookPass() {
                      rec.errorMessage.empty() ? "no error recorded" : rec.errorMessage.c_str());
         }
 
-    m_stats.total  = total;
-    m_stats.cooked = 0;
-    m_stats.failed = standingFailures;
-    m_stats.active = total > 0;
+    m_stats.total    = total;
+    m_stats.cooked   = 0;
+    m_stats.failed   = standingFailures;
+    m_stats.deferred = deferred;   // lets the synchronous cookOnce() converge
+    m_stats.active   = total > 0;
 
     if (total == 0) {
         if (standingFailures > 0)
