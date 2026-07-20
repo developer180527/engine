@@ -100,8 +100,11 @@ inline std::string resolve(const AssetRef& ref,
         return {};
     }
 
-    // 3. Legacy absolute path (old scene files).
-    if (fs::exists(p)) return p.string();
+    // 3. Legacy absolute path (old scene files). Only an ABSOLUTE path is
+    //    trusted here: a bare relative ref with an empty projectRoot would
+    //    otherwise resolve against the process CWD — the exact fragility
+    //    AssetRef exists to eliminate (asset audit: "CWD Dependency Fallback").
+    if (p.is_absolute() && fs::exists(p)) return p.string();
 
     // 3b. The absolute path is from another machine/layout — re-root the
     // "assets/..." suffix onto this project.

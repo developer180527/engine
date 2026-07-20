@@ -193,7 +193,7 @@ MeshImportResult GltfImporter::load(const std::string& path,
                 const cgltf_accessor* posAcc    = findAttribute(&prim, cgltf_attribute_type_position);
                 const cgltf_accessor* normalAcc = findAttribute(&prim, cgltf_attribute_type_normal);
                 const cgltf_accessor* uvAcc     = findAttribute(&prim, cgltf_attribute_type_texcoord);
-                if (!posAcc || !prim.indices) continue;   // unusable primitive — skip
+                if (!posAcc) continue;   // no positions — genuinely unusable
 
                 const uint32_t vertBase = (uint32_t)vertices.size();
                 for (size_t i = 0; i < posAcc->count; ++i) {
@@ -203,15 +203,25 @@ MeshImportResult GltfImporter::load(const std::string& path,
                     float nrm[3] = {0,1,0};
                     if (normalAcc && i < normalAcc->count) readFloats(normalAcc, i, nrm, 3);
                     xformNormal(nmat, nrm, v.normal);
-                    if (uvAcc) readFloats(uvAcc, i, v.uv, 2);
+                    if (uvAcc && i < uvAcc->count) readFloats(uvAcc, i, v.uv, 2);
                     bMin.x = std::min(bMin.x, v.position[0]); bMax.x = std::max(bMax.x, v.position[0]);
                     bMin.y = std::min(bMin.y, v.position[1]); bMax.y = std::max(bMax.y, v.position[1]);
                     bMin.z = std::min(bMin.z, v.position[2]); bMax.z = std::max(bMax.z, v.position[2]);
                     vertices.push_back(v);
                 }
                 const uint32_t idxStart = (uint32_t)indices.size();
-                for (size_t i = 0; i < prim.indices->count; ++i)
-                    indices.push_back(vertBase + (uint32_t)cgltf_accessor_read_index(prim.indices, i));
+                if (prim.indices) {
+                    for (size_t i = 0; i < prim.indices->count; ++i)
+                        indices.push_back(vertBase + (uint32_t)cgltf_accessor_read_index(prim.indices, i));
+                } else {
+                    // Non-indexed primitive — valid per the glTF spec: vertices
+                    // are streamed sequentially. Synthesize the index run so the
+                    // merged buffer stays uniformly indexed instead of silently
+                    // dropping the primitive (importer audit: "SILENT Dropping
+                    // of Non-Indexed glTF Geometry").
+                    for (size_t i = 0; i < posAcc->count; ++i)
+                        indices.push_back(vertBase + (uint32_t)i);
+                }
 
                 SubmeshRange r;
                 r.indexOffset = idxStart;

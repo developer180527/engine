@@ -42,15 +42,23 @@ static std::string discoverTexture(const std::filesystem::path& dir,
     };
     static const char* kExts[] = { ".jpg", ".png", ".jpeg", ".tga", nullptr };
 
+    // Files that advertise a NON-color map — binding one of these as the
+    // diffuse map is the failure a loose substring test invites (a normal map
+    // named rock_COL_normal.png contains "_col"). Veto them outright.
+    static const char* kNonDiffuse[] = {
+        "normal", "_nor", "_nrm", "rough", "metal", "_ao",
+        "height", "_disp", "specular", "_spec", nullptr
+    };
+
     std::string lowerBase = baseName;
-    for (auto& c : lowerBase) c = (char)std::tolower(c);
+    for (auto& c : lowerBase) c = (char)std::tolower((unsigned char)c);
 
     try {
         for (const auto& de : std::filesystem::directory_iterator(dir)) {
             if (!de.is_regular_file()) continue;
             std::string fname = de.path().filename().string();
             std::string lf = fname;
-            for (auto& c : lf) c = (char)std::tolower(c);
+            for (auto& c : lf) c = (char)std::tolower((unsigned char)c);
 
             // Must start with the model base name
             if (lf.find(lowerBase) != 0) continue;
@@ -61,10 +69,17 @@ static std::string discoverTexture(const std::filesystem::path& dir,
                 if (de.path().extension() == kExts[i]) { goodExt = true; break; }
             if (!goodExt) continue;
 
+            // Reject anything that names a non-color map — this is the diffuse
+            // slot only (importer audit: "Broad Substring Matching").
+            bool nonDiffuse = false;
+            for (int i = 0; kNonDiffuse[i]; ++i)
+                if (lf.find(kNonDiffuse[i]) != std::string::npos) { nonDiffuse = true; break; }
+            if (nonDiffuse) continue;
+
             // Must contain a diffuse-indicating suffix
             for (int i = 0; kSuffixes[i]; ++i) {
                 std::string ls = kSuffixes[i];
-                for (auto& c : ls) c = (char)std::tolower(c);
+                for (auto& c : ls) c = (char)std::tolower((unsigned char)c);
                 if (lf.find(ls) != std::string::npos) {
                     LOG_SUCCESS("Assimp", "Texture discovered: %s", fname.c_str());
                     return de.path().string();
@@ -100,7 +115,9 @@ static TextureHandle importTexture(const aiScene*   scene,
                 h = (int)t->mHeight;
                 size_t sz = (size_t)(w * h * 4);
                 pixels = (stbi_uc*)malloc(sz);
-                // Assimp stores as ARGB; reorder to RGBA for bgfx
+                // aiTexel's in-memory layout is BGRA, but its .r/.g/.b/.a
+                // MEMBERS name the components — reading them by name yields
+                // the correct RGBA order for bgfx regardless of byte order.
                 const aiTexel* src = t->pcData;
                 for (int p = 0; p < w * h; ++p) {
                     pixels[p*4+0] = src[p].r;
@@ -304,6 +321,16 @@ static MeshHandle finalizeMesh(const std::vector<VertT>& verts,
         bgfx::copy(verts.data(), (uint32_t)(verts.size()*sizeof(VertT))),
         VertT::layout());
 
+    // Validate before wrapping — a failed GPU allocation must not be stored as
+    // a live handle (importer audit: "Unchecked GPU Buffer Creation"; the glTF
+    // importer already does this).
+    if (!bgfx::isValid(vbh) || !bgfx::isValid(ibh)) {
+        if (bgfx::isValid(vbh)) bgfx::destroy(vbh);
+        if (bgfx::isValid(ibh)) bgfx::destroy(ibh);
+        LOG_ERROR("Assimp", "GPU buffer creation failed for %s", sourcePath.c_str());
+        return MeshHandle{};
+    }
+
     Mesh mesh(vbh, ibh, (uint32_t)indices.size());
     mesh.material   = submeshes.empty() ? MaterialHandle{} : submeshes.front().material;
     mesh.sourcePath = sourcePath;
@@ -452,6 +479,9 @@ MeshImportResult AssimpImporter::load(const std::string& path,
     MeshHandle merged = skinnedModel
         ? finalizeMesh(skinnedVerts, indices, std::move(submeshes), bounds, path, storage)
         : finalizeMesh(staticVerts,  indices, std::move(submeshes), bounds, path, storage);
+
+    if (!merged.valid())
+        return MeshImportResult::fail("Assimp: GPU buffer creation failed: " + path);
 
     LOG_INFO("Assimp", "Merged mesh: %zu submesh(es), %u indices%s",
              subCount, (uint32_t)indices.size(), skinnedModel ? " [skinned]" : "");

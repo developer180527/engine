@@ -5,6 +5,9 @@
 #include "core/logger.h"
 #include <assetlib/scene_asset.h>   // header peek: version-aware staleness
 #include <fstream>
+#include <mutex>
+#include <unordered_map>
+#include <utility>
 
 CookService::CookService(const std::filesystem::path& dbPath,
                          const std::filesystem::path& projectRoot,
@@ -44,6 +47,26 @@ static bool fileSettled(const std::filesystem::path& p) {
     std::error_code ec;
     const auto mtime = std::filesystem::last_write_time(p, ec);
     if (ec) return false;                        // vanished mid-scan — skip
+    const auto size  = std::filesystem::file_size(p, ec);
+    if (ec) return false;
+
+    // mtime-age alone is not enough: a slow export over a network drive or a
+    // saturated disk can stall >750ms *between* chunks, so the file looks old
+    // while it is still growing, and we cook a truncated asset (cooker audit:
+    // "750ms Burst-Write Trap"). Require the (size, mtime) pair to be UNCHANGED
+    // since the previous poll as well — a file mid-write fails this on the pass
+    // where its size moved, and only settles once writing has actually stopped.
+    static std::mutex mtx;
+    static std::unordered_map<std::string,
+        std::pair<uintmax_t, std::filesystem::file_time_type>> seen;
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        auto& prev = seen[p.string()];
+        const bool stable = (prev.first == size && prev.second == mtime);
+        prev = {size, mtime};
+        if (!stable) return false;               // first sight or still moving
+    }
+
     const auto age = std::filesystem::file_time_type::clock::now() - mtime;
     return age >= std::chrono::milliseconds(750);
 }

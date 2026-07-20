@@ -28,14 +28,14 @@ public:
     bool supportsFile(const std::filesystem::path& p) const {
         std::string ext = p.extension().string();
         if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
-        for (auto& c : ext) c = (char)std::tolower(c);
+        for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
         return supports(ext);
     }
 
     MeshImportResult load(const std::string& path, AssetStorage& storage) const {
         std::string ext = std::filesystem::path(path).extension().string();
         if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
-        for (auto& c : ext) c = (char)std::tolower(c);
+        for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
         auto* imp = findImporter(ext);
         if (!imp) return MeshImportResult::fail("No importer for '." + ext + "'");
         return imp->load(path, storage);
@@ -49,10 +49,14 @@ public:
         auto it = m_cache.find(canonical);
         if (it != m_cache.end()) {
             std::printf("[Registry] Cache hit: %s\n", canonical.c_str());
-            return MeshImportResult::ok(it->second);
+            // Return the FULL cached result — caching only the MeshHandle
+            // stripped the skeleton + clips on every hit, so a skinned asset
+            // loaded twice lost its animation on the second load (importer
+            // audit: "Animation Data Loss on Cache Hit").
+            return it->second;
         }
         auto result = load(path, storage);
-        if (result.success) m_cache[canonical] = result.mesh;
+        if (result.success) m_cache[canonical] = result;
         return result;
     }
 
@@ -74,5 +78,5 @@ public:
 
 private:
     std::vector<std::unique_ptr<MeshImporter>> m_importers;
-    std::map<std::string, MeshHandle>          m_cache;
+    std::map<std::string, MeshImportResult>    m_cache;
 };

@@ -29,24 +29,55 @@
 namespace asset_path {
 
 // Cached at first call.
+//
+// Runs inside a static initializer, so it must NEVER let an exception escape:
+// an uncaught throw here (e.g. fs::canonical failing under a chroot/flatpak
+// where /proc is masked, or a path that won't resolve) calls std::terminate
+// before main() even begins. Every filesystem call uses the error_code
+// overloads, and the whole body is wrapped so any surprise degrades to the
+// current-working-directory fallback instead of killing the process.
 inline const std::filesystem::path& executableDir() {
     static const std::filesystem::path dir = []() -> std::filesystem::path {
         namespace fs = std::filesystem;
-
+        std::error_code ec;
+        try {
 #if defined(__APPLE__)
-        char buf[1024];
-        uint32_t size = sizeof(buf);
-        if (_NSGetExecutablePath(buf, &size) == 0) {
-            return fs::canonical(buf).parent_path();
-        }
+            // _NSGetExecutablePath needs a buffer of the exact size; on
+            // overflow it returns non-zero and writes the required length.
+            uint32_t size = 1024;
+            std::string buf(size, '\0');
+            if (_NSGetExecutablePath(buf.data(), &size) != 0) {
+                buf.resize(size);
+                if (_NSGetExecutablePath(buf.data(), &size) != 0)
+                    return fs::current_path(ec);
+            }
+            buf.resize(std::char_traits<char>::length(buf.c_str()));
+            auto c = fs::canonical(buf, ec);
+            if (!ec) return c.parent_path();
 #elif defined(__linux__)
-        return fs::canonical("/proc/self/exe").parent_path();
+            auto c = fs::canonical("/proc/self/exe", ec);
+            if (!ec) return c.parent_path();
 #elif defined(_WIN32)
-        char buf[1024];
-        GetModuleFileNameA(nullptr, buf, sizeof(buf));
-        return fs::canonical(buf).parent_path();
+            // Wide-char + growing buffer: GetModuleFileNameA mangles non-ASCII
+            // install paths and, on truncation, does not null-terminate. The W
+            // variant with an explicit truncation check (n == size) avoids both.
+            std::wstring buf(1024, L'\0');
+            for (;;) {
+                DWORD n = GetModuleFileNameW(nullptr, buf.data(), (DWORD)buf.size());
+                if (n == 0) break;                      // hard failure
+                if (n < buf.size()) {                   // fully written + terminated
+                    buf.resize(n);
+                    auto c = fs::canonical(buf, ec);
+                    if (!ec) return c.parent_path();
+                    break;
+                }
+                if (buf.size() >= (1u << 16)) break;    // absurd — give up
+                buf.resize(buf.size() * 2);             // truncated — grow, retry
+            }
 #endif
-        return fs::current_path();  // fallback
+        } catch (...) { /* fall through to CWD */ }
+        auto cwd = fs::current_path(ec);
+        return ec ? fs::path{} : cwd;                   // last-resort fallback
     }();
     return dir;
 }

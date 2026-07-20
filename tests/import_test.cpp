@@ -22,6 +22,8 @@
 #include "render/texture_registry.h"
 #include "render/material_registry.h"
 #include "render/mesh.h"
+#include "animation/skeleton_registry.h"
+#include "animation/clip_registry.h"
 
 static int g_failures = 0;
 #define CHECK(cond, ...) do {                                        \
@@ -73,7 +75,9 @@ int main(int argc, char** argv) {
     AssetRegistry    meshes;
     TextureRegistry  textures;
     MaterialRegistry materials;
-    AssetStorage storage{meshes, textures, materials};
+    SkeletonRegistry skeletons;   // wired so skinned models yield a skeleton —
+    AnimClipRegistry clips;       // the cache-preservation regression needs it
+    AssetStorage storage{meshes, textures, materials, &skeletons, &clips};
 
     ImporterRegistry importers;
     importers.registerImporter(std::make_unique<GltfImporter>());
@@ -107,6 +111,20 @@ int main(int argc, char** argv) {
                 if (s.material.id != firstMat.id) anyDistinctMats = true;
             }
             CHECK(ranges_ok, "all submesh ranges lie within the shared index buffer");
+        }
+
+        // Regression (importer audit "Animation Data Loss on Cache Hit"): a
+        // skinned asset loaded via the CACHE must still carry its skeleton and
+        // clips. The cache used to store only the MeshHandle, so the second
+        // load silently stripped the animation. Only exercised for a model that
+        // actually rigged on the direct load.
+        if (r.skeleton.valid()) {
+            MeshImportResult c1 = importers.loadCached(path, storage);  // populates cache
+            MeshImportResult c2 = importers.loadCached(path, storage);  // cache HIT
+            CHECK(c2.skeleton.valid(),
+                  "cache hit preserves skeleton (was dropped pre-fix)");
+            CHECK(c2.clips.size() == c1.clips.size() && !c2.clips.empty(),
+                  "cache hit preserves %zu clip(s)", c1.clips.size());
         }
     }
 

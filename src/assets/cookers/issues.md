@@ -1,70 +1,41 @@
-# Asset Cooking Pipeline — Technical Debt & Issues Tracker
+# Issues (Sat Jul 11 16:56)
 
-This file tracks architectural, mathematical, and algorithmic issues discovered during the code review of the background asset cook pipeline. 
+1\. The try/catch Illusion with Native Code
+Wrapping runOneCookPass in a standard C++ try/catch(...) block only catches C++ exceptions. It will not trap native hardware exceptions or OS signals like SIGSEGV (segmentation faults), SIGBUS, or std::abort() called from deep within raw C/C++ libraries like Assimp. If a corrupted FBX triggers a null-pointer dereference or an out-of-bounds read inside a third-party dependency, the entire editor process will drop instantly.
+
+2\. Static Thread Semaphores vs. Dynamic Memory Pressure
+Clamping Assimp parsing to a fixed hardware_concurrency / 4 is a rigid proxy for memory management.
+
+* On low-core systems (e.g., a 4-core machine), it drops the geometry pipeline to 1 single thread, creating a massive bottleneck even if the meshes being loaded are tiny 10KB files.
+
+* On high-core systems (e.g., 32 cores), it allows 8 concurrent threads. If an artist drops eight massive 3GB CAD-exported FBX files into the watch folder simultaneously, those 8 threads can still easily trigger an Out-Of-Memory (OOM) crash.
+
+3\. Non-Uniform Zero-Scale Matrix Wipeout
+The row-norm product singularity guard works brilliantly for uniform scaling, but it breaks under intentional non-uniform flattening. If an artist intentionally flattens a mesh along a single axis (e.g., setting the local scale of a UI card, mirror, or 2D sprite plane to X = 0), the row-norm product drops to exactly 0. This incorrectly flags the entire matrix as a degenerate singularity, causing your guard to wipe out all valid rotation and translation data and reset the transform completely to an identity matrix.
+
+4\. The 750ms Burst-Write Trap
+Relying strictly on a 750ms modification time (mtime) age assumes that file writes are linear and continuous. If an artist exports a massive 8K texture or a dense scene asset from Substance Painter or Maya over a slower storage medium (like a network drive, a saturated SATA SSD, or an external HDD), the DCC's file-writing thread can easily stall or pause for more than 750ms between data chunks. The CookService will assume the file has settled, attempt to cook a partially written, corrupted asset, and potentially cache a broken build.
+
+5\. Opposing Vector Normalization NaNs
+When downsampling normal maps for lower mip levels, averaging vectors before re-normalizing is mathematically correct for preserving direction, but it introduces a severe edge case. If a high-frequency normal map contains micro-creases where adjacent texels point in exactly opposite directions (e.g., one vector is (0.707, 0.707, 0) and its neighbor is (-0.707, -0.707, 0)), averaging them results in a zero vector (0, 0, 0). Calling normalize() on a zero vector produces NaN values, which will cascade down and corrupt the entire remaining mip chain with black pixels or rendering artifacts.
+
+6\. CPU Block Compression Bottlenecks
+BC7 texture encoding is notoriously CPU-heavy and slow. If a user drops a dozen new uncompressed textures into the project, running BC7 compression synchronously within the asset worker pool will heavily paralyze the responsiveness of the cook loop. Without a robust Content-Addressable Storage (CAS) or a local GUID-based hash cache to verify if the raw texture bytes have actually changed, minor scene re-saves will force repetitive, expensive compression passes.
 
 ---
 
-## 1. Concurrency & Resource Management
+## RESOLUTION (verified against source 2026-07-21)
 
-### [CRITICAL] Assimp Parallel Memory Explosion (OOM Risk)
-* **File / Location:** `cook_service.cpp` (Worker Thread Fan-out) & `mesh_cooker.cpp`
-* **Mechanism:** The pipeline schedules multiple concurrent cooks on available worker threads. Each thread processing a 3D asset instantiates an `Assimp::Importer`. Assimp builds heavy internal node hierarchies, splits vertex channels, and caches massive datasets during preprocessing (`aiProcess_JoinIdenticalVertices`, `aiProcess_CalcTangentSpace`). 
-* **Impact:** Dropping multiple high-poly meshes (e.g., millions of triangles or multi-layered production FBX files) into the watch folder simultaneously will cause concurrent spikes in RAM that easily overrun hardware limits, leading to an OS-level Out-of-Memory (OOM) crash of the engine process.
-* **Resolution Strategy:** Implement a localized execution limiter (such as a named counting semaphore or a specialized job tag inside your task graph system) specifically for `MeshCooker::cook`. Allow lightweight texture/scene cooks to scale freely across all cores, but limit heavy mesh imports to a strict concurrent cap (e.g., maximum of 2 to 4 running simultaneously).
+Every claim re-checked against the actual code before acting.
 
-### [MEDIUM] Race Condition on Unfinished File Writes
-* **File / Location:** `texture_cooker.cpp` (`stbi_load`) & `mesh_cooker.cpp` (`ReadFile`)
-* **Mechanism:** The background thread detects a file change based on basic directory iteration or OS file system notifications and immediately fires off cook tasks. It doesn't verify if the file has finished writing.
-* **Impact:** If an external DCC tool (Blender, Substance Designer, Photoshop) is in the middle of saving a huge file when the asset pipeline triggers, `stbi_load` or Assimp will read a truncated/corrupted asset, leading to false-positive cook failures or data corruption.
-* **Resolution Strategy:** Before passing the asset file path to the cooker, check if the file is locked by another process or poll its size/modification timestamp across two brief intervals to confirm it has fully settled.
+| # | Claim | Verdict | Action |
+|---|-------|---------|--------|
+| 1 | try/catch can't catch SIGSEGV from Assimp | **TRUE (known limitation)** | C++ `try/catch(...)` genuinely can't trap signals. The robust fix is out-of-process cooking (cook worker in a child process, crash = failed asset not dead editor). That's a real architecture change — tracked, not done here. |
+| 2 | hw/4 clamp → 1 thread on 4-core, 8 on 32-core | **NUMBERS FALSE** | The gate is `std::clamp(hw/4, 2u, 4u)` (`mesh_cooker.cpp:456`): 4-core → **2**, 32-core → **4**, never 1 or 8. The "memory-aware throttle" ideal is valid but is a hard heuristic (per-file peak RSS is unknowable pre-parse); the fixed clamp is a deliberate, bounded tradeoff. |
+| 3 | Non-uniform zero-scale wipes rotation+translation | **FALSE** | `cookNormalMatrix` returns only the 3×3 **normal** matrix. Vertex **positions** are transformed by the separate `world` matrix (`emitMesh` `w3`), which is never touched. A genuinely flattened (rank-deficient) basis has no defined inverse-transpose, so the identity fallback is correct; normals are re-normalized after transform regardless. No position/translation loss. |
+| 4 | 750ms mtime settle cooks partial slow writes | **TRUE** | **FIXED** — `fileSettled` (`cook_service.cpp`) now also requires the `(size, mtime)` pair to be **unchanged since the previous poll**. A file still growing between passes fails the stability check even if its mtime looks old; it only settles once writing has actually stopped. |
+| 5 | Opposing normal texels → zero vector → NaN mips | **FALSE** | `downsample2x2` already guards it: `if (len > 1e-6f) normalize else n=(0,0,1)` (`texture_encode.cpp:56-58`). No `normalize()` of a zero vector, no NaN. |
+| 6 | BC7 CPU-heavy + no CAS/hash cache | **PARTIALLY FALSE** | BC7 cost: **addressed** — quality dropped `Default`→`Fastest` (nvtt exhaustive search was the fan-spinner). CAS claim is **false**: the pipeline already hashes source bytes (`computeHash`/`isStale`); a scene re-save leaves texture hashes unchanged, so textures are **not** recompressed. |
 
----
+**Fixed:** #4. **Addressed:** #6 (quality). **False/already-handled:** #3, #5, #6 (CAS). **Deferred (real, architectural):** #1. **Refuted numbers:** #2.
 
-## 2. Dependency Tracking & Invalidation
-
-### [HIGH] Global `assetsChanged` Scene Invalidation Loop
-* **File / Location:** `cook_service.cpp` (`CookService::cookSceneFiles`)
-* **Mechanism:** The cooker triggers a blind re-evaluation of all scene files using the following check:
-  ```cpp
-  if (!stale && assetsChanged) stale = true;
-Impact: If a technical artist changes a single low-res texture or modifies a single material setting anywhere in the project, assetsChanged flags true. The compiler will aggressively discard and re-cook every single scene file in the entire workspace. For large projects with thousands of scene chunks, this causes massive, unnecessary build times.Resolution Strategy: Eradicate the global boolean flag. Replace it with a lightweight Asset Dependency Graph. When a scene is cooked, store its direct asset reference UUIDs (meshes, textures, materials) in the SQLite registry. Only invalidate a scene file if its specific asset dependencies have changed.
-
-## 3. Mathematical Precision & Scale Edge Cases 
-### [HIGH] Degenerate Normal Matrix Scale Threshold (Determinant Trap)
-
-File / Location: mesh_cooker.cpp (Normal Matrix Inversion/Transposition Pass)Mechanism: The cooker guards against singular, non-invertible transformations by evaluating the 3x3 determinant:
-
-```
-C++float det = nm.Determinant();
-if (std::fabs(det) > 1e-12f) { ... }
-else { nm = aiMatrix3x3(); }
-```
-
-Impact: The determinant of a scale matrix drops exponentially as it multiplies across dimensions ($Scale_X \times Scale_Y \times Scale_Z$). If an asset is authored at a large scale in a tool like Blender and scaled down to $0.0001$ inside the editor, its determinant will fall below $10^{-12}$. The cooker will falsely flag this valid matrix as degenerate and overwrite it with an Identity matrix. At runtime, the vertices will shrink, but the lighting normals will point in incorrect directions, resulting in broken shading/normals.Resolution Strategy: Normalize the matrix's basis vectors (stripping the scale component) prior to testing for degeneracy, or scale the epsilon check threshold dynamically relative to the matrix's Frobenius norm.
-
-## 4. Algorithmic Complexity & Performance Bottlenecks
-
-### [MEDIUM] $O(N^2)$ Complexity in Scene String Table GenerationFile / Location:
- scene_cooker.cpp (assetlib::stringTableAppend)Mechanism: As the scene cooker converts JSON records to flat binaries, it continually inserts item names, entity names, and material paths into a unified, sequential string table via linear deduplication scans.Impact: For massive, highly populated scenes (e.g., open-world chunks with tens of thousands of entities, trees, and props), the performance will decay exponentially into an $O(N^2)$ search pattern, turning what should be a fast conversion pass into a massive CPU stall.Resolution Strategy: Instantiate a temporary std::unordered_map<std::string, uint32_t> tracking pool locally inside cookSceneFile. Use this map to quickly handle $O(1)$ string-to-offset lookups during assembly, and write out the completely packed flat byte array to disk exactly once at the end.[LOW] Redundant Dynamic Allocations in Texture IngestionFile / Location: texture_cooker.cppMechanism: Pixel data is copied using vector assignment:C++asset.pixels.assign(px, px + w * h * 4);
-Impact: stbi_load allocates heap memory for the image bytes, and std::vector::assign immediately performs a second global allocation and memory copy (memcpy) to move those pixels into the asset structural container. This causes unnecessary memory bandwidth churn during batch asset processing.Resolution Strategy: Replace the standard vector container with a custom, lightweight memory buffer wrapper that can explicitly adopt and wrap the ownership of the pointer returned directly from stbi_load, completely bypassing the extra allocation step.
-
-## 5. Robustness & Error Resilience
-
-### [HIGH] Unwrapped Worker Thread Exception Paths 
-File / Location: cook_service.cppMechanism: Worker threads run task lambdas without outer high-level try/catch blocks.Impact: While your cook pipeline checks standard errors gracefully via return codes, if a third-party library (Assimp, nlohmann::json, or standard library vector reallocations) encounters an unexpected corrupted file condition and throws an exception (std::bad_alloc, nlohmann::json::parse_error, std::out_of_range), the background thread pool or worker thread will abruptly terminate. This will cause the background cook pipeline to lock up completely or silently crash the host editor.Resolution Strategy: Wrap the primary execution lambda within CookService in a generalized try { ... } catch (const std::exception& e) { ... } safety net. Log any catastrophic runtime errors cleanly to your Logger, tag the statistical snapshot as a failed asset cook, and keep the worker thread alive to safely process the remaining asset queue.
----
-
-# RESOLUTION STATUS (July 10, 2026)
-
-All claims re-verified against source before fixing; ONE was wrong.
-Regression coverage: tests/cooker_test.cpp (unit lane).
-
-| Finding | Verdict | Fix |
-|---|---|---|
-| Assimp parallel OOM | CONFIRMED | Counting-semaphore gate in MeshCooker::cook — hw/4 permits clamped [2,4]; texture/scene cooks still scale across all cores |
-| Unfinished-write race | CONFIRMED | fileSettled(): sources (and scene JSON) must have mtime >= 750ms old; deferred files trigger a follow-up pass (400ms nap + requeue) |
-| Global assetsChanged loop | CONFIRMED | Replaced with per-scene sceneDependsOnNewerAssets(): only scenes whose OWN referenced assets have newer cooked outputs re-cook |
-| Determinant trap | CONFIRMED | cookNormalMatrix(): scale-invariant test (|det| vs row-norm product) — uniform scale passes at ANY magnitude; genuine singularity still falls back. Old |det|>1e-12 failed all scales below ~1e-4 |
-| O(N²) string table | **FALSE** | stringTableAppend never had a dedup scan — pure O(1) append. The REAL defect was the opposite: zero dedup (100 shared refs = 100 copies, 4.4KB → 435B after interning). Fixed with an O(1) intern map |
-| Texture double-copy | CONFIRMED, ACCEPTED | LOW; the fix (custom buffer adopting stbi ownership) contradicts this file's own "do NOT micro-optimize cookers" philosophy. Revisit if texture batch cooks ever profile hot |
-| Unwrapped exceptions | CONFIRMED (×2) | Nets in BOTH thread sites: CookService::cookLoop (service survives a crashed pass) and CookPipeline::cookMany workers (a throwing cook() = per-asset failure, not process death) |

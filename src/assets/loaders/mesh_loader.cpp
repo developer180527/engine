@@ -29,6 +29,31 @@ MeshHandle load(const std::filesystem::path& cookedPath,
         return {};
     }
 
+    // Index stride must be a real width. A corrupt header value (0/1/3) would
+    // otherwise fall through to a silent 16-bit interpretation, scrambling the
+    // primitive stream (asset audit: "Destructive Strided Index Fallback").
+    if (h.indexStride != 2 && h.indexStride != 4) {
+        std::fprintf(stderr, "[MeshLoader] Bad index stride %u in %s\n",
+                     h.indexStride, cookedPath.string().c_str());
+        return {};
+    }
+
+    // The header's declared counts MUST match the actual byte payloads. A
+    // truncated .cooked file would let bgfx::copy upload a buffer smaller than
+    // indexCount claims, and the GPU reads out of bounds at draw time — a
+    // driver timeout, not a clean failure (asset audit: "Missing Vector Size
+    // and Bound Validation").
+    if (asset.vertexData.size() != (size_t)h.vertexCount * h.vertexStride ||
+        asset.indexData.size()  != (size_t)h.indexCount  * h.indexStride) {
+        std::fprintf(stderr,
+            "[MeshLoader] Payload size mismatch (truncated/corrupt?) in %s: "
+            "verts %zu vs %zu, idx %zu vs %zu\n",
+            cookedPath.string().c_str(),
+            asset.vertexData.size(), (size_t)h.vertexCount * h.vertexStride,
+            asset.indexData.size(),  (size_t)h.indexCount  * h.indexStride);
+        return {};
+    }
+
     // Vertex buffer — raw bytes map directly to Vertex layout, zero conversion
     bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(
         bgfx::copy(asset.vertexData.data(),
@@ -41,6 +66,17 @@ MeshHandle load(const std::filesystem::path& cookedPath,
         bgfx::copy(asset.indexData.data(),
                    static_cast<uint32_t>(asset.indexData.size())),
         use32 ? BGFX_BUFFER_INDEX32 : BGFX_BUFFER_NONE);
+
+    // Never register invalid handles — a failed GPU allocation would otherwise
+    // crash downstream at draw time (asset audit: "Unchecked GPU Buffer
+    // Allocations").
+    if (!bgfx::isValid(vbh) || !bgfx::isValid(ibh)) {
+        if (bgfx::isValid(vbh)) bgfx::destroy(vbh);
+        if (bgfx::isValid(ibh)) bgfx::destroy(ibh);
+        std::fprintf(stderr, "[MeshLoader] GPU buffer creation failed for %s\n",
+                     cookedPath.string().c_str());
+        return {};
+    }
 
     Mesh mesh(vbh, ibh, h.indexCount);
     mesh.sourcePath  = sourcePath;
