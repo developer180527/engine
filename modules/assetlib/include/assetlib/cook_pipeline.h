@@ -90,8 +90,9 @@ private:
     // THE staleness version — bump when ANY cooker's output changes so the
     // workspace re-cooks. (Per-cooker kVersion constants exist but do NOT
     // feed isStale(); this one does. 11: glTF/GLB cook + scale-invariant
-    // normal matrices. 12: BC7/BC5 block compression + mip chains.)
-    static constexpr uint32_t   kCurrentCookVersion = 12;
+    // normal matrices. 12: BC7/BC5 block compression + mip chains. 13: fast
+    // squish default (BC1/BC3 color, BC5 normal); BC7 opt-in via COOK_TEX_HQ.)
+    static constexpr uint32_t   kCurrentCookVersion = 13;
 };
 
 } // namespace assetlib

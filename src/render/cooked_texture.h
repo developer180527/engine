@@ -11,6 +11,8 @@ inline bgfx::TextureFormat::Enum cookedTexBgfxFormat(uint32_t f) {
     switch (f) {
         case assetlib::kTexBC7: return bgfx::TextureFormat::BC7;
         case assetlib::kTexBC5: return bgfx::TextureFormat::BC5;
+        case assetlib::kTexBC1: return bgfx::TextureFormat::BC1;
+        case assetlib::kTexBC3: return bgfx::TextureFormat::BC3;
         default:                return bgfx::TextureFormat::RGBA8;
     }
 }

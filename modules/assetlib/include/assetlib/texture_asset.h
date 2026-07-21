@@ -11,9 +11,16 @@ namespace assetlib {
 // VRAM/bandwidth trap — 64MB per 4k texture, no mips, cold texture caches.
 enum TextureFormatId : uint32_t {
     kTexRGBA8 = 0,   // v1 legacy — raw, no mips
-    kTexBC7   = 1,   // color: near-lossless 4:1, hardware-decoded
+    kTexBC7   = 1,   // color HQ: near-lossless 4:1 — SLOW encode (final bake)
     kTexBC5   = 2,   // normal maps: two-channel XY, Z reconstructed in-shader
+    kTexBC1   = 3,   // color, opaque: 8:1, fast squish (iteration default)
+    kTexBC3   = 4,   // color, alpha: 4:1, fast squish (iteration default)
 };
+
+// Bytes per 4x4 block. BC1 is 8; BC3/BC5/BC7 are 16.
+inline uint32_t bcBytesPerBlock(uint32_t fmt) {
+    return fmt == kTexBC1 ? 8u : 16u;
+}
 
 struct TextureHeader {
     uint32_t magic    = 0x54455820; // 'TEX '
@@ -31,8 +38,9 @@ struct TextureAsset {
     TextureHeader        header;
     // kTexRGBA8: raw width*height*4.
     // BC formats: every mip packed contiguous (mip0..mipN), each mip
-    // ceil(w/4)*ceil(h/4)*16 bytes at that mip's dimensions — exactly the
-    // layout bgfx expects for a pre-mipped texture upload.
+    // ceil(w/4)*ceil(h/4)*bcBytesPerBlock(format) bytes at that mip's
+    // dimensions (BC1 = 8, BC3/BC5/BC7 = 16) — exactly the layout bgfx
+    // expects for a pre-mipped texture upload.
     std::vector<uint8_t> pixels;
 };
 

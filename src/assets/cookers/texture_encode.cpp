@@ -5,7 +5,10 @@
 #include <bx/error.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -75,8 +78,8 @@ void downsample2x2(const std::vector<uint8_t>& src, uint32_t sw, uint32_t sh,
     }
 }
 
-inline size_t bcMipBytes(uint32_t w, uint32_t h) {
-    return (size_t)((w + 3) / 4) * ((h + 3) / 4) * 16;   // BC5/BC7: 16 B/block
+inline size_t bcMipBytes(uint32_t w, uint32_t h, uint32_t bytesPerBlock) {
+    return (size_t)((w + 3) / 4) * ((h + 3) / 4) * bytesPerBlock;
 }
 
 } // namespace
@@ -94,41 +97,60 @@ bool encodeTexture(const uint8_t* rgba, uint32_t w, uint32_t h,
                    bool isNormalMap, assetlib::TextureAsset& out) {
     if (!rgba || w == 0 || h == 0) return false;
 
+    // ── Format choice ────────────────────────────────────────────────────
+    // BC7 is near-lossless but bimg's only BC7 encoder is nvtt's AVPCL, which
+    // runs an EXHAUSTIVE per-block endpoint search and IGNORES Quality::Fastest
+    // (minutes per 4K, pins every core — the "melting laptop"). So BC7 is a
+    // FINAL-BAKE format, opt-in via COOK_TEX_HQ, not the iteration default.
+    // Default path uses squish (which DOES honor Fastest, ~orders faster):
+    //   normals -> BC5 (two-channel XY)
+    //   color   -> BC1 when opaque (8:1), BC3 when the source has alpha (4:1)
+    const char* hqEnv = std::getenv("COOK_TEX_HQ");
+    const bool  hq     = hqEnv && *hqEnv && hqEnv[0] != '0';
+
+    bool hasAlpha = false;
+    if (!isNormalMap) {
+        const size_t n = (size_t)w * h * 4;
+        for (size_t i = 3; i < n; i += 4)
+            if (rgba[i] != 255) { hasAlpha = true; break; }
+    }
+
+    uint32_t fmt; bimg::TextureFormat::Enum bimgFmt;
+    if (isNormalMap)   { fmt = assetlib::kTexBC5; bimgFmt = bimg::TextureFormat::BC5; }
+    else if (hq)       { fmt = assetlib::kTexBC7; bimgFmt = bimg::TextureFormat::BC7; }
+    else if (hasAlpha) { fmt = assetlib::kTexBC3; bimgFmt = bimg::TextureFormat::BC3; }
+    else               { fmt = assetlib::kTexBC1; bimgFmt = bimg::TextureFormat::BC1; }
+    const uint32_t bpb = assetlib::bcBytesPerBlock(fmt);
+
     out.header.width    = w;
     out.header.height   = h;
     out.header.channels = 4;
     out.header.version  = 2;
-    out.header.format   = isNormalMap ? assetlib::kTexBC5 : assetlib::kTexBC7;
-    const auto bimgFmt  = isNormalMap ? bimg::TextureFormat::BC5
-                                      : bimg::TextureFormat::BC7;
+    out.header.format   = fmt;
     out.pixels.clear();
 
     std::vector<uint8_t> mip(rgba, rgba + (size_t)w * h * 4);
-    std::vector<float>   mipF;   // BC7 scratch — see below
+    std::vector<float>   mipF;   // BC7 float scratch only
+    const auto t0 = std::chrono::steady_clock::now();
     uint32_t mw = w, mh = h, mips = 0;
     for (;;) {
         ++mips;
         const size_t off = out.pixels.size();
-        out.pixels.resize(off + bcMipBytes(mw, mh));
+        out.pixels.resize(off + bcMipBytes(mw, mh, bpb));
         bx::Error err;
         if (bimgFmt == bimg::TextureFormat::BC7) {
-            // bimg's Rgba8 entry point rejects BC7 ("unable to convert") —
-            // the nvtt BC7 compressor is only reachable through the RGBA32F
-            // path (exactly how texturec feeds it). Convert the mip.
-            //
-            // Quality::Fastest, NOT Default: Default runs nvtt's exhaustive
-            // partition/endpoint search — tens of millions of blocks per 4K
-            // texture, every core pinned, minutes per asset. Fastest is
-            // ~10-30x quicker with barely visible loss on albedo, which is
-            // what shipping engines use for iteration cooks. Bump to Highest
-            // only for a final master bake.
+            // bimg's Rgba8 entry point rejects BC7 — the nvtt BC7 path is only
+            // reachable through RGBA32F (how texturec feeds it). Convert the
+            // mip. Quality::Default: AVPCL is exhaustive regardless, so take the
+            // best quality since this is the explicit final bake.
             mipF.resize((size_t)mw * mh * 4);
             for (size_t i = 0; i < mipF.size(); ++i)
                 mipF[i] = mip[i] / 255.0f;
             bimg::imageEncodeFromRgba32f(&g_encAlloc, out.pixels.data() + off,
                                          mipF.data(), mw, mh, 1, bimgFmt,
-                                         bimg::Quality::Fastest, &err);
+                                         bimg::Quality::Default, &err);
         } else {
+            // squish (BC1/BC3/BC5): Fastest = range-fit, real-time-ish.
             bimg::imageEncodeFromRgba8(&g_encAlloc, out.pixels.data() + off,
                                        mip.data(), mw, mh, 1, bimgFmt,
                                        bimg::Quality::Fastest, &err);
@@ -144,6 +166,11 @@ bool encodeTexture(const uint8_t* rgba, uint32_t w, uint32_t h,
         mw = nw; mh = nh;
     }
     out.header.mipCount = mips;
+    static const char* kName[] = {"RGBA8","BC7","BC5","BC1","BC3"};
+    const double ms = std::chrono::duration<double, std::milli>(
+                          std::chrono::steady_clock::now() - t0).count();
+    std::printf("[TexEncode] %ux%u %s %u mips in %.0f ms\n", w, h,
+                fmt < 5 ? kName[fmt] : "?", mips, ms);
     return true;
 }
 

@@ -181,22 +181,40 @@ int main() {
 
     // ── 2c. BC texture encode: format, mips, packed size, v1 compat ──────
     {
-        // 8x8 gradient — encodes to BC7 with a 4-level mip chain (8,4,2,1).
+        // 8x8 OPAQUE gradient (alpha=255). Default (fast) path → BC1, a 4-level
+        // mip chain (8,4,2,1). BC1 is 8 B/block: 8x8=4 blocks, then 1+1+1 →
+        // 7 blocks × 8 B = 56 B. This is the iteration default — BC7's bimg
+        // encoder is exhaustive (minutes per 4K), so it's opt-in only.
         std::vector<uint8_t> rgba(8 * 8 * 4);
         for (int i = 0; i < 8 * 8; ++i) {
             rgba[i*4+0] = (uint8_t)(i * 4);
             rgba[i*4+1] = (uint8_t)(255 - i * 4);
-            rgba[i*4+2] = 128; rgba[i*4+3] = 255;
+            rgba[i*4+2] = 128; rgba[i*4+3] = 255;   // opaque
         }
+        unsetenv("COOK_TEX_HQ");
         assetlib::TextureAsset t;
         CHECK(cook::encodeTexture(rgba.data(), 8, 8, false, t),
-              "BC7 encode succeeds");
-        CHECK(t.header.format == assetlib::kTexBC7 && t.header.mipCount == 4,
-              "BC7 + 4 mips (fmt=%u mips=%u)", t.header.format, t.header.mipCount);
-        // 8x8=4 blocks, 4x4=1, 2x2=1, 1x1=1 → 7 blocks × 16 B = 112 B
-        CHECK(t.pixels.size() == 112,
-              "packed mip chain is 112 B (%zu) — was 256 B raw, no mips",
-              t.pixels.size());
+              "opaque color encodes (fast default)");
+        CHECK(t.header.format == assetlib::kTexBC1 && t.header.mipCount == 4,
+              "opaque → BC1 + 4 mips (fmt=%u mips=%u)", t.header.format, t.header.mipCount);
+        CHECK(t.pixels.size() == 56,
+              "BC1 packed mip chain is 56 B (%zu)", t.pixels.size());
+
+        // Same pixels but with real alpha → BC3 (4:1, still fast squish).
+        std::vector<uint8_t> rgbaA = rgba;
+        rgbaA[3] = 100;                              // one non-opaque texel
+        assetlib::TextureAsset ta;
+        CHECK(cook::encodeTexture(rgbaA.data(), 8, 8, false, ta)
+              && ta.header.format == assetlib::kTexBC3 && ta.pixels.size() == 112,
+              "alpha color → BC3 (fmt=%u, %zu B)", ta.header.format, ta.pixels.size());
+
+        // Opt-in HQ → BC7 (16 B/block → 112 B), the exhaustive final-bake path.
+        setenv("COOK_TEX_HQ", "1", 1);
+        assetlib::TextureAsset hq;
+        CHECK(cook::encodeTexture(rgba.data(), 8, 8, false, hq)
+              && hq.header.format == assetlib::kTexBC7 && hq.pixels.size() == 112,
+              "COOK_TEX_HQ → BC7 (fmt=%u, %zu B)", hq.header.format, hq.pixels.size());
+        unsetenv("COOK_TEX_HQ");
 
         assetlib::TextureAsset n;
         CHECK(cook::encodeTexture(rgba.data(), 8, 8, true, n)
@@ -211,9 +229,9 @@ int main() {
         CHECK(assetlib::saveTexture(t, v2), "v2 texture saves");
         assetlib::TextureAsset back;
         CHECK(assetlib::loadTexture(back, v2)
-              && back.header.format == assetlib::kTexBC7
+              && back.header.format == assetlib::kTexBC1
               && back.header.mipCount == 4
-              && back.pixels.size() == 112,
+              && back.pixels.size() == 56,
               "v2 texture round-trips (blocks + mips intact)");
 
         assetlib::TextureAsset v1;
