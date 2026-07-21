@@ -62,6 +62,15 @@ public:
     Stats       stats()     const;
     bool        isCooking() const { return m_stats.load().active; }
 
+    // What a cook pass considers cookable.
+    //   WholeProject — every registered asset (editor default: any scene you
+    //                  open next is ready).
+    //   SceneClosure — only assets the project's .scene files reference, i.e.
+    //                  the scene meshes + their textures. On-demand cooking:
+    //                  touch 3 assets, not a 637-asset kit dropped in assets/.
+    enum class Scope { WholeProject, SceneClosure };
+    void setScope(Scope s) { m_scope = s; }
+
 private:
     void cookLoop();
     void runOneCookPass();
@@ -72,6 +81,10 @@ private:
     void cookSceneFiles(assetlib::AssetRegistry& registry);
     // Files mid-write by external tools defer to a follow-up pass.
     void requeueIfDeferred(int deferred);
+    // Scene source dirs: <project>/scenes and <assets>/scenes (whichever exist).
+    std::vector<std::filesystem::path> sceneDirs() const;
+
+    Scope m_scope = Scope::WholeProject;
 
     std::filesystem::path m_dbPath;
     std::filesystem::path m_projectRoot;

@@ -1,5 +1,8 @@
 #pragma once
 #include <filesystem>
+#include <unordered_set>
+#include <vector>
+#include <string>
 
 namespace assetlib { class AssetRegistry; }
 
@@ -29,3 +32,13 @@ bool sceneDependsOnNewerAssets(const std::filesystem::path& jsonPath,
                                assetlib::AssetRegistry* assetLib,
                                const std::filesystem::path& projectRoot,
                                const std::filesystem::path& cacheRoot);
+
+// The COOK closure of a project's scenes: the asset-DB UUIDs (as strings) of
+// every mesh any .scene under `sceneDirs` references. Cooking just these — the
+// scene meshes, which in turn cook their own embedded/sibling textures — is
+// enough to run the game. This is what lets an on-demand cook touch 3 assets
+// instead of a 637-asset library that happens to sit in assets/.
+std::unordered_set<std::string> collectSceneAssetClosure(
+    const std::vector<std::filesystem::path>& sceneDirs,
+    assetlib::AssetRegistry* assetLib,
+    const std::filesystem::path& projectRoot);

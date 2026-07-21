@@ -39,6 +39,33 @@ static std::optional<assetlib::AssetRecord> resolveMeshRecord(
     return rec;
 }
 
+std::unordered_set<std::string> collectSceneAssetClosure(
+        const std::vector<std::filesystem::path>& sceneDirs,
+        assetlib::AssetRegistry* assetLib,
+        const std::filesystem::path& projectRoot) {
+    std::unordered_set<std::string> out;
+    if (!assetLib) return out;
+    std::error_code ec;
+    for (const auto& dir : sceneDirs) {
+        if (!std::filesystem::is_directory(dir, ec)) continue;
+        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            if (!entry.is_regular_file()) continue;
+            if (entry.path().extension() != ".scene") continue;
+            std::ifstream f(entry.path());
+            if (!f) continue;
+            nlohmann::json scene;
+            try { scene = nlohmann::json::parse(f); }
+            catch (...) { continue; }   // a broken scene mustn't abort the walk
+            for (const auto& je : scene.value("entities", nlohmann::json::array())) {
+                if (!je.contains("meshRenderer")) continue;
+                if (auto rec = resolveMeshRecord(je["meshRenderer"], assetLib, projectRoot))
+                    out.insert(rec->uuid.toString());
+            }
+        }
+    }
+    return out;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // cookSceneFile — JSON scene → binary scene
 //

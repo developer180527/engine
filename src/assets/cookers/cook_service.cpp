@@ -7,6 +7,8 @@
 #include <fstream>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
+#include <optional>
 #include <utility>
 
 CookService::CookService(const std::filesystem::path& dbPath,
@@ -101,6 +103,15 @@ void CookService::cookLoop() {
     }
 }
 
+std::vector<std::filesystem::path> CookService::sceneDirs() const {
+    namespace fs = std::filesystem;
+    std::vector<fs::path> dirs;
+    for (fs::path d : {m_projectRoot / "scenes", m_assetsRoot / "scenes"})
+        if (fs::exists(d) && fs::is_directory(d))
+            dirs.push_back(std::move(d));
+    return dirs;
+}
+
 void CookService::runOneCookPass() {
     // Open a dedicated registry connection — WAL mode allows concurrent
     // reads from the main thread's registry at the same time.
@@ -127,10 +138,22 @@ void CookService::runOneCookPass() {
     // Collect cookable stale assets ONCE (skip unsupported extensions +
     // missing files). Files still being written by an external tool are
     // DEFERRED — cooked on a follow-up pass once their mtime settles.
+    // On-demand scope: when restricted to the scene closure, cook only the
+    // meshes (and thus their sibling textures) the project's .scene files
+    // actually reference — not every asset that happens to live in assets/.
+    // This is what keeps a 3-mesh scene from cooking a 637-asset kit.
+    std::optional<std::unordered_set<std::string>> scope;
+    if (m_scope == Scope::SceneClosure) {
+        scope = collectSceneAssetClosure(sceneDirs(), &registry, m_projectRoot);
+        LOG_INFO("CookService", "Scene-scoped cook: %zu asset(s) in closure",
+                 scope->size());
+    }
+
     int deferred = 0;
     std::vector<assetlib::UUID> todo;
     todo.reserve(all.size());
     for (auto& rec : all) {
+        if (scope && !scope->count(rec.uuid.toString())) continue;
         auto ext = std::filesystem::path(rec.sourcePath).extension().string();
         if (!pipeline.hasCookerFor(ext)) continue;
         auto src = m_projectRoot / rec.sourcePath;
@@ -226,16 +249,13 @@ void CookService::cookSceneFiles(assetlib::AssetRegistry& registry) {
     // Scanning only the former silently skipped the latter: those scenes
     // were only ever cooked by editor saves, so format upgrades never
     // reached them.
-    std::vector<fs::path> sceneDirs;
-    for (fs::path d : {m_projectRoot / "scenes", m_assetsRoot / "scenes"})
-        if (fs::exists(d) && fs::is_directory(d))
-            sceneDirs.push_back(std::move(d));
-    if (sceneDirs.empty()) return;
+    std::vector<fs::path> dirs = sceneDirs();
+    if (dirs.empty()) return;
 
     std::error_code ec;
     int scenesCooked = 0;
 
-    for (const auto& scenesDir : sceneDirs)
+    for (const auto& scenesDir : dirs)
     for (const auto& entry : fs::directory_iterator(scenesDir, ec)) {
         if (!m_running) break;
         if (!entry.is_regular_file()) continue;
