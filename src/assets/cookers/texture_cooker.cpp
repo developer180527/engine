@@ -3,6 +3,18 @@
 #include <stb_image.h>
 #include <cstdio>
 
+size_t TextureCooker::estimatePeakBytes(const assetlib::CookContext& ctx) const {
+    int w = 0, h = 0, c = 0;
+    if (stbi_info(ctx.sourcePath.string().c_str(), &w, &h, &c) && w > 0 && h > 0) {
+        // Peak resident while cooking one texture: decoded RGBA8 (4 B/px) +
+        // the BC7 RGBA32F working buffer (16 B/px) + the mip tail (~1.33x) +
+        // encoder scratch. ~24 B/px is a safe ceiling (8K ≈ 1.6 GB).
+        const size_t px = (size_t)w * (size_t)h;
+        return px * 24 + ((size_t)16 << 20);
+    }
+    return assetlib::ICooker::estimatePeakBytes(ctx);   // header unreadable
+}
+
 assetlib::CookResult TextureCooker::cook(const assetlib::CookContext& ctx) {
     int w = 0, h = 0, ch = 0;
     uint8_t* px = stbi_load(ctx.sourcePath.string().c_str(), &w, &h, &ch, 4);

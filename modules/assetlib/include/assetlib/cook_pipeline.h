@@ -35,6 +35,18 @@ public:
     // Which source file extensions does this cooker handle? e.g. {".fbx", ".obj"}
     virtual std::vector<std::string> extensions() const = 0;
     virtual CookResult               cook(const CookContext& ctx) = 0;
+
+    // Estimated peak heap footprint, in bytes, of cooking this one asset.
+    // The scheduler admits work against a memory budget (not a fixed thread
+    // count) so a burst of 8K textures or high-poly meshes serializes instead
+    // of OOM-ing the machine — heavy tasks run few-at-a-time, cheap ones pack.
+    // Default: a generous multiple of source size; a cooker that can cheaply
+    // predict better (a texture peeking its header dimensions) should override.
+    virtual size_t estimatePeakBytes(const CookContext& ctx) const {
+        std::error_code ec;
+        const auto sz = std::filesystem::file_size(ctx.sourcePath, ec);
+        return ec ? ((size_t)64 << 20) : (size_t)sz * 10 + ((size_t)16 << 20);
+    }
 };
 
 // ── Cook pipeline ─────────────────────────────────────────────────────────────
