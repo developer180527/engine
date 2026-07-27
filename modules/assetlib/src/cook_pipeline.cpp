@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
+#include <fstream>
 
 #if defined(__APPLE__)
     #include <pthread/qos.h>
@@ -15,6 +17,12 @@
 #elif defined(__linux__)
     #include <unistd.h>
     #include <pthread.h>
+#endif
+#if !defined(_WIN32)
+    #include <spawn.h>
+    #include <sys/wait.h>
+    #include <signal.h>
+    extern char** environ;
 #endif
 
 namespace assetlib {
@@ -80,7 +88,136 @@ long envLong(const char* name, long fallback) {
     return (end && *end == '\0' && n > 0) ? n : fallback;
 }
 
+#if !defined(_WIN32)
+// ── Out-of-process cook ───────────────────────────────────────────────────────
+// One asset per child process. The worker writes its outcome to a sidecar
+// RESULT FILE (never parsed from stdout — cookers print freely) with a tiny
+// line protocol:
+//     RESULT ok|skip|fail
+//     ERROR  <single-line message>       (optional)
+//     OUTPUT <extra output path>         (0..n, mesh's sibling .ctex)
+//     DEP    <uuid>                      (0..n)
+// Exit-by-signal, a missing/garbled result file, or a deadline overrun all
+// become a per-asset failure — the host process (editor!) never dies with it.
+CookResult runWorkerProcess(const std::filesystem::path& exe,
+                            ICooker* cooker, const CookContext& ctx) {
+    namespace fs = std::filesystem;
+    const fs::path resultPath = ctx.outputPath.string() + ".result";
+    std::error_code ec;
+    fs::remove(resultPath, ec);
+
+    // Hard per-task memory cap, applied by the CHILD via setrlimit: a runaway
+    // import hits ENOMEM/bad_alloc inside its own process instead of OOM-ing
+    // the machine. 2× the estimate with a 1 GB floor (estimates are ceilings,
+    // not promises); COOK_TASK_MEM_CAP_MB pins it explicitly.
+    long capMb = envLong("COOK_TASK_MEM_CAP_MB", 0);
+    if (capMb <= 0)
+        capMb = std::max((long)((cooker->estimatePeakBytes(ctx) * 2) >> 20),
+                         1024L);
+
+    std::string exeArg = exe.string();
+    std::string srcArg = ctx.sourcePath.string();
+    std::string outArg = ctx.outputPath.string();
+    std::string resArg = resultPath.string();
+    std::string capArg = std::to_string(capMb);
+    char* argv[] = { exeArg.data(), srcArg.data(), outArg.data(),
+                     resArg.data(), capArg.data(), nullptr };
+
+    pid_t pid = -1;
+    const int rc = posix_spawn(&pid, exeArg.c_str(), nullptr, nullptr,
+                               argv, environ);
+    if (rc != 0)
+        return { .success=false,
+                 .error=std::string("cannot spawn cook worker: ") + std::strerror(rc) };
+
+    // Reap with a deadline. Default is generous — an HQ BC7 8K encode is
+    // legitimately minutes — but bounded, so one wedged parse can't hold a
+    // worker slot forever (COOK_TASK_TIMEOUT_SEC overrides).
+    const long timeoutSec = envLong("COOK_TASK_TIMEOUT_SEC", 3600);
+    const auto deadline   = std::chrono::steady_clock::now()
+                          + std::chrono::seconds(timeoutSec);
+    int  status   = 0;
+    bool timedOut = false;
+    for (;;) {
+        const pid_t r = waitpid(pid, &status, WNOHANG);
+        if (r == pid) break;
+        if (r < 0)   { status = -1; break; }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            kill(pid, SIGKILL);
+            waitpid(pid, &status, 0);
+            timedOut = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    auto cleanupResult = [&] { std::error_code e; fs::remove(resultPath, e); };
+
+    if (timedOut) {
+        cleanupResult();
+        return { .success=false,
+                 .error="cook timed out after " + std::to_string(timeoutSec)
+                      + "s (worker killed)" };
+    }
+    if (WIFSIGNALED(status)) {
+        cleanupResult();
+        const int sig = WTERMSIG(status);
+        return { .success=false,
+                 .error=std::string("cook worker crashed: signal ")
+                      + std::to_string(sig) + " (" + strsignal(sig) + ")" };
+    }
+
+    std::ifstream f(resultPath);
+    if (!f) {
+        return { .success=false,
+                 .error="cook worker exited (code "
+                      + std::to_string(WIFEXITED(status) ? WEXITSTATUS(status) : -1)
+                      + ") without writing a result" };
+    }
+    std::string verdict, error, line;
+    while (std::getline(f, line)) {
+        if      (line.rfind("RESULT ", 0) == 0) verdict = line.substr(7);
+        else if (line.rfind("ERROR ", 0)  == 0) error   = line.substr(6);
+        else if (line.rfind("OUTPUT ", 0) == 0) {
+            if (ctx.addOutput) ctx.addOutput(fs::path(line.substr(7)));
+        }
+        else if (line.rfind("DEP ", 0) == 0) {
+            if (ctx.addDependency)
+                ctx.addDependency(UUID::fromString(line.substr(4)));
+        }
+    }
+    f.close();
+    cleanupResult();
+    if (verdict == "ok")   return { .success=true };
+    if (verdict == "skip") return { .success=false, .skipped=true, .error=error };
+    if (verdict == "fail") return { .success=false, .error=error };
+    return { .success=false, .error="worker result file had no RESULT line" };
+}
+#endif // !_WIN32
+
 } // namespace
+
+CookResult CookPipeline::dispatchCook(ICooker* cooker,
+                                      const CookContext& ctx) const {
+#if !defined(_WIN32)
+    if (!m_workerExe.empty())
+        return runWorkerProcess(m_workerExe, cooker, ctx);
+#endif
+    // In-process fallback. Exception net: cook() runs third-party parsers
+    // (Assimp, stb, json) on corrupt files — a throw escaping a worker
+    // std::thread is std::terminate for the whole host process (cooker
+    // audit: "Unwrapped Worker Thread Exception Paths"). Convert to a
+    // per-asset failure. (Signals still kill us in-process — that is
+    // precisely what the out-of-process mode is for.)
+    try {
+        return cooker->cook(ctx);
+    } catch (const std::exception& e) {
+        return { .success=false,
+                 .error=std::string("cooker threw: ") + e.what() };
+    } catch (...) {
+        return { .success=false, .error="cooker threw a non-std exception" };
+    }
+}
 
 CookPipeline::CookPipeline(AssetRegistry& registry,
                            std::filesystem::path projectRoot,
@@ -300,7 +437,7 @@ CookResult CookPipeline::cookInternal(const UUID& uuid, bool useFetch) {
     ctx.addDependency = [&deps](const UUID& dep) { deps.push_back(dep); };
     ctx.addOutput     = [&extras](const std::filesystem::path& p) { extras.push_back(p); };
 
-    auto result = cooker->cook(ctx);
+    auto result = dispatchCook(cooker, ctx);
     if (result.success) {
         if (ddcStoreOutputs(key, tmpPath, extras) && ddcFetchOutputs(key, outPath)) {
             std::error_code ec;
@@ -449,21 +586,10 @@ int CookPipeline::cookMany(const std::vector<UUID>& uuids,
             const size_t estBytes = w.cooker->estimatePeakBytes(ctx);
             gov.acquire(estBytes);
 
-            // Exception net: cook() runs third-party parsers (Assimp, stb,
-            // json) on a corrupt file away from any try/catch — a throw
-            // here (bad_alloc, parse_error, out_of_range) would terminate
-            // this std::thread and take the whole host process with it
-            // (cooker audit: "Unwrapped Worker Thread Exception Paths").
-            // Convert to a per-asset failure and keep the worker alive.
-            try {
-                w.result = w.cooker->cook(ctx);
-            } catch (const std::exception& e) {
-                w.result = {.success = false,
-                            .error = std::string("cooker threw: ") + e.what()};
-            } catch (...) {
-                w.result = {.success = false,
-                            .error = "cooker threw a non-std exception"};
-            }
+            // dispatchCook: spawns an isolated worker process when one is
+            // configured (crash = one failed asset, hard child memory cap),
+            // else cooks in-process behind the exception net.
+            w.result = dispatchCook(w.cooker, ctx);
             gov.release(estBytes);
 
             if (onResult) {

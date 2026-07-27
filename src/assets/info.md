@@ -53,6 +53,24 @@ model binds rigidly to bone 0 so it can't collapse. Verified headless by
   (`start()`, WAL SQLite allows concurrent main-thread reads), synchronous
   `cookOnce()` for the engine_cook CLI.
 
+### Out-of-process cook workers
+Every cook runs in a spawned `engine_cook_worker` child (one asset per
+process, `src/tools/engine_cook_worker.cpp`): a corrupt FBX that SIGSEGVs
+Assimp kills one worker and fails one asset — the try/catch-can't-trap-signals
+problem is closed for real. Each child also runs under a HARD memory cap
+(`setrlimit`, 2× the cooker's estimate, floor 1 GB, `COOK_TASK_MEM_CAP_MB`
+pins it) and a kill deadline (`COOK_TASK_TIMEOUT_SEC`, default 3600s).
+Outcome comes back via a sidecar result file (`RESULT/ERROR/OUTPUT/DEP`
+lines), never stdout — cookers print freely. The worker binary must sit next
+to the spawning executable; if missing (or `COOK_INPROC=1`), cooking falls
+back in-process behind the exception net, with a loud warning. Crash/timeout
+failures record the DDC key like any failure: not retried until inputs change
+(or forceRecook). Fault-injection hooks `COOK_WORKER_TEST_CRASH` /
+`COOK_WORKER_TEST_HANG` (substring of source filename) keep the containment
+paths testable — a crash path you can't trigger is a crash path you never
+verified. The parent's MemGovernor + worker-thread pool still schedule
+admission; the child limits are the enforcement.
+
 Rules: cookers may use Assimp/stb/assetlib but must never reference bgfx,
 GLFW, or plugin symbols — `engine_cook` links engine_core alone. Failed cooks
 must delete stale output; cooked formats carry versioned headers.

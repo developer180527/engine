@@ -18,7 +18,9 @@ is moving toward.
   version + settings fingerprint feed the key), and `cookMany` (DDC hits
   served inline on the caller thread; misses cook in parallel under the
   thermal/memory governor; registry I/O stays on the calling thread so the
-  single connection is never shared).
+  single connection is never shared). With `setWorkerExecutable()` set, each
+  cook spawns an isolated `engine_cook_worker` child — signal-crash/timeout
+  containment + hard child `setrlimit` memory caps (see `src/assets/info.md`).
 - **`DdcStore`** (`ddc.h`) — two-tier content-addressed Derived Data Cache:
   local `~/.engine/ddc` (`ENGINE_DDC`) + optional shared mount
   (`ENGINE_DDC_SHARED`), BLAKE3-256 keys (vendored `third_party/blake3`,

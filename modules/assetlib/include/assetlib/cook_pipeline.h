@@ -111,11 +111,22 @@ public:
     DdcStore&       ddc()       { return m_ddc; }
     const DdcStore& ddc() const { return m_ddc; }
 
+    // Out-of-process cooking: when set (and the binary exists), every cook
+    // runs in a spawned `engine_cook_worker` child — a corrupt FBX that
+    // SIGSEGVs Assimp kills one worker, not the editor, and each task gets a
+    // HARD memory cap (child setrlimit) instead of the governor's estimate.
+    // Unset/missing → cooks run in-process (COOK_INPROC=1 forces this).
+    void setWorkerExecutable(std::filesystem::path exe) { m_workerExe = std::move(exe); }
+
 private:
     ICooker*     findCooker(const std::string& ext) const;
     // Shared body of cookOne/forceRecook. useFetch=false bypasses the DDC
     // read path (forceRecook must not re-fetch the very blob under suspicion).
     CookResult   cookInternal(const UUID& uuid, bool useFetch);
+    // THE single call site for running a cook: out-of-process when a worker
+    // binary is configured, in-process (with the exception net) otherwise.
+    // ctx callbacks receive deps/extra outputs in both modes.
+    CookResult   dispatchCook(ICooker* cooker, const CookContext& ctx) const;
     // A cook RECORD is a manifest of member blobs (primary .cooked + any
     // extra outputs like the mesh cooker's sibling .ctex textures), each
     // content-addressed by its own hash. Store the whole set / materialize
@@ -137,6 +148,7 @@ private:
     std::filesystem::path       m_projectRoot;
     std::filesystem::path       m_cacheRoot;
     DdcStore                    m_ddc;      // roots from env (ENGINE_DDC[_SHARED])
+    std::filesystem::path       m_workerExe;
     std::vector<std::unique_ptr<ICooker>> m_cookers;
 };
 

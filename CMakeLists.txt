@@ -216,7 +216,7 @@ install(TARGETS engine_runtime engine_core assetlib bgfx bimg bx glfw
 if(ENGINE_WITH_SOURCE_IMPORTERS)
     # Dev SDK only — shipping posture has no assimp target and no cooker CLI.
     install(TARGETS assimp ARCHIVE DESTINATION lib)
-    install(TARGETS engine_cook RUNTIME DESTINATION bin)
+    install(TARGETS engine_cook engine_cook_worker RUNTIME DESTINATION bin)
 endif()
 
 # Engine headers: public umbrellas + the src tree they re-export.

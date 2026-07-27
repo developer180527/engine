@@ -285,6 +285,20 @@ set_target_properties(engine_cook PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# ── engine_cook_worker — isolated per-asset cook child ──────────────────────
+# Spawned by CookPipeline (editor + engine_cook): one asset per process, so a
+# parser SIGSEGV kills the worker, not the host, and each task runs under a
+# hard setrlimit memory cap. Links engine_core only, same as engine_cook.
+add_executable(engine_cook_worker tools/engine_cook_worker.cpp)
+target_link_libraries(engine_cook_worker PRIVATE engine_core)
+set_target_properties(engine_cook_worker PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+# Spawners locate the worker next to their own binary at runtime — make sure
+# it exists whenever they build.
+add_dependencies(engine_cook engine_cook_worker)
+add_dependencies(editor      engine_cook_worker)
+
 # ── engine_build — package a project into a shippable dist/ ─────────────────
 # Cook -> shipping player (Assimp-free) -> kits rebuilt Release -> assemble.
 add_executable(engine_build tools/engine_build.cpp)

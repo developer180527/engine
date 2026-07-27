@@ -2,6 +2,7 @@
 #include "assets/cookers/mesh_cooker.h"
 #include "assets/cookers/texture_cooker.h"
 #include "assets/cookers/scene_cooker.h"
+#include "assets/asset_path.h"
 #include "core/logger.h"
 #include <assetlib/scene_asset.h>   // header peek: version-aware staleness
 #include <fstream>
@@ -129,6 +130,25 @@ void CookService::runOneCookPass() {
     assetlib::CookPipeline pipeline(registry, m_projectRoot, m_cacheRoot);
     pipeline.registerCooker(std::make_unique<MeshCooker>());
     pipeline.registerCooker(std::make_unique<TextureCooker>());
+
+    // Out-of-process cooking: run each cook in an engine_cook_worker child
+    // (crash isolation + hard per-task memory caps). The worker ships next
+    // to whatever spawned us (editor, engine_cook — both at the build/bin
+    // root). Missing binary or COOK_INPROC=1 falls back to in-process,
+    // loudly — silently losing crash isolation is how a "stable" editor
+    // starts dying on corrupt FBX imports again.
+    const char* inproc = std::getenv("COOK_INPROC");
+    if (!(inproc && *inproc && inproc[0] != '0')) {
+        const auto worker = asset_path::executableDir() / "engine_cook_worker";
+        std::error_code ec;
+        if (std::filesystem::exists(worker, ec)) {
+            pipeline.setWorkerExecutable(worker);
+        } else {
+            LOG_WARN("CookService", "engine_cook_worker not found at %s — "
+                     "cooking IN-PROCESS (no crash isolation)",
+                     worker.string().c_str());
+        }
+    }
 
     auto all = registry.all();
     int total  = 0;
