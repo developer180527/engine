@@ -1,172 +1,24 @@
+// ── CookPipeline — cook ORCHESTRATION ────────────────────────────────────────
+// What needs cooking, in what order, and what the registry records after.
+// The mechanics live behind their own seams:
+//   cook_key.h        identity + staleness (DDC keys)
+//   cook_dispatch.h   execution mode (isolated child process / in-process)
+//   ddc_manifest.h    cached-output record format (manifest of member blobs)
+//   ddc.h             the content-addressed two-tier store
+//   task_graph.h      cost-weighted DAG scheduler + thermal governance
 #include "assetlib/cook_pipeline.h"
+#include "assetlib/ddc_manifest.h"
 #include "assetlib/task_graph.h"
-#include <ctime>
+#include "cook_dispatch.h"
+#include "cook_key.h"
+
+#include <atomic>
 #include <chrono>
-#include <thread>
-#include <algorithm>
-#include <cstdlib>
 #include <cstdio>
-#include <cstring>
-#include <fstream>
+#include <ctime>
 #include <unordered_map>
 
-#if defined(__APPLE__)
-    #include <pthread/qos.h>
-    #include <sys/sysctl.h>
-#elif defined(__linux__)
-    #include <unistd.h>
-    #include <pthread.h>
-#endif
-#if !defined(_WIN32)
-    #include <spawn.h>
-    #include <sys/wait.h>
-    #include <signal.h>
-    extern char** environ;
-#endif
-
 namespace assetlib {
-
-namespace {
-
-// Reads an integer environment override; returns fallback when unset/invalid.
-long envLong(const char* name, long fallback) {
-    const char* v = std::getenv(name);
-    if (!v || !*v) return fallback;
-    char* end = nullptr;
-    const long n = std::strtol(v, &end, 10);
-    return (end && *end == '\0' && n > 0) ? n : fallback;
-}
-
-#if !defined(_WIN32)
-// ── Out-of-process cook ───────────────────────────────────────────────────────
-// One asset per child process. The worker writes its outcome to a sidecar
-// RESULT FILE (never parsed from stdout — cookers print freely) with a tiny
-// line protocol:
-//     RESULT ok|skip|fail
-//     ERROR  <single-line message>       (optional)
-//     OUTPUT <extra output path>         (0..n, mesh's sibling .ctex)
-//     DEP    <uuid>                      (0..n)
-// Exit-by-signal, a missing/garbled result file, or a deadline overrun all
-// become a per-asset failure — the host process (editor!) never dies with it.
-CookResult runWorkerProcess(const std::filesystem::path& exe,
-                            ICooker* cooker, const CookContext& ctx) {
-    namespace fs = std::filesystem;
-    const fs::path resultPath = ctx.outputPath.string() + ".result";
-    std::error_code ec;
-    fs::remove(resultPath, ec);
-
-    // Hard per-task memory cap, applied by the CHILD via setrlimit: a runaway
-    // import hits ENOMEM/bad_alloc inside its own process instead of OOM-ing
-    // the machine. 2× the estimate with a 1 GB floor (estimates are ceilings,
-    // not promises); COOK_TASK_MEM_CAP_MB pins it explicitly.
-    long capMb = envLong("COOK_TASK_MEM_CAP_MB", 0);
-    if (capMb <= 0)
-        capMb = std::max((long)((cooker->estimatePeakBytes(ctx) * 2) >> 20),
-                         1024L);
-
-    std::string exeArg = exe.string();
-    std::string srcArg = ctx.sourcePath.string();
-    std::string outArg = ctx.outputPath.string();
-    std::string resArg = resultPath.string();
-    std::string capArg = std::to_string(capMb);
-    char* argv[] = { exeArg.data(), srcArg.data(), outArg.data(),
-                     resArg.data(), capArg.data(), nullptr };
-
-    pid_t pid = -1;
-    const int rc = posix_spawn(&pid, exeArg.c_str(), nullptr, nullptr,
-                               argv, environ);
-    if (rc != 0)
-        return { .success=false,
-                 .error=std::string("cannot spawn cook worker: ") + std::strerror(rc) };
-
-    // Reap with a deadline. Default is generous — an HQ BC7 8K encode is
-    // legitimately minutes — but bounded, so one wedged parse can't hold a
-    // worker slot forever (COOK_TASK_TIMEOUT_SEC overrides).
-    const long timeoutSec = envLong("COOK_TASK_TIMEOUT_SEC", 3600);
-    const auto deadline   = std::chrono::steady_clock::now()
-                          + std::chrono::seconds(timeoutSec);
-    int  status   = 0;
-    bool timedOut = false;
-    for (;;) {
-        const pid_t r = waitpid(pid, &status, WNOHANG);
-        if (r == pid) break;
-        if (r < 0)   { status = -1; break; }
-        if (std::chrono::steady_clock::now() >= deadline) {
-            kill(pid, SIGKILL);
-            waitpid(pid, &status, 0);
-            timedOut = true;
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-
-    auto cleanupResult = [&] { std::error_code e; fs::remove(resultPath, e); };
-
-    if (timedOut) {
-        cleanupResult();
-        return { .success=false,
-                 .error="cook timed out after " + std::to_string(timeoutSec)
-                      + "s (worker killed)" };
-    }
-    if (WIFSIGNALED(status)) {
-        cleanupResult();
-        const int sig = WTERMSIG(status);
-        return { .success=false,
-                 .error=std::string("cook worker crashed: signal ")
-                      + std::to_string(sig) + " (" + strsignal(sig) + ")" };
-    }
-
-    std::ifstream f(resultPath);
-    if (!f) {
-        return { .success=false,
-                 .error="cook worker exited (code "
-                      + std::to_string(WIFEXITED(status) ? WEXITSTATUS(status) : -1)
-                      + ") without writing a result" };
-    }
-    std::string verdict, error, line;
-    while (std::getline(f, line)) {
-        if      (line.rfind("RESULT ", 0) == 0) verdict = line.substr(7);
-        else if (line.rfind("ERROR ", 0)  == 0) error   = line.substr(6);
-        else if (line.rfind("OUTPUT ", 0) == 0) {
-            if (ctx.addOutput) ctx.addOutput(fs::path(line.substr(7)));
-        }
-        else if (line.rfind("DEP ", 0) == 0) {
-            if (ctx.addDependency)
-                ctx.addDependency(UUID::fromString(line.substr(4)));
-        }
-    }
-    f.close();
-    cleanupResult();
-    if (verdict == "ok")   return { .success=true };
-    if (verdict == "skip") return { .success=false, .skipped=true, .error=error };
-    if (verdict == "fail") return { .success=false, .error=error };
-    return { .success=false, .error="worker result file had no RESULT line" };
-}
-#endif // !_WIN32
-
-} // namespace
-
-CookResult CookPipeline::dispatchCook(ICooker* cooker,
-                                      const CookContext& ctx) const {
-#if !defined(_WIN32)
-    if (!m_workerExe.empty())
-        return runWorkerProcess(m_workerExe, cooker, ctx);
-#endif
-    // In-process fallback. Exception net: cook() runs third-party parsers
-    // (Assimp, stb, json) on corrupt files — a throw escaping a worker
-    // std::thread is std::terminate for the whole host process (cooker
-    // audit: "Unwrapped Worker Thread Exception Paths"). Convert to a
-    // per-asset failure. (Signals still kill us in-process — that is
-    // precisely what the out-of-process mode is for.)
-    try {
-        return cooker->cook(ctx);
-    } catch (const std::exception& e) {
-        return { .success=false,
-                 .error=std::string("cooker threw: ") + e.what() };
-    } catch (...) {
-        return { .success=false, .error="cooker threw a non-std exception" };
-    }
-}
 
 CookPipeline::CookPipeline(AssetRegistry& registry,
                            std::filesystem::path projectRoot,
@@ -175,6 +27,8 @@ CookPipeline::CookPipeline(AssetRegistry& registry,
     , m_projectRoot(std::move(projectRoot))
     , m_cacheRoot(std::move(cacheRoot))
     , m_ddc() {}   // roots from ENGINE_DDC / ENGINE_DDC_SHARED (or defaults)
+
+// ── Cooker registry ──────────────────────────────────────────────────────────
 
 void CookPipeline::registerCooker(std::unique_ptr<ICooker> cooker) {
     m_cookers.push_back(std::move(cooker));
@@ -193,117 +47,69 @@ bool CookPipeline::hasCookerFor(const std::string& ext) const {
     return findCooker(lower) != nullptr;
 }
 
-std::string CookPipeline::sourceHashFor(const AssetRecord& rec) const {
-    // scan() keeps sourceHash current (and upgrades legacy FNV to BLAKE3);
-    // hash directly only when a record predates the scan or slipped through.
-    if (rec.sourceHash.size() == 64) return rec.sourceHash;
-    return blake3File(m_projectRoot / rec.sourcePath);
-}
+// ── Identity + staleness (policy in cook_key.h) ──────────────────────────────
 
 std::string CookPipeline::currentKey(const AssetRecord& rec,
                                      ICooker* cooker) const {
     if (!cooker) return {};
-    const std::string srcHash = sourceHashFor(rec);
-    if (srcHash.empty()) return {};        // unreadable source — no identity
-
-    CookContext ctx;                        // fingerprint may inspect the path
-    ctx.uuid       = rec.uuid;
-    ctx.sourcePath = m_projectRoot / rec.sourcePath;
-
-    DdcKeyInputs in;
-    in.cookerId      = cooker->id();
-    in.cookerVersion = cooker->version();
-    in.settings      = cooker->settingsFingerprint(ctx);
-    if (!rec.importSettings.empty()) {
-        in.settings += '\n';
-        in.settings += rec.importSettings.json;
-    }
-    in.sourceHash = srcHash;
-    return computeDdcKey(in);
+    return computeCookKey(rec, *cooker, m_projectRoot);
 }
 
 bool CookPipeline::isStale(const AssetRecord& rec) const {
-    auto ext = std::filesystem::path(rec.sourcePath).extension().string();
-    for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-    ICooker* cooker = findCooker(ext);
+    ICooker* cooker = findCooker(lowerExtOf(rec.sourcePath));
     if (!cooker) return false;              // nothing can cook it
+    return cookIsStale(rec, computeCookKey(rec, *cooker, m_projectRoot),
+                       m_cacheRoot);
+}
 
-    const std::string key = currentKey(rec, cooker);
-    if (key.empty()) return false;          // unreadable source — cooking
-                                            // would fail identically
-    // Inputs changed since the last attempt (or never attempted).
-    if (rec.ddcKey != key) return true;
+// ── Per-record resolution + output placement ─────────────────────────────────
 
-    // Same inputs as last time. Failed stays failed (retry only when the
-    // source/cooker/settings change — or via forceRecook); a Ready record
-    // with no cookedPath was deliberately skipped.
-    if (rec.state == AssetState::Failed) return false;
-    if (rec.cookedPath.empty())          return false;
+std::optional<CookPipeline::Resolved>
+CookPipeline::resolve(const AssetRecord& rec) const {
+    Resolved r;
+    r.cooker = findCooker(lowerExtOf(rec.sourcePath));
+    if (!r.cooker) return std::nullopt;
+    r.key = computeCookKey(rec, *r.cooker, m_projectRoot);
+    if (r.key.empty()) return std::nullopt;     // unreadable source
 
-    // Materialized output vanished (user wiped .cache/) — a DDC hit restores
-    // it without recooking.
+    const auto outDir = m_cacheRoot / (assetTypeName(rec.type) + "s");
     std::error_code ec;
-    return !std::filesystem::exists(m_cacheRoot / rec.cookedPath, ec);
+    std::filesystem::create_directories(outDir, ec);
+
+    r.sourceRel  = rec.sourcePath;
+    r.sourcePath = m_projectRoot / rec.sourcePath;
+    r.outPath    = outDir / (rec.uuid.toString() + ".cooked");
+    r.tmpPath    = outDir / (rec.uuid.toString() + ".cooking");
+    return r;
 }
 
-// ── DDC record = manifest of member blobs ────────────────────────────────────
-// A cook can produce several files (cooked mesh + sibling .ctex embedded
-// textures). Each member is stored under ITS OWN content hash; a small
-// manifest under the cook key names them. Fetching materializes every member
-// or reports a miss — a hit can never yield a mesh missing its textures.
-// Format: "ddc-manifest-v1\n" then "<blobKey>\t<name>\n" per member, where
-// name "@" is the primary output and anything else is a sibling filename.
-
-bool CookPipeline::ddcStoreOutputs(const std::string& key,
-                                   const std::filesystem::path& primary,
-                                   const std::vector<std::filesystem::path>& extras) {
-    std::string manifest = "ddc-manifest-v1\n";
-    auto addMember = [&](const std::filesystem::path& file,
-                         const std::string& name) -> bool {
-        const std::string mk = blake3File(file);
-        if (mk.empty() || !m_ddc.store(mk, file)) return false;
-        manifest += mk; manifest += '\t'; manifest += name; manifest += '\n';
-        return true;
-    };
-    if (!addMember(primary, "@")) return false;
-    for (const auto& e : extras)
-        if (!addMember(e, e.filename().string())) return false;
-    return m_ddc.storeBytes(key, manifest);
-}
-
-bool CookPipeline::ddcFetchOutputs(const std::string& key,
-                                   const std::filesystem::path& outPath) {
-    std::string manifest;
-    if (!m_ddc.fetchBytes(key, manifest)) return false;
-
-    size_t pos = manifest.find('\n');
-    if (pos == std::string::npos ||
-        manifest.compare(0, pos, "ddc-manifest-v1") != 0) return false;
-    ++pos;
-    while (pos < manifest.size()) {
-        size_t eol = manifest.find('\n', pos);
-        if (eol == std::string::npos) eol = manifest.size();
-        const std::string line = manifest.substr(pos, eol - pos);
-        pos = eol + 1;
-        if (line.empty()) continue;
-        const size_t tab = line.find('\t');
-        if (tab == std::string::npos) return false;
-        const std::string mk   = line.substr(0, tab);
-        const std::string name = line.substr(tab + 1);
-        // Names are plain sibling filenames — a manifest from a SHARED store
-        // is remote input; never let one path-traverse out of the cache dir.
-        if (name.empty() || name.find('/') != std::string::npos ||
-            name.find('\\') != std::string::npos || name.find("..") == 0)
-            return false;
-        const std::filesystem::path dst =
-            (name == "@") ? outPath : outPath.parent_path() / name;
-        if (!m_ddc.fetch(mk, dst)) return false;
+void CookPipeline::placeOutput(CookResult& res, const std::string& key,
+                               const std::filesystem::path& tmpPath,
+                               const std::filesystem::path& outPath,
+                               const std::vector<std::filesystem::path>& extras) {
+    std::error_code ec;
+    if (!res.success) {
+        std::filesystem::remove(tmpPath, ec);
+        return;
     }
-    return true;
+    // Ingest into the DDC, then materialize FROM the store — a cooker must
+    // never write the final path directly, because materialization hardlinks
+    // blobs and an ofstream on a hardlinked output would truncate the blob
+    // for every project sharing it.
+    if (ddcStoreRecord(m_ddc, key, tmpPath, extras)
+            && ddcFetchRecord(m_ddc, key, outPath)) {
+        std::filesystem::remove(tmpPath, ec);
+        return;
+    }
+    // Store unusable (disk full?) — keep the correct output anyway.
+    std::filesystem::rename(tmpPath, outPath, ec);
+    if (ec)
+        res = { .success=false,
+                .error="cannot place cooked output: " + ec.message() };
 }
 
-// Single writer for the registry outcome of a cook attempt — success, skip,
-// and failure previously carried three hand-rolled copies of this logic.
+// ── Registry commit ──────────────────────────────────────────────────────────
+
 void CookPipeline::commitResult(const UUID& uuid, const CookResult& res,
                                 const std::string& key, uint32_t cookerVersion,
                                 const std::filesystem::path& outPath,
@@ -341,6 +147,8 @@ void CookPipeline::commitResult(const UUID& uuid, const CookResult& res,
     m_registry.update(*rec);
 }
 
+// ── Single-asset cook ────────────────────────────────────────────────────────
+
 CookResult CookPipeline::cookOne(const UUID& uuid) {
     return cookInternal(uuid, /*useFetch=*/true);
 }
@@ -350,66 +158,60 @@ CookResult CookPipeline::cookInternal(const UUID& uuid, bool useFetch) {
     if (!rec) return { .success=false, .error="UUID not found in registry" };
     if (!isStale(*rec)) return { .success=true }; // already fresh
 
-    auto ext = std::filesystem::path(rec->sourcePath).extension().string();
-    for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-    ICooker* cooker = findCooker(ext);
-    if (!cooker) return { .success=false, .error="No cooker registered for extension: " + ext };
-
-    const std::string key = currentKey(*rec, cooker);
-    if (key.empty())
-        return { .success=false, .error="source unreadable (no content hash)" };
-
-    auto outDir = m_cacheRoot / (assetTypeName(rec->type) + "s");
-    std::filesystem::create_directories(outDir);
-    auto outPath = outDir / (uuid.toString() + ".cooked");
-
-    // ── Cache hit: someone (this machine, a teammate via the shared tier)
-    // already cooked these exact inputs — materialize, done.
-    if (useFetch && ddcFetchOutputs(key, outPath)) {
-        commitResult(uuid, { .success=true }, key, cooker->version(), outPath, {});
-        std::printf("[AssetLib] DDC hit: %s\n", rec->sourcePath.c_str());
-        return { .success=true, .cookedPath=outPath.string() };
+    auto r = resolve(*rec);
+    if (!r) {
+        const std::string ext = lowerExtOf(rec->sourcePath);
+        return { .success=false,
+                 .error=findCooker(ext) ? "source unreadable (no content hash)"
+                        : "No cooker registered for extension: " + ext };
     }
 
-    // ── Miss: cook to a TEMP file, ingest the result into the DDC, then
-    // materialize from the store. Never let a cooker write the final path
-    // directly — materialization hardlinks blobs, and an ofstream opened on
-    // a hardlinked output would truncate the blob for every project.
-    auto tmpPath = outDir / (uuid.toString() + ".cooking");
+    // Cache hit: someone (this machine, a teammate via the shared tier)
+    // already cooked these exact inputs — materialize, done.
+    if (useFetch && ddcFetchRecord(m_ddc, r->key, r->outPath)) {
+        commitResult(uuid, { .success=true }, r->key, r->cooker->version(),
+                     r->outPath, {});
+        std::printf("[AssetLib] DDC hit: %s\n", r->sourceRel.c_str());
+        return { .success=true, .cookedPath=r->outPath.string() };
+    }
 
     CookContext ctx;
     ctx.uuid       = uuid;
-    ctx.sourcePath = m_projectRoot / rec->sourcePath;
-    ctx.outputPath = tmpPath;
+    ctx.sourcePath = r->sourcePath;
+    ctx.outputPath = r->tmpPath;
     std::vector<UUID> deps;
     std::vector<std::filesystem::path> extras;
     ctx.addDependency = [&deps](const UUID& dep) { deps.push_back(dep); };
     ctx.addOutput     = [&extras](const std::filesystem::path& p) { extras.push_back(p); };
 
-    auto result = dispatchCook(cooker, ctx);
-    if (result.success) {
-        if (ddcStoreOutputs(key, tmpPath, extras) && ddcFetchOutputs(key, outPath)) {
-            std::error_code ec;
-            std::filesystem::remove(tmpPath, ec);
-        } else {
-            // Store unusable (disk full?) — keep the correct output anyway.
-            std::error_code ec;
-            std::filesystem::rename(tmpPath, outPath, ec);
-            if (ec) result = { .success=false, .error="cannot place cooked output: "
-                                                      + ec.message() };
-        }
-    } else {
-        std::error_code ec;
-        std::filesystem::remove(tmpPath, ec);
-    }
+    auto result = dispatchCook(m_workerExe, *r->cooker, ctx);
+    placeOutput(result, r->key, r->tmpPath, r->outPath, extras);
 
-    commitResult(uuid, result, key, cooker->version(), outPath, deps);
+    commitResult(uuid, result, r->key, r->cooker->version(), r->outPath, deps);
     if (result.success) {
-        result.cookedPath = outPath.string();
-        std::printf("[AssetLib] Cooked: %s\n", rec->sourcePath.c_str());
+        result.cookedPath = r->outPath.string();
+        std::printf("[AssetLib] Cooked: %s\n", r->sourceRel.c_str());
     }
     return result;
 }
+
+CookResult CookPipeline::forceRecook(const UUID& uuid) {
+    auto rec = m_registry.findByUUID(uuid);
+    if (!rec) return { .success=false, .error="UUID not found" };
+    // A force-recook exists because someone suspects the cached output —
+    // evict the local blob and cook with the DDC read path bypassed, so we
+    // genuinely re-cook instead of re-fetching the very bytes under
+    // suspicion. (Shared tier untouched: other machines may be serving from
+    // it; ingest there is first-writer-wins, so a poisoned shared blob needs
+    // an admin wipe — same as every production DDC.)
+    if (ICooker* cooker = findCooker(lowerExtOf(rec->sourcePath)))
+        m_ddc.evictLocal(computeCookKey(*rec, *cooker, m_projectRoot));
+    rec->ddcKey.clear();                    // force staleness
+    m_registry.update(*rec);
+    return cookInternal(uuid, /*useFetch=*/false);
+}
+
+// ── Batch cooks ──────────────────────────────────────────────────────────────
 
 int CookPipeline::cookAll(std::function<void(int,int)> progress) {
     auto all   = m_registry.all();
@@ -439,12 +241,9 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
                             std::function<bool()> shouldContinue) {
     struct Work {
         UUID                  uuid;
-        ICooker*              cooker = nullptr;
-        std::filesystem::path sourcePath, outputPath, tmpPath;
-        std::string           sourceRel;
-        std::string           key;
+        Resolved              r;
         std::vector<UUID>     deps;
-        std::vector<std::filesystem::path> extras;
+        std::vector<std::filesystem::path> outputs;
         CookResult            result;
     };
 
@@ -457,34 +256,17 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
     for (const auto& uuid : uuids) {
         auto rec = m_registry.findByUUID(uuid);
         if (!rec || !isStale(*rec)) continue;
-        auto ext = std::filesystem::path(rec->sourcePath).extension().string();
-        for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-        ICooker* cooker = findCooker(ext);
-        if (!cooker) continue;
-        const std::string key = currentKey(*rec, cooker);
-        if (key.empty()) continue;          // unreadable source
+        auto r = resolve(*rec);
+        if (!r) continue;                   // no cooker / unreadable source
 
-        auto outDir = m_cacheRoot / (assetTypeName(rec->type) + "s");
-        std::filesystem::create_directories(outDir);
-        auto outPath = outDir / (uuid.toString() + ".cooked");
-
-        if (ddcFetchOutputs(key, outPath)) {
-            commitResult(uuid, { .success=true }, key, cooker->version(),
-                         outPath, {});
+        if (ddcFetchRecord(m_ddc, r->key, r->outPath)) {
+            commitResult(uuid, { .success=true }, r->key, r->cooker->version(),
+                         r->outPath, {});
             ++hits;
-            if (onResult) onResult(rec->sourcePath, true);
+            if (onResult) onResult(r->sourceRel, true);
             continue;
         }
-
-        Work w;
-        w.uuid       = uuid;
-        w.cooker     = cooker;
-        w.sourcePath = m_projectRoot / rec->sourcePath;
-        w.outputPath = outPath;
-        w.tmpPath    = outDir / (uuid.toString() + ".cooking");
-        w.sourceRel  = rec->sourcePath;
-        w.key        = key;
-        work.push_back(std::move(w));
+        work.push_back(Work{ .uuid = uuid, .r = std::move(*r) });
     }
     const int numWork = static_cast<int>(work.size());
     if (hits > 0)
@@ -498,7 +280,8 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
     // registry connection is never shared). Nodes are cost-weighted by the
     // cooker's estimate — the graph dispatches longest-first, so the 8K
     // texture starts at t=0 instead of straggling behind a hundred trinkets.
-    // NOTE: `work` must not reallocate once lambdas capture into it.
+    // NOTE: `work` is fully sized above and must not reallocate now that
+    // lambdas capture references into it.
     TaskGraph graph;
     int cooked = 0;
     const auto t0 = std::chrono::steady_clock::now();
@@ -507,50 +290,34 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
     for (auto& w : work) {
         CookContext estCtx;                 // estimate may peek the header
         estCtx.uuid       = w.uuid;
-        estCtx.sourcePath = w.sourcePath;
-        const size_t est  = w.cooker->estimatePeakBytes(estCtx);
+        estCtx.sourcePath = w.r.sourcePath;
+        const size_t est  = w.r.cooker->estimatePeakBytes(estCtx);
 
-        const int node = graph.add("asset:" + w.sourceRel, est,
+        const int node = graph.add("asset:" + w.r.sourceRel, est,
             /*work — pool*/ [this, &w] {
                 CookContext ctx;
                 ctx.uuid          = w.uuid;
-                ctx.sourcePath    = w.sourcePath;
-                ctx.outputPath    = w.tmpPath;   // NEVER the final path — see cookOne
+                ctx.sourcePath    = w.r.sourcePath;
+                ctx.outputPath    = w.r.tmpPath;   // never the final path
                 ctx.addDependency = [&w](const UUID& dep) { w.deps.push_back(dep); };
                 ctx.addOutput     = [&w](const std::filesystem::path& p) {
-                    w.extras.push_back(p);
+                    w.outputs.push_back(p);
                 };
-                // dispatchCook: isolated worker process when configured
-                // (crash = one failed asset, hard child memory cap), else
-                // in-process behind the exception net.
-                w.result = dispatchCook(w.cooker, ctx);
-
-                std::error_code ec;
-                if (w.result.success) {
-                    // DDC ingest on the pool too — hashing/copying blobs of
-                    // a big mesh is real work the drain shouldn't serialize.
-                    if (ddcStoreOutputs(w.key, w.tmpPath, w.extras)
-                            && ddcFetchOutputs(w.key, w.outputPath)) {
-                        std::filesystem::remove(w.tmpPath, ec);
-                    } else {
-                        std::filesystem::rename(w.tmpPath, w.outputPath, ec);
-                        if (ec) w.result = { .success=false,
-                                             .error="cannot place cooked output: "
-                                                    + ec.message() };
-                    }
-                } else {
-                    std::filesystem::remove(w.tmpPath, ec);
-                }
+                w.result = dispatchCook(m_workerExe, *w.r.cooker, ctx);
+                // DDC ingest on the pool too — hashing/copying the blobs of a
+                // big mesh is real work the drain lane shouldn't serialize.
+                placeOutput(w.result, w.r.key, w.r.tmpPath, w.r.outPath,
+                            w.outputs);
             },
             /*done — drain*/ [this, &w, &cooked, &onResult] {
                 if (!w.result.success && !w.result.skipped)
                     std::printf("[AssetLib] Cook FAILED: %s — %s\n",
-                                w.sourceRel.c_str(), w.result.error.c_str());
-                commitResult(w.uuid, w.result, w.key, w.cooker->version(),
-                             w.outputPath, w.deps);
+                                w.r.sourceRel.c_str(), w.result.error.c_str());
+                commitResult(w.uuid, w.result, w.r.key, w.r.cooker->version(),
+                             w.r.outPath, w.deps);
                 if (w.result.success) ++cooked;
                 if (onResult)
-                    onResult(w.sourceRel, w.result.success || w.result.skipped);
+                    onResult(w.r.sourceRel, w.result.success || w.result.skipped);
             });
         nodeByUuid.emplace(w.uuid.toString(), node);
     }
@@ -559,11 +326,11 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
     // meshes cook their textures inline — but any cooker that READS another
     // asset's cooked output is ordered correctly from here on.
     for (auto& w : work) {
-        const auto it = nodeByUuid.find(w.uuid.toString());
+        const int self = nodeByUuid.at(w.uuid.toString());
         for (const auto& dep : m_registry.dependencies(w.uuid)) {
             const auto dit = nodeByUuid.find(dep.toString());
-            if (dit != nodeByUuid.end() && dit->second != it->second)
-                graph.addEdge(dit->second, it->second);
+            if (dit != nodeByUuid.end() && dit->second != self)
+                graph.addEdge(dit->second, self);
         }
     }
 
@@ -571,7 +338,7 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
     // cooked AND committed — and immediately when none of them are cooking.
     std::vector<char> extraOk(extras.size(), 0);
     for (size_t i = 0; i < extras.size(); ++i) {
-        ExtraTask& e = extras[i];
+        ExtraTask& e  = extras[i];
         char&      ok = extraOk[i];
         const int node = graph.add("extra:" + e.name, e.estBytes,
             [&e, &ok] { ok = (e.run && e.run()) ? 1 : 0; },
@@ -591,24 +358,6 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
     std::printf("[AssetLib] Cooked %d/%d asset(s), %zu extra task(s) in %.1f ms "
                 "(+%d from DDC)\n", cooked, numWork, extras.size(), ms, hits);
     return cooked + hits;
-}
-
-CookResult CookPipeline::forceRecook(const UUID& uuid) {
-    auto rec = m_registry.findByUUID(uuid);
-    if (!rec) return { .success=false, .error="UUID not found" };
-    // A force-recook exists because someone suspects the cached output —
-    // evict the local blob and cook with the DDC read path bypassed, so we
-    // genuinely re-cook instead of re-fetching the very bytes under
-    // suspicion. (Shared tier untouched: other machines may be serving from
-    // it; ingest there is first-writer-wins, so a poisoned shared blob needs
-    // an admin wipe — same as every production DDC.)
-    auto ext = std::filesystem::path(rec->sourcePath).extension().string();
-    for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-    if (ICooker* cooker = findCooker(ext))
-        m_ddc.evictLocal(currentKey(*rec, cooker));
-    rec->ddcKey.clear();                    // force staleness
-    m_registry.update(*rec);
-    return cookInternal(uuid, /*useFetch=*/false);
 }
 
 } // namespace assetlib

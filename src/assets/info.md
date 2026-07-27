@@ -43,7 +43,11 @@ model binds rigidly to bone 0 so it can't collapse. Verified headless by
 `tools/import_test.cpp` (bgfx Noop backend).
 
 ## Cookers (`cookers/`)
-`assetlib::ICooker` implementations + `CookService`:
+`assetlib::ICooker` implementations + `CookService`. Cooker headers include
+`<assetlib/cooker.h>` (the contract alone) — not `cook_pipeline.h`; only the
+orchestrator needs the pipeline. See `modules/assetlib/info.md` for how the
+cook layer is split (orchestration / keying / dispatch / store / record
+format / scheduling).
 - `MeshCooker` — imports via Assimp directly, writes vertex/index buffers +
   submeshes + bounds. Returns `skipped` for skinned meshes (no cooked format
   for bone data yet).

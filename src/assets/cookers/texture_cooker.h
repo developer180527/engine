@@ -1,5 +1,5 @@
 #pragma once
-#include <assetlib/cook_pipeline.h>
+#include <assetlib/cooker.h>
 #include <assetlib/texture_asset.h>
 #include <vector>
 #include <string>

@@ -1,5 +1,5 @@
 #pragma once
-#include <assetlib/cook_pipeline.h>
+#include <assetlib/cooker.h>
 #include <assetlib/mesh_asset.h>
 #include <assimp/matrix3x3.h>
 #include <assimp/matrix4x4.h>

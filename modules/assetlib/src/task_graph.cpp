@@ -1,4 +1,5 @@
 #include "assetlib/task_graph.h"
+#include "cook_env.h"
 
 #include <algorithm>
 #include <atomic>
@@ -71,15 +72,6 @@ struct MemGovernor {
         cv.notify_all();
     }
 };
-
-// Reads an integer environment override; returns fallback when unset/invalid.
-long envLong(const char* name, long fallback) {
-    const char* v = std::getenv(name);
-    if (!v || !*v) return fallback;
-    char* end = nullptr;
-    const long n = std::strtol(v, &end, 10);
-    return (end && *end == '\0' && n > 0) ? n : fallback;
-}
 
 } // namespace
 

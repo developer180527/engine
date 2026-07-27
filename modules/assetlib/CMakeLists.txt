@@ -11,11 +11,15 @@ add_library(assetlib STATIC
     src/mesh_asset.cpp
     src/texture_asset.cpp
     src/scene_asset.cpp
-    src/cook_pipeline.cpp
     src/dependency_graph.cpp
     src/file_watcher.cpp
-    src/ddc.cpp
-    src/task_graph.cpp
+    # ── Cook pipeline, one concern per TU ────────────────────────────────────
+    src/cook_pipeline.cpp    # orchestration: what to cook, in what order
+    src/cook_key.cpp         # identity + staleness (DDC keys)
+    src/cook_dispatch.cpp    # execution mode (child process / in-process)
+    src/ddc.cpp              # content-addressed two-tier blob store
+    src/ddc_manifest.cpp     # cached-output record format
+    src/task_graph.cpp       # cost-weighted DAG scheduler
 )
 
 # ── BLAKE3 (vendored, C) ─────────────────────────────────────────────────────
