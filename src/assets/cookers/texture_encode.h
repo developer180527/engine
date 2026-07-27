@@ -3,11 +3,13 @@
 // The one encode path every cooker shares (standalone TextureCooker, the
 // FBX embedded-texture flow, the glTF material flow). Offline it does ALL
 // the heavy lifting: full mip chain (gamma-correct box filter for color,
-// renormalized averaging for normal maps), then hardware block compression
-// per mip — BC7 for color (near-lossless 4:1), BC5 for normal maps (two-
-// channel XY, Z reconstructed in-shader, no BC1-style chroma artifacts).
-// The runtime then streams the blocks straight to the GPU: header read,
-// zero CPU decode.
+// renormalized averaging for normal maps), then block compression per mip
+// via vendored rgbcx/bc7enc (third_party/bc7enc) — BC1/BC3 for color
+// (BC7 near-lossless on COOK_TEX_HQ=1 final bakes), BC5 for normal maps
+// (two-channel XY, Z reconstructed in-shader, no BC1-style chroma
+// artifacts). A 4K BC1 encodes in ~200ms; the old squish path took 6.5s and
+// nvtt BC7 took minutes. The runtime then streams the blocks straight to
+// the GPU: header read, zero CPU decode.
 #include <assetlib/texture_asset.h>
 #include <cstdint>
 

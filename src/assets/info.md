@@ -47,7 +47,9 @@ model binds rigidly to bone 0 so it can't collapse. Verified headless by
 - `MeshCooker` — imports via Assimp directly, writes vertex/index buffers +
   submeshes + bounds. Returns `skipped` for skinned meshes (no cooked format
   for bone data yet).
-- `TextureCooker` — stb decode → GPU-ready texels.
+- `TextureCooker` — stb decode → block-compressed texels + mips via
+  `texture_encode` (vendored rgbcx/bc7enc: ~200ms per 4K BC1, BC7 final
+  bake seconds not minutes; encoder TUs pinned to -O2 even in Debug).
 - `SceneCooker` — scene JSON → binary for SceneService.
 - `CookService` — drives the pipeline: background thread in the editor
   (`start()`, WAL SQLite allows concurrent main-thread reads), synchronous

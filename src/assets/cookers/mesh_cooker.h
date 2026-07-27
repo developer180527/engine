@@ -6,10 +6,12 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 11; // 10: glTF/GLB cook (cgltf).
+    static constexpr uint32_t kVersion = 12; // 10: glTF/GLB cook (cgltf).
                                              // 11: DDC transition — embedded
                                              // .ctex outputs reported via
                                              // ctx.addOutput.
+                                             // 12: rgbcx/bc7enc texture
+                                             // encoders (.ctex bytes change).
     std::vector<std::string> extensions() const override {
         return {".fbx",".obj",".dae",".ply",".stl",".gltf",".glb"};
     }

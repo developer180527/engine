@@ -65,7 +65,10 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         assets/cookers/scene_cooker.cpp
         assets/cookers/texture_cooker.cpp
         assets/cookers/texture_encode.cpp
-        assets/cookers/cook_service.cpp)
+        assets/cookers/cook_service.cpp
+        # Fast CPU block compression (rgbcx BC1/3/5 + bc7enc BC7) — offline only
+        ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
+        ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp)
 else()
     set(ENGINE_COOKER_SOURCES "")
     message(STATUS "engine: SHIPPING posture — Assimp/cookers compiled out; "
@@ -109,11 +112,23 @@ target_link_libraries(engine_core PUBLIC
 )
 if(ENGINE_WITH_SOURCE_IMPORTERS)
     target_link_libraries(engine_core PUBLIC assimp)
-    # BC7/BC5 texture encoding (texture_encode.cpp) — the same encoder
-    # texturec uses. Offline-only: shipped runtimes read blocks, never encode.
-    target_link_libraries(engine_core PRIVATE bimg_encode bimg bx)
+    # BC1/3/5/7 texture encoding (texture_encode.cpp) via vendored
+    # rgbcx/bc7enc. Offline-only: shipped runtimes read blocks, never encode.
+    # (Replaced bimg_encode: squish cluster-fit was ~6.5s per 4K BC1 and
+    # nvtt AVPCL BC7 was exhaustive-minutes; rgbcx does the same 4K in ~100s
+    # of ms at equal-or-better quality.)
     target_include_directories(engine_core PRIVATE
-        ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bimg/include)
+        ${CMAKE_SOURCE_DIR}/third_party/bc7enc)
+    # Block encoders + mip filter are hot inner loops over gigapixels; at
+    # Debug -O0 they dominate cook time 5-10x. They're deterministic vendored
+    # codecs nobody steps through with the engine — always optimize them.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
+            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
+            assets/cookers/texture_encode.cpp
+            PROPERTIES COMPILE_OPTIONS "-O2")
+    endif()
 endif()
 target_compile_definitions(engine_core PUBLIC
     BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>   # bx headers (cooker skeleton types)

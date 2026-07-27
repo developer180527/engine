@@ -8,7 +8,8 @@ class TextureCooker : public assetlib::ICooker {
 public:
     // v2: DDC transition — this version now feeds the per-cooker cache key
     // (bumping it re-cooks textures and ONLY textures).
-    static constexpr uint32_t kVersion = 2;
+    // v3: rgbcx/bc7enc encoders replace squish/nvtt (different block bytes).
+    static constexpr uint32_t kVersion = 3;
 
     std::vector<std::string> extensions() const override {
         return {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".hdr"};
