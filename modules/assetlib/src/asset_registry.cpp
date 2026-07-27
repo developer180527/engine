@@ -1,4 +1,5 @@
 #include "assetlib/asset_registry.h"
+#include "assetlib/ddc.h"
 #include <sqlite3.h>
 #include <ctime>
 #include <fstream>
@@ -14,19 +15,16 @@ namespace assetlib {
 
 static sqlite3* db(void* p) { return static_cast<sqlite3*>(p); }
 
-// ── FNV-1a 64-bit ─────────────────────────────────────────────────────────────
+// ── Content hash ──────────────────────────────────────────────────────────────
+// BLAKE3-256 (64 hex chars) — the SAME hash the DDC keys cooked output by, so
+// the registry's source_hash feeds straight into DDC key computation. The old
+// FNV-1a 64-bit hash (16 hex chars) was fine for local change detection but
+// is unsafe to content-address a shared cache with; scan() detects the short
+// legacy format and rehashes in place.
 static std::string hashFile(const std::filesystem::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    if (!f) return "";
-    uint64_t h = 14695981039346656037ULL;
-    char buf[65536];
-    while (f.read(buf, sizeof(buf)) || f.gcount())
-        for (std::streamsize i = 0; i < f.gcount(); ++i)
-            { h ^= static_cast<uint8_t>(buf[i]); h *= 1099511628211ULL; }
-    std::ostringstream ss;
-    ss << std::hex << std::setw(16) << std::setfill('0') << h;
-    return ss.str();
+    return blake3File(p);
 }
+static bool isLegacyHash(const std::string& h) { return h.size() != 64; }
 
 // ── Stat helpers (Fix 1) ──────────────────────────────────────────────────────
 bool AssetRegistry::statChanged(const AssetRecord& rec,
@@ -98,7 +96,8 @@ CREATE TABLE IF NOT EXISTS assets (
     importer_version INTEGER NOT NULL DEFAULT 0,
     import_settings  TEXT    NOT NULL DEFAULT '',
     error_message    TEXT    NOT NULL DEFAULT '',
-    cooked_at        INTEGER NOT NULL DEFAULT 0
+    cooked_at        INTEGER NOT NULL DEFAULT 0,
+    ddc_key          TEXT    NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS dependencies (
     asset_uuid      TEXT NOT NULL,
@@ -120,6 +119,7 @@ static const char* kMigrations[] = {
     "ALTER TABLE assets ADD COLUMN importer_version INTEGER NOT NULL DEFAULT 0;",
     "ALTER TABLE assets ADD COLUMN import_settings  TEXT    NOT NULL DEFAULT '';",
     "ALTER TABLE assets ADD COLUMN error_message    TEXT    NOT NULL DEFAULT '';",
+    "ALTER TABLE assets ADD COLUMN ddc_key          TEXT    NOT NULL DEFAULT '';",
 };
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ void AssetRegistry::migrate() {
 static const char* kCols =
     "uuid,type,state,source_path,cooked_path,source_hash,"
     "source_mtime,source_size,cook_version,importer_version,"
-    "import_settings,error_message,cooked_at";
+    "import_settings,error_message,cooked_at,ddc_key";
 
 static AssetRecord rowToRecord(sqlite3_stmt* s) {
     AssetRecord r;
@@ -177,6 +177,7 @@ static AssetRecord rowToRecord(sqlite3_stmt* s) {
     r.importSettings.json = txt(10);
     r.errorMessage      = txt(11);
     r.cookedAt          = sqlite3_column_int64(s,12);
+    r.ddcKey            = txt(13);
     return r;
 }
 
@@ -186,8 +187,8 @@ bool AssetRegistry::insert(const AssetRecord& r) {
         "INSERT INTO assets"
         "(uuid,type,state,source_path,cooked_path,source_hash,"
         " source_mtime,source_size,cook_version,importer_version,"
-        " import_settings,error_message,cooked_at)"
-        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        " import_settings,error_message,cooked_at,ddc_key)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(uuid) DO UPDATE SET"
         "  type=excluded.type, state=excluded.state,"
         "  source_path=excluded.source_path,"
@@ -199,7 +200,8 @@ bool AssetRegistry::insert(const AssetRecord& r) {
         "  importer_version=excluded.importer_version,"
         "  import_settings=excluded.import_settings,"
         "  error_message=excluded.error_message,"
-        "  cooked_at=excluded.cooked_at;";
+        "  cooked_at=excluded.cooked_at,"
+        "  ddc_key=excluded.ddc_key;";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db(m_db),sql,-1,&stmt,nullptr)!=SQLITE_OK) return false;
     auto us = r.uuid.toString();
@@ -216,6 +218,7 @@ bool AssetRegistry::insert(const AssetRecord& r) {
     sqlite3_bind_text (stmt,11, r.importSettings.json.c_str(), -1,SQLITE_TRANSIENT);
     sqlite3_bind_text (stmt,12, r.errorMessage.c_str(),        -1,SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt,13, r.cookedAt);
+    sqlite3_bind_text (stmt,14, r.ddcKey.c_str(),              -1,SQLITE_TRANSIENT);
     bool ok = sqlite3_step(stmt)==SQLITE_DONE;
     sqlite3_finalize(stmt);
     return ok;
@@ -388,7 +391,10 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
         auto existing=findBySourcePath(rel);
 
         if (existing) {
-            if (!statChanged(*existing, entry.path())) continue; // fast skip
+            // Fast skip only when the stat is unchanged AND the stored hash is
+            // already BLAKE3 — legacy FNV hashes are upgraded in place once.
+            if (!statChanged(*existing, entry.path())
+                    && !isLegacyHash(existing->sourceHash)) continue;
             auto newHash=hashFile(entry.path());
             if (newHash==existing->sourceHash) {
                 fillStat(*existing,entry.path()); update(*existing); // touch only

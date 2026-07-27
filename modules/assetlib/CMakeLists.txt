@@ -14,7 +14,31 @@ add_library(assetlib STATIC
     src/cook_pipeline.cpp
     src/dependency_graph.cpp
     src/file_watcher.cpp
+    src/ddc.cpp
 )
+
+# ── BLAKE3 (vendored, C) ─────────────────────────────────────────────────────
+# Content hash for the DDC — cryptographic-strength keys are what make a
+# SHARED cache safe (an FNV collision on a shared store silently serves the
+# wrong bytes to the whole studio). Portable kernel everywhere; NEON on ARM.
+set(BLAKE3_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/blake3)
+set(BLAKE3_SRCS
+    ${BLAKE3_DIR}/blake3.c
+    ${BLAKE3_DIR}/blake3_dispatch.c
+    ${BLAKE3_DIR}/blake3_portable.c
+)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    # NEON kernel autodetects via blake3_impl.h on AArch64.
+    list(APPEND BLAKE3_SRCS ${BLAKE3_DIR}/blake3_neon.c)
+else()
+    # x86 SIMD kernels not vendored — portable only (correct, just slower).
+    # Defines must be identical on EVERY blake3 TU: MAX_SIMD_DEGREE is derived
+    # from them in blake3_impl.h and sizes buffers shared across the TUs.
+    set_source_files_properties(${BLAKE3_SRCS} PROPERTIES COMPILE_DEFINITIONS
+        "BLAKE3_NO_SSE2;BLAKE3_NO_SSE41;BLAKE3_NO_AVX2;BLAKE3_NO_AVX512")
+endif()
+target_sources(assetlib PRIVATE ${BLAKE3_SRCS})
+target_include_directories(assetlib PRIVATE ${BLAKE3_DIR})
 
 add_library(assetlib::core ALIAS assetlib)
 

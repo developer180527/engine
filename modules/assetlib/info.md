@@ -9,13 +9,22 @@ is moving toward.
 
 ## Architecture
 - **`AssetRegistry`** — `registry.db` (SQLite, WAL journal). `scan(root)`
-  assigns UUIDs to new files and re-hashes changed ones; records carry
-  source path, content hash, cooked path, and state (used by the asset
-  browser's badges).
-- **`CookPipeline`** — staleness checks (source hash vs record), cooker
-  registration by extension (`ICooker`), and `cookMany` (parallel cooks on a
-  thread pool; registry I/O stays on the calling thread so the single
-  connection is never shared).
+  assigns UUIDs to new files and re-hashes changed ones (BLAKE3-256; legacy
+  FNV hashes upgraded in place on scan); records carry source path, content
+  hash, cooked path, DDC key of the last cook attempt, and state (used by
+  the asset browser's badges).
+- **`CookPipeline`** — content-addressed staleness (`record.ddcKey` vs the
+  key of current inputs), cooker registration by extension (`ICooker`: id +
+  version + settings fingerprint feed the key), and `cookMany` (DDC hits
+  served inline on the caller thread; misses cook in parallel under the
+  thermal/memory governor; registry I/O stays on the calling thread so the
+  single connection is never shared).
+- **`DdcStore`** (`ddc.h`) — two-tier content-addressed Derived Data Cache:
+  local `~/.engine/ddc` (`ENGINE_DDC`) + optional shared mount
+  (`ENGINE_DDC_SHARED`), BLAKE3-256 keys (vendored `third_party/blake3`,
+  portable + NEON). Immutable read-only blobs, atomic temp+rename ingest,
+  hardlink materialization, shared→local promotion on hit. Multi-output
+  cooks are manifests of member blobs (see `src/assets/info.md`).
 - **`DependencyGraph`** — asset→asset dependencies so cooking can cascade.
 - **`FileWatcher`** — change notifications driving re-scan requests.
 - **`uuid`** — stable asset identity that survives renames/moves.

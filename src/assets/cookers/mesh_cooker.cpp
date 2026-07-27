@@ -10,6 +10,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <cfloat>
 #include <cmath>
 #include <cctype>
@@ -243,6 +244,7 @@ static std::string resolveCookTexture(const aiScene* scene, const aiString& tp,
                   ctx.outputPath.stem().string().c_str(), slot);
     const auto outPath = ctx.outputPath.parent_path() / name;
     if (!assetlib::saveTexture(tex, outPath)) return {};
+    if (ctx.addOutput) ctx.addOutput(outPath);   // travels with the DDC record
     std::printf("[MeshCooker] embedded texture -> %s (%ux%u %s, %u mips)\n",
                 name, tw, th, isNormalMap ? "BC5" : "BC7", tex.header.mipCount);
     return name;
@@ -544,6 +546,7 @@ static std::string gltfCookTexture(const cgltf_image* img,
                   ctx.outputPath.stem().string().c_str(), slot);
     const auto outPath = ctx.outputPath.parent_path() / name;
     if (!assetlib::saveTexture(tex, outPath)) return {};
+    if (ctx.addOutput) ctx.addOutput(outPath);   // travels with the DDC record
     std::printf("[MeshCooker] glTF texture -> %s (%dx%d %s, %u mips)\n",
                 name, w, h, isNormalMap ? "BC5" : "BC7", tex.header.mipCount);
     return name;
@@ -733,6 +736,14 @@ static CookResult cookGltf(const CookContext& ctx) {
                 totalVerts, totalIndices, asset.submeshes.size(),
                 asset.materials.size());
     return {.success = true};
+}
+
+std::string MeshCooker::settingsFingerprint(const CookContext&) const {
+    // Embedded/material textures share cook::encodeTexture, so the quality
+    // tier changes this cooker's .ctex outputs (mirrors texture_encode.cpp).
+    const char* hqEnv = std::getenv("COOK_TEX_HQ");
+    const bool  hq    = hqEnv && *hqEnv && hqEnv[0] != '0';
+    return std::string("hq=") + (hq ? "1" : "0");
 }
 
 CookResult MeshCooker::cook(const CookContext& ctx) {

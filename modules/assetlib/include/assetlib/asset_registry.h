@@ -40,6 +40,11 @@ struct AssetRecord {
     int64_t       cookedAt        = 0;
     ImportSettings importSettings;
     std::string   errorMessage;
+    // DDC key of the last cook ATTEMPT (success, skip, or failure) — the
+    // content address of everything that went into it. Staleness is simply
+    // "stored key != current key"; a Failed record with a matching key means
+    // "these exact inputs already failed, don't retry until they change".
+    std::string   ddcKey;
 };
 
 class AssetRegistry {

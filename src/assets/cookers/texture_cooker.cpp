@@ -2,6 +2,17 @@
 #include "assets/cookers/texture_encode.h"
 #include <stb_image.h>
 #include <cstdio>
+#include <cstdlib>
+
+std::string TextureCooker::settingsFingerprint(const assetlib::CookContext& ctx) const {
+    // Mirrors the format choice in cook::encodeTexture exactly.
+    const char* hqEnv = std::getenv("COOK_TEX_HQ");
+    const bool  hq     = hqEnv && *hqEnv && hqEnv[0] != '0';
+    const bool  normal = cook::looksLikeNormalMap(
+        ctx.sourcePath.filename().string().c_str());
+    return std::string("hq=") + (hq ? "1" : "0")
+         + ";normal="         + (normal ? "1" : "0");
+}
 
 size_t TextureCooker::estimatePeakBytes(const assetlib::CookContext& ctx) const {
     int w = 0, h = 0, c = 0;

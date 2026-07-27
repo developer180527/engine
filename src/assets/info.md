@@ -54,9 +54,32 @@ model binds rigidly to bone 0 so it can't collapse. Verified headless by
   `cookOnce()` for the engine_cook CLI.
 
 Rules: cookers may use Assimp/stb/assetlib but must never reference bgfx,
-GLFW, or plugin symbols — `engine_cook` links engine_core alone. Staleness is
-content-hash based; failed cooks must delete stale output; cooked formats
-carry versioned headers.
+GLFW, or plugin symbols — `engine_cook` links engine_core alone. Failed cooks
+must delete stale output; cooked formats carry versioned headers.
+
+### Derived Data Cache (content-addressed cooking)
+Cooking is a caching problem: cooked output is a pure function of
+(source bytes ⊕ cooker id ⊕ cooker version ⊕ settings), so that hash — the
+DDC key (BLAKE3-256) — names the output in a two-tier blob store
+(`assetlib/ddc.h`). Local tier `~/.engine/ddc` (override `ENGINE_DDC`) is
+per-machine, shared across projects; optional shared tier `ENGINE_DDC_SHARED`
+(any network mount) is the studio cache — a hit there means a teammate/CI
+already cooked it and nobody compresses that 8K texture twice. Staleness is
+simply `record.ddcKey != currentKey`; wiping `.cache/` re-materializes by
+hardlink without recooking; a per-cooker version bump re-cooks ONLY that
+cooker's assets. A cook RECORD is a manifest of member blobs (cooked mesh +
+its sibling `.ctex` embedded textures — cookers report extras via
+`CookContext::addOutput`), fetched all-or-nothing. Cookers write to a TEMP
+path, the pipeline ingests then hardlink-materializes — never hand a cooker a
+hardlinked final path (an ofstream would truncate the blob for every project;
+blobs are also stored chmod 0444 for exactly that reason). Cook identity per
+cooker: `id()` + `version()` + `settingsFingerprint(ctx)` — the fingerprint
+MUST cover every env knob that alters output (`COOK_TEX_HQ`, the normal-map
+filename heuristic), or a fast-quality blob silently satisfies a final-bake
+request. Failed cooks store no blob but record the key: identical inputs are
+not retried until source/cooker/settings change (`forceRecook` evicts the
+local blob and bypasses the fetch path — otherwise it would just re-download
+the bytes under suspicion).
 
 ## Loaders (`loaders/`)
 `mesh_loader` — reads a `.cooked` mesh and creates bgfx buffers. The fast

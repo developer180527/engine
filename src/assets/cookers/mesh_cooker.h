@@ -6,11 +6,20 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 10; // bumped: glTF/GLB cook (cgltf)
+    static constexpr uint32_t kVersion = 11; // 10: glTF/GLB cook (cgltf).
+                                             // 11: DDC transition — embedded
+                                             // .ctex outputs reported via
+                                             // ctx.addOutput.
     std::vector<std::string> extensions() const override {
         return {".fbx",".obj",".dae",".ply",".stl",".gltf",".glb"};
     }
     assetlib::CookResult cook(const assetlib::CookContext& ctx) override;
+
+    const char* id()      const override { return "mesh"; }
+    uint32_t    version() const override { return kVersion; }
+    // Embedded/material textures run through the shared encode path, so the
+    // COOK_TEX_HQ tier changes THIS cooker's output too.
+    std::string settingsFingerprint(const assetlib::CookContext&) const override;
 };
 
 // Normal matrix (inverse-transpose of the linear part) with a SCALE-INVARIANT

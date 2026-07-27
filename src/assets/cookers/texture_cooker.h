@@ -6,12 +6,21 @@
 
 class TextureCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 1;
+    // v2: DDC transition — this version now feeds the per-cooker cache key
+    // (bumping it re-cooks textures and ONLY textures).
+    static constexpr uint32_t kVersion = 2;
 
     std::vector<std::string> extensions() const override {
         return {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".hdr"};
     }
     assetlib::CookResult cook(const assetlib::CookContext& ctx) override;
+
+    const char* id()      const override { return "texture"; }
+    uint32_t    version() const override { return kVersion; }
+    // Output varies with the COOK_TEX_HQ tier (BC7 vs fast squish) and the
+    // filename normal-map heuristic (BC5 + linear mips) — both must key the
+    // cache or an iteration-quality blob could satisfy a final-bake request.
+    std::string settingsFingerprint(const assetlib::CookContext& ctx) const override;
 
     // Textures are the memory hogs the budget scheduler most needs to know
     // about: an 8K source decodes to 256 MB RGBA and ~1 GB in the BC7 float
