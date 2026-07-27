@@ -33,6 +33,15 @@ bool sceneDependsOnNewerAssets(const std::filesystem::path& jsonPath,
                                const std::filesystem::path& projectRoot,
                                const std::filesystem::path& cacheRoot);
 
+// The asset-DB UUIDs (as strings) ONE scene references — used to build the
+// cook graph's scene→asset dependency edges, so a scene cooks the moment its
+// own assets land instead of waiting for the whole batch. Returns empty on
+// parse failure (a broken scene gets no edges and fails at its own cook).
+std::unordered_set<std::string> collectSceneRefs(
+    const std::filesystem::path& jsonPath,
+    assetlib::AssetRegistry* assetLib,
+    const std::filesystem::path& projectRoot);
+
 // The COOK closure of a project's scenes: the asset-DB UUIDs (as strings) of
 // every mesh any .scene under `sceneDirs` references. Cooking just these — the
 // scene meshes, which in turn cook their own embedded/sibling textures — is

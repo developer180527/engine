@@ -1,15 +1,14 @@
 #include "assetlib/cook_pipeline.h"
+#include "assetlib/task_graph.h"
 #include <ctime>
 #include <chrono>
 #include <thread>
-#include <atomic>
-#include <mutex>
-#include <condition_variable>
 #include <algorithm>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <unordered_map>
 
 #if defined(__APPLE__)
     #include <pthread/qos.h>
@@ -28,56 +27,6 @@
 namespace assetlib {
 
 namespace {
-
-// Total physical RAM in bytes (0 if unknown).
-size_t physicalRamBytes() {
-#if defined(__APPLE__)
-    int64_t mem = 0; size_t len = sizeof(mem);
-    if (sysctlbyname("hw.memsize", &mem, &len, nullptr, 0) == 0 && mem > 0)
-        return (size_t)mem;
-#elif defined(__linux__)
-    const long pages = sysconf(_SC_PHYS_PAGES);
-    const long psize = sysconf(_SC_PAGE_SIZE);
-    if (pages > 0 && psize > 0) return (size_t)pages * (size_t)psize;
-#endif
-    return 0;
-}
-
-// Drop the calling (cook worker) thread to a background/utility QoS so the OS
-// scheduler keeps it BELOW foreground work and clocks the cores down before
-// the fans spin up — the cook should be invisible, not a space heater.
-void demoteToBackground() {
-#if defined(__APPLE__)
-    pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
-#elif defined(__linux__)
-    // Best-effort niceness; ignored if unsupported.
-    nice(10);
-#endif
-}
-
-// Admits cook work against a byte budget instead of a fixed thread count, so a
-// burst of 8K textures / high-poly meshes serializes rather than OOM-ing. A
-// task larger than the whole budget is allowed to run ALONE (used==0) so it
-// can never deadlock waiting for space that will never exist.
-struct MemGovernor {
-    std::mutex              m;
-    std::condition_variable cv;
-    size_t                  budget;
-    size_t                  used = 0;
-    explicit MemGovernor(size_t b) : budget(b ? b : (size_t)1 << 30) {}
-
-    void acquire(size_t need) {
-        need = std::min(need, budget);
-        std::unique_lock<std::mutex> lk(m);
-        cv.wait(lk, [&] { return used == 0 || used + need <= budget; });
-        used += need;
-    }
-    void release(size_t need) {
-        need = std::min(need, budget);
-        { std::lock_guard<std::mutex> lk(m); used -= need; }
-        cv.notify_all();
-    }
-};
 
 // Reads an integer environment override; returns fallback when unset/invalid.
 long envLong(const char* name, long fallback) {
@@ -484,9 +433,10 @@ int CookPipeline::cookAll(std::function<void(int,int)> progress) {
     return cooked;
 }
 
-int CookPipeline::cookMany(const std::vector<UUID>& uuids,
-                           std::function<void(const std::string&, bool)> onResult,
-                           std::function<bool()> shouldContinue) {
+int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
+                            std::vector<ExtraTask> extras,
+                            std::function<void(const std::string&, bool)> onResult,
+                            std::function<bool()> shouldContinue) {
     struct Work {
         UUID                  uuid;
         ICooker*              cooker = nullptr;
@@ -539,97 +489,107 @@ int CookPipeline::cookMany(const std::vector<UUID>& uuids,
     const int numWork = static_cast<int>(work.size());
     if (hits > 0)
         std::printf("[AssetLib] DDC: %d asset(s) restored from cache\n", hits);
-    if (numWork == 0) return hits;
+    if (numWork == 0 && extras.empty()) return hits;
 
-    // ── Phase 2 (parallel): pure cook() under thermal + memory governance ──
-    // Thermal citizenship: the cook is an OFFLINE background chore, not the
-    // foreground app. It must not pin every core (the "melting laptop") nor
-    // OOM the box on a pile of 8K assets. Three levers:
-    //   • worker cap — leave 2 cores for the OS/editor (COOK_THREADS overrides)
-    //   • QoS demotion — workers run at background/utility priority
-    //   • memory budget — admit work by estimated peak bytes (COOK_MEM_BUDGET_MB)
-    const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
-    int workers = (int)envLong("COOK_THREADS", (long)std::max(1u, hw > 2 ? hw - 2 : 1u));
-    workers = std::max(1, std::min(workers, numWork));
-
-    const size_t ram        = physicalRamBytes();
-    const size_t autoBudget = ram ? ram * 3 / 5 : ((size_t)4 << 30);   // 60% RAM
-    const size_t budget     = (size_t)envLong("COOK_MEM_BUDGET_MB",
-                                  (long)(autoBudget >> 20)) << 20;
-    MemGovernor gov(budget);
-
-    std::atomic<int> next{0};
-    std::mutex       cbMtx;
-    const auto       t0 = std::chrono::steady_clock::now();
-    std::printf("[AssetLib] Cooking %d asset(s) on %d worker(s), mem budget %zu MB...\n",
-                numWork, workers, budget >> 20);
-
-    auto run = [&]() {
-        demoteToBackground();   // this worker yields to foreground work
-        for (;;) {
-            if (shouldContinue && !shouldContinue()) break;
-            int i = next.fetch_add(1);
-            if (i >= numWork) break;
-            Work& w = work[i];
-            CookContext ctx;
-            ctx.uuid          = w.uuid;
-            ctx.sourcePath    = w.sourcePath;
-            ctx.outputPath    = w.tmpPath;   // NEVER the final path — see cookOne
-            ctx.addDependency = [&w](const UUID& dep) { w.deps.push_back(dep); };
-            ctx.addOutput     = [&w](const std::filesystem::path& p) {
-                w.extras.push_back(p);
-            };
-
-            // Reserve this task's estimated peak against the shared budget
-            // before touching it — heavy assets wait for headroom, cheap ones
-            // stream through. Released the moment the cook returns (or throws).
-            const size_t estBytes = w.cooker->estimatePeakBytes(ctx);
-            gov.acquire(estBytes);
-
-            // dispatchCook: spawns an isolated worker process when one is
-            // configured (crash = one failed asset, hard child memory cap),
-            // else cooks in-process behind the exception net.
-            w.result = dispatchCook(w.cooker, ctx);
-            gov.release(estBytes);
-
-            if (onResult) {
-                std::lock_guard<std::mutex> lk(cbMtx);
-                onResult(w.sourceRel, w.result.success || w.result.skipped);
-            }
-        }
-    };
-    std::vector<std::thread> pool;
-    pool.reserve(workers);
-    for (int t = 0; t < workers; ++t) pool.emplace_back(run);
-    for (auto& th : pool) th.join();
-
-    // ── Phase 3 (caller thread): ingest into the DDC + commit registry ────
+    // ── Phase 2: build the task graph ──────────────────────────────────────
+    // Every miss is a node: work() = cook + DDC ingest (worker pool, memory-
+    // governed, QoS-demoted — TaskGraph owns the thermal levers); done() =
+    // registry commit + progress (drain lane = this thread, so the single
+    // registry connection is never shared). Nodes are cost-weighted by the
+    // cooker's estimate — the graph dispatches longest-first, so the 8K
+    // texture starts at t=0 instead of straggling behind a hundred trinkets.
+    // NOTE: `work` must not reallocate once lambdas capture into it.
+    TaskGraph graph;
     int cooked = 0;
+    const auto t0 = std::chrono::steady_clock::now();
+    std::unordered_map<std::string, int> nodeByUuid;
+
     for (auto& w : work) {
-        std::error_code ec;
-        if (w.result.success) {
-            if (ddcStoreOutputs(w.key, w.tmpPath, w.extras)
-                    && ddcFetchOutputs(w.key, w.outputPath)) {
-                std::filesystem::remove(w.tmpPath, ec);
-            } else {
-                std::filesystem::rename(w.tmpPath, w.outputPath, ec);
-                if (ec) w.result = { .success=false,
-                                     .error="cannot place cooked output: " + ec.message() };
-            }
-        } else {
-            std::filesystem::remove(w.tmpPath, ec);
-            if (!w.result.skipped)
-                std::printf("[AssetLib] Cook FAILED: %s — %s\n",
-                            w.sourceRel.c_str(), w.result.error.c_str());
-        }
-        commitResult(w.uuid, w.result, w.key, w.cooker->version(),
-                     w.outputPath, w.deps);
-        if (w.result.success) ++cooked;
+        CookContext estCtx;                 // estimate may peek the header
+        estCtx.uuid       = w.uuid;
+        estCtx.sourcePath = w.sourcePath;
+        const size_t est  = w.cooker->estimatePeakBytes(estCtx);
+
+        const int node = graph.add("asset:" + w.sourceRel, est,
+            /*work — pool*/ [this, &w] {
+                CookContext ctx;
+                ctx.uuid          = w.uuid;
+                ctx.sourcePath    = w.sourcePath;
+                ctx.outputPath    = w.tmpPath;   // NEVER the final path — see cookOne
+                ctx.addDependency = [&w](const UUID& dep) { w.deps.push_back(dep); };
+                ctx.addOutput     = [&w](const std::filesystem::path& p) {
+                    w.extras.push_back(p);
+                };
+                // dispatchCook: isolated worker process when configured
+                // (crash = one failed asset, hard child memory cap), else
+                // in-process behind the exception net.
+                w.result = dispatchCook(w.cooker, ctx);
+
+                std::error_code ec;
+                if (w.result.success) {
+                    // DDC ingest on the pool too — hashing/copying blobs of
+                    // a big mesh is real work the drain shouldn't serialize.
+                    if (ddcStoreOutputs(w.key, w.tmpPath, w.extras)
+                            && ddcFetchOutputs(w.key, w.outputPath)) {
+                        std::filesystem::remove(w.tmpPath, ec);
+                    } else {
+                        std::filesystem::rename(w.tmpPath, w.outputPath, ec);
+                        if (ec) w.result = { .success=false,
+                                             .error="cannot place cooked output: "
+                                                    + ec.message() };
+                    }
+                } else {
+                    std::filesystem::remove(w.tmpPath, ec);
+                }
+            },
+            /*done — drain*/ [this, &w, &cooked, &onResult] {
+                if (!w.result.success && !w.result.skipped)
+                    std::printf("[AssetLib] Cook FAILED: %s — %s\n",
+                                w.sourceRel.c_str(), w.result.error.c_str());
+                commitResult(w.uuid, w.result, w.key, w.cooker->version(),
+                             w.outputPath, w.deps);
+                if (w.result.success) ++cooked;
+                if (onResult)
+                    onResult(w.sourceRel, w.result.success || w.result.skipped);
+            });
+        nodeByUuid.emplace(w.uuid.toString(), node);
     }
+
+    // Dependency edges among the cook set (registry graph). Sparse today —
+    // meshes cook their textures inline — but any cooker that READS another
+    // asset's cooked output is ordered correctly from here on.
+    for (auto& w : work) {
+        const auto it = nodeByUuid.find(w.uuid.toString());
+        for (const auto& dep : m_registry.dependencies(w.uuid)) {
+            const auto dit = nodeByUuid.find(dep.toString());
+            if (dit != nodeByUuid.end() && dit->second != it->second)
+                graph.addEdge(dit->second, it->second);
+        }
+    }
+
+    // Extra tasks (scene cooks): run after their own referenced assets are
+    // cooked AND committed — and immediately when none of them are cooking.
+    std::vector<char> extraOk(extras.size(), 0);
+    for (size_t i = 0; i < extras.size(); ++i) {
+        ExtraTask& e = extras[i];
+        char&      ok = extraOk[i];
+        const int node = graph.add("extra:" + e.name, e.estBytes,
+            [&e, &ok] { ok = (e.run && e.run()) ? 1 : 0; },
+            [&e, &ok] { if (e.onDone) e.onDone(ok != 0); });
+        for (const auto& u : e.waitFor) {
+            const auto dit = nodeByUuid.find(u.toString());
+            if (dit != nodeByUuid.end()) graph.addEdge(dit->second, node);
+        }
+    }
+
+    TaskGraph::Options opts;
+    opts.shouldContinue = std::move(shouldContinue);
+    graph.run(opts);
+
     const double ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - t0).count();
-    std::printf("[AssetLib] Cooked %d/%d asset(s) in %.1f ms on %d worker(s) "
-                "(+%d from DDC)\n", cooked, numWork, ms, workers, hits);
+    std::printf("[AssetLib] Cooked %d/%d asset(s), %zu extra task(s) in %.1f ms "
+                "(+%d from DDC)\n", cooked, numWork, extras.size(), ms, hits);
     return cooked + hits;
 }
 

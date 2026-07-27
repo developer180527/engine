@@ -15,12 +15,20 @@ is moving toward.
   the asset browser's badges).
 - **`CookPipeline`** — content-addressed staleness (`record.ddcKey` vs the
   key of current inputs), cooker registration by extension (`ICooker`: id +
-  version + settings fingerprint feed the key), and `cookMany` (DDC hits
-  served inline on the caller thread; misses cook in parallel under the
-  thermal/memory governor; registry I/O stays on the calling thread so the
-  single connection is never shared). With `setWorkerExecutable()` set, each
-  cook spawns an isolated `engine_cook_worker` child — signal-crash/timeout
-  containment + hard child `setrlimit` memory caps (see `src/assets/info.md`).
+  version + settings fingerprint feed the key), and `cookGraph` (DDC hits
+  served inline on the caller thread; misses + extra tasks run as a
+  TaskGraph; registry I/O stays on the calling thread — the graph's drain
+  lane — so the single connection is never shared). With
+  `setWorkerExecutable()` set, each cook spawns an isolated
+  `engine_cook_worker` child — signal-crash/timeout containment + hard child
+  `setrlimit` memory caps (see `src/assets/info.md`).
+- **`TaskGraph`** (`task_graph.h`) — cost-weighted DAG scheduler: max-heap
+  ready queue on estimated bytes (longest-first dispatch), dependency edges,
+  memory-budget admission + QoS-demoted workers (the thermal levers moved
+  here from cookMany), a serialized drain lane on the caller thread for
+  done() callbacks, cancellation, and cycle detection. Dependents release
+  when a task DRAINS (success or failure) — a failed asset never wedges the
+  scenes referencing it.
 - **`DdcStore`** (`ddc.h`) — two-tier content-addressed Derived Data Cache:
   local `~/.engine/ddc` (`ENGINE_DDC`) + optional shared mount
   (`ENGINE_DDC_SHARED`), BLAKE3-256 keys (vendored `third_party/blake3`,

@@ -53,7 +53,12 @@ model binds rigidly to bone 0 so it can't collapse. Verified headless by
 - `SceneCooker` — scene JSON → binary for SceneService.
 - `CookService` — drives the pipeline: background thread in the editor
   (`start()`, WAL SQLite allows concurrent main-thread reads), synchronous
-  `cookOnce()` for the engine_cook CLI.
+  `cookOnce()` for the engine_cook CLI. Assets AND scenes cook as ONE task
+  graph (`CookPipeline::cookGraph` + `assetlib::TaskGraph`): each stale
+  scene is an ExtraTask with dependency edges on exactly the cooking assets
+  it references (`collectSceneRefs`), so it cooks the moment its own assets
+  land — the old flow cooked every scene sequentially after ALL assets.
+  Scene tasks run on the worker pool with their own WAL read connections.
 
 ### Out-of-process cook workers
 Every cook runs in a spawned `engine_cook_worker` child (one asset per

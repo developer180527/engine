@@ -134,6 +134,10 @@ bool AssetRegistry::open(const std::filesystem::path& dbPath) {
     sqlite3_exec(db(m_db), "PRAGMA foreign_keys  = ON;",     nullptr,nullptr,nullptr);
     sqlite3_exec(db(m_db), "PRAGMA journal_mode  = WAL;",    nullptr,nullptr,nullptr);
     sqlite3_exec(db(m_db), "PRAGMA synchronous   = NORMAL;", nullptr,nullptr,nullptr);
+    // Connections open mid-cook (scene tasks on the worker pool) while the
+    // drain lane writes — retry briefly on lock contention instead of
+    // failing a read that would have succeeded 5ms later.
+    sqlite3_busy_timeout(db(m_db), 5000);
     migrate();
     return true;
 }

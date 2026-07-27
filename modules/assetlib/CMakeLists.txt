@@ -15,6 +15,7 @@ add_library(assetlib STATIC
     src/dependency_graph.cpp
     src/file_watcher.cpp
     src/ddc.cpp
+    src/task_graph.cpp
 )
 
 # ── BLAKE3 (vendored, C) ─────────────────────────────────────────────────────

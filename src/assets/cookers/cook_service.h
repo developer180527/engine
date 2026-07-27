@@ -7,6 +7,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 // CookService — runs the cook pipeline on a background thread so the
 // editor opens immediately. Opens its own DB connection (WAL mode allows
@@ -74,11 +76,17 @@ public:
 private:
     void cookLoop();
     void runOneCookPass();
-    // Scene staleness is PER-SCENE: source-JSON mtime vs cooked binary, plus
-    // sceneDependsOnNewerAssets() (only the scenes whose OWN referenced
-    // assets changed re-cook — the old global assetsChanged flag re-cooked
-    // every scene in the workspace on any single asset change).
-    void cookSceneFiles(assetlib::AssetRegistry& registry);
+    // Scene cooks as graph tasks. Scene staleness is PER-SCENE: source-JSON
+    // mtime vs cooked binary, header version peek, plus
+    // sceneDependsOnNewerAssets() — AND any scene whose referenced assets
+    // are in `cooking` gets a task with dependency edges on exactly those
+    // assets, so it cooks the moment they land (the old flow cooked every
+    // scene sequentially after ALL assets finished). scenesCooked/scenesFailed
+    // are bumped from the graph's drain lane (the cook thread).
+    std::vector<assetlib::CookPipeline::ExtraTask> buildSceneTasks(
+        assetlib::AssetRegistry& registry,
+        const std::unordered_set<std::string>& cooking,
+        int* scenesCooked, int* scenesFailed);
     // Files mid-write by external tools defer to a follow-up pass.
     void requeueIfDeferred(int deferred);
     // Scene source dirs: <project>/scenes and <assets>/scenes (whichever exist).

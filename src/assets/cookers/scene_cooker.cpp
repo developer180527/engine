@@ -39,6 +39,25 @@ static std::optional<assetlib::AssetRecord> resolveMeshRecord(
     return rec;
 }
 
+std::unordered_set<std::string> collectSceneRefs(
+        const std::filesystem::path& jsonPath,
+        assetlib::AssetRegistry* assetLib,
+        const std::filesystem::path& projectRoot) {
+    std::unordered_set<std::string> out;
+    if (!assetLib) return out;
+    std::ifstream f(jsonPath);
+    if (!f) return out;
+    nlohmann::json scene;
+    try { scene = nlohmann::json::parse(f); }
+    catch (...) { return out; }         // broken scene — no refs, no edges
+    for (const auto& je : scene.value("entities", nlohmann::json::array())) {
+        if (!je.contains("meshRenderer")) continue;
+        if (auto rec = resolveMeshRecord(je["meshRenderer"], assetLib, projectRoot))
+            out.insert(rec->uuid.toString());
+    }
+    return out;
+}
+
 std::unordered_set<std::string> collectSceneAssetClosure(
         const std::vector<std::filesystem::path>& sceneDirs,
         assetlib::AssetRegistry* assetLib,

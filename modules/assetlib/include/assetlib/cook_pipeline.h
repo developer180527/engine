@@ -86,13 +86,38 @@ public:
     // Returns number of assets cooked.
     // Progress callback receives (cooked, total).
     int        cookAll(std::function<void(int,int)> progress = {});
-    // Cook a fixed UUID set across all cores. Registry I/O stays on the caller
-    // thread; only cook() runs on the pool. onResult(sourcePath, success) is
-    // invoked serialized as each finishes; shouldContinue() (optional) stops
-    // dispatching new work when false.
+
+    // A non-asset job scheduled into the same cook graph (scene cooks).
+    // run() executes on the worker pool AFTER every `waitFor` asset in the
+    // cook set has been cooked AND committed; onDone(success) runs on the
+    // caller thread. waitFor UUIDs not in the cook set are already fresh
+    // (or DDC hits committed up front) and impose no edge.
+    struct ExtraTask {
+        std::string               name;                      // for logs
+        size_t                    estBytes = (size_t)16 << 20;
+        std::function<bool()>     run;
+        std::vector<UUID>         waitFor;
+        std::function<void(bool)> onDone;
+    };
+
+    // Cook a fixed UUID set as a cost-weighted task graph (TaskGraph):
+    // DDC hits are served inline first; misses become graph nodes ordered
+    // longest-first with dependency edges from the registry; extras (scene
+    // cooks) run as soon as THEIR OWN assets land. Registry I/O stays on the
+    // caller thread (the graph's drain lane); cook() and DDC ingest run on
+    // the pool. onResult(sourcePath, success) is invoked serialized as each
+    // asset finishes; shouldContinue() (optional) stops dispatching.
+    // Returns assets cooked (including cache hits).
+    int        cookGraph(const std::vector<UUID>& uuids,
+                         std::vector<ExtraTask> extras = {},
+                         std::function<void(const std::string&, bool)> onResult = {},
+                         std::function<bool()> shouldContinue = {});
+    // Compatibility wrapper: cookGraph with no extras.
     int        cookMany(const std::vector<UUID>& uuids,
                         std::function<void(const std::string&, bool)> onResult = {},
-                        std::function<bool()> shouldContinue = {});
+                        std::function<bool()> shouldContinue = {}) {
+        return cookGraph(uuids, {}, std::move(onResult), std::move(shouldContinue));
+    }
 
     // Force re-cook regardless of hash.
     CookResult forceRecook(const UUID& uuid);

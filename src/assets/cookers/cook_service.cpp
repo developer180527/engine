@@ -171,6 +171,7 @@ void CookService::runOneCookPass() {
 
     int deferred = 0;
     std::vector<assetlib::UUID> todo;
+    std::unordered_set<std::string> todoSet;   // scene→asset edge lookup
     todo.reserve(all.size());
     for (auto& rec : all) {
         if (scope && !scope->count(rec.uuid.toString())) continue;
@@ -181,6 +182,7 @@ void CookService::runOneCookPass() {
         if (!pipeline.isStale(rec)) continue;
         if (!fileSettled(src)) { ++deferred; continue; }
         todo.push_back(rec.uuid);
+        todoSet.insert(rec.uuid.toString());
     }
     total = (int)todo.size();
 
@@ -202,25 +204,34 @@ void CookService::runOneCookPass() {
     m_stats.deferred = deferred;   // lets the synchronous cookOnce() converge
     m_stats.active   = total > 0;
 
-    if (total == 0) {
+    // ── Scene tasks ────────────────────────────────────────────────────
+    // Scenes are NOT DB-tracked assets — they live in scenes/ as JSON. They
+    // join the SAME graph as the assets, each with dependency edges on
+    // exactly the cooking assets it references: a scene cooks the moment
+    // its own assets land (and immediately, in parallel, when none are
+    // cooking) instead of every scene waiting for the whole batch.
+    int scenesCooked = 0, scenesFailed = 0;
+    auto sceneTasks = buildSceneTasks(registry, todoSet,
+                                      &scenesCooked, &scenesFailed);
+
+    if (total == 0 && sceneTasks.empty()) {
         if (standingFailures > 0)
             LOG_WARN("CookService", "Up to date, but %d asset(s) in FAILED state", standingFailures);
         else if (deferred == 0)
             LOG_INFO("CookService", "All assets up to date");
-        // Still check for stale scenes even when no mesh/texture changed —
-        // the user may have edited scene JSON directly.
-        cookSceneFiles(registry);
         requeueIfDeferred(deferred);
         return;
     }
 
-    LOG_INFO("CookService", "Cooking %d asset(s) in background (parallel)...", total);
+    if (total > 0)
+        LOG_INFO("CookService", "Cooking %d asset(s) + %zu scene(s) as a task "
+                 "graph...", total, sceneTasks.size());
 
-    // Cook the collected UUIDs across the cores. cookMany does registry I/O
-    // on this thread and runs only cook() on the pool, so the single
-    // registry connection stays single-threaded. The callback (serialized)
-    // drives progress; shouldContinue stops dispatch on shutdown.
-    pipeline.cookMany(todo,
+    // One graph run: cookGraph does registry I/O on this thread (the drain
+    // lane) and runs cook()/DDC ingest on the pool, so the single registry
+    // connection stays single-threaded. The callback (drain lane) drives
+    // progress; shouldContinue stops dispatch on shutdown.
+    pipeline.cookGraph(todo, std::move(sceneTasks),
         [&](const std::string& src, bool ok) {
             if (ok) {
                 ++cooked; m_stats.cooked = cooked;
@@ -239,13 +250,10 @@ void CookService::runOneCookPass() {
         std::lock_guard<std::mutex> lk(m_stats.nameMtx);
         m_stats.currentAsset.clear();
     }
-    LOG_INFO("CookService", "Done — %d cooked, %d failed", cooked, failed);
-
-    // ── Scene cooking ─────────────────────────────────────────────────
-    // Scenes are NOT DB-tracked assets — they live in scenes/ as JSON.
-    // After individual assets are cooked (so cooked paths are available in
-    // the DB), convert any stale JSON scenes into binary .cooked files.
-    cookSceneFiles(registry);
+    if (total > 0)
+        LOG_INFO("CookService", "Done — %d cooked, %d failed", cooked, failed);
+    if (scenesCooked > 0)
+        LOG_INFO("CookService", "Cooked %d scene(s) to binary", scenesCooked);
     requeueIfDeferred(deferred);
 }
 
@@ -260,8 +268,12 @@ void CookService::requeueIfDeferred(int deferred) {
     requestRefresh();
 }
 
-void CookService::cookSceneFiles(assetlib::AssetRegistry& registry) {
+std::vector<assetlib::CookPipeline::ExtraTask> CookService::buildSceneTasks(
+        assetlib::AssetRegistry& registry,
+        const std::unordered_set<std::string>& cooking,
+        int* scenesCooked, int* scenesFailed) {
     namespace fs = std::filesystem;
+    std::vector<assetlib::CookPipeline::ExtraTask> tasks;
     fs::path sceneCacheDir = m_cacheRoot / "scenes";
 
     // Scenes live in either <project>/scenes (canonical v2 layout) or
@@ -270,11 +282,9 @@ void CookService::cookSceneFiles(assetlib::AssetRegistry& registry) {
     // were only ever cooked by editor saves, so format upgrades never
     // reached them.
     std::vector<fs::path> dirs = sceneDirs();
-    if (dirs.empty()) return;
+    if (dirs.empty()) return tasks;
 
     std::error_code ec;
-    int scenesCooked = 0;
-
     for (const auto& scenesDir : dirs)
     for (const auto& entry : fs::directory_iterator(scenesDir, ec)) {
         if (!m_running) break;
@@ -287,6 +297,15 @@ void CookService::cookSceneFiles(assetlib::AssetRegistry& registry) {
         // A scene mid-save by the editor/user gets the same settle
         // treatment as assets — never cook a half-written JSON.
         if (!fileSettled(entry.path())) continue;   // next pass picks it up
+
+        // This scene's asset refs, intersected with what's cooking NOW —
+        // the graph edges that let it cook the moment its assets land.
+        std::vector<assetlib::UUID> waitFor;
+        if (!cooking.empty())
+            for (const auto& u : collectSceneRefs(entry.path(), &registry,
+                                                  m_projectRoot))
+                if (cooking.count(u))
+                    waitFor.push_back(assetlib::UUID::fromString(u));
 
         // Stale if binary doesn't exist, is older than the JSON source, or
         // was cooked by an older FORMAT version (header peek is cheap and
@@ -310,21 +329,35 @@ void CookService::cookSceneFiles(assetlib::AssetRegistry& registry) {
         // Per-scene dependency check (replaces the global assetsChanged
         // flag, which re-cooked EVERY scene in the workspace whenever ANY
         // single asset changed — cooker audit): only re-cook this scene if
-        // one of ITS OWN referenced assets has a newer cooked output.
-        if (!stale && sceneDependsOnNewerAssets(entry.path(), outTime,
-                                                &registry, m_projectRoot,
-                                                m_cacheRoot))
-            stale = true;
+        // one of ITS OWN referenced assets has a newer cooked output —
+        // or is about to (its refs are in the cook set).
+        if (!stale && waitFor.empty()
+                   && !sceneDependsOnNewerAssets(entry.path(), outTime,
+                                                 &registry, m_projectRoot,
+                                                 m_cacheRoot))
+            continue;
 
-        if (!stale) continue;
-
-        if (cookSceneFile(entry.path(), outPath, &registry, m_projectRoot))
-            ++scenesCooked;
-        else
-            LOG_WARN("CookService", "Scene cook failed: %s",
-                     entry.path().filename().string().c_str());
+        assetlib::CookPipeline::ExtraTask t;
+        t.name    = entry.path().filename().string();
+        t.waitFor = std::move(waitFor);
+        // run() executes on the worker pool, possibly concurrent with the
+        // drain lane's registry writes — open a PRIVATE read connection
+        // (WAL: one writer + N readers). Everything captured by value; the
+        // caller-thread registry is never touched from here.
+        t.run = [jsonPath = entry.path(), outPath, dbPath = m_dbPath,
+                 projectRoot = m_projectRoot]() -> bool {
+            assetlib::AssetRegistry reg;
+            if (!reg.open(dbPath))
+                return cookSceneFile(jsonPath, outPath, nullptr, projectRoot);
+            return cookSceneFile(jsonPath, outPath, &reg, projectRoot);
+        };
+        t.onDone = [name = t.name, scenesCooked, scenesFailed](bool ok) {
+            if (ok) { ++*scenesCooked; }
+            else    { ++*scenesFailed;
+                      LOG_WARN("CookService", "Scene cook failed: %s",
+                               name.c_str()); }
+        };
+        tasks.push_back(std::move(t));
     }
-
-    if (scenesCooked > 0)
-        LOG_INFO("CookService", "Cooked %d scene(s) to binary", scenesCooked);
+    return tasks;
 }
