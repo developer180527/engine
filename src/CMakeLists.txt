@@ -130,6 +130,15 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
             PROPERTIES COMPILE_OPTIONS "-O2")
     endif()
 endif()
+# Same policy for the single-header decode/parse TUs: stb decodes 4K PNGs,
+# cgltf parses GLB buffers — both byte-at-a-time loops that crawl at -O0,
+# both vendored code with no engine symbols to debug.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
+    set_source_files_properties(
+        assets/importers/stb_impl.cpp
+        assets/importers/cgltf_impl.cpp
+        PROPERTIES COMPILE_OPTIONS "-O2")
+endif()
 target_compile_definitions(engine_core PUBLIC
     BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>   # bx headers (cooker skeleton types)
     # Headers gate their Assimp paths on this (clip_library.h cook-on-miss).

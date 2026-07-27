@@ -118,6 +118,13 @@ set(ASSIMP_BUILD_STL_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_BLEND_IMPORTER   ON CACHE BOOL "" FORCE)
 if(ENGINE_WITH_SOURCE_IMPORTERS)
     add_subdirectory(third_party/assimp)
+    # Assimp chews through multi-hundred-MB FBX/DAE during cooks; at Debug
+    # -O0 the parse dominates cook time several-fold. It's a vendored parser
+    # nobody steps through with the engine debugger — keep it optimized even
+    # in Debug builds (same policy as the BC encoders in src/CMakeLists.txt).
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
+        target_compile_options(assimp PRIVATE $<$<CONFIG:Debug>:-O2>)
+    endif()
 endif()
 
 # ── JoltPhysics ──────────────────────────────────────────────────────────

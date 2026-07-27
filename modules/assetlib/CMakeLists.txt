@@ -39,6 +39,12 @@ else()
 endif()
 target_sources(assetlib PRIVATE ${BLAKE3_SRCS})
 target_include_directories(assetlib PRIVATE ${BLAKE3_DIR})
+# The hash runs over every source byte in the project on scan; at Debug -O0
+# it throttles registry scans + DDC key computation. Vendored, deterministic,
+# never debugged with the engine — keep it optimized in Debug builds.
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
+    set_source_files_properties(${BLAKE3_SRCS} PROPERTIES COMPILE_OPTIONS "-O2")
+endif()
 
 add_library(assetlib::core ALIAS assetlib)
 

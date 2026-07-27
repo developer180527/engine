@@ -18,6 +18,13 @@
 #include "assets/cookers/mesh_cooker.h"
 #include "assets/cookers/scene_cooker.h"
 #include "assets/cookers/texture_encode.h"
+// Assimp's matrix members are inline templates defined in .inl headers this
+// TU must instantiate ITSELF: with assimp built -O0 the archive happened to
+// carry weak out-of-line copies to link against, but an optimized assimp
+// inlines them and exports nothing.
+#include <assimp/vector3.inl>
+#include <assimp/matrix3x3.inl>
+#include <assimp/matrix4x4.inl>
 #include <assetlib/mesh_asset.h>
 #include <assetlib/scene_asset.h>
 #include <assetlib/texture_asset.h>
