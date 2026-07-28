@@ -12,7 +12,7 @@ tier-3 game module.
 
 ---
 
-## Ragebait stress-test suite (SHIPPED — src/tools/stress_*, July 2026)
+## Ragebait stress-test suite (SHIPPED — src/tests/stress_*, July 2026)
 Adversarial load/torture harnesses to find vulnerabilities the happy-path FPS
 never exercised. Findings:
 - **stress_deep_tree** → FOUND + FIXED a crash: flecs HARD-ABORTS on a ChildOf
