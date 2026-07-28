@@ -2,6 +2,7 @@
 #include "cook_env.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -44,7 +45,8 @@ CookResult cookInProcess(ICooker& cooker, const CookContext& ctx) {
 // Exit-by-signal, a missing/garbled result file, or a deadline overrun all
 // become a per-asset failure — the host process (editor!) never dies with it.
 CookResult cookInWorkerProcess(const std::filesystem::path& workerExe,
-                               ICooker& cooker, const CookContext& ctx) {
+                               ICooker& cooker, const CookContext& ctx,
+                               const CancelFn& isCancelled) {
     namespace fs = std::filesystem;
     const fs::path resultPath = ctx.outputPath.string() + ".result";
     std::error_code ec;
@@ -80,16 +82,30 @@ CookResult cookInWorkerProcess(const std::filesystem::path& workerExe,
     const long timeoutSec = envLong("COOK_TASK_TIMEOUT_SEC", 3600);
     const auto deadline   = std::chrono::steady_clock::now()
                           + std::chrono::seconds(timeoutSec);
-    int  status   = 0;
-    bool timedOut = false;
+    int  status    = 0;
+    bool timedOut  = false;
+    bool aborted   = false;
+    bool reapError = false;
     for (;;) {
         const pid_t r = waitpid(pid, &status, WNOHANG);
         if (r == pid) break;
-        if (r < 0)   { status = -1; break; }
-        if (std::chrono::steady_clock::now() >= deadline) {
+        if (r < 0) {
+            // EINTR is a benign signal interruption of the call itself, NOT a
+            // dead child — retrying is mandatory. Treating it as fatal both
+            // misreported healthy cooks as crashes and leaked the child
+            // (we'd leave the loop without ever reaping it).
+            if (errno == EINTR) continue;
+            reapError = true;
+            break;
+        }
+        // Kill on cancellation (host shutting down) or deadline overrun. Both
+        // reap the child so it can never outlive us as an orphan.
+        const bool cancel = isCancelled && isCancelled();
+        if (cancel || std::chrono::steady_clock::now() >= deadline) {
             kill(pid, SIGKILL);
-            waitpid(pid, &status, 0);
-            timedOut = true;
+            while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+            if (cancel) aborted  = true;
+            else        timedOut = true;
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -97,11 +113,21 @@ CookResult cookInWorkerProcess(const std::filesystem::path& workerExe,
 
     auto cleanupResult = [&] { std::error_code e; fs::remove(resultPath, e); };
 
+    if (aborted) {
+        cleanupResult();
+        return { .success=false, .cancelled=true, .error="cook cancelled" };
+    }
     if (timedOut) {
         cleanupResult();
         return { .success=false,
                  .error="cook timed out after " + std::to_string(timeoutSec)
                       + "s (worker killed)" };
+    }
+    if (reapError) {
+        cleanupResult();
+        return { .success=false,
+                 .error=std::string("cannot reap cook worker: ")
+                      + std::strerror(errno) };
     }
     if (WIFSIGNALED(status)) {
         cleanupResult();
@@ -141,7 +167,8 @@ CookResult cookInWorkerProcess(const std::filesystem::path& workerExe,
 #else  // _WIN32
 
 CookResult cookInWorkerProcess(const std::filesystem::path&,
-                               ICooker&, const CookContext&) {
+                               ICooker&, const CookContext&,
+                               const CancelFn&) {
     return { .success=false,
              .error="out-of-process cooking not implemented on Windows" };
 }
@@ -149,10 +176,14 @@ CookResult cookInWorkerProcess(const std::filesystem::path&,
 #endif
 
 CookResult dispatchCook(const std::filesystem::path& workerExe,
-                        ICooker& cooker, const CookContext& ctx) {
+                        ICooker& cooker, const CookContext& ctx,
+                        const CancelFn& isCancelled) {
+    // Never start work the caller has already given up on.
+    if (isCancelled && isCancelled())
+        return { .success=false, .cancelled=true, .error="cook cancelled" };
 #if !defined(_WIN32)
     if (!workerExe.empty())
-        return cookInWorkerProcess(workerExe, cooker, ctx);
+        return cookInWorkerProcess(workerExe, cooker, ctx, isCancelled);
 #endif
     return cookInProcess(cooker, ctx);
 }

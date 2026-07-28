@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <vector>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 #include <cstdio>
 #include <sys/stat.h>
@@ -381,10 +382,51 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
 
     // Wrap all writes in one transaction — N individual writes become 1.
     // On a 10,000-asset project this is the difference between 10s and 100ms.
-    sqlite3_exec(db(m_db), "BEGIN;", nullptr, nullptr, nullptr);
+    // RAII: the scan walks the filesystem and can throw (or return early), and
+    // an abandoned BEGIN leaves this connection stuck in an open transaction
+    // for its whole lifetime — every later write fails and the DB looks
+    // locked. The guard rolls back unless we reach the explicit commit.
+    struct Transaction {
+        sqlite3* db;
+        bool     done = false;
+        explicit Transaction(sqlite3* d) : db(d) {
+            sqlite3_exec(db, "BEGIN;", nullptr, nullptr, nullptr);
+        }
+        void commit() {
+            if (done) return;
+            sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr);
+            done = true;
+        }
+        ~Transaction() {
+            if (!done) sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
+        }
+    } txn(db(m_db));
 
+    // Move detection needs to look up records by content hash. Querying all()
+    // per new file was O(new × total) full-table scans — a 10k-asset first
+    // scan meant 10k SELECT *, i.e. 100M rows walked. Snapshot ONCE into a
+    // hash index instead, built lazily so an up-to-date tree never pays for
+    // it. `claimed` keeps one record from being re-pointed by two different
+    // files: the old per-file all() re-read picked that up via the `seen`
+    // check, a snapshot cannot.
+    std::unordered_map<std::string, std::vector<AssetRecord>> byHash;
+    std::unordered_set<std::string> claimed;
+    bool haveIndex = false;
+    auto hashIndex = [&]() -> decltype(byHash)& {
+        if (!haveIndex) {
+            for (auto& rec : all()) byHash[rec.sourceHash].push_back(rec);
+            haveIndex = true;
+        }
+        return byHash;
+    };
+
+    // error_code overload: an unreadable directory mid-walk must not throw
+    // past the transaction guard (it would still roll back, but a scan that
+    // reports what it managed to do beats one that unwinds into the caller).
+    std::error_code walkEc;
     for (auto& entry : std::filesystem::recursive_directory_iterator(
-             assetsRoot, std::filesystem::directory_options::skip_permission_denied)) {
+             assetsRoot, std::filesystem::directory_options::skip_permission_denied,
+             walkEc)) {
         if (!entry.is_regular_file()) continue;
         auto ext=entry.path().extension().string();
         for (auto& c:ext) c=static_cast<char>(std::tolower(c));
@@ -417,13 +459,18 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
             // file is gone — re-point that record instead of minting a new
             // UUID, so scene references (which key on UUID) survive renames.
             std::optional<AssetRecord> moved;
-            for (auto& rec:all()) {
-                if (rec.sourceHash!=newHash || rec.sourcePath==rel) continue;
-                if (seen.count(rec.sourcePath)) continue;            // still present
-                if (std::filesystem::exists(projectRoot/rec.sourcePath)) continue;
-                moved=rec; break;
+            auto& index = hashIndex();
+            if (auto it = index.find(newHash); it != index.end()) {
+                for (auto& rec : it->second) {
+                    if (rec.sourcePath==rel) continue;
+                    if (claimed.count(rec.uuid.toString())) continue;  // taken
+                    if (seen.count(rec.sourcePath)) continue;          // still present
+                    if (std::filesystem::exists(projectRoot/rec.sourcePath)) continue;
+                    moved=rec; break;
+                }
             }
             if (moved) {
+                claimed.insert(moved->uuid.toString());
                 std::printf("[AssetLib] Moved: %s -> %s (%s)\n",
                             moved->sourcePath.c_str(),rel.c_str(),
                             moved->uuid.toString().c_str());
@@ -456,7 +503,10 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
         std::printf("[AssetLib] Missing: %s\n",rec.sourcePath.c_str());
         ++changed;
     }
-    sqlite3_exec(db(m_db), "COMMIT;", nullptr, nullptr, nullptr);
+    txn.commit();
+    if (walkEc)
+        std::printf("[AssetLib] scan: %s (partial scan committed)\n",
+                    walkEc.message().c_str());
     return changed;
 }
 

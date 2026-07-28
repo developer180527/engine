@@ -1,10 +1,27 @@
 #include "assetlib/ddc_manifest.h"
 
+#include <cstdio>
+
 namespace assetlib {
 
 namespace {
 constexpr const char* kMagic = "ddc-manifest-v1";
 constexpr const char* kPrimaryName = "@";
+
+// True only for a bare filename that stays inside its directory: no
+// separators of either flavour, no drive/ADS colon, no "." / ".." traversal,
+// no leading dash-free weirdness beyond that. Anything else is rejected
+// rather than sanitized — a manifest we don't fully understand is a miss.
+bool isPlainFilename(const std::string& name) {
+    if (name.empty() || name.size() > 255)                return false;
+    if (name == "." || name == "..")                      return false;
+    if (name.find_first_of("/\\:") != std::string::npos)  return false;
+    // Reject control characters (a name is a filesystem path, not a payload).
+    for (unsigned char c : name) if (c < 0x20 || c == 0x7f) return false;
+    // Belt and braces: the path itself must agree it is just a filename.
+    const std::filesystem::path p(name);
+    return p.filename() == p && !p.has_root_directory() && !p.has_root_name();
+}
 } // namespace
 
 bool ddcStoreRecord(DdcStore& ddc, const std::string& key,
@@ -43,11 +60,16 @@ bool ddcFetchRecord(DdcStore& ddc, const std::string& key,
         if (tab == std::string::npos) return false;
         const std::string mk   = line.substr(0, tab);
         const std::string name = line.substr(tab + 1);
-        // Names are plain sibling filenames — a manifest from a SHARED store
-        // is remote input; never let one path-traverse out of the cache dir.
-        if (name.empty() || name.find('/') != std::string::npos ||
-            name.find('\\') != std::string::npos || name.find("..") == 0)
+        // A manifest from a SHARED store is REMOTE INPUT written by another
+        // machine — treat member names as hostile. Allowlist (a plain
+        // filename, nothing else) rather than blocklist: rejecting only
+        // "/ \ .." still lets "C:evil" through on Windows, where a
+        // drive-relative path escapes the cache directory entirely.
+        if (name != kPrimaryName && !isPlainFilename(name)) {
+            std::fprintf(stderr, "[DDC] rejected manifest member name '%s' "
+                         "for key %s\n", name.c_str(), key.c_str());
             return false;
+        }
         const std::filesystem::path dst =
             (name == kPrimaryName) ? outPath : outPath.parent_path() / name;
         if (!ddc.fetch(mk, dst)) return false;

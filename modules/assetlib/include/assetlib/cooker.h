@@ -14,6 +14,12 @@ namespace assetlib {
 // ── Cook context ──────────────────────────────────────────────────────────────
 // Passed to ICooker::cook(). Cooker reads from sourcePath, writes to outputPath,
 // and records any assets it depends on via addDependency().
+// THREADING CONTRACT: one CookContext belongs to ONE cook on ONE thread.
+// The pipeline runs different assets concurrently, never the same context.
+// addDependency/addOutput are therefore NOT synchronized — they append to
+// plain vectors owned by the scheduling task. A cooker that parallelizes its
+// OWN work (parallel mip encode, threaded mesh optimization) must funnel
+// these calls back to its cook() thread, or serialize them itself.
 struct CookContext {
     UUID                     uuid;
     std::filesystem::path    sourcePath;
@@ -29,6 +35,12 @@ struct CookContext {
 struct CookResult {
     bool        success    = false;
     bool        skipped    = false; // cooker can't handle this type — not an error
+    // Aborted mid-cook because the host is shutting down — NOT a verdict on
+    // the asset. The pipeline must leave the registry record untouched: a
+    // cancelled cook recorded as Failed would carry the current DDC key, and
+    // staleness reads "same key + Failed" as "already tried, don't retry" —
+    // the asset would never cook again until its source changed.
+    bool        cancelled  = false;
     std::string error;
     // Populated by the pipeline after a successful cook:
     std::string cookedPath;

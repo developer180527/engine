@@ -114,12 +114,21 @@ void CookPipeline::commitResult(const UUID& uuid, const CookResult& res,
                                 const std::string& key, uint32_t cookerVersion,
                                 const std::filesystem::path& outPath,
                                 const std::vector<UUID>& deps) {
+    // A cancelled cook is not a verdict on the asset — record NOTHING. Writing
+    // Failed with this key would make the record look "already attempted at
+    // these exact inputs", and staleness would skip it forever (see
+    // CookResult::cancelled). Leaving it untouched keeps it stale → retried.
+    if (res.cancelled) return;
+
     auto rec = m_registry.findByUUID(uuid);
     if (!rec) return;
 
     if (res.success) {
         for (auto& dep : deps) m_registry.addDependency(uuid, dep);
-        rec->cookedPath  = std::filesystem::relative(outPath, m_cacheRoot).string();
+        // error_code overload: the throwing one would propagate out of the
+        // graph's drain lane on a filesystem hiccup mid-commit.
+        std::error_code relEc;
+        rec->cookedPath  = std::filesystem::relative(outPath, m_cacheRoot, relEc).string();
         rec->state       = AssetState::Ready;
         rec->errorMessage.clear();
     } else {
@@ -186,6 +195,7 @@ CookResult CookPipeline::cookInternal(const UUID& uuid, bool useFetch) {
 
     auto result = dispatchCook(m_workerExe, *r->cooker, ctx);
     placeOutput(result, r->key, r->tmpPath, r->outPath, extras);
+
 
     commitResult(uuid, result, r->key, r->cooker->version(), r->outPath, deps);
     if (result.success) {
@@ -283,9 +293,16 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
     // NOTE: `work` is fully sized above and must not reallocate now that
     // lambdas capture references into it.
     TaskGraph graph;
-    int cooked = 0;
+    int cooked = 0, cancelled = 0;
     const auto t0 = std::chrono::steady_clock::now();
-    std::unordered_map<std::string, int> nodeByUuid;
+    std::unordered_map<UUID, int> nodeByUuid;   // UUID hashes directly
+
+    // Cancellation reaches the COOKS, not just the dispatcher: workers poll
+    // this and SIGKILL their child, so quitting the editor doesn't wait out a
+    // multi-minute bake. Must be thread-safe — CookService's reads an atomic.
+    CancelFn isCancelled;
+    if (shouldContinue)
+        isCancelled = [&shouldContinue] { return !shouldContinue(); };
 
     for (auto& w : work) {
         CookContext estCtx;                 // estimate may peek the header
@@ -294,7 +311,7 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
         const size_t est  = w.r.cooker->estimatePeakBytes(estCtx);
 
         const int node = graph.add("asset:" + w.r.sourceRel, est,
-            /*work — pool*/ [this, &w] {
+            /*work — pool*/ [this, &w, &isCancelled] {
                 CookContext ctx;
                 ctx.uuid          = w.uuid;
                 ctx.sourcePath    = w.r.sourcePath;
@@ -303,13 +320,17 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
                 ctx.addOutput     = [&w](const std::filesystem::path& p) {
                     w.outputs.push_back(p);
                 };
-                w.result = dispatchCook(m_workerExe, *w.r.cooker, ctx);
+                w.result = dispatchCook(m_workerExe, *w.r.cooker, ctx, isCancelled);
                 // DDC ingest on the pool too — hashing/copying the blobs of a
                 // big mesh is real work the drain lane shouldn't serialize.
                 placeOutput(w.result, w.r.key, w.r.tmpPath, w.r.outPath,
                             w.outputs);
             },
-            /*done — drain*/ [this, &w, &cooked, &onResult] {
+            /*done — drain*/ [this, &w, &cooked, &cancelled, &onResult] {
+                // Cancelled: commit nothing, count nothing, report nothing —
+                // the asset stays stale and cooks on the next pass. Reporting
+                // it as a failure would just spam the shutdown log.
+                if (w.result.cancelled) { ++cancelled; return; }
                 if (!w.result.success && !w.result.skipped)
                     std::printf("[AssetLib] Cook FAILED: %s — %s\n",
                                 w.r.sourceRel.c_str(), w.result.error.c_str());
@@ -319,16 +340,16 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
                 if (onResult)
                     onResult(w.r.sourceRel, w.result.success || w.result.skipped);
             });
-        nodeByUuid.emplace(w.uuid.toString(), node);
+        nodeByUuid.emplace(w.uuid, node);
     }
 
     // Dependency edges among the cook set (registry graph). Sparse today —
     // meshes cook their textures inline — but any cooker that READS another
     // asset's cooked output is ordered correctly from here on.
     for (auto& w : work) {
-        const int self = nodeByUuid.at(w.uuid.toString());
+        const int self = nodeByUuid.at(w.uuid);
         for (const auto& dep : m_registry.dependencies(w.uuid)) {
-            const auto dit = nodeByUuid.find(dep.toString());
+            const auto dit = nodeByUuid.find(dep);
             if (dit != nodeByUuid.end() && dit->second != self)
                 graph.addEdge(dit->second, self);
         }
@@ -344,19 +365,22 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
             [&e, &ok] { ok = (e.run && e.run()) ? 1 : 0; },
             [&e, &ok] { if (e.onDone) e.onDone(ok != 0); });
         for (const auto& u : e.waitFor) {
-            const auto dit = nodeByUuid.find(u.toString());
+            const auto dit = nodeByUuid.find(u);
             if (dit != nodeByUuid.end()) graph.addEdge(dit->second, node);
         }
     }
 
     TaskGraph::Options opts;
-    opts.shouldContinue = std::move(shouldContinue);
+    opts.shouldContinue = shouldContinue;   // graph keeps its own copy
     graph.run(opts);
 
     const double ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - t0).count();
     std::printf("[AssetLib] Cooked %d/%d asset(s), %zu extra task(s) in %.1f ms "
                 "(+%d from DDC)\n", cooked, numWork, extras.size(), ms, hits);
+    if (cancelled > 0)
+        std::printf("[AssetLib] %d cook(s) cancelled — left stale, will retry\n",
+                    cancelled);
     return cooked + hits;
 }
 

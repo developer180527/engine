@@ -68,7 +68,20 @@ struct MemGovernor {
     }
     void release(size_t need) {
         need = std::min(need, budget);
-        { std::lock_guard<std::mutex> lk(m); used -= need; }
+        {
+            std::lock_guard<std::mutex> lk(m);
+            // Saturate rather than wrap. An unbalanced acquire/release pair
+            // would otherwise underflow `used` to a huge value and wedge the
+            // scheduler FOREVER (every admission test fails) — a silent hang
+            // is the worst possible failure mode here, so clamp loudly.
+            if (need > used) {
+                std::fprintf(stderr, "[TaskGraph] BUG: memory release of %zu "
+                             "with only %zu reserved — clamping\n", need, used);
+                used = 0;
+            } else {
+                used -= need;
+            }
+        }
         cv.notify_all();
     }
 };
@@ -160,6 +173,48 @@ size_t TaskGraph::run(const Options& opts) {
     pool.reserve(workers);
     for (int t = 0; t < workers; ++t) pool.emplace_back(workerLoop);
 
+    // Names the ACTUAL cycle (A -> B -> C -> A), not just the set of stuck
+    // tasks — "these 40 tasks are unreachable" tells you nothing about which
+    // edge to delete. Once nothing is ready and nothing is in flight, every
+    // undrained node has an undrained predecessor, so walking predecessors
+    // from any stuck node is guaranteed to close a loop within N steps.
+    auto reportCycle = [this] {
+        const int n = (int)m_nodes.size();
+        std::vector<std::vector<int>> preds(n);
+        for (int i = 0; i < n; ++i)
+            for (int d : m_nodes[i].dependents) preds[d].push_back(i);
+
+        int start = -1;
+        for (int i = 0; i < n; ++i) if (m_nodes[i].unmet > 0) { start = i; break; }
+        if (start < 0) return;
+
+        std::vector<int> path, posInPath(n, -1);
+        int cur = start;
+        while (cur >= 0 && posInPath[cur] < 0) {
+            posInPath[cur] = (int)path.size();
+            path.push_back(cur);
+            int next = -1;
+            for (int p : preds[cur])
+                if (m_nodes[p].unmet > 0) { next = p; break; }
+            cur = next;
+        }
+        if (cur < 0) {   // no loop found (shouldn't happen) — list the stuck set
+            for (int i = 0; i < n; ++i)
+                if (m_nodes[i].unmet > 0)
+                    std::fprintf(stderr, "[TaskGraph]   stuck: %s\n",
+                                 m_nodes[i].name.c_str());
+            return;
+        }
+        // path[posInPath[cur]..] is the loop, in predecessor order — reverse
+        // it to print in the direction the edges actually point.
+        std::vector<int> cyc(path.begin() + posInPath[cur], path.end());
+        std::reverse(cyc.begin(), cyc.end());
+        std::string s;
+        for (int i : cyc) { s += m_nodes[i].name; s += " -> "; }
+        s += m_nodes[cyc.front()].name;          // close the loop
+        std::fprintf(stderr, "[TaskGraph]   cycle: %s\n", s.c_str());
+    };
+
     // ── Drain (caller thread): done() callbacks + dependency release ──────
     size_t drained   = 0;
     bool   cancelled = false;
@@ -189,10 +244,8 @@ size_t TaskGraph::run(const Options& opts) {
                 if (drained == total) break;       // all done
                 // Nothing running, nothing ready, tasks remain → cycle.
                 std::fprintf(stderr, "[TaskGraph] dependency cycle — %zu "
-                             "task(s) unreachable:\n", total - drained);
-                for (const auto& n : m_nodes)
-                    if (n.unmet > 0)
-                        std::fprintf(stderr, "[TaskGraph]   %s\n", n.name.c_str());
+                             "task(s) unreachable\n", total - drained);
+                reportCycle();
                 break;
             } else {
                 continue;                          // spurious/timeout wakeup

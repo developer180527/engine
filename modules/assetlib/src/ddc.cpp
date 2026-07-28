@@ -114,6 +114,25 @@ fs::path DdcStore::blobPath(const fs::path& root, const std::string& key) {
     return root / key.substr(0, 2) / (key + ".blob");
 }
 
+namespace {
+// A temp name unique across processes AND threads. Both must be in it: two
+// cook workers on one machine share a pid-less name, and two graph workers
+// storing the SAME key concurrently (duplicate assets, or two meshes with
+// byte-identical embedded textures) share a thread-less name — either
+// collision means both write the same file and one ships a truncated blob.
+fs::path uniqueTempPath(const fs::path& dir, const std::string& key,
+                        const char* tag) {
+    static std::atomic<uint64_t> ctr{0};
+#if defined(_WIN32)
+    const uint64_t pid = (uint64_t)::_getpid();
+#else
+    const uint64_t pid = (uint64_t)::getpid();
+#endif
+    return dir / (key + "." + tag + "." + std::to_string(pid)
+                      + "." + std::to_string(ctr.fetch_add(1)));
+}
+} // namespace
+
 bool DdcStore::contains(const std::string& key) const {
     if (key.empty()) return false;
     std::error_code ec;
@@ -132,15 +151,7 @@ bool DdcStore::ingest(const fs::path& root, const std::string& key,
     // Copy to a private temp name IN the destination directory, then rename:
     // rename is atomic on the same filesystem, so a concurrent reader can
     // never see a half-written blob — it sees nothing, or the whole thing.
-    static std::atomic<uint64_t> ctr{0};
-    fs::path tmp = blob.parent_path() /
-        (key + ".ingest." + std::to_string(
-#if defined(_WIN32)
-            (uint64_t)::_getpid()
-#else
-            (uint64_t)::getpid()
-#endif
-        ) + "." + std::to_string(ctr.fetch_add(1)));
+    const fs::path tmp = uniqueTempPath(blob.parent_path(), key, "ingest");
 
     fs::copy_file(src, tmp, fs::copy_options::overwrite_existing, ec);
     if (ec) { fs::remove(tmp, ec); return false; }
@@ -217,13 +228,7 @@ bool DdcStore::storeBytes(const std::string& key, const std::string& bytes) {
     // atomicity, same tiering).
     std::error_code ec;
     fs::create_directories(m_local, ec);
-    fs::path tmp = m_local / (key + ".bytes." + std::to_string(
-#if defined(_WIN32)
-        (uint64_t)::_getpid()
-#else
-        (uint64_t)::getpid()
-#endif
-    ));
+    const fs::path tmp = uniqueTempPath(m_local, key, "bytes");
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f.write(bytes.data(), (std::streamsize)bytes.size())) {

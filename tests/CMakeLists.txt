@@ -74,6 +74,9 @@ engine_test(providers_test)
 if(ENGINE_WITH_SOURCE_IMPORTERS)
     engine_test(async_loader_test)
     engine_test(cooker_test)
+    # Cook infrastructure (scheduler / DDC / manifest / scanner) — needs only
+    # the GPU-free core, no game assets.
+    engine_test(cook_infra_test LIB engine_core)
     engine_test(import_test)
     engine_test(residency_test)   # cooks its own fixture via MeshCooker
 endif()
