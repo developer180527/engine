@@ -35,8 +35,12 @@ int main() {
     auto& timer = prof.timer();
     timer.logLastFrame("Test");
 
-    // Verify durations land within a tolerance band (sleep is a lower bound;
-    // scheduling adds slack, so use a generous upper bound).
+    // Sleep is a LOWER bound only — the OS may delay a thread arbitrarily, so a
+    // tight upper bound measures the machine's scheduler, not the profiler. A
+    // 25ms ceiling on a 5ms sleep duly went red on a contended CI runner. The
+    // upper bounds are kept only loose enough to catch a UNITS error (recording
+    // ns or us as ms would be off by 1000x+), which is the one real bug an
+    // upper bound can find here.
     double outerMs = -1, innerMs = -1;
     int    outerDepth = -1, innerDepth = -1;
     uint32_t outerIdx = prof::kNoParent, innerParent = prof::kNoParent;
@@ -55,8 +59,9 @@ int main() {
     };
     check("outer recorded",        outerMs >= 0);
     check("inner recorded",        innerMs >= 0);
-    check("outer ~5ms (3+2)",      outerMs >= 4.0 && outerMs <= 25.0);
-    check("inner ~2ms",            innerMs >= 1.5 && innerMs <= 20.0);
+    constexpr double kUnitsSanityMs = 2000.0;   // not a timing bound
+    check("outer >= 4ms (3+2 slept)", outerMs >= 4.0 && outerMs <= kUnitsSanityMs);
+    check("inner >= 1.5ms",           innerMs >= 1.5 && innerMs <= kUnitsSanityMs);
     check("outer contains inner",  outerMs >= innerMs);
     check("outer depth 0",         outerDepth == 0);
     check("inner depth 1 (nested)", innerDepth == 1);

@@ -17,6 +17,27 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # section limit in Debug.
 if(MSVC)
     add_compile_options(/utf-8 /permissive- /Zc:preprocessor /Zc:__cplusplus /bigobj)
+
+    # Embed debug info in each .obj (/Z7) instead of a per-target .PDB (/Zi).
+    # Two independent reasons, both load-bearing here:
+    #  1. Parallel cl.exe processes writing one shared .PDB is a HARD ERROR
+    #     ("C1041: cannot open program database ... please use /FS"), which is
+    #     what stopped the Windows build at target 6 of 1638, inside a vendored
+    #     library that overrides CMake's flags.
+    #  2. sccache cannot cache /Zi compilations at all, so the Windows CI cache
+    #     would never hit and every run would rebuild all 1638 targets.
+    # cmake_minimum_required is 3.20, so CMP0141 is OLD and the debug-info flag
+    # lives in CMAKE_<LANG>_FLAGS_<CONFIG> — rewrite it there rather than using
+    # CMAKE_MSVC_DEBUG_INFORMATION_FORMAT, which needs 3.25.
+    foreach(_cfg DEBUG RELWITHDEBINFO)
+        foreach(_lang C CXX)
+            string(REPLACE "/Zi" "/Z7"
+                   CMAKE_${_lang}_FLAGS_${_cfg} "${CMAKE_${_lang}_FLAGS_${_cfg}}")
+        endforeach()
+    endforeach()
+    # Safety net: a vendored target that re-adds /Zi itself still serializes its
+    # PDB writes instead of failing the build.
+    add_compile_options(/FS)
     # The engine's own code is warning-clean elsewhere; keep MSVC's noisiest
     # non-actionable warnings from burying real ones on the first port pass.
     add_compile_options(/wd4244 /wd4267 /wd4305)   # narrowing conversions
