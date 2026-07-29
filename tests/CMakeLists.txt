@@ -77,6 +77,37 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # Cook infrastructure (scheduler / DDC / manifest / scanner) — needs only
     # the GPU-free core, no game assets.
     engine_test(cook_infra_test LIB engine_core)
+
+    # ── Fuzz targets — two ctest lanes from one binary ───────────────────────
+    # engine_fuzz_target(<name>) registers:
+    #   <name>_regress  replays tests/fuzz/corpus/<domain>/ — fast, DETERMINISTIC,
+    #                   gating, label `fuzz-regress`, runs in CI on every change.
+    #                   This is what makes past bugs unable to return.
+    #   <name>_explore  fresh seeds, label `fuzz-explore`, NOT part of the unit
+    #                   lane — long-running, for nightly/self-hosted campaigns.
+    #                   Its only job is to feed the corpus.
+    function(engine_fuzz_target name domain)
+        add_executable(${name} ${name}.cpp)
+        target_link_libraries(${name} PRIVATE engine_core)
+        target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        set_target_properties(${name} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
+        add_test(NAME ${name}_regress COMMAND ${name}
+                 --corpus ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/corpus/${domain})
+        set_tests_properties(${name}_regress PROPERTIES
+            LABELS "fuzz-regress" TIMEOUT 120)
+
+        # Deliberately modest by default so a developer can run the explore
+        # lane locally without it becoming a coffee break; campaigns override
+        # with --iterations directly.
+        add_test(NAME ${name}_explore COMMAND ${name} --iterations 2000)
+        set_tests_properties(${name}_explore PROPERTIES
+            LABELS "fuzz-explore" TIMEOUT 600)
+    endfunction()
+
+    engine_fuzz_target(fuzz_ddc_manifest_test ddc_manifest)
+    engine_fuzz_target(fuzz_mesh_loader_test  mesh_loader)
     engine_test(import_test)
     engine_test(residency_test)   # cooks its own fixture via MeshCooker
 endif()

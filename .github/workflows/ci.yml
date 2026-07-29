@@ -135,6 +135,30 @@ jobs:
         shell: bash
         run: cmake --build build --parallel
 
+      # Building is not evidence that anything works. These two lanes are the
+      # actual gate: `unit` is the fast hermetic correctness suite, and
+      # `fuzz-regress` replays every seed in tests/fuzz/corpus/ — every bug the
+      # fuzzer has ever found, so none of them can come back silently.
+      # Both are deterministic and need no game content.
+      #
+      # On Linux/Windows these inherit the job's continue-on-error, so a
+      # platform that cannot run them yet still reports instead of blocking.
+      # --output-on-failure prints the failing test's log inline; triaging from
+      # a bare "1 test failed" means downloading artifacts for nothing.
+      - name: Test (unit lane)
+        shell: bash
+        run: ctest --test-dir build -L unit --output-on-failure --parallel 4
+
+      - name: Test (fuzz regression corpus)
+        shell: bash
+        run: ctest --test-dir build -L fuzz-regress --output-on-failure
+
+      # The exploration lane is NOT run here: it uses fresh seeds, so it could
+      # fail on a commit that did not cause the bug, which would make CI a coin
+      # flip. It belongs on a schedule (nightly / self-hosted soak), where a
+      # find gets triaged and its seed committed to the corpus — after which
+      # the regression lane above catches it forever.
+
       # The build tree is large and mostly uninteresting; the logs are what
       # you need to triage a failing platform, and `compile_commands.json`
       # lets you reproduce a single failing translation unit locally.

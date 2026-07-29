@@ -1,5 +1,37 @@
 # Automated Engine Testing Suite — Seeded Fuzzing, Soak Farm & Profiling
 
+> **STATUS (2026-07-29).** Partially built, and the rollout order at the bottom
+> of this document was **deliberately inverted** — read this box first.
+>
+> **Built and gating:** `tests/fuzz/fuzz.h` implements §1.1 seed splitting
+> (`deriveSeed(master, domain)`) and the §1.3 `ReproKey` including the
+> generator-version pin. Two targets exist — `fuzz_ddc_manifest_test` and
+> `fuzz_mesh_loader_test` — with a committed seed corpus under
+> `tests/fuzz/corpus/`. Two ctest lanes: **`fuzz-regress`** replays the whole
+> corpus (fast, deterministic, runs in CI on every change — this is the
+> mechanism that makes "must pass all previous tests" true) and
+> **`fuzz-explore`** runs fresh seeds (long, nightly, feeds the corpus). CI now
+> also runs the `unit` lane, which it previously never did at all.
+>
+> **NOT built:** `EngineTestHarness`, `TraceRecorder`, `TraceReplayer`, and the
+> `engine-test-infrastructure-plan.md` referenced below — *that document does
+> not exist in this repo*. So §1.4 (artifact capture), all of Part 2 (soak
+> farm), and the input-bot / kit-churn / scene-spawn / timing-jitter domains of
+> §1.2 are still design only.
+>
+> **Why the order changed:** the rollout list starts with input-bot and
+> kit-churn, which are precisely the domains that need the unbuilt whole-engine
+> harness — following it literally means building weeks of scaffolding before
+> the first bug. Starting instead with harness-free targets (pure deserializers
+> and self-contained state machines) found **three real bugs within minutes of
+> the first run**: `ddcFetchRecord` returning success for a manifest with no
+> primary member, and two in `assetlib::loadMesh` — unbounded allocation
+> straight from untrusted header counts (a 4.5 TB `resize` from
+> `materialCount`) and truncation accepted as success via
+> `return f.good() || f.eof()`. Build the whole-engine harness when the
+> whole-engine domains are actually wanted; it is a separate project, not a
+> prerequisite for useful fuzzing.
+
 This builds directly on `engine-test-infrastructure-plan.md` — `EngineTestHarness`, `TraceRecorder`/`TraceReplayer`, and the layered tier strategy are assumed to exist. This plan adds the three things asked for on top of that foundation: **reproducible-by-seed fuzzing**, **a self-hosted long-running test farm**, and **one-click, auto-discovering automation** — plus the profiling needed to make days-long runs actually tell you something.
 
 ---

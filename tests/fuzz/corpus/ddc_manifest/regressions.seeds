@@ -1,0 +1,30 @@
+# Cases that reproduce bugs which were REAL. Found under generator version 1.
+#
+# The manifest parser originally validated member names with a blocklist
+# ("/", "\", ".."), which let a Windows drive-relative name like "C:evil.ctex"
+# escape the output directory. A manifest fetched from a SHARED DDC tier is
+# written by another machine, so that was arbitrary file placement studio-wide.
+# Fixed by replacing the blocklist with an allowlist (isPlainFilename).
+#
+# These seeds hit the hostile-name generator branch; they fail the CONTAINMENT
+# property against the pre-fix parser.
+1
+2
+3
+7
+11
+13
+17
+19
+23
+29
+31
+37
+41
+43
+47
+53
+59
+61
+67
+71

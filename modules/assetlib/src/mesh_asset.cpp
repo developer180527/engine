@@ -2,6 +2,7 @@
 #include <fstream>
 #include <cstring>
 #include <cstdio>
+#include <cstdint>   // SIZE_MAX
 
 namespace assetlib {
 
@@ -76,10 +77,41 @@ bool saveMesh(const MeshAsset& mesh, const std::filesystem::path& outPath) {
     return true;
 }
 
+// A cooked mesh is UNTRUSTED input: it can arrive truncated (an interrupted
+// cook, a partial download), corrupt (bad disk), or from a shared DDC written
+// by another machine. Every count and stride in the header therefore has to be
+// validated against the bytes that actually exist BEFORE it is used to size an
+// allocation or a read.
+//
+// Two bugs this guards, both found by tests/fuzz_mesh_loader_test.cpp:
+//   1. Unbounded allocation — every section was resize()d straight from a
+//      header field. materialCount=0xFFFFFFFF asks for 4.5 TB (1052 B each),
+//      vertexCount*vertexStride can ask for exabytes; the process thrashes
+//      itself to death on a single malformed file.
+//   2. Truncation accepted — the old `return f.good() || f.eof()` treated a
+//      short read as success, handing back full-size zero-filled buffers while
+//      the header still claimed the original counts. `src/assets/issues.md`
+//      recorded this class and it was fixed in mesh_loader.cpp (the bgfx
+//      path), but never here — and this is the deserializer the runtime
+//      actually streams through.
 bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
+    std::error_code ec;
+    const auto fileSizeRaw = std::filesystem::file_size(inPath, ec);
+    if (ec) {
+        std::fprintf(stderr, "[MeshAsset] Cannot stat: %s\n",
+                     inPath.string().c_str());
+        return false;
+    }
+    const size_t fileSize = static_cast<size_t>(fileSizeRaw);
+
     std::ifstream f(inPath, std::ios::binary);
     if (!f) {
         std::fprintf(stderr, "[MeshAsset] Cannot open: %s\n",
+                     inPath.string().c_str());
+        return false;
+    }
+    if (fileSize < sizeof(MeshHeader)) {
+        std::fprintf(stderr, "[MeshAsset] Truncated (no header): %s\n",
                      inPath.string().c_str());
         return false;
     }
@@ -94,58 +126,139 @@ bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
                      out.header.version, inPath.string().c_str());
         return false;
     }
-    const size_t vbBytes = static_cast<size_t>(out.header.vertexCount)
-                           * out.header.vertexStride;
-    out.vertexData.resize(vbBytes);
+
+    // Reserves `count * elemSize` bytes of the remaining file, or fails. This
+    // single check is what makes every resize() below safe: allocation is
+    // bounded by the file that exists, not by what the header wishes for.
+    size_t offset = sizeof(MeshHeader);
+    auto claim = [&](size_t count, size_t elemSize, const char* what) -> bool {
+        if (elemSize != 0 && count > (SIZE_MAX / elemSize)) {
+            std::fprintf(stderr, "[MeshAsset] %s size overflows: %s\n",
+                         what, inPath.string().c_str());
+            return false;
+        }
+        const size_t bytes = count * elemSize;
+        if (bytes > fileSize - offset) {
+            std::fprintf(stderr, "[MeshAsset] %s declares %zu B but only %zu B "
+                         "remain: %s\n", what, bytes, fileSize - offset,
+                         inPath.string().c_str());
+            return false;
+        }
+        offset += bytes;
+        return true;
+    };
+
+    // Strides are format constants, not free-form numbers. An indexStride of
+    // 0/1/3 was previously reinterpreted as 16-bit, silently scrambling
+    // geometry rather than failing.
+    if (out.header.indexCount > 0 &&
+        out.header.indexStride != 2 && out.header.indexStride != 4) {
+        std::fprintf(stderr, "[MeshAsset] Invalid indexStride %u (must be 2 or "
+                     "4): %s\n", out.header.indexStride, inPath.string().c_str());
+        return false;
+    }
+    if (out.header.vertexCount > 0 && out.header.vertexStride == 0) {
+        std::fprintf(stderr, "[MeshAsset] vertexStride is 0 with %u vertices: "
+                     "%s\n", out.header.vertexCount, inPath.string().c_str());
+        return false;
+    }
+
+    if (!claim(out.header.vertexCount, out.header.vertexStride, "vertex data"))
+        return false;
+    out.vertexData.resize((size_t)out.header.vertexCount * out.header.vertexStride);
     f.read(reinterpret_cast<char*>(out.vertexData.data()),
-           static_cast<std::streamsize>(vbBytes));
+           static_cast<std::streamsize>(out.vertexData.size()));
 
-    const size_t ibBytes = static_cast<size_t>(out.header.indexCount)
-                           * out.header.indexStride;
-    out.indexData.resize(ibBytes);
+    if (!claim(out.header.indexCount, out.header.indexStride, "index data"))
+        return false;
+    out.indexData.resize((size_t)out.header.indexCount * out.header.indexStride);
     f.read(reinterpret_cast<char*>(out.indexData.data()),
-           static_cast<std::streamsize>(ibBytes));
+           static_cast<std::streamsize>(out.indexData.size()));
 
+    if (!claim(out.header.submeshCount, sizeof(MeshSubmesh), "submeshes"))
+        return false;
     out.submeshes.resize(out.header.submeshCount);
     f.read(reinterpret_cast<char*>(out.submeshes.data()),
-           static_cast<std::streamsize>(
-               out.header.submeshCount * sizeof(MeshSubmesh)));
+           static_cast<std::streamsize>(out.submeshes.size() * sizeof(MeshSubmesh)));
+
+    // Every submesh draw range must lie inside the index buffer. The renderer
+    // issues a draw straight from these numbers, so a corrupt record (a single
+    // flipped bit is enough) otherwise becomes an out-of-bounds GPU read.
+    // 64-bit sum so offset+count cannot wrap.
+    for (const auto& s : out.submeshes) {
+        if ((uint64_t)s.indexOffset + s.indexCount > out.header.indexCount) {
+            std::fprintf(stderr, "[MeshAsset] Submesh range [%u,%llu) exceeds "
+                         "indexCount %u: %s\n", s.indexOffset,
+                         (unsigned long long)s.indexOffset + s.indexCount,
+                         out.header.indexCount, inPath.string().c_str());
+            return false;
+        }
+    }
 
     // Material section (version 2+)
     if (out.header.materialCount > 0) {
+        if (!claim(out.header.materialCount, sizeof(CookedMaterial), "materials"))
+            return false;
         out.materials.resize(out.header.materialCount);
         f.read(reinterpret_cast<char*>(out.materials.data()),
                static_cast<std::streamsize>(
-                   out.header.materialCount * sizeof(CookedMaterial)));
+                   out.materials.size() * sizeof(CookedMaterial)));
     }
 
     // v3 skinned payload (older files / static meshes: boneCount == 0)
     if (out.header.version >= 3 && out.header.boneCount > 0) {
+        if (!claim(out.header.boneCount, sizeof(CookedBone), "bones")) return false;
         out.bones.resize(out.header.boneCount);
         f.read(reinterpret_cast<char*>(out.bones.data()),
                static_cast<std::streamsize>(out.bones.size() * sizeof(CookedBone)));
+
         uint32_t skelSize = 0;
+        if (!claim(1, 4, "skeleton size")) return false;
         f.read(reinterpret_cast<char*>(&skelSize), 4);
+        if (!claim(skelSize, 1, "skeleton blob")) return false;
         out.skeletonBlob.resize(skelSize);
         f.read(reinterpret_cast<char*>(out.skeletonBlob.data()), skelSize);
+
         uint32_t clipCount = 0;
+        if (!claim(1, 4, "clip count")) return false;
         f.read(reinterpret_cast<char*>(&clipCount), 4);
+        // Each clip costs at least its four length fields, so the remaining
+        // bytes bound how many can exist — this stops a huge clipCount from
+        // allocating before a single clip has been read.
+        if (!claim(clipCount, 16, "clip headers")) return false;
+        offset -= (size_t)clipCount * 16;        // re-counted precisely below
         out.clips.resize(clipCount);
         for (auto& c : out.clips) {
             uint32_t nameLen = 0;
+            if (!claim(1, 4, "clip name length")) return false;
             f.read(reinterpret_cast<char*>(&nameLen), 4);
+            if (!claim(nameLen, 1, "clip name")) return false;
             c.name.resize(nameLen);
             f.read(c.name.data(), nameLen);
+
+            if (!claim(2, 4, "clip track counts")) return false;
             f.read(reinterpret_cast<char*>(&c.mappedTracks), 4);
             f.read(reinterpret_cast<char*>(&c.totalTracks), 4);
+
             uint32_t blobSize = 0;
+            if (!claim(1, 4, "clip blob size")) return false;
             f.read(reinterpret_cast<char*>(&blobSize), 4);
+            if (!claim(blobSize, 1, "clip blob")) return false;
             c.blob.resize(blobSize);
             f.read(reinterpret_cast<char*>(c.blob.data()), blobSize);
         }
     }
 
-    return f.good() || f.eof();
+    // Every read above was pre-validated to fit, so a stream failure here means
+    // the file changed under us or the disk errored — either way, not usable.
+    // (`f.eof()` is deliberately NOT accepted: that is what let truncated files
+    // through as success.)
+    if (!f) {
+        std::fprintf(stderr, "[MeshAsset] Short read: %s\n",
+                     inPath.string().c_str());
+        return false;
+    }
+    return true;
 }
 
 } // namespace assetlib

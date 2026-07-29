@@ -50,6 +50,12 @@ bool ddcFetchRecord(DdcStore& ddc, const std::string& key,
     if (pos == std::string::npos ||
         manifest.compare(0, pos, kMagic) != 0) return false;
     ++pos;
+    // A record is only a hit if it actually yields the PRIMARY output. A
+    // manifest carrying no "@" member (a truncated one from a shared tier
+    // produces exactly that) used to return true having written nothing, so
+    // the caller committed Ready with a cookedPath that did not exist.
+    // Found by tests/fuzz_ddc_manifest_test.cpp on its first run.
+    bool sawPrimary = false;
     while (pos < manifest.size()) {
         size_t eol = manifest.find('\n', pos);
         if (eol == std::string::npos) eol = manifest.size();
@@ -70,11 +76,16 @@ bool ddcFetchRecord(DdcStore& ddc, const std::string& key,
                          "for key %s\n", name.c_str(), key.c_str());
             return false;
         }
+        const bool isPrimary = (name == kPrimaryName);
+        if (isPrimary) {
+            if (sawPrimary) return false;      // two primaries: malformed
+            sawPrimary = true;
+        }
         const std::filesystem::path dst =
-            (name == kPrimaryName) ? outPath : outPath.parent_path() / name;
+            isPrimary ? outPath : outPath.parent_path() / name;
         if (!ddc.fetch(mk, dst)) return false;
     }
-    return true;
+    return sawPrimary;
 }
 
 } // namespace assetlib
