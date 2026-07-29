@@ -37,6 +37,15 @@ struct Sample {
     uint64_t stampNs;     // the event's own timestamp (per-stream clock)
     uint64_t observedNs;  // when WE first saw it (same clock as stampNs)
     double   dx, dy;
+    uint32_t device = 0;  // hid DeviceId (0 for SDL)
+};
+
+// One logical hid endpoint's contribution.
+struct Endpoint {
+    uint32_t id = 0, physId = 0;
+    char     name[64] = {};
+    size_t   motion = 0;
+    double   travel = 0;
 };
 
 struct Stats {
@@ -135,21 +144,35 @@ int main(int argc, char** argv) {
 
     // What did the native backend actually MATCH? Without this a run against a
     // device the backend does not claim looks identical to a broken backend.
+    // NOTE: the backend thread enumerates asynchronously, so this is refreshed
+    // whenever deviceGeneration() changes rather than sampled once here.
     size_t nPointer = 0;
+    std::vector<hid::DeviceInfo> known;
+    uint64_t lastGen = ~0ull;
+    auto refreshDevices = [&] {
+        hid::DeviceInfo devs[64];
+        const size_t n = hidCtx.devices(devs, 64);
+        known.assign(devs, devs + n);
+        nPointer = 0;
+        for (const auto& d : known)
+            if (d.cls == hid::DeviceClass::Mouse) ++nPointer;
+    };
     if (hidOk) {
-        hid::DeviceInfo devs[32];
-        const size_t n = hidCtx.devices(devs, 32);
-        std::printf("\nhid matched %zu device(s):\n", n);
-        for (size_t i = 0; i < n; ++i) {
+        // Give the backend thread a moment to enumerate before judging.
+        SDL_Delay(250);
+        lastGen = hidCtx.deviceGeneration();
+        refreshDevices();
+        std::printf("\nhid matched %zu device(s):\n", known.size());
+        for (const auto& d : known) {
             const char* cls = "?";
-            switch (devs[i].cls) {
-                case hid::DeviceClass::Mouse:    cls = "Mouse";    ++nPointer; break;
+            switch (d.cls) {
+                case hid::DeviceClass::Mouse:    cls = "Mouse";    break;
                 case hid::DeviceClass::Keyboard: cls = "Keyboard"; break;
                 case hid::DeviceClass::Gamepad:  cls = "Gamepad";  break;
                 default:                         cls = "Unknown";  break;
             }
-            std::printf("   [%u] %-8s %04x:%04x  %s\n", devs[i].id, cls,
-                        devs[i].vendorId, devs[i].productId, devs[i].name);
+            std::printf("   [%u] %-8s %04x:%04x phys=%u  %s\n", d.id, cls,
+                        d.vendorId, d.productId, d.physId, d.name);
         }
         if (nPointer == 0) {
             std::printf(
@@ -207,8 +230,13 @@ int main(int argc, char** argv) {
                 if (t < kNumEventTypes) ++hidTypeHist[t];
                 if (evts[i].type == hid::EventType::MouseMotion)
                     hidS.push_back({ evts[i].timeNs, obs,
-                                     (double)evts[i].value, (double)evts[i].value2 });
+                                     (double)evts[i].value, (double)evts[i].value2,
+                                     evts[i].device });
             }
+        }
+        if (hidOk) {
+            const uint64_t g = hidCtx.deviceGeneration();
+            if (g != lastGen) { lastGen = g; refreshDevices(); }
         }
         SDL_Delay(1);        // ~1kHz sampling of both queues
     }
@@ -246,6 +274,52 @@ int main(int argc, char** argv) {
         std::printf("\n");
     }
 
+    // ── Collapse hid endpoints by physId ───────────────────────────────────
+    // One physical mouse can present several logical endpoints (one per HID
+    // top-level collection), and each reports the SAME physical motion. Summing
+    // all of them inflates both the event count and the travel, which makes the
+    // travel comparison meaningless. Elect the busiest endpoint per physId —
+    // the "one endpoint per event type" rule from hid.h.
+    double hidTravelCollapsed = 0;
+    size_t hidMotionCollapsed = 0;
+    if (hidOk && !hidS.empty()) {
+        std::vector<Endpoint> eps;
+        auto findEp = [&](uint32_t id) -> Endpoint& {
+            for (auto& e : eps) if (e.id == id) return e;
+            Endpoint e; e.id = id;
+            for (const auto& d : known)
+                if (d.id == id) { e.physId = d.physId;
+                                  std::snprintf(e.name, sizeof(e.name), "%s", d.name); }
+            eps.push_back(e);
+            return eps.back();
+        };
+        for (const auto& sm : hidS) {
+            Endpoint& e = findEp(sm.device);
+            ++e.motion;
+            e.travel += std::fabs(sm.dx) + std::fabs(sm.dy);
+        }
+        std::printf("\n  hid motion by endpoint (physId groups the same physical device):\n");
+        for (const auto& e : eps)
+            std::printf("    [%u] phys=%-6u motion=%-7zu travel=%-10.0f %s\n",
+                        e.id, e.physId, e.motion, e.travel, e.name);
+
+        // Elect the busiest endpoint of each physId.
+        std::vector<uint32_t> seen;
+        for (const auto& e : eps) {
+            bool dup = false;
+            for (uint32_t p : seen) if (p == e.physId) { dup = true; break; }
+            if (dup) continue;
+            const Endpoint* best = &e;
+            for (const auto& o : eps)
+                if (o.physId == e.physId && o.motion > best->motion) best = &o;
+            seen.push_back(e.physId);
+            hidMotionCollapsed += best->motion;
+            hidTravelCollapsed += best->travel;
+        }
+        std::printf("    -> collapsed to %zu physical device(s): motion=%zu travel=%.0f\n",
+                    seen.size(), hidMotionCollapsed, hidTravelCollapsed);
+    }
+
     // ── Verdict ────────────────────────────────────────────────────────────
     std::printf("\n  Interpretation\n");
     if (a.count == 0) {
@@ -261,13 +335,23 @@ int main(int argc, char** argv) {
                         "    possible from this run — see the warning above.\n");
         }
         if (b.count > 0) {
-            std::printf("  * rate ratio SDL/hid %.2f. Far below 1.0 means SDL is\n"
-                        "    COALESCING motion (fewer, fatter events).\n",
-                        a.perSec / std::max(1.0, b.perSec));
-            std::printf("  * travel ratio SDL/hid %.2f. ~1.0 means SDL is giving\n"
-                        "    raw counts like IOHID; a different constant means it is\n"
-                        "    scaled/accelerated (aim feel would not match).\n",
-                        a.absTravel / std::max(1.0, b.absTravel));
+            // hid splits one hardware report into several element events (X, Y
+            // separately), so its raw event count is NOT the report rate. Its
+            // DISTINCT TIMESTAMP count is: one stamp per report.
+            std::printf("  * hid emits %.2f events per distinct timestamp (element\n"
+                        "    splitting + endpoints); its %zu distinct stamps are the\n"
+                        "    real hardware report count.\n",
+                        (double)b.count / std::max<size_t>(1, b.distinctStamps),
+                        b.distinctStamps);
+            std::printf("  * REPORT ratio SDL/hid %.3f (SDL events vs hid distinct\n"
+                        "    stamps). ~1.0 means SDL sees every hardware report and is\n"
+                        "    NOT coalescing.\n",
+                        (double)a.count / std::max<size_t>(1, b.distinctStamps));
+            if (hidTravelCollapsed > 0)
+                std::printf("  * travel ratio SDL/hid %.3f (endpoint-collapsed). ~1.0 =>\n"
+                            "    SDL gives raw counts like IOHID; a stable other constant\n"
+                            "    => scaled/accelerated, and aim feel would not match.\n",
+                            a.absTravel / hidTravelCollapsed);
         }
     }
     std::printf("\n  Reminder: end-to-end motion-to-photon needs external\n"

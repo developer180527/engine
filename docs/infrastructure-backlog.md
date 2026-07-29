@@ -133,28 +133,48 @@ Only 10 files touch POSIX-only headers and most already carry the Win32 side.
 
 25. ~~Memory backend: VirtualAlloc2 aligned reservations~~ — **DONE**;
     `mem.cpp` has the `MEM_RESERVE`/`MEM_COMMIT` over-reserve + trim path.
-26. **Raw-input backends.** `hid_null` is the fallback on Windows/Linux today
-    (engine builds and runs, no gamepad/raw input). **SDL3 is now wired as an
-    optional window backend** (`-DENGINE_WINDOW_BACKEND=sdl3`,
-    `src/runtime/platform/sdl3_platform.*`) — verified: `sample_minimal` opens
-    an SDL3 window with bgfx/Metal on it. Next, in order:
-    - **Measure before scoping.** SDL3 stamps events with OS-level ns
-      timestamps and uses RawInput internally for relative mouse on Windows,
-      so it *may* satisfy the sub-tick/late-latch requirements. A/B it against
-      the working IOHIDManager backend on macOS. If it measures equal, Win32
-      RawInput and Linux evdev are **deleted from this list**; if not, SDL3
-      stays window+gamepad only and the native backends proceed as designed.
-    - `hid_sdl3.cpp` gamepad backend — the unambiguous win (mapping database,
-      hotplug, rumble, battery, DualSense gyro/touchpad). Note SDL's event
-      queue is main-thread-bound (Cocoa), so it cannot park a thread in the OS
-      wait primitive the way IOHIDManager does; fine at gamepad rates.
-    - **Editor on SDL3** is gated off in CMake: it needs the ImGui SDL3
-      platform backend wired (with event forwarding out of
-      `Sdl3Platform::pollEvents`) plus an SDL3 window input source to replace
-      the GLFW-callback `InputSystem`. `src/editor/window_ops_sdl3.cpp` is
-      already written (incl. the Key→SDL_Scancode table) and syntax-clean.
-    - Selecting sdl3 today swaps the WINDOW only; GLFW stays linked because
-      `runtime/input/input_system.h` is still the window input source.
+26. **Raw-input backends — MEASURED, decided (2026-07-29).** `src/tools/input_ab.cpp`
+    captured SDL3 and IOHIDManager in ONE process from the same physical mouse
+    motion (a 125 Hz USB mouse; a trackpad cannot be used — see the wart below).
+    Results, 15s sweeps:
+
+    | axis | SDL3 vs hid | verdict |
+    |---|---|---|
+    | hardware reports seen | 0.946 / 0.950 (two runs) | **not coalescing** |
+    | cadence (median interval) | 1.002 | **identical** |
+    | observe latency (median) | +276 us | **parity** (both dominated by the 1 ms poll loop) |
+    | timestamps | 1 event/stamp vs hid's 3.9 | **SDL cleaner**, sub-tick viable |
+    | delta gain, SLOW strokes | **0.694** | |
+    | delta gain, FAST strokes | **1.210** | **1.74x swing = OS ACCELERATION** |
+
+    **SDL3's relative deltas on macOS are OS-accelerated, not raw.** The gain
+    varies with velocity, which is the signature of an acceleration curve
+    (macOS attenuates slow motion and amplifies fast). `SDL_HINT_MOUSE_RELATIVE_
+    SYSTEM_SCALE=0` only disables SDL's OWN extra scaling; SDL takes relative
+    motion from NSEvent deltaX/deltaY, which the OS has already accelerated, and
+    no hint undoes that. Disqualifying for aim: two identical flicks at
+    different speeds would land in different places.
+
+    Decision:
+    - **macOS pointer: keep IOHIDManager.** Already written and working.
+    - **Gamepads: SDL3 everywhere.** Built (`hid_sdl3.cpp`), mapping DB, hotplug.
+    - **`hid` needs backend COMPOSITION, not selection** — this is now a
+      requirement rather than a fallback. One backend TU per platform cannot
+      serve "pointer from IOHIDManager + gamepads from SDL3" simultaneously.
+    - **Windows/Linux pointer: still open.** SDL3 uses Raw Input on Windows and
+      evdev on Linux, which SHOULD be unaccelerated, but that is inferred, not
+      measured. Test it with the SAME-DISTANCE / DIFFERENT-SPEED method (no
+      second backend needed): sweep a fixed physical distance N times slowly,
+      then N times fast. Raw counts give the same total both ways; accelerated
+      deltas do not. If SDL3 passes there, Win32 Raw Input and evdev never need
+      writing — that is the roadmap saving still on the table.
+
+    **hid wart found while measuring:** `hid_iohid` matches the MacBook internal
+    trackpad as two `Mouse` endpoints (phys=110) but can never produce motion
+    from it — the trackpad does not expose GenericDesktop X/Y elements. It
+    advertises a pointer device that reports nothing, which reads as a broken
+    backend. Either classify it honestly or exclude it.
+
 27. ~~Optional-target CMake fixes~~ — **DONE**: `ENGINE_BUILD_{EDITOR,TOOLS,
     SAMPLES}` + `BUILD_TESTING`. Remaining: fs_triangle HLSL variants (texture
     sample inside the shadow loop); MSVC flags (**`/utf-8` is the sneaky one** —
