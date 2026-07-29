@@ -297,7 +297,26 @@ set_target_properties(engine_player PROPERTIES
 # ── Dev-only targets: skipped in the shipping posture ────────────────────────
 if(ENGINE_WITH_SOURCE_IMPORTERS)
 
-add_subdirectory(editor)
+# ── engine_cook_worker — isolated per-asset cook child ──────────────────────
+# NOT a "tool": it is the cook pipeline's out-of-process half, spawned at
+# runtime by the editor and by engine_cook alike. So it is built whenever
+# cooking is compiled in, independent of ENGINE_BUILD_TOOLS — otherwise
+# -DENGINE_BUILD_TOOLS=OFF would silently downgrade the editor to in-process
+# cooking (no crash isolation). Links engine_core only, same as engine_cook.
+add_executable(engine_cook_worker tools/engine_cook_worker.cpp)
+target_link_libraries(engine_cook_worker PRIVATE engine_core)
+set_target_properties(engine_cook_worker PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+if(ENGINE_BUILD_EDITOR)
+    add_subdirectory(editor)
+    # Spawners locate the worker next to their own binary at runtime — make
+    # sure it exists whenever they build.
+    add_dependencies(editor engine_cook_worker)
+endif()
+
+if(ENGINE_BUILD_TOOLS)
 
 # ── engine_cook — CLI asset cooker ───────────────────────────────────────────
 # Cooks a project's assets without the editor: engine_cook [project-dir].
@@ -308,20 +327,7 @@ target_link_libraries(engine_cook PRIVATE engine_core)
 set_target_properties(engine_cook PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
-
-# ── engine_cook_worker — isolated per-asset cook child ──────────────────────
-# Spawned by CookPipeline (editor + engine_cook): one asset per process, so a
-# parser SIGSEGV kills the worker, not the host, and each task runs under a
-# hard setrlimit memory cap. Links engine_core only, same as engine_cook.
-add_executable(engine_cook_worker tools/engine_cook_worker.cpp)
-target_link_libraries(engine_cook_worker PRIVATE engine_core)
-set_target_properties(engine_cook_worker PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-)
-# Spawners locate the worker next to their own binary at runtime — make sure
-# it exists whenever they build.
 add_dependencies(engine_cook engine_cook_worker)
-add_dependencies(editor      engine_cook_worker)
 
 # ── engine_build — package a project into a shippable dist/ ─────────────────
 # Cook -> shipping player (Assimp-free) -> kits rebuilt Release -> assemble.
@@ -374,5 +380,7 @@ target_link_libraries(scene_resave PRIVATE engine_runtime)
 set_target_properties(scene_resave PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+endif() # ENGINE_BUILD_TOOLS
 
 endif() # ENGINE_WITH_SOURCE_IMPORTERS (dev-only targets)

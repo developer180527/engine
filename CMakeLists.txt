@@ -18,6 +18,24 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(ENGINE_WITH_SOURCE_IMPORTERS
     "Compile source-format import (Assimp) into the engine" ON)
 
+# ── Optional target groups ───────────────────────────────────────────────────
+# The core SDK must be buildable WITHOUT the editor, the CLI tools, or the
+# samples. This exists for porting: on a platform where (say) a sample's
+# linker flags or a tool's POSIX call is broken, an unconditional build stops
+# at the first such failure and hides every real engine error behind it.
+# Turning a group off converts "the build is broken" into a specific,
+# incrementally fixable list — which is the entire point of the CI matrix.
+#
+#   cmake -B build-core -DENGINE_BUILD_EDITOR=OFF \
+#                       -DENGINE_BUILD_TOOLS=OFF  \
+#                       -DENGINE_BUILD_SAMPLES=OFF -DBUILD_TESTING=OFF
+#
+# All default ON: a normal dev build is unchanged. Tests use CTest's own
+# standard BUILD_TESTING rather than inventing a parallel switch.
+option(ENGINE_BUILD_EDITOR  "Build the ImGui editor application"   ON)
+option(ENGINE_BUILD_TOOLS   "Build the CLI tools (cook/build/host/…)" ON)
+option(ENGINE_BUILD_SAMPLES "Build the sample games and kits"      ON)
+
 # ── Sanitizer lanes (tests/docs/engine-compiler-test-sheet.md §3) ───────────
 # Whole-program instrumentation: applied before every subdirectory so vendored
 # libraries are covered too (mixing instrumented/uninstrumented code hides
@@ -205,13 +223,17 @@ if(BUILD_TESTING)
 endif()
 
 # ── Samples — prove the SDK builds games without the editor ─────────────────
-add_executable(sample_minimal samples/minimal_game/main.cpp)
-target_link_libraries(sample_minimal PRIVATE engine::runtime)
-set_target_properties(sample_minimal PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-)
-add_subdirectory("sdk_sample_game(cpp)")
-add_subdirectory(samples/hot_reload_game)
+# sample_minimal builds on every dev build deliberately: ~30 lines against the
+# public API only, so it fails the moment the SDK surface stops being honest.
+if(ENGINE_BUILD_SAMPLES)
+    add_executable(sample_minimal samples/minimal_game/main.cpp)
+    target_link_libraries(sample_minimal PRIVATE engine::runtime)
+    set_target_properties(sample_minimal PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+    add_subdirectory("sdk_sample_game(cpp)")
+    add_subdirectory(samples/hot_reload_game)
+endif()
 
 # ── Install — `cmake --install build --prefix <sdk-dir>` ────────────────────
 # Produces a relocatable SDK: lib/ (engine + bundled third-party archives),
@@ -223,7 +245,12 @@ install(TARGETS engine_runtime engine_core assetlib bgfx bimg bx glfw
 if(ENGINE_WITH_SOURCE_IMPORTERS)
     # Dev SDK only — shipping posture has no assimp target and no cooker CLI.
     install(TARGETS assimp ARCHIVE DESTINATION lib)
-    install(TARGETS engine_cook engine_cook_worker RUNTIME DESTINATION bin)
+    # The worker is part of the cook capability, not the tool group, so it
+    # installs whenever cooking is compiled in (see src/CMakeLists.txt).
+    install(TARGETS engine_cook_worker RUNTIME DESTINATION bin)
+    if(ENGINE_BUILD_TOOLS)
+        install(TARGETS engine_cook RUNTIME DESTINATION bin)
+    endif()
 endif()
 
 # Engine headers: public umbrellas + the src tree they re-export.

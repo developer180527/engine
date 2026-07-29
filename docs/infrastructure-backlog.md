@@ -122,13 +122,33 @@ never exercised. Findings:
     authoring (deferred by user until more game infra exists).
 24. **bgfx shutdown RefCount warnings sweep** (resource lifetime hygiene).
 
-## Phase F — Windows/Linux port (EXPLICITLY DELAYED — much later)
-25. Memory backend: **VirtualAlloc2** aligned reservations (mmap is POSIX).
+## Phase F — Windows/Linux port (IN PROGRESS — see `.github/workflows/ci.yml`)
+CI matrix is live: macOS gates, Linux (GCC+Clang) and Windows (MSVC) run
+non-fatally so they report a fixable error list instead of a red badge. Flip
+`experimental: false` per platform the moment it first passes — from then on it
+is a ratchet. `docker/linux-build.Dockerfile` checks Linux from a Mac in
+seconds. Survey (2026-07-29): engine C++ is *clean* — one non-portable
+construct in all of `src/`+`modules/`, and it's in a vendored ImGui backend.
+Only 10 files touch POSIX-only headers and most already carry the Win32 side.
+
+25. ~~Memory backend: VirtualAlloc2 aligned reservations~~ — **DONE**;
+    `mem.cpp` has the `MEM_RESERVE`/`MEM_COMMIT` over-reserve + trim path.
 26. **Win32 Raw Input/GameInput** hid backend (module drop-in, engine
-    untouched). Linux evdev alongside if desired.
-27. Shaders: fs_triangle HLSL variants; optional-target CMake fixes; dlfcn
-    remnants; profiler clock seam. (Module loading already table-based —
-    the dynamic_lookup dependency is gone.)
+    untouched). Linux evdev alongside. Until then both platforms fall back to
+    `hid_null` — engine builds and runs, no gamepad/raw input.
+27. ~~Optional-target CMake fixes~~ — **DONE**: `ENGINE_BUILD_{EDITOR,TOOLS,
+    SAMPLES}` + `BUILD_TESTING`. Remaining: fs_triangle HLSL variants (texture
+    sample inside the shadow loop); MSVC flags (**`/utf-8` is the sneaky one** —
+    the tree is full of `──`/`→` in comments; also `/permissive-`,
+    `/Zc:preprocessor`, `/bigobj`, and an `/O2` branch for the cook TUs that are
+    `-O2`-pinned only for Clang/GNU today); Linux **case-sensitivity** sweep
+    (APFS hides wrong-case includes and asset paths); profiler clock seam;
+    `engine_host` hardcodes `.dylib` in its usage text.
+    (Module loading is already table-based — the dynamic_lookup dependency is
+    gone. **Verify early:** `samples/hot_reload_game` still passes
+    `-undefined dynamic_lookup` under `if(APPLE)`. Build it *without* that flag;
+    if it links, Windows kits are unblocked. If it doesn't, C++ kits need
+    Phase H #32 — and the Windows port is that trigger.)
 
 ## Phase G — Export milestone (DELAYED FURTHER: after enough Kits + a
 ## robust single-genre-capable engine)
