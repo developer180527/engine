@@ -59,15 +59,47 @@ target_include_directories(assetlib
 )
 
 # ── SQLite ────────────────────────────────────────────────────────────────────
-# Use system sqlite3 — available on macOS, Linux, Windows via vcpkg.
+# When linking the system package use SQLite::SQLite3, NOT SQLite3::SQLite3.
+# The latter is a compatibility alias only newer CMake's FindSQLite3 adds
+# (Homebrew's CMake 4 has it; the 3.28 on Ubuntu 24.04 does not), so it builds
+# on this Mac and fails to configure on a stock Linux box. SQLite::SQLite3 is
+# canonical and has existed since CMake 3.14 — well under our 3.20 floor.
 #
-# Link SQLite::SQLite3, NOT SQLite3::SQLite3. The latter is a compatibility
-# alias that only newer CMake's FindSQLite3 adds (Homebrew's CMake 4 has it;
-# the 3.28 that ships with Ubuntu 24.04 does not), so using it builds on this
-# Mac and fails to configure on a stock Linux box. SQLite::SQLite3 is the
-# canonical name and has existed since CMake 3.14 — well under our 3.20 floor.
-find_package(SQLite3 REQUIRED)
-target_link_libraries(assetlib PUBLIC SQLite::SQLite3)
+# System SQLite where one exists (macOS SDK, Linux libsqlite3-dev) — those
+# platforms keep using exactly what they already were. Windows has no system
+# SQLite, and CI failed at configure there with "Could NOT find SQLite3", so
+# fall back to the vendored amalgamation (third_party/sqlite3). That also makes
+# assetlib genuinely standalone: no external package needed to consume it.
+find_package(SQLite3 QUIET)
+if(SQLite3_FOUND)
+    message(STATUS "assetlib: SQLite = system (${SQLite3_VERSION})")
+    target_link_libraries(assetlib PUBLIC SQLite::SQLite3)
+else()
+    message(STATUS "assetlib: SQLite = vendored amalgamation "
+                   "(no system SQLite found)")
+    add_library(assetlib_sqlite3 STATIC third_party/sqlite3/sqlite3.c)
+    target_include_directories(assetlib_sqlite3 PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite3)
+    # THREADSAFE=1 is REQUIRED, not a tuning knob: the registry runs one writer
+    # connection (the cook thread) alongside reader connections on other
+    # threads, which is only defined behaviour in serialized mode.
+    target_compile_definitions(assetlib_sqlite3 PUBLIC
+        SQLITE_THREADSAFE=1
+        SQLITE_OMIT_LOAD_EXTENSION=1     # nothing loads extensions
+        SQLITE_DQS=0)                    # no double-quoted string literals
+    if(MSVC)
+        # It is a 9.5 MB single TU; /O2 keeps a Debug configure from paying for
+        # an unoptimized SQLite, same policy as the vendored codecs.
+        target_compile_options(assetlib_sqlite3 PRIVATE /O2)
+    elseif(CMAKE_C_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
+        target_compile_options(assetlib_sqlite3 PRIVATE -O2 -w)
+    endif()
+    if(UNIX)
+        find_package(Threads REQUIRED)
+        target_link_libraries(assetlib_sqlite3 PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+    endif()
+    target_link_libraries(assetlib PUBLIC assetlib_sqlite3)
+endif()
 
 # ── Platform ──────────────────────────────────────────────────────────────────
 if(APPLE)

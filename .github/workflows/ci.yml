@@ -82,11 +82,13 @@ jobs:
         if: hashFiles('third_party/patches/*.patch') != ''
         shell: bash
         run: |
-          # Filename encodes its target: <submodule-dir>__<description>.patch.
+          # Filename encodes its target: <submodule-path>__<description>.patch,
+          # where '+' in the path part means '/' so NESTED submodules can be
+          # addressed (bgfx.cmake+bgfx -> third_party/bgfx.cmake/bgfx).
           # Patches must be applied from inside the submodule — the paths are
           # relative to its root, and --3way needs that repo's object store.
           for p in third_party/patches/*.patch; do
-            sub="${p##*/}"; sub="${sub%%__*}"
+            sub="${p##*/}"; sub="${sub%%__*}"; sub="${sub//+//}"
             echo "applying ${p##*/} -> third_party/$sub"
             git -C "third_party/$sub" apply --3way "$(pwd)/$p"
           done

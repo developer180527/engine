@@ -1,0 +1,30 @@
+diff --git a/tools/shaderc/shaderc.cpp b/tools/shaderc/shaderc.cpp
+index a7b16f8a9..590bc74a0 100644
+--- a/tools/shaderc/shaderc.cpp
++++ b/tools/shaderc/shaderc.cpp
+@@ -1409,7 +1409,24 @@ namespace bgfx
+ 				preprocessor.setDefine("BX_PLATFORM_IOS=1");
+ 			}
+ 
+-			if (profile->lang != ShadingLang::Metal)
++			if (profile->lang == ShadingLang::SpirV)
++			{
++				preprocessor.setDefine("BGFX_SHADER_LANGUAGE_SPIRV=1");
++			}
++			else if (profile->lang == ShadingLang::WGSL)
++			{
++				preprocessor.setDefine("BGFX_SHADER_LANGUAGE_WGSL=1");
++			}
++			else if (profile->lang == ShadingLang::HLSL
++			     ||  profile->lang == ShadingLang::Dxil)
++			{
++				preprocessor.setDefine(hlslDefine);
++				if (profile->lang == ShadingLang::Dxil)
++				{
++					preprocessor.setDefine(dxilDefine);
++				}
++			}
++			else if (profile->lang != ShadingLang::Metal)
+ 			{
+ 				preprocessor.setDefine(glslDefine);
+ 				preprocessor.setDefine(esslDefine);

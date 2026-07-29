@@ -42,6 +42,16 @@ delete the patch once a release contains it.
 
 ## Current patches
 
+- **`bgfx.cmake+bgfx__shaderc-shader-language-defines.patch`** — shaderc did not
+  define `BGFX_SHADER_LANGUAGE_SPIRV` / `_WGSL` / `_HLSL` / `_DXIL` for their
+  profiles, so a shader took the wrong preprocessor branch and glslang tried to
+  parse bgfx's dialect as HLSL: *"(75): error at column 19, HLSL parsing
+  failed"*. Every shader in the project fails to compile without this. It lived
+  as an uncommitted edit inside the nested `bgfx` submodule, so it worked on the
+  machine that made it and broke the first fresh checkout — which is exactly the
+  divergence this directory exists to prevent. Worth upstreaming (or bumping the
+  bgfx pin to a commit that has it), after which this file can go.
+
 - **`bgfx.cmake__shaderc-optimization-genex.patch`** — fixes a malformed CMake
   generator expression in `bgfx_compile_shaders`: `$<IF:$<CONFIG:Debug>:0,3>`
   uses `:` where `$<IF:cond,true,false>` requires a comma, so the shader
