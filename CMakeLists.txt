@@ -16,7 +16,23 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # /bigobj: the heavier TUs (Assimp, Jolt, the cookers) exceed the default
 # section limit in Debug.
 if(MSVC)
-    add_compile_options(/utf-8 /permissive- /Zc:preprocessor /Zc:__cplusplus /bigobj)
+    # /utf-8 goes into CMAKE_<LANG>_FLAGS, NOT add_compile_options, on purpose:
+    # assimp guards its own charset flag with
+    #     if(NOT CMAKE_CXX_FLAGS MATCHES "/utf-8") add_compile_options(/source-charset:utf-8)
+    # so a flag added any other way is invisible to that check and assimp then
+    # emits a flag MSVC rejects as incompatible with ours
+    # ("D8016: '/utf-8' and '/source-charset:utf-8' ... incompatible"), which
+    # killed the build inside assimp's vendored zlib. Setting it here is what
+    # assimp is looking for. Both languages: the zlib TUs that failed are C.
+    string(APPEND CMAKE_C_FLAGS   " /utf-8")
+    string(APPEND CMAKE_CXX_FLAGS " /utf-8")
+
+    # Language-agnostic.
+    add_compile_options(/bigobj /Zc:preprocessor)
+    # C++ only — MSVC rejects or ignores these on C TUs, and the tree has
+    # several (tlsf, blake3, sqlite, zlib).
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/permissive->
+                        $<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>)
 
     # Embed debug info in each .obj (/Z7) instead of a per-target .PDB (/Zi).
     # Two independent reasons, both load-bearing here:
