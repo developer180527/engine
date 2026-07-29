@@ -1,13 +1,19 @@
 #include "assetlib/ddc.h"
 #include "blake3.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <random>
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <windows.h>
+    #include <process.h>
+#else
     #include <unistd.h>
     #include <sys/stat.h>
 #endif
@@ -15,6 +21,34 @@
 namespace assetlib {
 
 namespace fs = std::filesystem;
+
+namespace {
+
+// Blobs are stored read-only (see store()). POSIX honours the containing
+// directory's write permission when unlinking, so remove() just works — but
+// Windows refuses to delete a FILE_ATTRIBUTE_READONLY file outright. Clearing
+// the attribute first is what makes eviction and replacement portable;
+// without it every blob removal on Windows fails silently and the cache grows
+// without bound.
+void removeBlob(const fs::path& p, std::error_code& ec) {
+#if defined(_WIN32)
+    const DWORD attrs = ::GetFileAttributesW(p.wstring().c_str());
+    if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY))
+        ::SetFileAttributesW(p.wstring().c_str(), attrs & ~FILE_ATTRIBUTE_READONLY);
+#endif
+    fs::remove(p, ec);
+}
+
+// Mark a finished blob immutable.
+void makeReadOnly(const fs::path& p) {
+#if defined(_WIN32)
+    ::SetFileAttributesW(p.wstring().c_str(), FILE_ATTRIBUTE_READONLY);
+#else
+    ::chmod(p.string().c_str(), 0444);
+#endif
+}
+
+} // namespace
 
 // ── Hashing ───────────────────────────────────────────────────────────────────
 
@@ -155,15 +189,13 @@ bool DdcStore::ingest(const fs::path& root, const std::string& key,
 
     fs::copy_file(src, tmp, fs::copy_options::overwrite_existing, ec);
     if (ec) { fs::remove(tmp, ec); return false; }
-#if !defined(_WIN32)
     // Blobs are immutable — read-only so a stray ofstream (or a cooker handed
     // a hardlinked path by mistake) fails to open rather than corrupting the
     // cache for every project sharing it.
-    ::chmod(tmp.string().c_str(), 0444);
-#endif
+    makeReadOnly(tmp);
     fs::rename(tmp, blob, ec);
     if (ec) {
-        fs::remove(tmp, ec);
+        removeBlob(tmp, ec);              // read-only by now: needs the helper
         std::error_code ec2;
         return fs::exists(blob, ec2);          // raced with another writer: fine
     }
@@ -173,7 +205,7 @@ bool DdcStore::ingest(const fs::path& root, const std::string& key,
 bool DdcStore::materialize(const fs::path& blob, const fs::path& dst) const {
     std::error_code ec;
     fs::create_directories(dst.parent_path(), ec);
-    fs::remove(dst, ec);                        // replace, never write-through
+    removeBlob(dst, ec);                        // replace, never write-through
     fs::create_hard_link(blob, dst, ec);        // zero-copy on same volume
     if (!ec) return true;
     ec.clear();
@@ -270,7 +302,7 @@ bool DdcStore::fetchBytes(const std::string& key, std::string& out) {
 void DdcStore::evictLocal(const std::string& key) {
     if (key.empty()) return;
     std::error_code ec;
-    fs::remove(blobPath(m_local, key), ec);
+    removeBlob(blobPath(m_local, key), ec);
 }
 
 DdcStore::Stats DdcStore::stats() const {

@@ -194,13 +194,20 @@ public:
 
     // ── Navigation (engine-owned NavService; no-op until a navmesh is baked) ──
     void setNavService(nav::NavService* n) { m_nav = n; }
+    // Named locals rather than `(const float[3]){...}` compound literals:
+    // those are C99, accepted by Clang in C++ only as a GNU extension, and
+    // rejected outright by GCC ("taking address of temporary array").
     int  navFindPath(float sx, float sy, float sz, float ex, float ey, float ez,
                      float* out, int maxPoints) const {
-        return m_nav ? m_nav->findPath((const float[3]){sx,sy,sz},
-                                       (const float[3]){ex,ey,ez}, out, maxPoints) : 0;
+        if (!m_nav) return 0;
+        const float start[3] = { sx, sy, sz };
+        const float end[3]   = { ex, ey, ez };
+        return m_nav->findPath(start, end, out, maxPoints);
     }
     bool navProject(float x, float y, float z, float* out) const {
-        return m_nav && m_nav->projectPoint((const float[3]){x,y,z}, out);
+        if (!m_nav) return false;
+        const float p[3] = { x, y, z };
+        return m_nav->projectPoint(p, out);
     }
     bool navReady() const { return m_nav && m_nav->ready(); }
 

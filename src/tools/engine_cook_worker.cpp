@@ -31,11 +31,16 @@
 #include <string>
 #include <vector>
 
-#if !defined(_WIN32)
+#include <chrono>
+#include <thread>
+
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <windows.h>
+#else
     #include <sys/resource.h>
     #include <csignal>
-    #include <thread>
-    #include <chrono>
 #endif
 #if defined(__APPLE__)
     #include <pthread/qos.h>
@@ -61,7 +66,13 @@ int main(int argc, char** argv) {
     const std::filesystem::path resultPath = argv[3];
     const long                  memCapMb   = std::atol(argv[4]);
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+    // On Windows the cap is already in force: the parent assigned this
+    // process to a job object with JOB_OBJECT_LIMIT_PROCESS_MEMORY while it
+    // was still suspended, so the limit predates our first instruction.
+    // Nothing to do here — see cook_dispatch.cpp.
+    (void)memCapMb;
+#else
     // Hard memory cap — the pipeline's MemGovernor schedules by ESTIMATE;
     // this is the enforcement. RLIMIT_AS is a no-op on macOS, RLIMIT_DATA
     // does work there (and on Linux covers the heap) — set both, best-effort.
@@ -71,7 +82,11 @@ int main(int argc, char** argv) {
         setrlimit(RLIMIT_AS,   &rl);
     }
 #endif
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    // Same intent as the QoS demotion below: keep the cook off the foreground
+    // scheduler. BELOW_NORMAL_PRIORITY_CLASS is the process-wide equivalent.
+    ::SetPriorityClass(::GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+#elif defined(__APPLE__)
     // The parent's cook threads are QoS-demoted; a spawned child is not.
     // Re-demote so the cook stays invisible to foreground work.
     pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
@@ -79,18 +94,24 @@ int main(int argc, char** argv) {
     nice(10);
 #endif
 
-#if !defined(_WIN32)
     // Fault-injection hooks for testing the containment paths end to end
     // (a crash you can't reproduce on demand is a crash path you never
     // actually verified). Trigger only when the env var value appears in
-    // the source filename.
+    // the source filename. These must exist on every platform, or the
+    // containment tests silently stop covering the one being ported.
     if (const char* t = std::getenv("COOK_WORKER_TEST_CRASH");
-        t && *t && sourcePath.filename().string().find(t) != std::string::npos)
+        t && *t && sourcePath.filename().string().find(t) != std::string::npos) {
+#if defined(_WIN32)
+        // Raises STATUS_ACCESS_VIOLATION (0xC0000005), which the parent
+        // classifies as a crash — the counterpart of raise(SIGSEGV).
+        *(volatile int*)nullptr = 0;
+#else
         raise(SIGSEGV);
+#endif
+    }
     if (const char* t = std::getenv("COOK_WORKER_TEST_HANG");
         t && *t && sourcePath.filename().string().find(t) != std::string::npos)
         for (;;) std::this_thread::sleep_for(std::chrono::seconds(60));
-#endif
 
     std::vector<std::unique_ptr<assetlib::ICooker>> cookers;
     cookers.push_back(std::make_unique<MeshCooker>());

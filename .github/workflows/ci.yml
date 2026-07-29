@@ -35,24 +35,37 @@ jobs:
       matrix:
         include:
           - name: macOS (arm64, AppleClang)
+            slug: macos-appleclang
             os: macos-latest
             experimental: false
 
           - name: Linux (x64, GCC)
+            slug: linux-gcc
             os: ubuntu-latest
             experimental: true
 
           - name: Linux (x64, Clang)
+            slug: linux-clang
             os: ubuntu-latest
             cc: clang
             cxx: clang++
             experimental: true
 
           - name: Windows (x64, MSVC)
+            slug: windows-msvc
             os: windows-latest
             experimental: true
 
     steps:
+      # MUST precede checkout. Windows runners default to core.autocrlf=true,
+      # which rewrites LF to CRLF on clone; the patches in third_party/patches
+      # carry LF context lines and then fail to apply ("patch does not apply").
+      # Keeping the worktree byte-identical across platforms also avoids a whole
+      # class of Windows-only tool surprises.
+      - name: Disable git line-ending conversion (Windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
@@ -108,10 +121,13 @@ jobs:
 
       # Assimp and bgfx dominate build time and rarely change. The cache is
       # keyed per matrix leg so compilers never share entries.
+      # Cache keys may not contain commas, and the display names do
+      # ("macOS (arm64, AppleClang)") — hence the separate slug. This failed
+      # every leg before Configure, so nothing had ever compiled.
       - name: Compiler cache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ${{ matrix.name }}
+          key: ${{ matrix.slug }}
           variant: ${{ runner.os == 'Windows' && 'sccache' || 'ccache' }}
           max-size: 1G
 

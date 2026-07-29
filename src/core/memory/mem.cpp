@@ -2,18 +2,27 @@
 // RECURSION RULE: nothing in this file may allocate through operator new —
 // the routed global new (mem_counters.cpp) lands here. Diagnostics use
 // fprintf (no std::string), state is constant-initialized statics (no static
-// init order hazard), locks are plain std::mutex (no allocation).
+// init order hazard), locks are immortal OS primitives (no allocation).
 #include "core/memory/mem.h"
 
-#include <sys/mman.h>
-#include <unistd.h>
+#if defined(_WIN32)
+// WIN32_LEAN_AND_MEAN trims the socket/RPC/OLE headers; NOMINMAX stops
+// windows.h from defining min/max as macros, which breaks <algorithm> and
+// any `std::numeric_limits<T>::max()` downstream.
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+#else
+#  include <pthread.h>
+#  include <sys/mman.h>
+#  include <unistd.h>
+#endif
 
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <mutex>
-#include <pthread.h>
+#include <type_traits>
 
 #include "tlsf.h"
 
@@ -47,6 +56,7 @@ struct BlockHeader {
     size_t   mapBytes;    // whole mapping (large spans may exceed kBlockSize)
     size_t   userBytes;   // large only: the caller's requested size
     Shard*   shard;       // pool blocks only: owning shard (for free routing)
+    void*    mapRaw;      // what goes back to the OS; == this except on Windows
 };
 static_assert(sizeof(BlockHeader) <= kHeaderSize, "header must fit the line");
 
@@ -59,20 +69,80 @@ const char* kTagNames[(size_t)Tag::Count] = {
 std::atomic<uint64_t> g_mappedBytes{0};
 std::atomic<uint64_t> g_mapEvents{0};
 
-// 2MB-aligned mapping via over-allocate + trim. size must be page-aligned.
-void* mapAligned(size_t size) {
+// Cached page size. Deliberately an atomic rather than a function-local
+// static: this runs on the allocation path during static init, and a
+// magic-static guard is one more thing that has to be alive down here.
+// The race is benign — both racers compute the same value.
+std::atomic<size_t> g_pageSize{0};
+
+inline size_t pageSize() {
+    size_t s = g_pageSize.load(std::memory_order_relaxed);
+    if (s == 0) {
+#if defined(_WIN32)
+        SYSTEM_INFO si;
+        ::GetSystemInfo(&si);
+        s = (size_t)si.dwPageSize;
+#else
+        s = (size_t)::getpagesize();
+#endif
+        g_pageSize.store(s, std::memory_order_relaxed);
+    }
+    return s;
+}
+
+// A 2MB-aligned region. `base` is what the allocator uses; `raw` is what has
+// to be handed back to the OS.
+//
+// They differ on Windows. mmap can unmap a sub-range, so POSIX over-allocates
+// and trims the head/tail, leaving base == raw. VirtualFree(MEM_RELEASE) can
+// only release an entire reservation, never part of one, so the same trick is
+// impossible: Windows instead RESERVES the oversized span, COMMITS only the
+// aligned window inside it, and remembers the reservation base for release.
+// The untouched head/tail cost address space but no physical memory — a
+// non-issue in a 64-bit address space.
+struct Mapping {
+    void* base;
+    void* raw;
+};
+
+// size must be page-aligned. Returns {nullptr, nullptr} on failure.
+Mapping mapAligned(size_t size) {
     const size_t over = size + kBlockSize;
+
+#if defined(_WIN32)
+    void* raw = ::VirtualAlloc(nullptr, over, MEM_RESERVE, PAGE_READWRITE);
+    if (!raw) return {nullptr, nullptr};
+    const uintptr_t base = ((uintptr_t)raw + kBlockSize - 1) & kBlockMask;
+    if (!::VirtualAlloc((void*)base, size, MEM_COMMIT, PAGE_READWRITE)) {
+        ::VirtualFree(raw, 0, MEM_RELEASE);
+        return {nullptr, nullptr};
+    }
+#else
     void* raw = ::mmap(nullptr, over, PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANON, -1, 0);
-    if (raw == MAP_FAILED) return nullptr;
+    if (raw == MAP_FAILED) return {nullptr, nullptr};
     const uintptr_t base = ((uintptr_t)raw + kBlockSize - 1) & kBlockMask;
     const size_t head = base - (uintptr_t)raw;
     const size_t tail = over - head - size;
     if (head) ::munmap(raw, head);
     if (tail) ::munmap((void*)(base + size), tail);
+    raw = (void*)base;   // head/tail are gone; the region IS the mapping
+#endif
+
     g_mappedBytes.fetch_add(size, std::memory_order_relaxed);
     g_mapEvents.fetch_add(1, std::memory_order_relaxed);
-    return (void*)base;
+    return {(void*)base, raw};
+}
+
+// `bytes` is the committed size on POSIX and ignored on Windows, where
+// MEM_RELEASE requires a zero length and frees the whole reservation.
+void unmapRegion(void* raw, size_t bytes) {
+#if defined(_WIN32)
+    (void)bytes;
+    ::VirtualFree(raw, 0, MEM_RELEASE);
+#else
+    ::munmap(raw, bytes);
+#endif
 }
 
 // ── Immortal locking ────────────────────────────────────────────────────────
@@ -82,13 +152,32 @@ void* mapAligned(size_t size) {
 // exit and the next lock() threw from libc++ (the cmd+q SIGSEGV). POSIX
 // mutexes with PTHREAD_MUTEX_INITIALIZER are trivially destructible POD:
 // "destroying" them is a no-op, so post-exit allocations keep working.
-// (Windows port: swap for SRWLOCK, same triviality — see backlog F.)
+//
+// SRWLOCK is the Windows equivalent and has the same property: SRWLOCK_INIT
+// is a zero-initializer, there is no Delete/Destroy call in the API at all,
+// and the type is trivially destructible. The static_assert below is the
+// real contract — any future swap must keep it.
+#if defined(_WIN32)
+using ImmortalMutex = SRWLOCK;
+#  define MEM_MUTEX_INIT SRWLOCK_INIT
+inline void mutexLock(ImmortalMutex& m)   { ::AcquireSRWLockExclusive(&m); }
+inline void mutexUnlock(ImmortalMutex& m) { ::ReleaseSRWLockExclusive(&m); }
+#else
+using ImmortalMutex = pthread_mutex_t;
+#  define MEM_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
+inline void mutexLock(ImmortalMutex& m)   { ::pthread_mutex_lock(&m); }
+inline void mutexUnlock(ImmortalMutex& m) { ::pthread_mutex_unlock(&m); }
+#endif
+
+static_assert(std::is_trivially_destructible_v<ImmortalMutex>,
+              "the allocator's locks must survive static destruction");
+
 struct ImmortalLock {
-    explicit ImmortalLock(pthread_mutex_t& m) : m_m(&m) { pthread_mutex_lock(m_m); }
-    ~ImmortalLock() { pthread_mutex_unlock(m_m); }
+    explicit ImmortalLock(ImmortalMutex& m) : m_m(&m) { mutexLock(*m_m); }
+    ~ImmortalLock() { mutexUnlock(*m_m); }
     ImmortalLock(const ImmortalLock&)            = delete;
     ImmortalLock& operator=(const ImmortalLock&) = delete;
-    pthread_mutex_t* m_m;
+    ImmortalMutex* m_m;
 };
 
 // ── Block registry — "is this pointer ours?" ────────────────────────────────
@@ -98,7 +187,7 @@ struct ImmortalLock {
 constexpr size_t    kRegSlots = size_t(1) << 15;
 constexpr uintptr_t kTombstone = 1;
 std::atomic<uintptr_t> g_registry[kRegSlots];   // zero-init: empty
-pthread_mutex_t        g_regMu = PTHREAD_MUTEX_INITIALIZER;
+ImmortalMutex          g_regMu = MEM_MUTEX_INIT;
 
 inline size_t regHash(uintptr_t base) {
     return size_t(((base >> kBlockShift) * 0x9E3779B97F4A7C15ull) >> 49);
@@ -145,19 +234,21 @@ struct TagHeap;
 inline TagHeap& heap(Tag t);
 
 // ── Shard — one striped TLSF pool + its own lock ────────────────────────────
-// Only mu (immortal PTHREAD) + tlsf: both trivially constant-initializable, so
+// Only mu (immortal, trivially destructible) + tlsf: both trivially constant-initializable, so
 // g_heaps stays safe to touch from the first static-init allocation. The tag
 // flows in per call (or from the block header) so no self-referential setup.
 struct Shard {
-    pthread_mutex_t mu   = PTHREAD_MUTEX_INITIALIZER;
+    ImmortalMutex   mu   = MEM_MUTEX_INIT;
     tlsf_t          tlsf = nullptr;
 
     bool grow(Tag tag) {
-        void* b = mapAligned(kBlockSize);
+        const Mapping m = mapAligned(kBlockSize);
+        void* b = m.base;
         if (!b) return false;
         auto* h = (BlockHeader*)b;
         h->magic = kMagic; h->tag = (uint8_t)tag; h->isLarge = 0;
         h->mapBytes = kBlockSize; h->userBytes = 0; h->shard = this;
+        h->mapRaw = m.raw;
         void* pool = (char*)b + kHeaderSize;
         if (!tlsf) tlsf = tlsf_create_with_pool(pool, kBlockSize - kHeaderSize);
         else       tlsf_add_pool(tlsf, pool, kBlockSize - kHeaderSize);
@@ -234,13 +325,15 @@ thread_local int t_scopeTop = 0;
 void* largeAlloc(Tag tag, size_t size, size_t align) {
     if (align > kBlockSize / 2) return nullptr;   // nobody needs this
     const size_t offset = (kHeaderSize + align - 1) & ~(align - 1);
-    const size_t page   = (size_t)::getpagesize();
+    const size_t page   = pageSize();
     const size_t total  = (offset + size + page - 1) & ~(page - 1);
-    void* base = mapAligned(total);
+    const Mapping m = mapAligned(total);
+    void* base = m.base;
     if (!base) return nullptr;
     auto* h = (BlockHeader*)base;
     h->magic = kMagic; h->tag = (uint8_t)tag; h->isLarge = 1;
     h->mapBytes = total; h->userBytes = size; h->shard = nullptr;
+    h->mapRaw = m.raw;
     regInsert((uintptr_t)base);
     heap(tag).bump(size);
     return (char*)base + offset;
@@ -252,7 +345,10 @@ void largeFree(BlockHeader* h) {
     th.frees.fetch_add(1, std::memory_order_relaxed);
     g_mappedBytes.fetch_sub(h->mapBytes, std::memory_order_relaxed);
     regErase((uintptr_t)h);
-    ::munmap((void*)h, h->mapBytes);
+    // Read the reservation base BEFORE unmapping — the header lives inside
+    // the region being released.
+    void* raw = h->mapRaw;
+    unmapRegion(raw, h->mapBytes);
 }
 
 inline BlockHeader* headerOf(void* p) {

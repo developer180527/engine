@@ -6,6 +6,26 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# ── MSVC conformance + encoding ─────────────────────────────────────────────
+# /utf-8 is not optional here: this tree's comments are full of box-drawing and
+# arrow characters (── → ⊕). Without it MSVC reads source as the local ANSI
+# codepage, which at best floods C4819 and at worst mis-tokenises a comment when
+# a multi-byte sequence ends in a byte that looks like a backslash.
+# /permissive- + /Zc:* get MSVC to the standard semantics the code was written
+# against (two-phase lookup, conforming preprocessor, correct __cplusplus).
+# /bigobj: the heavier TUs (Assimp, Jolt, the cookers) exceed the default
+# section limit in Debug.
+if(MSVC)
+    add_compile_options(/utf-8 /permissive- /Zc:preprocessor /Zc:__cplusplus /bigobj)
+    # The engine's own code is warning-clean elsewhere; keep MSVC's noisiest
+    # non-actionable warnings from burying real ones on the first port pass.
+    add_compile_options(/wd4244 /wd4267 /wd4305)   # narrowing conversions
+    # NOMINMAX / WIN32_LEAN_AND_MEAN globally: <windows.h> otherwise defines
+    # min/max macros that break std::min/std::max and drags in winsock.
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES
+                            _CRT_SECURE_NO_WARNINGS)
+endif()
+
 # ── Shipping posture: source importers in or out ────────────────────────────
 # ON  (default): dev tree — editor, cookers, Assimp/FBX import, all tools.
 # OFF (shipping): a fully-cooked runtime. Assimp is not compiled OR linked

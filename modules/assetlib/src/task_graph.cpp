@@ -12,7 +12,11 @@
 #include <queue>
 #include <thread>
 
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <windows.h>
+#elif defined(__APPLE__)
     #include <pthread/qos.h>
     #include <sys/sysctl.h>
 #elif defined(__linux__)
@@ -26,7 +30,12 @@ namespace {
 
 // Total physical RAM in bytes (0 if unknown).
 size_t physicalRamBytes() {
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    MEMORYSTATUSEX ms{};
+    ms.dwLength = sizeof(ms);
+    if (::GlobalMemoryStatusEx(&ms) && ms.ullTotalPhys > 0)
+        return (size_t)ms.ullTotalPhys;
+#elif defined(__APPLE__)
     int64_t mem = 0; size_t len = sizeof(mem);
     if (sysctlbyname("hw.memsize", &mem, &len, nullptr, 0) == 0 && mem > 0)
         return (size_t)mem;
@@ -42,7 +51,14 @@ size_t physicalRamBytes() {
 // scheduler keeps it BELOW foreground work and clocks the cores down before
 // the fans spin up — the cook should be invisible, not a space heater.
 void demoteToBackground() {
-#if defined(__APPLE__)
+#if defined(_WIN32)
+    // THREAD_MODE_BACKGROUND_BEGIN also demotes I/O priority, which is the
+    // closer match to QOS_CLASS_UTILITY than a plain priority drop — a cook is
+    // as disk-hungry as it is CPU-hungry. Falls back to lowest priority on the
+    // (documented) failure when the thread is already in background mode.
+    if (!::SetThreadPriority(::GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN))
+        ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+#elif defined(__APPLE__)
     pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
 #elif defined(__linux__)
     nice(10);   // best-effort; ignored if unsupported

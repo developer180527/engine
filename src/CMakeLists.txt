@@ -128,6 +128,14 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
             ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
             assets/cookers/texture_encode.cpp
             PROPERTIES COMPILE_OPTIONS "-O2")
+    elseif(MSVC)
+        # Same policy, MSVC spelling. /O2 with /Ob2 inlining; without this a
+        # Debug cook on Windows is ~8x slower for no debugging benefit.
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
+            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
+            assets/cookers/texture_encode.cpp
+            PROPERTIES COMPILE_OPTIONS "/O2")
     endif()
 endif()
 # Same policy for the single-header decode/parse TUs: stb decodes 4K PNGs,
@@ -138,6 +146,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
         assets/importers/stb_impl.cpp
         assets/importers/cgltf_impl.cpp
         PROPERTIES COMPILE_OPTIONS "-O2")
+elseif(MSVC)
+    set_source_files_properties(
+        assets/importers/stb_impl.cpp
+        assets/importers/cgltf_impl.cpp
+        PROPERTIES COMPILE_OPTIONS "/O2")
 endif()
 target_compile_definitions(engine_core PUBLIC
     BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>   # bx headers (cooker skeleton types)

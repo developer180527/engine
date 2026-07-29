@@ -59,9 +59,15 @@ target_include_directories(assetlib
 )
 
 # ── SQLite ────────────────────────────────────────────────────────────────────
-# Use system sqlite3 — available on macOS, Linux, Windows via vcpkg
+# Use system sqlite3 — available on macOS, Linux, Windows via vcpkg.
+#
+# Link SQLite::SQLite3, NOT SQLite3::SQLite3. The latter is a compatibility
+# alias that only newer CMake's FindSQLite3 adds (Homebrew's CMake 4 has it;
+# the 3.28 that ships with Ubuntu 24.04 does not), so using it builds on this
+# Mac and fails to configure on a stock Linux box. SQLite::SQLite3 is the
+# canonical name and has existed since CMake 3.14 — well under our 3.20 floor.
 find_package(SQLite3 REQUIRED)
-target_link_libraries(assetlib PUBLIC SQLite3::SQLite3)
+target_link_libraries(assetlib PUBLIC SQLite::SQLite3)
 
 # ── Platform ──────────────────────────────────────────────────────────────────
 if(APPLE)
