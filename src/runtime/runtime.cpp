@@ -15,6 +15,7 @@
 #include "runtime/services/anim_service.h"
 #include "runtime/scripting/engine_api_binding.h"
 #include "runtime/mem_channel.h"
+#include "runtime/frame_stats_channel.h"
 #include "runtime/jobs/jobs.h"
 #include "runtime/input/input_system.h"
 #include "core/memory/mem.h"
@@ -147,6 +148,15 @@ void EngineRuntime::shutdown() {
                         m_memChannel.reset(); }
     if (m_inputLatency) { prof::Profiler::get().removeChannel(m_inputLatency.get());
                           m_inputLatency.reset(); }
+    // Frame-time distribution, printed once at exit: every windowed app gets
+    // the report without its own code, and it is the only place present/vsync
+    // cost is real. Report BEFORE unregistering.
+    if (m_frameStats) {
+        if (prof::Profiler::get().enabled() && m_frameStats->totalFrames() > 0)
+            m_frameStats->logDistribution("shutdown");
+        prof::Profiler::get().removeChannel(m_frameStats.get());
+        m_frameStats.reset();
+    }
     stopSimulation();      // broadcasts onSimulationStop if still running
     engineApiBindHost(nullptr);
     engineInputBindManager(nullptr);

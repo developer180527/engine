@@ -12,6 +12,7 @@
 #include "runtime/scripting/script_services.h"
 #include "runtime/scripting/engine_api_binding.h"
 #include "runtime/mem_channel.h"
+#include "runtime/frame_stats_channel.h"
 #include "runtime/jobs/jobs.h"
 #include "core/memory/mem.h"
 #include <ozz/base/memory/allocator.h>
@@ -65,6 +66,8 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     prof::Profiler::get().addChannel(m_memChannel.get());
     m_inputLatency = std::make_unique<InputLatencyChannel>(&m_input);
     prof::Profiler::get().addChannel(m_inputLatency.get());
+    m_frameStats = std::make_unique<FrameStatsChannel>();
+    prof::Profiler::get().addChannel(m_frameStats.get());
     prof::Profiler::get().beginFrame();   // boot = "frame 0"
     m_frameArena.init(4 * 1024 * 1024);   // 4 MB per-frame transient pool
     // Worker pool next — spawned exactly once for the engine's lifetime;
@@ -104,6 +107,10 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     // Dump the boot breakdown (boot = the profiler frame opened above).
     prof::Profiler::get().endFrame();
     if (cfg.enableProfiler) prof::Profiler::get().timer().logLastFrame("Boot");
+    // Boot was "frame 0", so without this the first real frame's cadence would
+    // be measured from the start of init — one multi-second sample that skews
+    // every tail percentile in the report.
+    if (m_frameStats) m_frameStats->reset();
     return true;
 }
 

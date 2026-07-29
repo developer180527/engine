@@ -20,6 +20,12 @@ int main(int argc, char** argv) {
         cfg.projectRoot = argv[1];
         LOG_INFO("Project", "Opening from argument: %s", argv[1]);
     }
+    // --frames N: run N frames then exit cleanly, so the frame-time report the
+    // runtime prints at shutdown covers a fixed, repeatable window.
+    long frameLimit = 0;
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--frames" && i + 1 < argc)
+            frameLimit = std::strtol(argv[++i], nullptr, 10);
 
     // The editor creates the platform explicitly (rather than letting
     // EngineRuntime default it) because it needs the window handle for the
@@ -81,7 +87,7 @@ int main(int argc, char** argv) {
 
     cookService.start(); // background thread — doesn't block
 
-    editor.run();
+    editor.run(frameLimit);
 
     editor.saveScene();
     project.saveAsLastProject();

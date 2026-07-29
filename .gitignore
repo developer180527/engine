@@ -1,27 +1,50 @@
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# build folders
 build/
 build-asan/
 build-ship/
+build-ab/
+build-sdl3/
+# RelWithDebInfo + -DENGINE_PROFILE=1 — the frame-time measurement tree
+build-prof/
+.buildlog/
+# Linux container build tree + ccache (docker/linux-build.Dockerfile)
+build-linux/
+.ccache-linux/
 
+# Miscellaneous
 .cache/
 .vscode/
-.idea/
 *.dSYM/
 compile_commands.json
 .DS_Store
 docs/generated
 /assets/
-# Kits (separate repos) + user game projects — not part of the engine repo
+.atom/
+.build/
+project.json
+.history
+.svn/
+.swiftpm/
+.claude/
+
+# Kits (separate repos) + example game projects which not part of the engine repo
 Kits/
 fps_shooter/
 
 # Compiled tool binaries (sources live in tools/)
 fbx_diag
+
 # ImGui window layout, rewritten on every panel move
 imgui.ini
+
 # macOS custom-folder-icon file; its name ends in a carriage return, so the
 # `?` is a single-character wildcard rather than punctuation.
 Icon?
 
-# Linux container build tree + ccache (docker/linux-build.Dockerfile)
-build-linux/
-.ccache-linux/
+

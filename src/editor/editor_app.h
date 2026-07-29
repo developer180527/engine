@@ -138,10 +138,21 @@ public:
         m_rt.attachPlugins();
     }
 
-    void run() {
+    // frameLimit > 0 exits after that many frames — for scripted profiling
+    // runs, where a session whose length depends on when someone closes the
+    // window is not a measurement. 0 runs until the window closes.
+    void run(long frameLimit = 0) {
         // The runtime owns the loop skeleton (events, timing, resize, async
         // drain, frame flip); the editor supplies the per-frame body.
-        m_rt.run([this](float dt) { frame(dt); });
+        if (frameLimit <= 0) {
+            m_rt.run([this](float dt) { frame(dt); });
+            return;
+        }
+        float dt = 0.0f;
+        for (long n = 0; n < frameLimit && m_rt.frameBegin(dt); ++n) {
+            frame(dt);
+            m_rt.frameEnd();
+        }
     }
 
 private:

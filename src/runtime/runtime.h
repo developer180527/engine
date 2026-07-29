@@ -34,6 +34,7 @@ namespace engine_detail { bool ensureFlecsAllocatorHooked(); }
 
 class ScriptHost;    // runtime-owned scripting surface (scripting/script_host.h)
 class MemoryChannel; // profiler memory channel (runtime/mem_channel.h)
+class FrameStatsChannel; // frame-time distribution (runtime/frame_stats_channel.h)
 class AnimService;   // runtime/services/anim_service.h (pulls ClipLibrary/Assimp)
 class ClipLibrary;   // standalone animation clips (animation/clip_library.h) —
                      // fwd-declared: it pulls Assimp, which kits don't get
@@ -188,6 +189,9 @@ public:
     mem::FrameArena&  frameArena() { return m_frameArena; }
     input::InputManager& inputManager() { return m_input; }
     InputLatencyChannel* inputLatency() { return m_inputLatency.get(); }
+    // Frame-time distribution — the "is there actually a hitch?" channel.
+    // Reports at shutdown on its own; grab it to dump mid-run or export CSV.
+    FrameStatsChannel*   frameStats()   { return m_frameStats.get(); }
     // Immediate-mode debug lines — queue via engineDraw*/this, drawn this frame,
     // cleared at the next frameBegin.
     dbg::DebugDraw&   debugDraw()  { return m_debugDraw; }
@@ -257,6 +261,7 @@ private:
     mem::FrameArena     m_frameArena;   // per-frame transient allocator
     input::InputManager m_input;        // action layer over raw input
     std::unique_ptr<InputLatencyChannel> m_inputLatency;   // profiler channel
+    std::unique_ptr<FrameStatsChannel>   m_frameStats;     // profiler channel
     static constexpr float kSimDt = 1.0f / 60.0f;   // fixed simulation step
     float m_simAccumulator = 0.0f;
     dbg::DebugDraw      m_debugDraw;     // per-frame debug lines (engineDraw*)

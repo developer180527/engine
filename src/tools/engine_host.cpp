@@ -19,9 +19,11 @@
 #include "runtime/services/async_loader.h"
 #include "runtime/module_loader.h"   // shared dlopen + gauntlet (also used by KitHost)
 #include "core/profiler.h"           // periodic frame-profile dump (dev runner)
+#include "runtime/frame_stats_channel.h"  // frame-time distribution + CSV
 #include "core/memory/mem.h"         // periodic tagged-heap dump
 
 #include <cstdio>
+#include <cstdlib>   // strtol — --frames
 #include <filesystem>
 #include <string>
 
@@ -87,16 +89,27 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IOLBF, 0);
     if (argc < 2) {
         std::fprintf(stderr,
-            "usage: engine_host <project-dir> [dev-module.dylib]\n");
+            "usage: engine_host <project-dir> [dev-module.dylib]\n"
+            "       [--record-input <file.irec>]\n"
+            "       [--frames N]            exit after N frames\n"
+            "       [--frame-csv <file>]    per-frame timings for plotting\n");
         return 2;
     }
     const fs::path projectDir = argv[1];
     // Optional: --record-input <file.irec> — tee accepted input + tick marks
     // for the determinism/replay harness (see input_manager.h Recording).
     fs::path recordPath;
-    for (int i = 2; i < argc - 0; ++i)
-        if (std::string(argv[i]) == "--record-input" && i + 1 < argc)
-            recordPath = argv[++i];
+    // Profiling-run knobs: --frames N exits after N frames so a measurement is
+    // scriptable (no human closing a window at an arbitrary moment), and
+    // --frame-csv writes the raw per-frame timings for offline plotting.
+    long     frameLimit = 0;      // 0 = run until the window closes
+    fs::path frameCsv;
+    for (int i = 2; i < argc; ++i) {
+        const std::string a = argv[i];
+        if      (a == "--record-input" && i + 1 < argc) recordPath = argv[++i];
+        else if (a == "--frames"       && i + 1 < argc) frameLimit = std::strtol(argv[++i], nullptr, 10);
+        else if (a == "--frame-csv"    && i + 1 < argc) frameCsv   = argv[++i];
+    }
     // argv[2] is the optional dev module ONLY if it isn't a --flag.
     const bool     hasDevModule = argc >= 3 && argv[2][0] != '-';
     const fs::path modulePath  = hasDevModule ? fs::absolute(argv[2]) : fs::path{};
@@ -166,8 +179,12 @@ int main(int argc, char** argv) {
         engine.inputManager().startRecording(recordPath);
     engine.startSimulation(); // in-place: boot = play
 
-    int profFrame = 0;
-    engine.run([&](float dt) {
+    // Explicit loop rather than engine.run() so --frames can stop it: a
+    // measurement whose length depends on when someone closes a window is not
+    // a measurement.
+    long  profFrame = 0;
+    float dt = 0.0f;
+    while (engine.frameBegin(dt)) {
         InputSystem::get().processEvents();
         loader.drainOne(storage);
         if (watcher && watcher->changed(dt))
@@ -180,8 +197,20 @@ int main(int argc, char** argv) {
             mem::logStats("engine_host");   // tagged heaps + map-event total
             if (engine.inputLatency())
                 engine.inputLatency()->logLastFrame("engine_host");
+            if (engine.frameStats())
+                engine.frameStats()->logSummary("engine_host");
         }
-    });
+        engine.frameEnd();
+        if (frameLimit > 0 && profFrame >= frameLimit) break;
+    }
+    // Written before shutdown, which is where the distribution report prints.
+    if (!frameCsv.empty() && engine.frameStats()) {
+        if (engine.frameStats()->writeCsv(frameCsv.string()))
+            std::printf("[FrameStats] wrote %s\n", frameCsv.string().c_str());
+        else
+            std::fprintf(stderr, "engine_host: cannot write %s\n",
+                         frameCsv.string().c_str());
+    }
 
     // Order matters: the dev plugin must be fully released (its deleter lives
     // in the dylib) before the library unloads, and both before the runtime
