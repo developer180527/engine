@@ -49,6 +49,13 @@ endfunction()
 add_test(NAME hid_null_link_check COMMAND hid_null_link_check)
 set_tests_properties(hid_null_link_check PROPERTIES LABELS unit TIMEOUT 30)
 
+# SDL3 gamepad backend gauntlet — exists only when that backend is compiled.
+# Uses SDL's VIRTUAL joystick, so it needs no controller and runs in CI.
+if(TARGET hid_sdl3_gamepad_test)
+    add_test(NAME hid_sdl3_gamepad_test COMMAND hid_sdl3_gamepad_test)
+    set_tests_properties(hid_sdl3_gamepad_test PROPERTIES LABELS unit TIMEOUT 60)
+endif()
+
 # ── sim-purity gauntlet — compiling IS the test (audit A.1–A.4) ───────────────
 # Poisoned bgfx/assimp headers sit FIRST on the include path: a sim-facing
 # header that transitively includes either fails the build with a message
