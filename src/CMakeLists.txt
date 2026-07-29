@@ -129,13 +129,21 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
             assets/cookers/texture_encode.cpp
             PROPERTIES COMPILE_OPTIONS "-O2")
     elseif(MSVC)
-        # Same policy, MSVC spelling. /O2 with /Ob2 inlining; without this a
-        # Debug cook on Windows is ~8x slower for no debugging benefit.
+        # NOT applied in Debug: MSVC's Debug config carries /RTC1, and
+        # `/RTC1 /O2` is a hard command-line error (D8016). These are per-SOURCE
+        # pins inside engine_core, so /RTC1 cannot be stripped for them alone
+        # without disarming Debug checks for the entire library — and silently
+        # weakening checks across the engine is a worse trade than a slower
+        # Windows Debug cook.
+        # Consequence: a Debug cook on Windows is ~8x slower than on
+        # Clang/GNU. The fix, when that bites, is to move these TUs into their
+        # own static library and strip /RTC1 in that scope — exactly what
+        # modules/assetlib/third_party/sqlite3/CMakeLists.txt does.
         set_source_files_properties(
             ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
             ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
             assets/cookers/texture_encode.cpp
-            PROPERTIES COMPILE_OPTIONS "/O2")
+            PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:/O2>")
     endif()
 endif()
 # Same policy for the single-header decode/parse TUs: stb decodes 4K PNGs,
@@ -147,10 +155,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
         assets/importers/cgltf_impl.cpp
         PROPERTIES COMPILE_OPTIONS "-O2")
 elseif(MSVC)
+    # See the note above: /O2 conflicts with Debug's /RTC1 (D8016), so this is
+    # non-Debug only.
     set_source_files_properties(
         assets/importers/stb_impl.cpp
         assets/importers/cgltf_impl.cpp
-        PROPERTIES COMPILE_OPTIONS "/O2")
+        PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:/O2>")
 endif()
 target_compile_definitions(engine_core PUBLIC
     BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>   # bx headers (cooker skeleton types)

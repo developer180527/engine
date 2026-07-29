@@ -77,27 +77,9 @@ if(SQLite3_FOUND)
 else()
     message(STATUS "assetlib: SQLite = vendored amalgamation "
                    "(no system SQLite found)")
-    add_library(assetlib_sqlite3 STATIC third_party/sqlite3/sqlite3.c)
-    target_include_directories(assetlib_sqlite3 PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sqlite3)
-    # THREADSAFE=1 is REQUIRED, not a tuning knob: the registry runs one writer
-    # connection (the cook thread) alongside reader connections on other
-    # threads, which is only defined behaviour in serialized mode.
-    target_compile_definitions(assetlib_sqlite3 PUBLIC
-        SQLITE_THREADSAFE=1
-        SQLITE_OMIT_LOAD_EXTENSION=1     # nothing loads extensions
-        SQLITE_DQS=0)                    # no double-quoted string literals
-    if(MSVC)
-        # It is a 9.5 MB single TU; /O2 keeps a Debug configure from paying for
-        # an unoptimized SQLite, same policy as the vendored codecs.
-        target_compile_options(assetlib_sqlite3 PRIVATE /O2)
-    elseif(CMAKE_C_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
-        target_compile_options(assetlib_sqlite3 PRIVATE -O2 -w)
-    endif()
-    if(UNIX)
-        find_package(Threads REQUIRED)
-        target_link_libraries(assetlib_sqlite3 PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
-    endif()
+    # Its own subdirectory so MSVC's /RTC1 can be stripped for that TU alone —
+    # see the CMakeLists there.
+    add_subdirectory(third_party/sqlite3)
     target_link_libraries(assetlib PUBLIC assetlib_sqlite3)
 endif()
 
