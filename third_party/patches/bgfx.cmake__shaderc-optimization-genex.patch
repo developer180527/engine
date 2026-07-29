@@ -1,0 +1,13 @@
+diff --git a/cmake/bgfxToolUtils.cmake b/cmake/bgfxToolUtils.cmake
+index 7f50445..a937ba1 100644
+--- a/cmake/bgfxToolUtils.cmake
++++ b/cmake/bgfxToolUtils.cmake
+@@ -643,7 +643,7 @@ if(TARGET bgfx::shaderc)
+ 					FILE ${SHADER_FILE_ABSOLUTE}
+ 					OUTPUT ${OUTPUT}
+ 					PROFILE ${PROFILE}
+-					O "$<IF:$<CONFIG:Debug>:0,3>"
++					O "$<IF:$<CONFIG:Debug>,0,3>"
+ 					VARYINGDEF ${ARGS_VARYING_DEF}
+ 					INCLUDES ${BGFX_SHADER_INCLUDE_PATH} ${ARGS_INCLUDE_DIRS}
+ 					DEFINES ${ARGS_DEFINES}

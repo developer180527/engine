@@ -1,0 +1,6 @@
+# The build context is only used for the toolchain image — the source itself
+# is bind-mounted at run time (see docker/linux-build.Dockerfile). Excluding
+# the tree keeps `docker build` from tarring tens of GB, and skips the
+# fsmonitor socket in .git, which tar cannot represent at all.
+*
+!docker/

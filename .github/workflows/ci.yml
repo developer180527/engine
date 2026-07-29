@@ -1,0 +1,205 @@
+name: CI
+
+# The engine is developed on macOS and has never been built on Linux, and only
+# once (badly) on Windows. The point of this workflow is to turn "it's broken
+# on the other platforms" into a specific, incrementally fixable list of
+# compiler errors — so the Linux and Windows lanes are EXPECTED to fail at
+# first. See `experimental` in the matrix below.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push supersedes an in-flight run of the same branch; these builds are
+# expensive (Assimp + bgfx from source) and there's no value in finishing a
+# run whose result is already stale.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    # Linux and Windows are known-broken. Marking them non-fatal keeps the
+    # workflow useful from day one instead of permanently red — macOS still
+    # gates merges, and the other two report progress. Flip `experimental`
+    # to false the moment a platform first goes green, so it can't regress.
+    continue-on-error: ${{ matrix.experimental }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (arm64, AppleClang)
+            os: macos-latest
+            experimental: false
+
+          - name: Linux (x64, GCC)
+            os: ubuntu-latest
+            experimental: true
+
+          - name: Linux (x64, Clang)
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+            experimental: true
+
+          - name: Windows (x64, MSVC)
+            os: windows-latest
+            experimental: true
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          # 14 submodules, several with nested submodules of their own
+          # (bgfx.cmake -> bgfx). Shallow: history isn't needed to build.
+          submodules: recursive
+          fetch-depth: 1
+
+      # Local fixes to vendored dependencies live as patch files so they
+      # survive a fresh clone. Without this step CI builds unpatched sources
+      # and can diverge from every developer machine — which is exactly the
+      # class of bug this workflow exists to catch.
+      - name: Apply third-party patches
+        if: hashFiles('third_party/patches/*.patch') != ''
+        shell: bash
+        run: |
+          # Filename encodes its target: <submodule-dir>__<description>.patch.
+          # Patches must be applied from inside the submodule — the paths are
+          # relative to its root, and --3way needs that repo's object store.
+          for p in third_party/patches/*.patch; do
+            sub="${p##*/}"; sub="${sub%%__*}"
+            echo "applying ${p##*/} -> third_party/$sub"
+            git -C "third_party/$sub" apply --3way "$(pwd)/$p"
+          done
+
+      # GLFW needs X11 + Wayland + xkbcommon; miniaudio needs ALSA; bgfx needs
+      # GL headers. `xorg-dev` is the umbrella that covers the X11 extension
+      # headers (Xrandr/Xinerama/Xcursor/Xi) GLFW looks for individually.
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config \
+            xorg-dev libx11-dev libgl1-mesa-dev \
+            libwayland-dev libxkbcommon-dev wayland-protocols \
+            libasound2-dev libpulse-dev \
+            libsqlite3-dev
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      # Puts cl.exe and the Windows SDK on PATH so the Ninja generator works
+      # the same way it does on the other two platforms. Without this, CMake
+      # falls back to the Visual Studio generator and the build diverges from
+      # what developers run locally.
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Assimp and bgfx dominate build time and rarely change. The cache is
+      # keyed per matrix leg so compilers never share entries.
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.name }}
+          variant: ${{ runner.os == 'Windows' && 'sccache' || 'ccache' }}
+          max-size: 1G
+
+      - name: Select compiler
+        if: matrix.cc != ''
+        shell: bash
+        run: |
+          echo "CC=${{ matrix.cc }}"   >> "$GITHUB_ENV"
+          echo "CXX=${{ matrix.cxx }}" >> "$GITHUB_ENV"
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_C_COMPILER_LAUNCHER=${{ runner.os == 'Windows' && 'sccache' || 'ccache' }} \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=${{ runner.os == 'Windows' && 'sccache' || 'ccache' }}
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --parallel
+
+      # The build tree is large and mostly uninteresting; the logs are what
+      # you need to triage a failing platform, and `compile_commands.json`
+      # lets you reproduce a single failing translation unit locally.
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.name }}
+          path: |
+            build/CMakeCache.txt
+            build/compile_commands.json
+            build/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The shipping posture is a build-level invariant ("the runtime never parses
+  # FBX" — Assimp is neither compiled nor linked). It's cheap to verify and
+  # easy to break by adding an include, so it gets its own lane.
+  shipping-runtime:
+    name: Shipping runtime (no source importers)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Apply third-party patches
+        if: hashFiles('third_party/patches/*.patch') != ''
+        shell: bash
+        run: |
+          for p in third_party/patches/*.patch; do
+            sub="${p##*/}"; sub="${sub%%__*}"
+            git -C "third_party/$sub" apply --3way "$(pwd)/$p"
+          done
+
+      - run: brew install ninja
+
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: shipping-macos
+          max-size: 1G
+
+      - name: Configure (importers OFF)
+        run: |
+          cmake -B build-ship -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_WITH_SOURCE_IMPORTERS=OFF \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build engine_player
+        run: cmake --build build-ship --target engine_player --parallel
+
+      # Assimp links statically, so its symbols would be DEFINED in the binary
+      # rather than undefined — check the whole symbol table, not just `nm -u`.
+      - name: Assert Assimp is not linked in
+        shell: bash
+        run: |
+          bin=build-ship/engine_player
+          test -f "$bin" || { echo "::error::$bin was not produced"; exit 1; }
+          if nm "$bin" 2>/dev/null | grep -qi assimp; then
+            echo "::error::engine_player contains Assimp symbols — the cooked-runtime invariant (runtime never parses source formats) is broken."
+            nm "$bin" | grep -i assimp | head -20
+            exit 1
+          fi
+          echo "OK: no Assimp symbols in engine_player"
