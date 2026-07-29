@@ -4,7 +4,7 @@
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <bx/math.h>
-#include <GLFW/glfw3.h>
+#include "editor/window_ops.h"
 #include <cmath>
 
 #include "editor/engine_context.h"
@@ -74,14 +74,14 @@ inline void gizmoBeginFrame() {
     ImGuizmo::SetOrthographic(false);
 }
 
-inline void gizmoHandleHotkeys(GLFWwindow* window, EngineContext& ctx) {
+inline void gizmoHandleHotkeys(edwin::WindowHandle window, EngineContext& ctx) {
     if (ctx.editor.playing()) return;          // editor authoring is inert in play
     if (ImGui::GetIO().WantTextInput) return;
-    if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)
+    if (edwin::isKeyDown(window, Key::T))
         ctx.gizmoState.operation = ImGuizmo::TRANSLATE;
-    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)
+    if (edwin::isKeyDown(window, Key::R))
         ctx.gizmoState.operation = ImGuizmo::ROTATE;
-    if (glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS)
+    if (edwin::isKeyDown(window, Key::Y))
         ctx.gizmoState.operation = ImGuizmo::SCALE;
 }
 

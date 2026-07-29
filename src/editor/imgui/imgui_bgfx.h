@@ -2,11 +2,11 @@
 
 #include <bgfx/bgfx.h>
 
-struct GLFWwindow;
 
-// Initialize ImGui with the bgfx renderer and GLFW input backend.
-// Must be called after bgfx::init() and after glfwCreateWindow().
-void imguiInit(GLFWwindow* window, float fontSize = 16.0f);
+// Initialize ImGui with the bgfx renderer and the platform input backend.
+// Must be called after bgfx::init() and after the window exists.
+// `window` is the platform backend's window handle (opaque here).
+void imguiInit(void* window, float fontSize = 16.0f);
 
 // Tear down ImGui and release all bgfx resources it owns.
 void imguiShutdown();

@@ -2,9 +2,14 @@
 # The only target that links ImGui. Everything engine-side comes from
 # engine_runtime; this layer adds panels, gizmos, docking, and the ImGui
 # platform/renderer glue (GLFW + bgfx backends).
+#
+# window_ops_glfw.cpp is the editor's ONLY window-system dependency outside the
+# vendored ImGui platform backend (see editor/window_ops.h). Swapping to SDL3
+# means replacing these two files, not editing panels.
 
 add_executable(editor
     main.cpp
+    window_ops_glfw.cpp
     imgui/imgui_bgfx.cpp
     imgui/imgui_impl_glfw.cpp
 )

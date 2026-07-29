@@ -27,6 +27,16 @@ only layer that links ImGui/ImGuizmo — the runtime stays UI-free.
   fonts), `imgui_impl_glfw.*` (platform backend), docking + multi-viewport.
   `imguiInit` also registers the **editor UI backend** (`engineUiSetBackend`)
   so any plugin/kit can draw via the `engineUi*` facade without linking ImGui.
+- **Window seam** (`window_ops.h` + `window_ops_glfw.cpp`) — the editor's ONLY
+  window-system dependency. The editor drives several OS windows (a detached
+  Scene/Game View is its own ImGui viewport), which `IPlatform` cannot model
+  since it owns a single window, and the handles come from
+  `ImGuiViewport::PlatformHandle`. So per-window focus/key-poll/cursor-capture
+  goes through `edwin::` on an opaque handle, with one implementation TU per
+  backend. Swapping to SDL3 = `window_ops_sdl3.cpp` + the ImGui platform
+  backend + the platform choice in `main.cpp`; no panel changes.
+  This is TOOLING input — engine systems and kits bind to actions through
+  InputManager and must never poll windows.
 - **Plug-in Manager** (`panels/plugins_panel.h`) — lists running plugins +
   manifest kits with their *true* load status (`KitHost::status()`), raises a
   modal on kit-load failure, and calls each plugin's `onEditorUI()` (drawn

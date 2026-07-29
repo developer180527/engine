@@ -3,42 +3,44 @@
 #include "editor/editor_icons.h"
 #include <string>
 #include <cstring>
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
+#include "editor/window_ops.h"
 #include "runtime/input/input_map.h"
 #include "runtime/input/input_system.h"
 #include "editor/editor_state.h"
 
 // ── Key display name ───────────────────────────────────────────────────────
-inline const char* keyDisplayName(int glfwKey) {
-    switch (glfwKey) {
-    case GLFW_KEY_SPACE:         return "Space";
-    case GLFW_KEY_ENTER:         return "Enter";
-    case GLFW_KEY_ESCAPE:        return "Escape";
-    case GLFW_KEY_TAB:           return "Tab";
-    case GLFW_KEY_BACKSPACE:     return "Backspace";
-    case GLFW_KEY_DELETE:        return "Delete";
-    case GLFW_KEY_RIGHT:         return "Right";
-    case GLFW_KEY_LEFT:          return "Left";
-    case GLFW_KEY_UP:            return "Up";
-    case GLFW_KEY_DOWN:          return "Down";
-    case GLFW_KEY_LEFT_SHIFT:    return "L.Shift";
-    case GLFW_KEY_RIGHT_SHIFT:   return "R.Shift";
-    case GLFW_KEY_LEFT_CONTROL:  return "L.Ctrl";
-    case GLFW_KEY_RIGHT_CONTROL: return "R.Ctrl";
-    case GLFW_KEY_LEFT_ALT:      return "L.Alt";
-    case GLFW_KEY_RIGHT_ALT:     return "R.Alt";
-    case GLFW_KEY_LEFT_SUPER:    return "L.Cmd";
-    case GLFW_KEY_RIGHT_SUPER:   return "R.Cmd";
-    case GLFW_KEY_F1:  return "F1";  case GLFW_KEY_F2:  return "F2";
-    case GLFW_KEY_F3:  return "F3";  case GLFW_KEY_F4:  return "F4";
-    case GLFW_KEY_F5:  return "F5";  case GLFW_KEY_F6:  return "F6";
-    case GLFW_KEY_F7:  return "F7";  case GLFW_KEY_F8:  return "F8";
-    case GLFW_KEY_F9:  return "F9";  case GLFW_KEY_F10: return "F10";
-    case GLFW_KEY_F11: return "F11"; case GLFW_KEY_F12: return "F12";
-    case GLFW_KEY_UNKNOWN: return "None";
+// Label for a key in the binding UI. The switch covers keys with no
+// printable form; anything else falls back to the backend's layout-aware
+// name (edwin::keyName), which is what shows the user "q" vs "a" on AZERTY.
+inline const char* keyDisplayName(Key key) {
+    switch (key) {
+    case Key::Space:         return "Space";
+    case Key::Enter:         return "Enter";
+    case Key::Escape:        return "Escape";
+    case Key::Tab:           return "Tab";
+    case Key::Backspace:     return "Backspace";
+    case Key::Delete:        return "Delete";
+    case Key::Right:         return "Right";
+    case Key::Left:          return "Left";
+    case Key::Up:            return "Up";
+    case Key::Down:          return "Down";
+    case Key::LeftShift:    return "L.Shift";
+    case Key::RightShift:   return "R.Shift";
+    case Key::LeftCtrl:  return "L.Ctrl";
+    case Key::RightCtrl: return "R.Ctrl";
+    case Key::LeftAlt:      return "L.Alt";
+    case Key::RightAlt:     return "R.Alt";
+    case Key::LeftSuper:    return "L.Cmd";
+    case Key::RightSuper:   return "R.Cmd";
+    case Key::F1:  return "F1";  case Key::F2:  return "F2";
+    case Key::F3:  return "F3";  case Key::F4:  return "F4";
+    case Key::F5:  return "F5";  case Key::F6:  return "F6";
+    case Key::F7:  return "F7";  case Key::F8:  return "F8";
+    case Key::F9:  return "F9";  case Key::F10: return "F10";
+    case Key::F11: return "F11"; case Key::F12: return "F12";
+    case Key::Unknown: return "None";
     default: {
-        const char* n = glfwGetKeyName(glfwKey, 0);
+        const char* n = edwin::keyName(key);
         return n ? n : "?";
     }
     }
@@ -83,7 +85,7 @@ inline void drawCategoryInput(ProjectSettingsState& s, SimState simState) {
 
         // Check for key
         int k = sys.anyKeyPressedRaw();
-        if (k >= 0 && k != GLFW_KEY_ESCAPE) {
+        if (k >= 0 && (Key)k != Key::Escape) {
             if (!s.captureIsAxis) {
                 map.addActionKey(s.captureAction, (Key)k);
             } else if (s.captureIsPos) {
@@ -92,7 +94,7 @@ inline void drawCategoryInput(ProjectSettingsState& s, SimState simState) {
                 map.setAxisNegative(s.captureAxis, (Key)k);
             }
             s.capturing = false;
-        } else if (k == GLFW_KEY_ESCAPE) {
+        } else if ((Key)k == Key::Escape) {
             s.capturing = false;
         }
         ImGui::Spacing();
@@ -125,7 +127,7 @@ inline void drawCategoryInput(ProjectSettingsState& s, SimState simState) {
                 // Key badge
                 ImGui::PushStyleColor(ImGuiCol_Button,
                     ImVec4(0.25f,0.35f,0.55f,1.0f));
-                const char* kn = keyDisplayName((int)action.keys[ki]);
+                const char* kn = keyDisplayName(action.keys[ki]);
                 if (ImGui::SmallButton(kn))
                     map.removeActionKey(action.id, ki);
                 ImGui::PopStyleColor();
@@ -190,7 +192,7 @@ inline void drawCategoryInput(ProjectSettingsState& s, SimState simState) {
             ImGui::TableSetColumnIndex(1);
             ImGui::PushID((int)axis.id.id + 20000);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f,0.45f,0.15f,1.0f));
-            if (ImGui::Button(keyDisplayName((int)axis.positive))) {
+            if (ImGui::Button(keyDisplayName(axis.positive))) {
                 s.capturing      = true;
                 s.captureIsAxis  = true;
                 s.captureIsPos   = true;
@@ -203,7 +205,7 @@ inline void drawCategoryInput(ProjectSettingsState& s, SimState simState) {
             ImGui::TableSetColumnIndex(2);
             ImGui::PushID((int)axis.id.id + 30000);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f,0.15f,0.15f,1.0f));
-            if (ImGui::Button(keyDisplayName((int)axis.negative))) {
+            if (ImGui::Button(keyDisplayName(axis.negative))) {
                 s.capturing      = true;
                 s.captureIsAxis  = true;
                 s.captureIsPos   = false;

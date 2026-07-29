@@ -1,6 +1,6 @@
 #include <filesystem>
 #pragma once
-#include <GLFW/glfw3.h>
+#include "editor/window_ops.h"
 #include "runtime/runtime.h"
 #include "scene/scene_serializer.h"
 #include <imgui.h>
@@ -39,9 +39,10 @@
 
 class EditorApp {
 public:
-    // The editor requires a GLFW-backed platform — it owns the window pointer
-    // for ImGui glue, input callbacks, and cursor capture.
-    EditorApp(EngineRuntime& rt, GLFWwindow* window)
+    // The window is an opaque handle from whichever platform backend created
+    // it; the editor operates on it only through edwin:: (editor/window_ops.h)
+    // for focus, key polling and cursor capture. See that header for why.
+    EditorApp(EngineRuntime& rt, edwin::WindowHandle window)
         : m_rt(rt), m_window(window) {}
     ~EditorApp() = default;
 
@@ -119,7 +120,7 @@ public:
     // Requires ImGui to be initialized already (main.cpp does imguiInit +
     // applyEditorTheme before the project hub, which also draws ImGui).
     void init() {
-        // Input system — register GLFW callbacks + default action bindings
+        // Input system — register window callbacks + default action bindings
         InputSystem::get().init(m_window);
         auto& map = InputMap::get();
         map.bindAction("Jump",        Key::Space);
@@ -169,15 +170,14 @@ private:
             { auto& io = ImGui::GetIO();
               const bool __playing = (m_editor.simState == SimState::Playing);
               const bool __cursorLocked =
-                  glfwGetInputMode(m_window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+                  edwin::cursorMode(m_window) == CursorMode::Captured;
               InputSystem::get().setUICapture(
                   __playing ? io.WantTextInput : io.WantCaptureKeyboard,
                   __cursorLocked ? false : io.WantCaptureMouse);
               // Captured play-mode cursor is GAME input: ImGui must not see
               // the invisible mouse at all, or panels stay clickable and
               // steal edits mid-play. Esc (release) restores editor UI.
-              const bool __capFocused = m_lastCaptureWin &&
-                  glfwGetWindowAttrib(m_lastCaptureWin, GLFW_FOCUSED);
+              const bool __capFocused = edwin::isFocused(m_lastCaptureWin);
               if (__playing && __cursorLocked && __capFocused)
                   io.ConfigFlags |=  ImGuiConfigFlags_NoMouse;
               else
@@ -188,41 +188,41 @@ private:
             { auto ctx = buildCtx(); gizmoHandleHotkeys(m_window, ctx); }
 
             // ---- Editor camera ----
-            // Use the GLFW window that currently hosts the Scene View panel.
+            // Use the OS window that currently hosts the Scene View panel.
             // When docked: main window. When detached: the OS child window.
-            GLFWwindow* camWin = m_sceneGLFWWindow ? m_sceneGLFWWindow : m_window;
+            edwin::WindowHandle camWin = m_sceneHostWindow ? m_sceneHostWindow : m_window;
             updateEditorCamera(m_cam, m_input, camWin, dt, m_sceneViewHovered);
             // ---- Play-mode cursor capture (FPS mouse-look) ----
             {
                 // Capture on the window that HOSTS the Game View — detached
                 // panels are separate OS windows and own the play input.
-                GLFWwindow* gw = m_gameGLFWWindow ? m_gameGLFWWindow : m_window;
+                edwin::WindowHandle gw = m_gameHostWindow ? m_gameHostWindow : m_window;
                 if (m_lastCaptureWin && m_lastCaptureWin != gw)
-                    glfwSetInputMode(m_lastCaptureWin, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                    edwin::setCursorMode(m_lastCaptureWin, CursorMode::Normal);
                 m_lastCaptureWin = gw;
                 const bool playing = (m_editor.simState == SimState::Playing);
                 if (playing && !m_wasPlaying) m_playCursorLocked = true;
                 // FAIL-SAFE: losing focus always releases the cursor (the
                 // alt-tab rule) — a hidden cursor can never strand the UI.
-                if (playing && m_playCursorLocked &&
-                    !glfwGetWindowAttrib(gw, GLFW_FOCUSED))
+                if (playing && m_playCursorLocked && !edwin::isFocused(gw))
                     m_playCursorLocked = false;
                 if (playing) {
                     InputSystem::get().setActiveWindow(gw);
-                    const bool escNow = glfwGetKey(gw, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+                    const bool escNow = edwin::isKeyDown(gw, Key::Escape);
                     if (escNow && !m_escPrev) {
                         if (m_playCursorLocked) m_playCursorLocked = false; // 1st Esc: free mouse
                         else onStop();                                       // 2nd Esc: stop play
                     }
                     m_escPrev = escNow;
-                    const int want = m_playCursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
-                    if (glfwGetInputMode(gw, GLFW_CURSOR) != want)
-                        glfwSetInputMode(gw, GLFW_CURSOR, want);
+                    const CursorMode want = m_playCursorLocked ? CursorMode::Captured
+                                                : CursorMode::Normal;
+                    if (edwin::cursorMode(gw) != want)
+                        edwin::setCursorMode(gw, want);
                 } else {
                     m_escPrev = false;
                     InputSystem::get().setActiveWindow(m_window);
                     if (m_playCursorLocked) { m_playCursorLocked = false;
-                        glfwSetInputMode(gw, GLFW_CURSOR, GLFW_CURSOR_NORMAL); }
+                        edwin::setCursorMode(gw, CursorMode::Normal); }
                 }
                 m_wasPlaying = playing;
 
@@ -293,7 +293,7 @@ public:
 
 private:
     EngineRuntime&  m_rt;
-    GLFWwindow*     m_window = nullptr; // owned by the runtime's GlfwPlatform
+    edwin::WindowHandle m_window = nullptr; // owned by the runtime's platform
     std::filesystem::path m_projectRoot;
     std::filesystem::path m_scenePath;
     AsyncLoader      m_loader;
@@ -309,9 +309,9 @@ private:
     bool           m_escPrev          = false;
     bool           m_wasPlaying       = false;
     float          m_sceneAspect      = 16.0f / 9.0f;
-    GLFWwindow*    m_sceneGLFWWindow  = nullptr; // GLFW window currently hosting Scene View
-    GLFWwindow*    m_gameGLFWWindow   = nullptr; // GLFW window currently hosting Game View
-    GLFWwindow*    m_lastCaptureWin   = nullptr; // un-hide cursor on host switch
+    edwin::WindowHandle m_sceneHostWindow = nullptr; // window hosting Scene View
+    edwin::WindowHandle m_gameHostWindow  = nullptr; // window hosting Game View
+    edwin::WindowHandle m_lastCaptureWin  = nullptr; // un-hide cursor on host switch
     int            m_desiredSceneW    = 1280;
     int            m_desiredSceneH    = 720;
     int            m_lastDesiredW     = 0;    // FB-recreate debounce
@@ -412,9 +412,9 @@ private:
         ImGui::Begin(ICON_FA_EYE " Scene View", &m_panels.sceneView);
         ImGui::PopStyleVar();
 
-        // Track which GLFW window hosts this panel for camera input.
+        // Track which OS window hosts this panel for camera input.
         if (ImGuiViewport* vp = ImGui::GetWindowViewport())
-            m_sceneGLFWWindow = (GLFWwindow*)vp->PlatformHandle;
+            m_sceneHostWindow = vp->PlatformHandle;
 
         ImVec2 avail = ImGui::GetContentRegionAvail();
         if (avail.x < 16.0f) avail.x = 16.0f;
@@ -483,7 +483,7 @@ private:
         drawMenuBar({
             [this]{ saveScene(); },
             [this]{ setProject(m_rt.ctx().project); },
-            [this]{ glfwSetWindowShouldClose(m_window, true); },
+            [this]{ edwin::requestClose(m_window); },
             [this]{ m_showProjectSettings = true; },
             [this]{ m_editor.undoStack.undo(m_rt.ctx().ecs); },
             [this]{ m_editor.undoStack.redo(m_rt.ctx().ecs); },
@@ -551,7 +551,7 @@ private:
                          [this]{ onPause(); },
                          [this]{ onStop(); },
                          &m_panels.gameView,
-                         (void**)&m_gameGLFWWindow);
+                         (void**)&m_gameHostWindow);
 
         // Stats
         if (m_panels.stats) {

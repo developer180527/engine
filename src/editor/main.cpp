@@ -30,7 +30,7 @@ int main(int argc, char** argv) {
         return 1;
 
     // ImGui comes up before either the hub or the editor draws.
-    imguiInit(glfwPlatform->glfwWindow(), 16.0f);
+    imguiInit(glfwPlatform->glfwWindow(), 16.0f);   // opaque handle from here on
     applyEditorTheme();
 
     // ── Project hub — pick or create a project before the editor loads ──

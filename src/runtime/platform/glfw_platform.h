@@ -12,6 +12,7 @@ public:
     void shutdown() override;
 
     void* nativeWindowHandle() const override;
+    void* nativeDisplayHandle() const override;
     void  pollEvents() override;
     bool  shouldClose() const override;
     void  requestClose() override;

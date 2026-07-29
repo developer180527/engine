@@ -70,7 +70,7 @@ inline void drawGameViewPanel(bgfx::TextureHandle gameTex, bool hasCam,
     if (open && !*open) return;
     ImGui::Begin(ICON_FA_GAMEPAD " Game View", open);
     // Report which OS window hosts this panel — when detached it is a
-    // separate GLFW window and play-mode input must be read from IT.
+    // separate OS window and play-mode input must be read from IT.
     if (hostWindow)
         if (ImGuiViewport* vp = ImGui::GetWindowViewport())
             *hostWindow = vp->PlatformHandle;

@@ -16,15 +16,8 @@
 #include <string>
 #include <filesystem>
 #include <system_error>
-#include <GLFW/glfw3.h>  // must precede glfw3native.h (defines GLFWAPI)
-#ifdef __APPLE__
-#  define GLFW_EXPOSE_NATIVE_COCOA
-#elif defined(_WIN32)
-#  define GLFW_EXPOSE_NATIVE_WIN32
-#else
-#  define GLFW_EXPOSE_NATIVE_X11
-#endif
-#include <GLFW/glfw3native.h>
+#include "editor/window_ops.h"
+
 namespace {
 const bgfx::EmbeddedShader kShaders[] = {
     BGFX_EMBEDDED_SHADER(vs_ocornut_imgui),
@@ -39,15 +32,6 @@ struct BgfxViewportData {
     bgfx::FrameBufferHandle fb     = BGFX_INVALID_HANDLE;
     bgfx::ViewId            viewId = 0;
 };
-static void* nativeWindowHandle(GLFWwindow* win) {
-#ifdef __APPLE__
-    return (void*)glfwGetCocoaWindow(win);
-#elif defined(_WIN32)
-    return (void*)glfwGetWin32Window(win);
-#else
-    return (void*)(uintptr_t)glfwGetX11Window(win);
-#endif
-}
 bool checkTransientAvail(uint32_t numV, const bgfx::VertexLayout& layout, uint32_t numI) {
     return numV == bgfx::getAvailTransientVertexBuffer(numV, layout)
         && (0 == numI || numI == bgfx::getAvailTransientIndexBuffer(numI));
@@ -158,9 +142,10 @@ void setupViewportCallbacks() {
     pio.Renderer_CreateWindow = [](ImGuiViewport* vp) {
         auto* d   = new BgfxViewportData;
         d->viewId = g_nextViewId++;
-        GLFWwindow* win = (GLFWwindow*)vp->PlatformHandle;
-        int fbW, fbH; glfwGetFramebufferSize(win, &fbW, &fbH);
-        d->fb = bgfx::createFrameBuffer(nativeWindowHandle(win), (uint16_t)fbW, (uint16_t)fbH);
+        edwin::WindowHandle win = vp->PlatformHandle;
+        int fbW, fbH; edwin::framebufferSize(win, fbW, fbH);
+        d->fb = bgfx::createFrameBuffer(edwin::nativeWindowHandle(win),
+                                        (uint16_t)fbW, (uint16_t)fbH);
         vp->RendererUserData = d;
     };
     pio.Renderer_DestroyWindow = [](ImGuiViewport* vp) {
@@ -173,10 +158,11 @@ void setupViewportCallbacks() {
     pio.Renderer_SetWindowSize = [](ImGuiViewport* vp, ImVec2) {
         auto* d = (BgfxViewportData*)vp->RendererUserData;
         if (!d) return;
-        GLFWwindow* win = (GLFWwindow*)vp->PlatformHandle;
-        int fbW, fbH; glfwGetFramebufferSize(win, &fbW, &fbH);
+        edwin::WindowHandle win = vp->PlatformHandle;
+        int fbW, fbH; edwin::framebufferSize(win, fbW, fbH);
         if (bgfx::isValid(d->fb)) bgfx::destroy(d->fb);
-        d->fb = bgfx::createFrameBuffer(nativeWindowHandle(win), (uint16_t)fbW, (uint16_t)fbH);
+        d->fb = bgfx::createFrameBuffer(edwin::nativeWindowHandle(win),
+                                        (uint16_t)fbW, (uint16_t)fbH);
     };
     pio.Renderer_RenderWindow = [](ImGuiViewport* vp, void*) {
         auto* d = (BgfxViewportData*)vp->RendererUserData;
@@ -186,7 +172,7 @@ void setupViewportCallbacks() {
     };
 }
 } // namespace
-void imguiInit(GLFWwindow* window, float fontSize) {
+void imguiInit(void* window, float fontSize) {
     IMGUI_CHECKVERSION();
     // Editor heap — set BEFORE the context so every ImGui allocation routes.
     ImGui::SetAllocatorFunctions(
@@ -240,7 +226,9 @@ void imguiInit(GLFWwindow* window, float fontSize) {
             (void*)s_faSolid900Ttf, sizeof(s_faSolid900Ttf),
             fontSize - 1.0f, &iconCfg, iconRanges);
     }
-    ImGui_ImplGlfw_InitForOther(window, true);
+    // The ONE backend-specific line in this file: swapping to SDL3 means
+    // imgui_impl_sdl3.h + ImGui_ImplSDL3_InitForOther here.
+    ImGui_ImplGlfw_InitForOther((GLFWwindow*)window, true);
     bgfx::RendererType::Enum type = bgfx::getRendererType();
     g_program = bgfx::createProgram(
         bgfx::createEmbeddedShader(kShaders, type, "vs_ocornut_imgui"),

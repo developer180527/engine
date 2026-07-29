@@ -31,6 +31,12 @@ public:
     // Null => headless, no renderer.
     virtual void* nativeWindowHandle() const = 0;
 
+    // The display/server connection the window belongs to — X11 `Display*` or
+    // Wayland `wl_display*`, which bgfx needs as PlatformData::ndt. Null on
+    // macOS and Windows, where the window handle alone identifies the device;
+    // null is therefore the correct default, not "unimplemented".
+    virtual void* nativeDisplayHandle() const { return nullptr; }
+
     // Explicit capability: can this platform host a GPU device? The runtime
     // checks THIS (not the null-handle convention) to decide whether to
     // initialize the renderer. Default derives from the handle so existing

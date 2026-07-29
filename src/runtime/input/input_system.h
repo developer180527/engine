@@ -32,13 +32,16 @@ public:
 
     // Call once after window creation AND after imguiInit().
     // Only installs scroll + char callbacks (chained to ImGui's).
-    void init(GLFWwindow* window) {
-        m_window = window;
+    // Opaque handle for the same reason as setActiveWindow(): the editor must
+    // not need GLFW types to hand its window to the window input source.
+    void init(void* window) {
+        auto* gw = static_cast<GLFWwindow*>(window);
+        m_window = gw;
         // Chain scroll + char — ImGui needs these too
-        m_prevScroll = glfwSetScrollCallback(window, cbScroll);
-        m_prevChar   = glfwSetCharCallback  (window, cbChar);
+        m_prevScroll = glfwSetScrollCallback(gw, cbScroll);
+        m_prevChar   = glfwSetCharCallback  (gw, cbChar);
         // Seed cursor so first delta is 0
-        glfwGetCursorPos(window, &m_lastX, &m_lastY);
+        glfwGetCursorPos(gw, &m_lastX, &m_lastY);
     }
 
     // Call AFTER glfwPollEvents(), before any gameplay code.
@@ -92,13 +95,19 @@ public:
     float cursorX()      const { return m_cursorX; }
     float cursorY()      const { return m_cursorY; }
 
-    // Retarget polling to another GLFW window (editor: a detached Game View
+    // Retarget polling to another OS window (editor: a detached Game View
     // lives in its own OS window — keys/cursor must be read THERE). Reseeds
     // the cursor baseline so the switch doesn't produce a delta spike.
-    void setActiveWindow(GLFWwindow* w) {
-        if (!w || w == m_window) return;
-        m_window = w;
-        glfwGetCursorPos(w, &m_lastX, &m_lastY);
+    //
+    // Takes an OPAQUE handle so callers (the editor) don't need GLFW types:
+    // this backend knows it is really a GLFWwindow*, they don't. The window
+    // source is GLFW-backed by design — GLFW keeps window + text/IME — but
+    // that must not leak into the editor's own headers.
+    void setActiveWindow(void* w) {
+        auto* gw = static_cast<GLFWwindow*>(w);
+        if (!gw || gw == m_window) return;
+        m_window = gw;
+        glfwGetCursorPos(gw, &m_lastX, &m_lastY);
     }
 
     // Window focus — the InputManager's gate for raw (system-wide) input.

@@ -3,7 +3,7 @@
 // The rebinding UI (backlog C#14). Edits the FILE (the developer-owned
 // source of truth), never the manager's compiled state: Save & Apply writes
 // input.json and hot-reloads the InputManager, so bindings change mid-play.
-// Capture flow: click [cap], press a key — the reverse keymap turns the GLFW
+// Capture flow: click [cap], press a key — the reverse keymap turns the raw
 // code into a "key:Name" spec. TODO(#13 gamepad): capture pad buttons/axes
 // here once 'pad:' specs exist.
 #include <filesystem>

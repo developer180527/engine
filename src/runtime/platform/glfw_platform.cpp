@@ -57,6 +57,20 @@ void* GlfwPlatform::nativeWindowHandle() const {
 #endif
 }
 
+void* GlfwPlatform::nativeDisplayHandle() const {
+#if defined(__linux__)
+    // bgfx needs the server connection alongside the window on Linux
+    // (PlatformData::ndt); on macOS/Windows there is nothing to pass.
+    #if defined(GLFW_EXPOSE_NATIVE_WAYLAND)
+    if (glfwGetPlatform && glfwGetPlatform() == GLFW_PLATFORM_WAYLAND)
+        return (void*)glfwGetWaylandDisplay();
+    #endif
+    return (void*)glfwGetX11Display();
+#else
+    return nullptr;
+#endif
+}
+
 void GlfwPlatform::pollEvents() {
     glfwPollEvents();
 }

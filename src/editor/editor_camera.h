@@ -1,6 +1,6 @@
 #pragma once
 #include <bx/math.h>
-#include <GLFW/glfw3.h>
+#include "editor/window_ops.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -34,27 +34,27 @@ struct EditorInput {
 };
 
 inline void updateEditorCamera(EditorCamera& cam, EditorInput& inp,
-                                GLFWwindow* window, float dt,
+                                edwin::WindowHandle window, float dt,
                                 bool sceneHovered = true) {
     ImGuiIO& io = ImGui::GetIO();
     const bool typing       = io.WantTextInput;
     // Scene View IS an ImGui window so WantCaptureMouse is always true there.
     // Use sceneHovered (set by panel) instead.
-    const bool rightDownNow = (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT)
-                               == GLFW_PRESS) && sceneHovered;
+    const bool rightDownNow =
+        edwin::isMouseButtonDown(window, MouseButton::Right) && sceneHovered;
 
     if (rightDownNow && !inp.rightMouseHeld) {
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-        glfwGetCursorPos(window, &inp.lastMouseX, &inp.lastMouseY);
+        edwin::setCursorMode(window, CursorMode::Captured);
+        edwin::cursorPos(window, inp.lastMouseX, inp.lastMouseY);
         inp.rightMouseHeld = true;
     } else if (!rightDownNow && inp.rightMouseHeld) {
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        edwin::setCursorMode(window, CursorMode::Normal);
         inp.rightMouseHeld = false;
     }
 
     if (inp.rightMouseHeld) {
         double mx, my;
-        glfwGetCursorPos(window, &mx, &my);
+        edwin::cursorPos(window, mx, my);
         const float dx = float(mx - inp.lastMouseX);
         const float dy = float(my - inp.lastMouseY);
         inp.lastMouseX = mx;
@@ -74,18 +74,18 @@ inline void updateEditorCamera(EditorCamera& cam, EditorInput& inp,
 
     if (typing || !sceneHovered) return;
 
-    const float speed = (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT)  == GLFW_PRESS ||
-                         glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS)
+    const float speed = (edwin::isKeyDown(window, Key::LeftShift) ||
+                         edwin::isKeyDown(window, Key::RightShift))
                         ? 20.0f : 5.0f;
     const float step = speed * dt;
     const bx::Vec3 fwd = cam.forward();
     const bx::Vec3 rt  = cam.right();
 
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) cam.position = bx::add(cam.position, bx::mul(fwd,  step));
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) cam.position = bx::add(cam.position, bx::mul(fwd, -step));
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) cam.position = bx::add(cam.position, bx::mul(rt,  -step));
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) cam.position = bx::add(cam.position, bx::mul(rt,   step));
+    if (edwin::isKeyDown(window, Key::W)) cam.position = bx::add(cam.position, bx::mul(fwd,  step));
+    if (edwin::isKeyDown(window, Key::S)) cam.position = bx::add(cam.position, bx::mul(fwd, -step));
+    if (edwin::isKeyDown(window, Key::D)) cam.position = bx::add(cam.position, bx::mul(rt,  -step));
+    if (edwin::isKeyDown(window, Key::A)) cam.position = bx::add(cam.position, bx::mul(rt,   step));
     const bx::Vec3 wup = {0.0f, 1.0f, 0.0f};
-    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) cam.position = bx::add(cam.position, bx::mul(wup,  step));
-    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) cam.position = bx::add(cam.position, bx::mul(wup, -step));
+    if (edwin::isKeyDown(window, Key::E)) cam.position = bx::add(cam.position, bx::mul(wup,  step));
+    if (edwin::isKeyDown(window, Key::Q)) cam.position = bx::add(cam.position, bx::mul(wup, -step));
 }
