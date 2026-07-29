@@ -150,13 +150,23 @@ add_library(engine::core ALIAS engine_core)
 # ── engine_runtime — the full game SDK ───────────────────────────────────────
 # Public API surface: include/engine/*.h umbrella headers. Everything under
 # src/ is implementation detail unless re-exported there.
+# ── Window backend selection (ENGINE_WINDOW_BACKEND, root CMakeLists) ────────
+# Only the chosen backend's TU is compiled: the other one's library isn't
+# necessarily even available. platform_factory.cpp resolves the choice.
+if(ENGINE_WINDOW_BACKEND STREQUAL "sdl3")
+    set(ENGINE_PLATFORM_SOURCES runtime/platform/sdl3_platform.cpp)
+else()
+    set(ENGINE_PLATFORM_SOURCES runtime/platform/glfw_platform.cpp)
+endif()
+
 add_library(engine_runtime STATIC
     # Runtime core — platform, frame loop, renderer, services
     runtime/runtime.cpp
     runtime/runtime_boot.cpp
     runtime/runtime_frame.cpp
     runtime/runtime_sim.cpp
-    runtime/platform/glfw_platform.cpp
+    ${ENGINE_PLATFORM_SOURCES}
+    runtime/platform/platform_factory.cpp
     render/renderer.cpp
     runtime/services/asset_service.cpp
     runtime/services/scene_service.cpp
@@ -208,6 +218,10 @@ target_compile_definitions(engine_runtime PUBLIC
 target_link_libraries(engine_runtime PUBLIC
     engine_core
     bgfx bx bimg
+    # GLFW is linked in BOTH backends for now: the window input source
+    # (runtime/input/input_system.h) is still GLFW-callback based and is pulled
+    # in by runtime.cpp / runtime_sim.cpp. Selecting sdl3 today swaps the
+    # WINDOW, not yet the window input source — see sdl3_platform.h.
     glfw
     flecs_static
     Jolt
@@ -256,6 +270,11 @@ endif()
 
 # Namespaced alias — what consumers link:
 #   target_link_libraries(my_game PRIVATE engine::runtime)
+if(ENGINE_WINDOW_BACKEND STREQUAL "sdl3")
+    target_link_libraries(engine_runtime PUBLIC SDL3::SDL3)
+    target_compile_definitions(engine_runtime PUBLIC ENGINE_WINDOW_BACKEND_SDL3=1)
+endif()
+
 add_library(engine::runtime ALIAS engine_runtime)
 
 # ── engine::headers — include dirs + defines, ZERO libraries ─────────────────
@@ -309,7 +328,13 @@ set_target_properties(engine_cook_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-if(ENGINE_BUILD_EDITOR)
+if(ENGINE_BUILD_EDITOR AND ENGINE_WINDOW_BACKEND STREQUAL "sdl3")
+    message(STATUS
+        "engine: editor SKIPPED under ENGINE_WINDOW_BACKEND=sdl3 — it still "
+        "needs the ImGui SDL3 platform backend (+ event forwarding) and an "
+        "SDL3 window input source. Build the editor with the default glfw "
+        "backend, or pass -DENGINE_BUILD_EDITOR=OFF to silence this.")
+elseif(ENGINE_BUILD_EDITOR)
     add_subdirectory(editor)
     # Spawners locate the worker next to their own binary at runtime — make
     # sure it exists whenever they build.

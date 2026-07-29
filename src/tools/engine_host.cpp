@@ -109,8 +109,8 @@ int main(int argc, char** argv) {
     EngineConfig cfg;
     cfg.projectRoot  = projectDir;
     cfg.defaultScene = false;
-    auto platform = std::make_unique<GlfwPlatform>();
-    GlfwPlatform* glfwPlat = platform.get();
+    auto  platform = makeDefaultPlatform();
+    auto* plat     = platform.get();
     EngineRuntime engine;
     if (!engine.init(cfg, std::move(platform))) return 1;
     if (!engine.hasProject()) {
@@ -121,7 +121,12 @@ int main(int argc, char** argv) {
 
     // Host-side input — what game modules and Lua reach through the C API /
     // ScriptHost. Default WASD bindings match the editor's.
-    InputSystem::get().init(glfwPlat->glfwWindow());
+#if !defined(ENGINE_WINDOW_BACKEND_SDL3)
+    // The window input source is still GLFW-callback based; handing it an
+    // SDL_Window* would be a crash. Inert (and safe) under sdl3 until the
+    // SDL3 window input source lands.
+    InputSystem::get().init(plat->backendWindowHandle());
+#endif
     // (Legacy InputMap axis bindings removed: gameplay reads ACTIONS from
     // the project's input.json — see docs/engine-api.md. InputSystem remains
     // for editor/meta polling only.)

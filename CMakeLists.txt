@@ -36,6 +36,44 @@ option(ENGINE_BUILD_EDITOR  "Build the ImGui editor application"   ON)
 option(ENGINE_BUILD_TOOLS   "Build the CLI tools (cook/build/host/…)" ON)
 option(ENGINE_BUILD_SAMPLES "Build the sample games and kits"      ON)
 
+# ── Window / raw-input backend ───────────────────────────────────────────────
+# GLFW is the default and fully supported. SDL3 is being brought up as the
+# window + raw-input PROVIDER behind the engine's own input abstraction — the
+# draw is its controller support (mapping database, hotplug, rumble, gyro),
+# which is the one part of raw input not worth writing three times.
+#
+#   cmake -B build-sdl3 -DENGINE_WINDOW_BACKEND=sdl3
+#
+# Both backends stay compiling so the migration never breaks `main`. See
+# src/runtime/platform/sdl3_platform.h for the current limits.
+set(ENGINE_WINDOW_BACKEND "glfw" CACHE STRING
+    "Window/input backend: glfw (default, complete) or sdl3 (in progress)")
+set_property(CACHE ENGINE_WINDOW_BACKEND PROPERTY STRINGS glfw sdl3)
+if(NOT ENGINE_WINDOW_BACKEND MATCHES "^(glfw|sdl3)$")
+    message(FATAL_ERROR
+        "ENGINE_WINDOW_BACKEND must be 'glfw' or 'sdl3', got "
+        "'${ENGINE_WINDOW_BACKEND}'")
+endif()
+if(ENGINE_WINDOW_BACKEND STREQUAL "sdl3")
+    # Prefer a vendored submodule if someone adds one; otherwise use an
+    # installed SDL3 (brew/vcpkg/distro). Not vendored by default — a large
+    # dependency shouldn't land in the tree before the backend is chosen.
+    if(EXISTS ${CMAKE_SOURCE_DIR}/third_party/SDL/CMakeLists.txt)
+        add_subdirectory(third_party/SDL)
+    else()
+        find_package(SDL3 CONFIG QUIET)
+        if(NOT SDL3_FOUND)
+            message(FATAL_ERROR
+                "ENGINE_WINDOW_BACKEND=sdl3 but SDL3 was not found.\n"
+                "  macOS:  brew install sdl3\n"
+                "  Linux:  apt install libsdl3-dev  (or build from source)\n"
+                "  Windows: vcpkg install sdl3\n"
+                "Or vendor it at third_party/SDL.")
+        endif()
+    endif()
+endif()
+message(STATUS "engine: window backend = ${ENGINE_WINDOW_BACKEND}")
+
 # ── Sanitizer lanes (tests/docs/engine-compiler-test-sheet.md §3) ───────────
 # Whole-program instrumentation: applied before every subdirectory so vendored
 # libraries are covered too (mixing instrumented/uninstrumented code hides

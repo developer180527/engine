@@ -47,7 +47,8 @@ OzzMemAllocator g_ozzAllocator;
 } // namespace
 
 bool EngineRuntime::init(const EngineConfig& cfg) {
-    return init(cfg, std::make_unique<GlfwPlatform>());
+    // Whichever backend this build selected (ENGINE_WINDOW_BACKEND).
+    return init(cfg, makeDefaultPlatform());
 }
 
 bool EngineRuntime::init(const EngineConfig& cfg,

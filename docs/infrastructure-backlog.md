@@ -133,9 +133,28 @@ Only 10 files touch POSIX-only headers and most already carry the Win32 side.
 
 25. ~~Memory backend: VirtualAlloc2 aligned reservations~~ — **DONE**;
     `mem.cpp` has the `MEM_RESERVE`/`MEM_COMMIT` over-reserve + trim path.
-26. **Win32 Raw Input/GameInput** hid backend (module drop-in, engine
-    untouched). Linux evdev alongside. Until then both platforms fall back to
-    `hid_null` — engine builds and runs, no gamepad/raw input.
+26. **Raw-input backends.** `hid_null` is the fallback on Windows/Linux today
+    (engine builds and runs, no gamepad/raw input). **SDL3 is now wired as an
+    optional window backend** (`-DENGINE_WINDOW_BACKEND=sdl3`,
+    `src/runtime/platform/sdl3_platform.*`) — verified: `sample_minimal` opens
+    an SDL3 window with bgfx/Metal on it. Next, in order:
+    - **Measure before scoping.** SDL3 stamps events with OS-level ns
+      timestamps and uses RawInput internally for relative mouse on Windows,
+      so it *may* satisfy the sub-tick/late-latch requirements. A/B it against
+      the working IOHIDManager backend on macOS. If it measures equal, Win32
+      RawInput and Linux evdev are **deleted from this list**; if not, SDL3
+      stays window+gamepad only and the native backends proceed as designed.
+    - `hid_sdl3.cpp` gamepad backend — the unambiguous win (mapping database,
+      hotplug, rumble, battery, DualSense gyro/touchpad). Note SDL's event
+      queue is main-thread-bound (Cocoa), so it cannot park a thread in the OS
+      wait primitive the way IOHIDManager does; fine at gamepad rates.
+    - **Editor on SDL3** is gated off in CMake: it needs the ImGui SDL3
+      platform backend wired (with event forwarding out of
+      `Sdl3Platform::pollEvents`) plus an SDL3 window input source to replace
+      the GLFW-callback `InputSystem`. `src/editor/window_ops_sdl3.cpp` is
+      already written (incl. the Key→SDL_Scancode table) and syntax-clean.
+    - Selecting sdl3 today swaps the WINDOW only; GLFW stays linked because
+      `runtime/input/input_system.h` is still the window input source.
 27. ~~Optional-target CMake fixes~~ — **DONE**: `ENGINE_BUILD_{EDITOR,TOOLS,
     SAMPLES}` + `BUILD_TESTING`. Remaining: fs_triangle HLSL variants (texture
     sample inside the shadow loop); MSVC flags (**`/utf-8` is the sneaky one** —

@@ -21,9 +21,15 @@ public:
     void  setTitle(const std::string& title) override;
     void  setCursorMode(CursorMode mode) override;
 
-    // APP-LAYER ONLY (editor, engine_host, samples — code that explicitly
-    // chose this platform). Engine internals must stay behind IPlatform so
-    // alternative platforms don't compile-but-break on hidden GLFW deps.
+    // Opaque GLFWwindow* for the ImGui platform backend and the editor's
+    // window-ops implementation — neither of which should have to name a
+    // concrete platform class. Prefer this over glfwWindow().
+    void* backendWindowHandle() const override { return m_window; }
+
+    // APP-LAYER ONLY, and only for code that genuinely needs the GLFW type
+    // (nothing does since the window-ops seam landed — kept for out-of-tree
+    // consumers). Engine internals must stay behind IPlatform so alternative
+    // platforms don't compile-but-break on hidden GLFW deps.
     GLFWwindow* glfwWindow() const { return m_window; }
 
 private:

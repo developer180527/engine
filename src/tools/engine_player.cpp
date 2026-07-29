@@ -32,8 +32,8 @@ int main(int argc, char** argv) {
     cfg.openAssetDatabase = false;   // no registry.db in a shipped build
     cfg.enableProfiler    = false;   // release posture (flip for profiling builds)
 
-    auto platform = std::make_unique<GlfwPlatform>();
-    GlfwPlatform* glfwPlat = platform.get();
+    auto  platform = makeDefaultPlatform();
+    auto* plat     = platform.get();
     EngineRuntime engine;
     if (!engine.init(cfg, std::move(platform))) return 1;
     if (!engine.hasProject()) {
@@ -43,7 +43,12 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    InputSystem::get().init(glfwPlat->glfwWindow());
+#if !defined(ENGINE_WINDOW_BACKEND_SDL3)
+    // The window input source is still GLFW-callback based; handing it an
+    // SDL_Window* would be a crash. Inert (and safe) under sdl3 until the
+    // SDL3 window input source lands.
+    InputSystem::get().init(plat->backendWindowHandle());
+#endif
 
     // Engine providers by NAME from project.json's "providers" block —
     // swapping physics/audio is a project setting (stock_plugins.h).

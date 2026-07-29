@@ -1,5 +1,5 @@
 #include "runtime/runtime.h"
-#include "runtime/platform/glfw_platform.h"
+#include "runtime/platform/platform.h"
 #include "editor/editor_app.h"
 #include "editor/project_hub.h"
 #include "editor/editor_theme.h"
@@ -20,17 +20,19 @@ int main(int argc, char** argv) {
         LOG_INFO("Project", "Opening from argument: %s", argv[1]);
     }
 
-    // The editor needs raw GLFW access (ImGui glue, input callbacks), so it
-    // creates the platform explicitly and keeps the window pointer; the
-    // runtime owns the platform's lifetime.
-    auto platform = std::make_unique<GlfwPlatform>();
-    GlfwPlatform* glfwPlatform = platform.get();
+    // The editor creates the platform explicitly (rather than letting
+    // EngineRuntime default it) because it needs the window handle for the
+    // ImGui backend and its own window ops; the runtime owns the lifetime.
+    // makeDefaultPlatform() resolves ENGINE_WINDOW_BACKEND, so the editor
+    // names no windowing library — the handle stays opaque from here on.
+    auto  platform = makeDefaultPlatform();
+    auto* plat     = platform.get();
     EngineRuntime runtime;
     if (!runtime.init(cfg, std::move(platform)))
         return 1;
 
     // ImGui comes up before either the hub or the editor draws.
-    imguiInit(glfwPlatform->glfwWindow(), 16.0f);   // opaque handle from here on
+    imguiInit(plat->backendWindowHandle(), 16.0f);
     applyEditorTheme();
 
     // ── Project hub — pick or create a project before the editor loads ──
@@ -60,7 +62,7 @@ int main(int argc, char** argv) {
     CookService cookService(cacheRoot / "registry.db", project.projectRoot,
                             project.assetsRoot, cacheRoot);
 
-    EditorApp editor(runtime, glfwPlatform->glfwWindow());
+    EditorApp editor(runtime, plat->backendWindowHandle());
     editor.init();
     editor.setRegistry(&runtime.assetLib());
     editor.setProjectRoot(project.projectRoot);

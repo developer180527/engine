@@ -1,4 +1,5 @@
 #pragma once
+#include <memory>
 #include <string>
 
 struct PlatformConfig {
@@ -60,4 +61,22 @@ public:
     // (raw relative motion via mouseDelta); Normal = visible OS cursor. No-op
     // where there is no window (headless).
     virtual void setCursorMode(CursorMode /*mode*/) {}
+
+    // The WINDOWING LIBRARY's window object (GLFWwindow* / SDL_Window*), as
+    // opposed to nativeWindowHandle()'s OS-level handle. Opaque on purpose:
+    // apps hand it to whichever ImGui platform backend and window-ops
+    // implementation are compiled in, without naming GLFW or SDL themselves.
+    // Null when there is no window (headless).
+    virtual void* backendWindowHandle() const { return nullptr; }
 };
+
+// The platform for the backend this build selected (ENGINE_WINDOW_BACKEND).
+// Every app constructs its window through here rather than naming a concrete
+// class, so flipping the CMake option switches the whole engine over.
+// Headless tools keep constructing HeadlessPlatform directly — that is a
+// deliberate choice, not a default.
+std::unique_ptr<IPlatform> makeDefaultPlatform();
+
+// Human-readable name of the compiled-in window backend ("glfw" / "sdl3"),
+// for logs and --version output.
+const char* windowBackendName();
