@@ -348,6 +348,18 @@ set_target_properties(engine_cook PROPERTIES
 )
 add_dependencies(engine_cook engine_cook_worker)
 
+# ── input_ab — SDL3 vs native-hid input measurement ─────────────────────────
+# Settles whether SDL3 can be the raw-input provider for mouse/keyboard or only
+# for gamepads (backlog Phase F #26). Needs SDL3 for one side and a real native
+# hid backend for the other, so it only builds when both are present:
+#   cmake -B build-ab -DENGINE_WINDOW_BACKEND=sdl3 -DHID_BACKEND=iohid
+if(ENGINE_WINDOW_BACKEND STREQUAL "sdl3" AND NOT HID_BACKEND_RESOLVED STREQUAL "sdl3")
+    add_executable(input_ab tools/input_ab.cpp)
+    target_link_libraries(input_ab PRIVATE hid SDL3::SDL3)
+    set_target_properties(input_ab PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
+
 # ── engine_build — package a project into a shippable dist/ ─────────────────
 # Cook -> shipping player (Assimp-free) -> kits rebuilt Release -> assemble.
 add_executable(engine_build tools/engine_build.cpp)
