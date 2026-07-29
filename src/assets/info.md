@@ -87,6 +87,8 @@ GLFW, or plugin symbols — `engine_cook` links engine_core alone. Failed cooks
 must delete stale output; cooked formats carry versioned headers.
 
 ### Derived Data Cache (content-addressed cooking)
+Full design + rationale: **`docs/asset-cook-architecture.md`**.
+
 Cooking is a caching problem: cooked output is a pure function of
 (source bytes ⊕ cooker id ⊕ cooker version ⊕ settings), so that hash — the
 DDC key (BLAKE3-256) — names the output in a two-tier blob store

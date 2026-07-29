@@ -14,6 +14,11 @@ is moving toward.
   hash, cooked path, DDC key of the last cook attempt, and state (used by
   the asset browser's badges).
 ### The cook layer — one concern per TU
+Design doc: **`docs/asset-cook-architecture.md`** — the key recipe, the
+invariants that are load-bearing (and silent when broken), the
+transformation-graph target, and the decisions deliberately not taken. Read §5
+(invariants) and §6.2 (stage-boundary economics) before changing cook code.
+
 `CookPipeline` orchestrates; each mechanism sits behind its own seam, so a
 change to (say) the cache record format can't disturb scheduling or registry
 policy. Public headers are `cooker.h` (the cooker contract), `cook_pipeline.h`,
