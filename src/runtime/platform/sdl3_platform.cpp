@@ -71,14 +71,21 @@ void* Sdl3Platform::nativeDisplayHandle() const {
 
 void* Sdl3Platform::backendWindowHandle() const { return m_window; }
 
+void Sdl3Platform::setNativeEventHook(NativeEventHook hook) {
+    m_eventHook = std::move(hook);
+}
+
 void Sdl3Platform::pollEvents() {
     // SDL has ONE process-wide event queue, unlike GLFW's per-window
     // callbacks: whoever pumps it sees every window's events. Drain it fully
-    // here and let close requests set our flag; when the ImGui SDL3 backend is
-    // wired it will need to observe these same events (ImGui_ImplSDL3_
-    // ProcessEvent), so this loop is the hook point for that.
+    // here and fan every event out to the hook, since ImGui and the window
+    // input source both need to see them but only one component can own the
+    // pump.
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
+        // Observers first (ImGui, the window input source) — they must see
+        // every event, including the close request we act on below.
+        if (m_eventHook) m_eventHook(&e);
         switch (e.type) {
             case SDL_EVENT_QUIT:
                 m_shouldClose = true;

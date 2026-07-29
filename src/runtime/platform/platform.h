@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -61,6 +62,18 @@ public:
     // (raw relative motion via mouseDelta); Normal = visible OS cursor. No-op
     // where there is no window (headless).
     virtual void setCursorMode(CursorMode /*mode*/) {}
+
+    // Observe the backend's native events as they are pumped. `nativeEvent`
+    // points at the backend's OWN event type (SDL_Event* on SDL3). Set it
+    // before the first pollEvents().
+    //
+    // This exists because SDL has ONE process-wide event queue: the ImGui
+    // platform backend and the window input source both need to SEE events,
+    // but only one component may own the pump. So the platform pumps and
+    // everyone else observes. GLFW dispatches through per-window callbacks
+    // instead and has no event objects, so this is simply never called there.
+    using NativeEventHook = std::function<void(const void* nativeEvent)>;
+    virtual void setNativeEventHook(NativeEventHook) {}
 
     // The WINDOWING LIBRARY's window object (GLFWwindow* / SDL_Window*), as
     // opposed to nativeWindowHandle()'s OS-level handle. Opaque on purpose:

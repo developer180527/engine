@@ -1,5 +1,6 @@
 #include "runtime/runtime.h"
 #include "runtime/platform/platform.h"
+#include "runtime/input/input_system.h"
 #include "editor/editor_app.h"
 #include "editor/project_hub.h"
 #include "editor/editor_theme.h"
@@ -33,6 +34,15 @@ int main(int argc, char** argv) {
 
     // ImGui comes up before either the hub or the editor draws.
     imguiInit(plat->backendWindowHandle(), 16.0f);
+
+    // Fan the platform's native events out to everyone who needs to SEE them.
+    // On SDL3 there is one process-wide queue owned by the platform pump, so
+    // without this the editor renders but gets no keyboard, mouse or text.
+    // No-op on GLFW, which dispatches through per-window callbacks.
+    plat->setNativeEventHook([](const void* e) {
+        imguiProcessNativeEvent(e);
+        InputSystem::get().processNativeEvent(e);
+    });
     applyEditorTheme();
 
     // ── Project hub — pick or create a project before the editor loads ──

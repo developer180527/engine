@@ -2,7 +2,7 @@
 // A complete fly-around scene built ONLY from the engine SDK — no editor, no
 // project, no external assets. Tests in one program:
 //
-//   • engine init + OS window         (EngineRuntime + GlfwPlatform)
+//   • engine init + OS window         (EngineRuntime + makeDefaultPlatform)
 //   • input: WASD/QE fly + mouse look (Input axes + raw mouse delta)
 //   • primitives: cube/sphere/plane   (PrimitiveLibrary — generated, no files)
 //   • lights: directional + point + spot
@@ -120,16 +120,17 @@ int main() {
     cfg.openAssetDatabase = false;
     cfg.defaultScene      = false;
 
-    // The game keeps the GLFW window pointer for input + cursor capture.
-    auto platform = std::make_unique<GlfwPlatform>();
-    GlfwPlatform* glfwPlat = platform.get();
+    // The platform comes from the factory, so this sample builds on whichever
+    // window backend the SDK was configured with — it names none. Cursor
+    // capture goes through IPlatform::setCursorMode(), the public API for it.
+    auto  platform = makeDefaultPlatform();
+    auto* plat     = platform.get();
 
     EngineRuntime engine;
     if (!engine.init(cfg, std::move(platform))) return 1;
-    GLFWwindow* window = glfwPlat->glfwWindow();
 
-    // Input: GLFW-polled key/mouse state + named axis bindings.
-    InputSystem::get().init(window);
+    // Input: window-polled key/mouse state + named axis bindings.
+    InputSystem::get().init(plat->backendWindowHandle());
     auto& map = InputMap::get();
     map.bindAxis  ("MoveForward", Key::W, Key::S);
     map.bindAxis  ("MoveRight",   Key::D, Key::A);
@@ -152,7 +153,7 @@ int main() {
     FlyCamera fly;
     bool mouseCaptured  = true;
     int  skipLookFrames = 1; // swallow the cursor-warp delta on capture
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    plat->setCursorMode(CursorMode::Captured);
 
     engine.startSimulation(); // boot = play (plugins would tick here)
 
@@ -163,11 +164,11 @@ int main() {
         // clicking back into the window recaptures it.
         if (mouseCaptured && Input::isKeyPressed(Key::Escape)) {
             mouseCaptured = false;
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            plat->setCursorMode(CursorMode::Normal);
         } else if (!mouseCaptured && Input::isMousePressed(MouseButton::Left)) {
             mouseCaptured  = true;
             skipLookFrames = 1; // ignore the recenter jump
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            plat->setCursorMode(CursorMode::Captured);
         }
 
         // ── Mouse look ───────────────────────────────────────────────────

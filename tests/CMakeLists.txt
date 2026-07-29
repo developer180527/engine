@@ -56,6 +56,14 @@ if(TARGET hid_sdl3_gamepad_test)
     set_tests_properties(hid_sdl3_gamepad_test PROPERTIES LABELS unit TIMEOUT 60)
 endif()
 
+# SDL3 event plumbing — only meaningful (and only compilable) on sdl3 builds.
+# Catches "renders fine, receives no input": nothing crashes or logs when the
+# native-event hook wiring breaks, so it needs an explicit test.
+if(ENGINE_WINDOW_BACKEND STREQUAL "sdl3")
+    engine_test(sdl3_input_test TIMEOUT 60)
+    target_link_libraries(sdl3_input_test PRIVATE SDL3::SDL3)
+endif()
+
 # ── sim-purity gauntlet — compiling IS the test (audit A.1–A.4) ───────────────
 # Poisoned bgfx/assimp headers sit FIRST on the include path: a sim-facing
 # header that transitively includes either fails the build with a message

@@ -3,7 +3,14 @@
 #include <bgfx/embedded_shader.h>
 #include <bx/math.h>
 #include <imgui.h>
-#include "imgui_impl_glfw.h"
+// The ImGui PLATFORM backend is the one genuinely backend-specific dependency
+// in the editor; this file is the single place it is named.
+#if defined(ENGINE_WINDOW_BACKEND_SDL3)
+    #include "imgui_impl_sdl3.h"
+    #include <SDL3/SDL.h>
+#else
+    #include "imgui_impl_glfw.h"
+#endif
 #include "vs_ocornut_imgui.bin.h"
 #include "fs_ocornut_imgui.bin.h"
 #include "roboto_regular.ttf.h"
@@ -226,9 +233,13 @@ void imguiInit(void* window, float fontSize) {
             (void*)s_faSolid900Ttf, sizeof(s_faSolid900Ttf),
             fontSize - 1.0f, &iconCfg, iconRanges);
     }
-    // The ONE backend-specific line in this file: swapping to SDL3 means
-    // imgui_impl_sdl3.h + ImGui_ImplSDL3_InitForOther here.
+#if defined(ENGINE_WINDOW_BACKEND_SDL3)
+    // InitForOther: bgfx owns the device, so ImGui must not create a graphics
+    // context of its own. Events reach it via imguiProcessNativeEvent().
+    ImGui_ImplSDL3_InitForOther((SDL_Window*)window);
+#else
     ImGui_ImplGlfw_InitForOther((GLFWwindow*)window, true);
+#endif
     bgfx::RendererType::Enum type = bgfx::getRendererType();
     g_program = bgfx::createProgram(
         bgfx::createEmbeddedShader(kShaders, type, "vs_ocornut_imgui"),
@@ -253,7 +264,11 @@ void imguiInit(void* window, float fontSize) {
     engineUiSetBackend(&s_uiBackend);
 }
 void imguiShutdown() {
+#if defined(ENGINE_WINDOW_BACKEND_SDL3)
+    ImGui_ImplSDL3_Shutdown();
+#else
     ImGui_ImplGlfw_Shutdown();
+#endif
     for (ImTextureData* tex : ImGui::GetPlatformIO().Textures) {
         if (tex->RefCount == 1 && tex->TexID != ImTextureID_Invalid) {
             bgfx::TextureHandle h = { (uint16_t)(uintptr_t)tex->GetTexID() };
@@ -267,7 +282,11 @@ void imguiShutdown() {
     ImGui::DestroyContext();
 }
 void imguiNewFrame() {
+#if defined(ENGINE_WINDOW_BACKEND_SDL3)
+    ImGui_ImplSDL3_NewFrame();
+#else
     ImGui_ImplGlfw_NewFrame();
+#endif
     ImGui::NewFrame();
 }
 void imguiRender(bgfx::ViewId viewId) {
@@ -281,4 +300,16 @@ void imguiRenderViewports() {
         ImGui::UpdatePlatformWindows();
         ImGui::RenderPlatformWindowsDefault();
     }
+}
+
+void imguiProcessNativeEvent(const void* nativeEvent) {
+#if defined(ENGINE_WINDOW_BACKEND_SDL3)
+    // SDL's queue is pumped by the platform; ImGui only observes. Without this
+    // the editor would render but receive no keyboard, mouse or text at all —
+    // GLFW's backend installs its own callbacks instead and needs nothing here.
+    if (nativeEvent)
+        ImGui_ImplSDL3_ProcessEvent(static_cast<const SDL_Event*>(nativeEvent));
+#else
+    (void)nativeEvent;
+#endif
 }

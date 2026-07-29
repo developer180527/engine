@@ -37,8 +37,10 @@ public:
     void  waitEvents(double timeoutSeconds) override;
     void  setTitle(const std::string& title) override;
     void  setCursorMode(CursorMode mode) override;
+    void  setNativeEventHook(NativeEventHook hook) override;
 
 private:
+    NativeEventHook m_eventHook;
     SDL_Window* m_window      = nullptr;
     bool        m_shouldClose = false;
     bool        m_ownsSdl     = false;   // did WE call SDL_Init?

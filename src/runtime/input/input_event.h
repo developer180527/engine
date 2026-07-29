@@ -39,3 +39,10 @@ enum class MouseButton : int {
     Right  = 1,
     Middle = 2,
 };
+
+// Bounds of the code spaces above, so state tables can be sized without a
+// windowing library's constants (these were GLFW_KEY_LAST / _MOUSE_BUTTON_LAST,
+// which forced every consumer of the input state to include GLFW).
+// Values match GLFW's so the GLFW-backed path is byte-identical.
+static constexpr int kKeyCodeMax      = 348;   // GLFW_KEY_LAST
+static constexpr int kMouseButtonMax  = 7;     // GLFW_MOUSE_BUTTON_LAST

@@ -328,13 +328,7 @@ set_target_properties(engine_cook_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-if(ENGINE_BUILD_EDITOR AND ENGINE_WINDOW_BACKEND STREQUAL "sdl3")
-    message(STATUS
-        "engine: editor SKIPPED under ENGINE_WINDOW_BACKEND=sdl3 — it still "
-        "needs the ImGui SDL3 platform backend (+ event forwarding) and an "
-        "SDL3 window input source. Build the editor with the default glfw "
-        "backend, or pass -DENGINE_BUILD_EDITOR=OFF to silence this.")
-elseif(ENGINE_BUILD_EDITOR)
+if(ENGINE_BUILD_EDITOR)
     add_subdirectory(editor)
     # Spawners locate the worker next to their own binary at runtime — make
     # sure it exists whenever they build.

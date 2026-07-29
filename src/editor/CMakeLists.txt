@@ -3,16 +3,32 @@
 # engine_runtime; this layer adds panels, gizmos, docking, and the ImGui
 # platform/renderer glue (GLFW + bgfx backends).
 #
-# window_ops_glfw.cpp is the editor's ONLY window-system dependency outside the
-# vendored ImGui platform backend (see editor/window_ops.h). Swapping to SDL3
-# means replacing these two files, not editing panels.
+# Two files carry the whole window-system dependency: the window-ops seam
+# (editor/window_ops.h) and the ImGui platform backend. Selecting a backend
+# swaps exactly those — no panel, gizmo or camera code changes.
+if(ENGINE_WINDOW_BACKEND STREQUAL "sdl3")
+    set(EDITOR_WINDOW_SOURCES
+        window_ops_sdl3.cpp
+        # Upstream ImGui backend, used straight from third_party rather than
+        # vendored into the editor: there is nothing local to patch in it.
+        ${CMAKE_SOURCE_DIR}/third_party/imgui/backends/imgui_impl_sdl3.cpp)
+else()
+    set(EDITOR_WINDOW_SOURCES
+        window_ops_glfw.cpp
+        imgui/imgui_impl_glfw.cpp)
+endif()
 
 add_executable(editor
     main.cpp
-    window_ops_glfw.cpp
     imgui/imgui_bgfx.cpp
-    imgui/imgui_impl_glfw.cpp
+    ${EDITOR_WINDOW_SOURCES}
 )
+
+if(ENGINE_WINDOW_BACKEND STREQUAL "sdl3")
+    target_include_directories(editor PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/imgui/backends)
+    target_link_libraries(editor PRIVATE SDL3::SDL3)
+endif()
 
 target_include_directories(editor PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
