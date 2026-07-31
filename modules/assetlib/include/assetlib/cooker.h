@@ -82,6 +82,25 @@ public:
         const auto sz = std::filesystem::file_size(ctx.sourcePath, ec);
         return ec ? ((size_t)64 << 20) : (size_t)sz * 10 + ((size_t)16 << 20);
     }
+
+    // The sibling files that belong to an ALREADY-materialized `primary` —
+    // the same set a fresh cook would report through addOutput(). Used only to
+    // BACK-FILL the DDC from outputs that exist on disk but were never
+    // ingested (see CookPipeline::backfillDdc): with no cook running there is
+    // no CookContext to collect addOutput calls, so the cooker must be able to
+    // re-derive its own output set.
+    //
+    // MUST be exact. Guessing by glob (`<uuid>_t*.ctex`) would sweep up stale
+    // siblings left by an older cooker version — nothing deletes them — and a
+    // manifest would then depend on this machine's .cache history rather than
+    // on the inputs, breaking the determinism invariant that lets two machines
+    // share a cache. Read the real output instead, as MeshCooker does.
+    //
+    // Default: none — correct for every single-output cooker.
+    virtual void enumerateOutputs(const std::filesystem::path& primary,
+                                  std::vector<std::filesystem::path>& out) const {
+        (void)primary; (void)out;
+    }
 };
 
 } // namespace assetlib

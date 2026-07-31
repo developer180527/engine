@@ -746,6 +746,29 @@ std::string MeshCooker::settingsFingerprint(const CookContext&) const {
     return std::string("hq=") + (hq ? "1" : "0");
 }
 
+void MeshCooker::enumerateOutputs(const std::filesystem::path& primary,
+                                  std::vector<std::filesystem::path>& out) const {
+    // Read the sibling set back out of the cooked mesh itself. cook() writes
+    // each embedded texture as "<uuid>_tN.ctex" and stores that BASENAME in the
+    // material record, so the material table is an exact list of what this cook
+    // produced — unlike a glob, which would also match stale siblings that an
+    // earlier cooker version left behind (nothing prunes .cache).
+    assetlib::MeshAsset mesh;
+    if (!assetlib::loadMesh(mesh, primary)) return;
+
+    const auto dir = primary.parent_path();
+    auto add = [&](const char* name, uint32_t flag, uint32_t flags) {
+        if (!(flags & flag) || name[0] == '\0') return;
+        auto p = dir / name;
+        if (std::find(out.begin(), out.end(), p) == out.end())
+            out.push_back(std::move(p));   // materials commonly share a texture
+    };
+    for (const auto& m : mesh.materials) {
+        add(m.baseColorPath, assetlib::kMatFlag_HasBaseColor, m.flags);
+        add(m.normalMapPath, assetlib::kMatFlag_HasNormalMap, m.flags);
+    }
+}
+
 CookResult MeshCooker::cook(const CookContext& ctx) {
     // glTF/GLB goes through cgltf — Assimp is built without those importers
     // (cgltf owns the format engine-wide). Everything else: Assimp.

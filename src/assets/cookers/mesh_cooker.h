@@ -22,6 +22,13 @@ public:
     // Embedded/material textures run through the shared encode path, so the
     // COOK_TEX_HQ tier changes THIS cooker's output too.
     std::string settingsFingerprint(const assetlib::CookContext&) const override;
+
+    // Sibling .ctex files of an already-cooked mesh, read back from its own
+    // material table (the exact set cook() reported via addOutput) so the DDC
+    // can be back-filled without re-cooking. Never globs — see
+    // ICooker::enumerateOutputs.
+    void enumerateOutputs(const std::filesystem::path& primary,
+                          std::vector<std::filesystem::path>& out) const override;
 };
 
 // Normal matrix (inverse-transpose of the linear part) with a SCALE-INVARIANT

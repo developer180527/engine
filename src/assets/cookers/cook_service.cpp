@@ -169,7 +169,7 @@ void CookService::runOneCookPass() {
                  scope->size());
     }
 
-    int deferred = 0;
+    int deferred = 0, backfilled = 0;
     std::vector<assetlib::UUID> todo;
     std::unordered_set<std::string> todoSet;   // scene→asset edge lookup
     todo.reserve(all.size());
@@ -179,12 +179,24 @@ void CookService::runOneCookPass() {
         if (!pipeline.hasCookerFor(ext)) continue;
         auto src = m_projectRoot / rec.sourcePath;
         if (!std::filesystem::exists(src)) continue;
-        if (!pipeline.isStale(rec)) continue;
+        if (!pipeline.isStale(rec)) {
+            // Up to date — but this is also the ONLY place a fresh asset is
+            // ever visited, so it is where a warm .cache beside a cold DDC
+            // gets noticed. Ingest it now; otherwise the next .cache wipe
+            // re-cooks output that was on disk all along, and this machine
+            // never contributes to the shared tier. No-op (one stat) when the
+            // DDC already has it, which is the normal case.
+            if (pipeline.backfillDdc(rec)) ++backfilled;
+            continue;
+        }
         if (!fileSettled(src)) { ++deferred; continue; }
         todo.push_back(rec.uuid);
         todoSet.insert(rec.uuid.toString());
     }
     total = (int)todo.size();
+    if (backfilled > 0)
+        LOG_INFO("CookService", "DDC: back-filled %d up-to-date asset(s)",
+                 backfilled);
 
     // Assets that failed at the current cook version are NOT retried (that
     // would loop forever) — but they must not be silently reported as "up to

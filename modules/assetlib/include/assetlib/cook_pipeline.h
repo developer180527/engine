@@ -80,6 +80,22 @@ public:
     // The DDC key for this record's current inputs ("" when no cooker/hash).
     std::string  currentKey(const AssetRecord& rec, ICooker* cooker) const;
 
+    // Ingest an already-materialized, up-to-date output into the DDC when the
+    // store has no record for its key. Closes the gap where a warm .cache sits
+    // beside a cold DDC (a wiped ~/.engine, a project tree copied between
+    // machines, a fresh CI container): staleness correctly says "not stale", so
+    // no cook runs, so nothing was ever ingested — and the NEXT .cache wipe
+    // then pays a full cook for outputs that were on disk the whole time. Such
+    // a machine also never contributes to the shared tier.
+    //
+    // Cheap when the DDC is warm: one `contains()` (a stat) per fresh asset,
+    // and real work only on an actual miss. Does NOT interfere with
+    // forceRecook(), which clears ddcKey to make the record stale — stale
+    // records take the cook path and never reach here.
+    //
+    // Returns true when a record was ingested.
+    bool         backfillDdc(const AssetRecord& rec);
+
     DdcStore&       ddc()       { return m_ddc; }
     const DdcStore& ddc() const { return m_ddc; }
 

@@ -108,6 +108,36 @@ void CookPipeline::placeOutput(CookResult& res, const std::string& key,
                 .error="cannot place cooked output: " + ec.message() };
 }
 
+bool CookPipeline::backfillDdc(const AssetRecord& rec) {
+    // Only records whose output is genuinely current and present. A skipped
+    // cook (empty cookedPath) has nothing to store; a Failed one must not be
+    // cached as if it were output.
+    if (rec.state != AssetState::Ready || rec.cookedPath.empty()) return false;
+
+    ICooker* cooker = findCooker(lowerExtOf(rec.sourcePath));
+    if (!cooker) return false;
+    const std::string key = computeCookKey(rec, *cooker, m_projectRoot);
+    // An empty key means the source is unreadable — no identity, nothing to
+    // address. A key that disagrees with the record is a stale record, which
+    // is the cook path's business, not ours.
+    if (key.empty() || key != rec.ddcKey) return false;
+
+    if (m_ddc.contains(key)) return false;          // already cached — the norm
+
+    const auto primary = m_cacheRoot / rec.cookedPath;
+    std::error_code ec;
+    if (!std::filesystem::exists(primary, ec)) return false;
+
+    // The cooker re-derives its own sibling set; guessing by glob would sweep
+    // up stale siblings from an older version (see ICooker::enumerateOutputs).
+    std::vector<std::filesystem::path> extras;
+    cooker->enumerateOutputs(primary, extras);
+    for (const auto& e : extras)
+        if (!std::filesystem::exists(e, ec)) return false;   // incomplete set
+
+    return ddcStoreRecord(m_ddc, key, primary, extras);
+}
+
 // ── Registry commit ──────────────────────────────────────────────────────────
 
 void CookPipeline::commitResult(const UUID& uuid, const CookResult& res,
@@ -228,14 +258,19 @@ int CookPipeline::cookAll(std::function<void(int,int)> progress) {
     int  total = static_cast<int>(all.size());
 
     std::vector<UUID> stale;
+    int backfilled = 0;
     for (auto& rec : all) {
         if (isStale(rec)) { stale.push_back(rec.uuid); continue; }
+        if (backfillDdc(rec)) ++backfilled;         // warm .cache, cold DDC
         if (rec.state != AssetState::Ready
                 && rec.state != AssetState::Failed) {   // fresh but unmarked
             auto r = m_registry.findByUUID(rec.uuid);
             if (r) { r->state = AssetState::Ready; m_registry.update(*r); }
         }
     }
+    if (backfilled > 0)
+        std::printf("[AssetLib] DDC: back-filled %d up-to-date asset(s)\n",
+                    backfilled);
 
     std::atomic<int> done{ total - static_cast<int>(stale.size()) };
     int cooked = cookMany(stale, [&](const std::string&, bool) {
@@ -262,10 +297,17 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
     // is nothing to parallelize.
     std::vector<Work> work;
     work.reserve(uuids.size());
-    int hits = 0;
+    int hits = 0, backfilled = 0;
     for (const auto& uuid : uuids) {
         auto rec = m_registry.findByUUID(uuid);
-        if (!rec || !isStale(*rec)) continue;
+        if (!rec) continue;
+        if (!isStale(*rec)) {
+            // Up to date. If the store somehow lacks it (wiped ~/.engine, a
+            // tree copied from another machine), ingest it now rather than
+            // paying a full cook at the next .cache wipe.
+            if (backfillDdc(*rec)) ++backfilled;
+            continue;
+        }
         auto r = resolve(*rec);
         if (!r) continue;                   // no cooker / unreadable source
 
@@ -281,6 +323,9 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
     const int numWork = static_cast<int>(work.size());
     if (hits > 0)
         std::printf("[AssetLib] DDC: %d asset(s) restored from cache\n", hits);
+    if (backfilled > 0)
+        std::printf("[AssetLib] DDC: back-filled %d up-to-date asset(s)\n",
+                    backfilled);
     if (numWork == 0 && extras.empty()) return hits;
 
     // ── Phase 2: build the task graph ──────────────────────────────────────

@@ -31,6 +31,33 @@
 > `return f.good() || f.eof()`. Build the whole-engine harness when the
 > whole-engine domains are actually wanted; it is a separate project, not a
 > prerequisite for useful fuzzing.
+>
+> **UPDATE (2026-07-30) — the farm has hardware, and three things in this
+> document changed as a result.** The target is a self-hosted **x86-64 Debian
+> box, headless, running for days**. Decisions taken: headless only (no
+> software-Vulkan render path), **single-purpose — no shared-DDC / cook-farm role**
+> (reversed 2026-07-30: a days-long test run suspends every other service on that
+> box anyway, so the DDC role was a necessity-not-necessary that bought a
+> benchmark-isolation problem for nothing — see §7.2), and the next fuzz target
+> is the **scene deserializer**.
+>
+> 1. **§3.1's "flat binary or CSV" is replaced by a real database** (Part 5).
+>    One CSV per run cannot answer "is this slower than last week", which is the
+>    only question a multi-day farm exists to answer.
+> 2. **`ReproKey` (§1.3) is necessary but not sufficient.** It pins code and
+>    generator, not *machine* or *build*. Perf numbers without a compiler and
+>    machine fingerprint produce phantom regressions on the day someone upgrades
+>    GCC. Part 5's identity model is the fix; `ReproKey` stays exactly as-is for
+>    the correctness path, where it is complete.
+> 3. **"Fuzzing with profiling" is two lanes, not one** (Part 7). Random inputs
+>    make excellent bug-finders and terrible benchmarks — variance swamps signal.
+>    They share the database and nothing else.
+>
+> Also since this was written: **`FrameStatsChannel`
+> (`src/runtime/frame_stats_channel.cpp`) is built** — cadence/work/present
+> percentiles, dropped-frame table and interval histogram, reporting at
+> `EngineRuntime::shutdown()`. It is §3.1's first real customer and the first
+> channel whose numbers are worth persisting.
 
 This builds directly on `engine-test-infrastructure-plan.md` — `EngineTestHarness`, `TraceRecorder`/`TraceReplayer`, and the layered tier strategy are assumed to exist. This plan adds the three things asked for on top of that foundation: **reproducible-by-seed fuzzing**, **a self-hosted long-running test farm**, and **one-click, auto-discovering automation** — plus the profiling needed to make days-long runs actually tell you something.
 
@@ -190,13 +217,299 @@ does, in order: builds the current commit across the needed configurations (ASan
 
 ---
 
+## Part 5 — The results database and the identity model
+
+### 5.1 — Why a database, and why SQLite
+
+Part 3.1 originally said "a simple flat binary or CSV, one row per sample". That
+is right for one run and wrong for a farm: the questions worth asking are all
+*cross-run* — is this commit slower than last week's, is this leak new, has this
+crash signature been seen before, which seed reproduces it cheapest. Answering
+those over a directory of CSVs means writing a query engine, badly.
+
+**SQLite.** It is already vendored (`modules/assetlib/third_party/sqlite3`) and
+already the asset registry's storage engine, so it adds no dependency and no new
+operational knowledge. The write pattern is append-mostly with occasional
+analytical reads, which is its sweet spot; WAL mode gives concurrent readers
+while a run writes. And it is one file — `rsync` it to a laptop and query it
+locally, back it up with `cp`.
+
+Postgres buys nothing here until multiple machines write concurrently, and costs
+a daemon, a network surface and a backup story on a box whose job is to be
+quiet. Revisit if a second farm node appears; not before.
+
+### 5.2 — Identity: the table nobody finds interesting and everything depends on
+
+A measurement without the full fingerprint of what produced it is not a
+measurement, it is a number. The failure mode is specific and expensive: someone
+upgrades the compiler, every metric shifts 4%, the farm reports a regression,
+a day goes into chasing it, and after the second false alarm nobody reads the
+reports again. A perf gate dies from false positives, not from missing bugs.
+
+```sql
+-- Cross-ARCH comparison is never valid. Storing arch is what lets a query
+-- REFUSE to compare rather than silently averaging aarch64 with x86_64.
+CREATE TABLE machine (
+    id            INTEGER PRIMARY KEY,
+    hostname      TEXT NOT NULL,
+    arch          TEXT NOT NULL,      -- aarch64 | x86_64
+    cpu_model     TEXT NOT NULL,
+    cores         INTEGER NOT NULL,
+    kernel        TEXT NOT NULL,
+    governor      TEXT,               -- performance | ondemand | NULL (macOS)
+    isolated_cpus TEXT,               -- the cpuset benchmarks are pinned to
+    UNIQUE(hostname, arch, kernel, cpu_model)
+);
+
+CREATE TABLE build (
+    id           INTEGER PRIMARY KEY,
+    commit_sha   TEXT NOT NULL,
+    dirty        INTEGER NOT NULL,    -- 1 = uncommitted: perf rows advisory ONLY
+    compiler     TEXT NOT NULL,       -- AppleClang | GNU | Clang | MSVC
+    compiler_ver TEXT NOT NULL,
+    build_type   TEXT NOT NULL,       -- Debug | RelWithDebInfo | Release
+    sanitizers   TEXT,                -- asan+ubsan | tsan | NULL
+    flags_hash   TEXT NOT NULL,       -- hash of the effective flag set
+    options_json TEXT NOT NULL,       -- ENGINE_* cmake options, ENGINE_PROFILE
+    UNIQUE(commit_sha, dirty, compiler, compiler_ver, build_type,
+           sanitizers, flags_hash, options_json)
+);
+
+CREATE TABLE run (
+    id          INTEGER PRIMARY KEY,
+    machine_id  INTEGER NOT NULL REFERENCES machine(id),
+    build_id    INTEGER NOT NULL REFERENCES build(id),
+    lane        TEXT NOT NULL,        -- fuzz | bench | soak | determinism
+    harness_ver TEXT NOT NULL,        -- the generator version from ReproKey (§1.3)
+    started_utc TEXT NOT NULL,
+    ended_utc   TEXT,
+    status      TEXT NOT NULL,        -- running | ok | failed | aborted
+    load_avg_1m REAL,                 -- machine state at start; see §7.2
+    notes       TEXT
+);
+```
+
+`dirty` earns its column: a perf row from an uncommitted tree cannot be
+reproduced by anyone, so it may be recorded but must never become a baseline.
+
+### 5.3 — Findings, deduplicated at the source
+
+One bug is found by tens of thousands of seeds. Without dedup the database is a
+firehose and §2.5's "recurrence count" is the whole design:
+
+```sql
+CREATE TABLE finding (
+    id            INTEGER PRIMARY KEY,
+    signature     TEXT NOT NULL UNIQUE,  -- hash(normalized frames + assert + class)
+    target        TEXT NOT NULL,
+    failure_class TEXT NOT NULL,   -- signal|assert|sanitizer|hang|cost_outlier
+    message       TEXT,
+    min_seed      INTEGER NOT NULL, -- cheapest known reproducer
+    min_cost_ms   REAL,             -- replaced whenever a cheaper seed lands
+    repro_key     TEXT NOT NULL,    -- the full §1.3 ReproKey, as JSON
+    first_run_id  INTEGER NOT NULL REFERENCES run(id),
+    last_run_id   INTEGER NOT NULL REFERENCES run(id),
+    hit_count     INTEGER NOT NULL DEFAULT 1,
+    status        TEXT NOT NULL DEFAULT 'new', -- new|triaged|corpus|fixed|wontfix
+    corpus_path   TEXT              -- set when the seed lands in tests/fuzz/corpus/
+);
+```
+
+Keeping `min_seed`/`min_cost_ms` and replacing them whenever a cheaper reproducer
+appears is §2.4's delta-debugging obtained for free from volume: run enough seeds
+and the fuzzer minimizes for you.
+
+**`cost_outlier` is a new failure class.** The current harness only notices
+crashes, and the bugs it has found are all in the family "untrusted header field
+drives an allocation" — a header that makes `loadMesh` take ten seconds instead
+of allocating 4.5 TB is the same bug wearing a different hat, and a crash-only
+fuzzer will never see it. So the fuzz lane records per-seed wall time and peak
+bytes, and flags outliers by robust z-score (median/MAD, not mean/σ — the
+distribution has a fat tail by construction) against the seed population.
+
+### 5.4 — Samples and baselines
+
+```sql
+CREATE TABLE sample (
+    run_id INTEGER NOT NULL REFERENCES run(id),
+    metric TEXT NOT NULL,   -- 'cook.cold_ms' | 'frame.work_p99_ms' | 'mem.live.Rendering'
+    unit   TEXT NOT NULL,
+    value  REAL NOT NULL,
+    iter   INTEGER NOT NULL DEFAULT 0,  -- bench repetition index
+    t_ms   INTEGER,                     -- soak: ms since run start; NULL for bench
+    tags   TEXT                         -- JSON: workload, scene, thread count
+);
+CREATE INDEX sample_metric_run ON sample(metric, run_id);
+CREATE INDEX sample_run_t      ON sample(run_id, t_ms);
+
+CREATE TABLE baseline (
+    metric       TEXT NOT NULL,
+    machine_id   INTEGER NOT NULL REFERENCES machine(id),
+    build_id     INTEGER NOT NULL REFERENCES build(id),
+    median       REAL NOT NULL,
+    mad          REAL NOT NULL,
+    n            INTEGER NOT NULL,
+    noise_floor  REAL NOT NULL,   -- §7.1, measured on THIS machine
+    accepted_utc TEXT NOT NULL,
+    PRIMARY KEY (metric, machine_id, build_id)
+);
+```
+
+Soak time series folds into `sample` via `t_ms` rather than getting its own
+table. One query path is worth more than schema purity, and a soak sample and a
+bench sample differ only in whether the x-axis is time or repetition index.
+
+---
+
+## Part 6 — What a headless x86 farm can and cannot measure
+
+### 6.1 — It cannot measure frame pacing. Say so out loud.
+
+Headless means `IPlatform::supportsRendering()` is false, so `EngineRuntime` sets
+`m_headless` and the render path no-ops entirely — there is not even a null bgfx
+backend. On that box `FrameStatsChannel`'s `present` is structurally 0 and `work`
+is the whole frame. Linux also selects `RendererType::Vulkan`
+(`src/render/renderer.cpp:77`), so even a windowed Linux run would exercise a
+different backend from the Metal one the frame-time work was done against.
+
+This matters because the investigation that motivated the farm was about
+present/vsync cost, and the farm cannot answer that class of question at all.
+**Frame pacing stays on the Mac, and later on a Windows box with a real GPU.**
+Believing otherwise produces confident numbers about nothing.
+
+### 6.2 — The four things it is genuinely good at
+
+1. **Correctness at scale.** Millions of seeds instead of the handful
+   `fuzz-explore` gets in CI. Three real bugs came out of an afternoon at
+   laptop scale; the yield curve here is the farm's main justification.
+2. **CPU-work regression.** `FrameStatsChannel`'s `work` — currently 0.09 ms in
+   the runtime, 1.59 ms in the editor. Portable, display-independent, real.
+3. **Soak.** Leaks and slow degradation only exist over hours. `mem::mapEvents()`
+   with its steady-state-zero invariant and per-tag live/peak are already the
+   right instruments and nothing currently watches them over time.
+4. **Cross-platform determinism** — see below.
+
+### 6.3 — The determinism lane, which the farm's second architecture unlocks
+
+Absent from this document until now, and the highest-value thing a second ISA
+buys a multiplayer engine. Fixed seed plus a recorded input trace (`.irec`, via
+`engine_host --record-input`), N sim ticks, world-state hash per tick. Two
+comparisons:
+
+- **Same machine, repeated.** Catches uninitialized reads, container
+  iteration-order dependence, and address-dependent behaviour.
+- **macOS-aarch64 vs Linux-x86-64.** Catches floating-point and libm divergence.
+  Different FMA contraction and different `sinf`/`cosf` implementations are
+  enough to desync a lockstep simulation.
+
+On divergence, record the first diverging tick and both hashes. This is a
+prerequisite for deterministic lockstep netcode, and right now nothing in the
+engine would tell you it is broken.
+
+---
+
+## Part 7 — Benchmark statistics and machine discipline
+
+### 7.1 — Measure the noise floor before trusting any comparison
+
+The first number the farm should produce is not a benchmark result. It is the
+**same binary compared against itself**, N times, on the quiet machine. That
+median and MAD define the smallest effect the farm can honestly detect. Every
+threshold downstream refers to it (`baseline.noise_floor`), and until it exists
+a "3% regression" is indistinguishable from a "3% improvement" and from nothing
+at all.
+
+Then:
+
+- Fixed workloads, **N ≥ 7** repetitions.
+- **Interleave A and B rather than running them sequentially.** Sequential runs
+  absorb thermal drift and cache-warmth differences as if they were signal.
+- Report **median + MAD**, never mean + σ; one hitch destroys a mean.
+- Flag only when `|Δmedian| > max(noise_floor, threshold)` **and** Mann-Whitney
+  p < 0.01. Both conditions, because a statistically certain 0.4% shift is not
+  worth a human's morning.
+
+Workloads to start with, all with existing measured numbers to anchor against:
+cook cold / `.cache`-wipe restore / warm no-op (1.8 s / ~107 ms / ~37 ms), DDC
+key computation, mesh load, `ECS.progress`, animation sampling, physics step,
+scene load.
+
+### 7.2 — The cook-farm coexistence problem, deleted rather than solved
+
+An earlier revision had the box doubling as the shared-DDC and cook-farm node,
+which collided head-on with §7.1: a cook running while a benchmark is timed is
+exactly the noise that poisons a perf gate. The design response was cgroup
+isolation on disjoint cores plus an exclusive benchmark lease.
+
+**Dropped 2026-07-30.** A days-long test run suspends every other service on that
+box regardless, so the DDC role could not have run concurrently anyway — it bought
+a real isolation problem in exchange for a benefit the operating model already
+excluded. The box is single-purpose. This is the cheaper kind of fix: not a better
+mechanism, one less mechanism.
+
+What survives from it is the one part that is about §7.1 rather than about cooks:
+
+- **Record machine state with every sample** (`run.load_avg_1m`, plus actual CPU
+  MHz) so a suspect run can be *discarded* after the fact instead of trusted.
+  Isolation does fail, and detection is the fallback when it does.
+
+### 7.3 — Machine setup
+
+`performance` governor (not `ondemand`), `isolcpus`/`cpuset` for the benchmark
+cores, pinned threads, no other workload, and turbo either off or explicitly
+recorded. Store all of it in `machine` so a governor change shows up as a new
+machine row rather than as a mysterious step change in every metric.
+
+### 7.4 — What the server must not do
+
+**It does not push to git.** On a repo with no branch protection where the
+convention is committing straight to `main`, an autonomous process with push
+rights is a bad trade for a convenience. When the fuzz lane finds a new
+signature it writes the minimized seed as a corpus *candidate* plus a report,
+and a human (or a supervised agent run) commits it. The `finding.status`
+transition `new → triaged → corpus` is the audit trail for that handoff.
+
+---
+
 ## Rollout order
 
-1. **Seed-splitting + `ReproKey` infrastructure** (1.1–1.3) — cheap, foundational, everything else depends on repro being trustworthy from day one.
-2. **Two fuzz domains to start**: input bot and kit churn (1.2) — these map directly to bugs already found (sub-tick edges, `KitHost` reload) so they pay for themselves immediately as regression coverage, not just future-proofing.
-3. **`soakd` basic orchestrator** (2.1–2.3) without minimization or dedup yet — get campaigns running and anomalies captured first.
-4. **Persisted profiler time series** (3.1) — needed before soaks are worth running for days, since otherwise a multi-day run just produces console spam nobody reads.
-5. **Registration macros + one-click script** (Part 4) — do this once there are at least two real fuzz domains and one golden fixture to register, so the convention is validated against real use rather than designed in the abstract.
-6. **Trend detection, crash minimization, dedup** (2.4, 2.5, 3.2) — genuine value-adds, but each is a refinement on top of a working pipeline, not a blocker to getting the pipeline running.
+**Superseded by the phased order below**, which reflects both what got built and
+the farm hardware. Kept for context: the original list started with the two
+domains that need the unbuilt whole-engine harness, which is what the STATUS box
+explains inverting.
 
-Want me to draft the actual seed-splitting utility and the `ENGINE_REGISTER_FUZZ_DOMAIN` macro next, against real C++ that would drop into this codebase?
+1. ~~Seed-splitting + `ReproKey`~~ — **built** (`tests/fuzz/fuzz.h`).
+2. ~~Two fuzz domains~~ — **built**, but DDC-manifest and mesh-loader instead of
+   input-bot and kit-churn, for the reason in the STATUS box.
+3. `soakd` basic orchestrator (2.1–2.3).
+4. Persisted profiler time series (3.1) — now Part 5's database.
+5. Registration macros + one-click script (Part 4).
+6. Trend detection, crash minimization, dedup (2.4, 2.5, 3.2).
+
+### Phased order (2026-07-30)
+
+- **Phase 0 — the farm is trustworthy or it is noise.** Build headless on Debian
+  x86-64 (both Linux CI legs are green, so this should be short), apply §7.3
+  machine discipline, and **produce the §7.1 noise floor**. Phase 1's gate has no
+  threshold without it, so this is genuinely first.
+- **Phase 1 — database + identity model** (Part 5) and one workload end to end
+  (cook cold/warm). Proves the schema against a real metric before anything
+  depends on it.
+- **Phase 2 — fuzz at scale**: signature dedup (§5.3), `cost_outlier` detection,
+  corpus candidates, and the **scene deserializer** target. This is where days of
+  runtime start paying, and the scene deserializer is the largest untrusted-input
+  surface left with real state behind it.
+- **Phase 3 — soak lane** (2.2–2.3) plus leak regression on the persisted series.
+- **Phase 4 — determinism lane** (§6.3). Needs the Mac side too, so it is last of
+  the farm phases.
+- **Phase 5 — Mac-side, fully parallel and independent of all the above.**
+  `BgfxStatsChannel` reading `bgfx::getStats()` for GPU time, `numDraw`, and the
+  `waitSubmit`/`waitRender` split — bgfx already computes all of it and nothing
+  in the engine has ever read it, which is the single largest accuracy gap in our
+  profiling. Plus ImGui phase scopes, since the editor's 1.59 ms of `work` is
+  currently unattributed.
+
+`waitSubmit`/`waitRender` are only meaningful with the render thread enabled,
+which `src/render/renderer.cpp:66` deliberately disables (`bgfx::renderFrame()`
+before `bgfx::init`, to dodge a platform-data race). So Phase 5 is also how you
+price re-enabling it before doing the work.

@@ -1,0 +1,19 @@
+{
+  "contexts": [
+    {
+      "name": "Gameplay",
+      "actions": [
+        { "name": "Fire",     "type": "digital", "bindings": ["mouse:left"] },
+        { "name": "Aim",      "type": "digital", "bindings": ["mouse:right"] },
+        { "name": "Jump",     "type": "digital", "bindings": ["key:Space"] },
+        { "name": "Sprint",   "type": "digital", "bindings": ["key:LShift"] },
+        { "name": "Interact", "type": "digital", "bindings": ["key:F"] },
+        { "name": "ToggleCursor", "type": "digital", "bindings": ["key:Escape"] },
+        { "name": "Move",     "type": "axis2",
+          "bindings": ["key:W:+y", "key:S:-y", "key:D:+x", "key:A:-x"] },
+        { "name": "Look",     "type": "axis2", "bindings": ["mouse:motion"] },
+        { "name": "Zoom",     "type": "axis1", "bindings": ["scroll"] }
+      ]
+    }
+  ]
+}
