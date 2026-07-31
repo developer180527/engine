@@ -25,11 +25,14 @@
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IOLBF, 0);   // logs stream live to pipes/files
 
-    bool cookAll = false;
+    bool cookAll = false, gc = false, gcPrune = false;
     std::string projectArg;
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--all") == 0) cookAll = true;
-        else if (projectArg.empty())           projectArg = argv[i];
+        const std::string a = argv[i];
+        if      (a == "--all")       cookAll = true;
+        else if (a == "--gc")        gc      = true;
+        else if (a == "--gc-prune")  { gc = true; gcPrune = true; }
+        else if (projectArg.empty() && a[0] != '-') projectArg = a;
     }
 
     ProjectContext project;
@@ -58,6 +61,13 @@ int main(int argc, char** argv) {
                      cacheRoot);
     cook.setScope(cookAll ? CookService::Scope::WholeProject
                           : CookService::Scope::SceneClosure);
+
+    // GC is its own mode: collecting garbage and cooking in one invocation
+    // would report against a cache the same run just changed.
+    if (gc) {
+        const auto st = cook.collectGarbage(gcPrune);
+        return (gcPrune && st.orphanFiles != st.deleted) ? 1 : 0;
+    }
 
     const auto run = cook.cookOnce();   // cumulative, not the last pass
     LOG_INFO("Cook", "Done — %d cooked, %d failed", run.cooked, run.failed);

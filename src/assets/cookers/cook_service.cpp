@@ -287,6 +287,138 @@ void CookService::requeueIfDeferred(int deferred) {
     requestRefresh();
 }
 
+CookService::GcStats CookService::collectGarbage(bool prune) {
+    namespace fs = std::filesystem;
+    GcStats st;
+
+    // FAIL CLOSED, and do NOT trust open() to report this. AssetRegistry::open
+    // CREATES the database when the path is missing, so a wiped or
+    // never-created registry opens "successfully" with zero records — and a GC
+    // that trusts that concludes nothing is referenced and deletes the entire
+    // cache. Verified: with registry.db moved aside, an earlier version of this
+    // function happily removed 8 of 9 files.
+    std::error_code dbEc;
+    if (!fs::exists(m_dbPath, dbEc)) {
+        LOG_ERROR("CookService", "GC: no registry at %s — refusing to delete "
+                  "anything, since nothing is known to be referenced",
+                  m_dbPath.string().c_str());
+        return st;
+    }
+
+    assetlib::AssetRegistry registry;
+    if (!registry.open(m_dbPath)) {
+        LOG_ERROR("CookService", "GC: cannot open registry at %s — refusing to "
+                  "delete anything without knowing what is referenced",
+                  m_dbPath.string().c_str());
+        return st;
+    }
+
+    // ── 1. What is still referenced ─────────────────────────────────────────
+    const auto records = registry.all();
+
+    // Second guard: an EMPTY registry next to a populated cache means the DB
+    // was rebuilt (or is mid-scan), not that every asset was deleted. Treating
+    // "no records" as "no references" is how a GC eats a whole cache, so the
+    // safe reading of an empty registry is "I don't know yet".
+    if (records.empty()) {
+        LOG_WARN("CookService", "GC: registry has no assets — refusing to "
+                 "treat that as 'nothing referenced' (run a cook first)");
+        return st;
+    }
+
+    std::unordered_set<std::string> keep;
+    MeshCooker meshCooker;              // only meshes have sibling outputs
+
+    for (const auto& rec : records) {
+        if (rec.cookedPath.empty()) continue;
+        const auto primary = m_cacheRoot / rec.cookedPath;
+        keep.insert(primary.lexically_normal().generic_string());
+
+        // A cooked mesh owns sibling .ctex files. Ask the cooker to re-derive
+        // them from the mesh's own material table rather than guessing by
+        // filename — the same exactness the DDC dedup needs, and the reason
+        // ICooker::enumerateOutputs exists.
+        std::error_code ec;
+        if (!fs::exists(primary, ec)) continue;
+        std::vector<fs::path> extras;
+        meshCooker.enumerateOutputs(primary, extras);
+        for (const auto& e : extras)
+            keep.insert(e.lexically_normal().generic_string());
+    }
+
+    // Cooked scenes are NOT registry-tracked (they live in scenes/, not the
+    // asset DB), so they are kept when their source .scene still exists.
+    for (const auto& dir : sceneDirs()) {
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(dir, ec)) {
+            if (!e.is_regular_file() || e.path().extension() != ".scene") continue;
+            const auto cooked = m_cacheRoot / "scenes"
+                              / (e.path().stem().string() + ".cooked");
+            keep.insert(cooked.lexically_normal().generic_string());
+        }
+    }
+
+    // ── 2. Sweep — allowlist only ───────────────────────────────────────────
+    // ONLY files this GC positively understands are candidates. Everything
+    // else survives by default: registry.db (and its -wal/-shm, deleting which
+    // would corrupt an open database), anim/*.ozzclip (the ClipLibrary's cache,
+    // keyed by a different scheme this code cannot evaluate), and anything a
+    // future cooker adds before this function learns about it. A GC that
+    // deletes what it does not recognise is how caches eat real data.
+    std::error_code ec;
+    if (!fs::exists(m_cacheRoot, ec)) return st;
+
+    std::vector<fs::path> victims;
+    for (auto it = fs::recursive_directory_iterator(m_cacheRoot, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) break;
+        if (!it->is_regular_file(ec)) continue;
+        const auto& p   = it->path();
+        const auto  ext = p.extension().string();
+        if (ext != ".cooked" && ext != ".ctex") continue;   // allowlist
+
+        const auto norm  = p.lexically_normal().generic_string();
+        const auto bytes = (uint64_t)fs::file_size(p, ec);
+        if (keep.count(norm)) { ++st.keptFiles;   st.keptBytes   += bytes; }
+        else                  { ++st.orphanFiles; st.orphanBytes += bytes;
+                                victims.push_back(p); }
+    }
+
+    // ── 3. Report, then (only if asked) delete ──────────────────────────────
+    const double mb = 1.0 / (1024.0 * 1024.0);
+    LOG_INFO("CookService",
+             "GC: %d referenced (%.1f MB), %d orphaned (%.1f MB)%s",
+             st.keptFiles, (double)st.keptBytes * mb,
+             st.orphanFiles, (double)st.orphanBytes * mb,
+             prune ? "" : "  [dry run — pass --gc-prune to delete]");
+
+    for (const auto& v : victims) {
+        if (!prune) {
+            std::printf("  orphan  %s\n",
+                        fs::relative(v, m_cacheRoot, ec).generic_string().c_str());
+            continue;
+        }
+        std::error_code rmEc;
+        const auto bytes = (uint64_t)fs::file_size(v, rmEc);
+        if (fs::remove(v, rmEc)) { ++st.deleted; st.freedBytes += bytes; }
+        else LOG_WARN("CookService", "GC: could not delete %s: %s",
+                      v.string().c_str(), rmEc.message().c_str());
+    }
+    if (prune)
+        // "Logical" is not pedantry. Materialized outputs are HARDLINKS to DDC
+        // blobs, so removing a .cache entry drops one link, not the inode —
+        // real disk is only reclaimed once the DDC's copy goes too (that store
+        // has its own size/age policy). Measured on fps_shooter: 72.7 MB of
+        // orphans removed, total disk unchanged at 55 MB. What this reclaims
+        // for certain is a coherent working directory; claiming freed disk
+        // would be a lie a user could check.
+        LOG_INFO("CookService", "GC: deleted %d file(s), %.1f MB logical "
+                 "(hardlinks to DDC blobs — real disk frees when the DDC "
+                 "evicts them). Re-cook or a DDC hit restores anything wanted.",
+                 st.deleted, (double)st.freedBytes * mb);
+    return st;
+}
+
 std::vector<assetlib::CookPipeline::ExtraTask> CookService::buildSceneTasks(
         assetlib::AssetRegistry& registry,
         const std::unordered_set<std::string>& cooking,

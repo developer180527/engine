@@ -70,6 +70,29 @@ public:
     // Safe to call from any thread (main thread, button handler, etc.)
     void requestRefresh();
 
+    // ── .cache garbage collection ────────────────────────────────────────
+    // Cooked output accumulates: a cooker version bump re-cooks under a new
+    // key, a deleted source leaves its output behind, and a regenerated
+    // registry.db mints fresh UUIDs so every previous file is instantly
+    // unreferenced. Measured on fps_shooter: one version bump grew .cache from
+    // 72 MB to 113 MB, all of the growth orphaned.
+    //
+    // This is the EASY layer to collect, and the reason the distributed-cache
+    // question is not scary: `.cache` is pure derived data. Deleting a live
+    // file costs a re-cook (or a ~100 ms DDC restore), never data — so the
+    // worst GC bug is slow, not destructive. The DDC and any shared tier are
+    // collected separately by their own size/age policy; nothing here needs to
+    // coordinate with another machine.
+    //
+    // DRY RUN BY DEFAULT. `prune == false` reports and deletes nothing.
+    struct GcStats {
+        int      keptFiles = 0,  orphanFiles = 0;
+        uint64_t keptBytes = 0,  orphanBytes = 0;
+        int      deleted   = 0;
+        uint64_t freedBytes = 0;
+    };
+    GcStats collectGarbage(bool prune);
+
     Stats       stats()     const;
     bool        isCooking() const { return m_stats.load().active; }
 
