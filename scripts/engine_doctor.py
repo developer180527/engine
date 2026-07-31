@@ -57,11 +57,18 @@ TIERS = ["prototype", "working", "hardened", "production"]
 TIER_RULES = {
     "prototype":  "compiles and runs; no test obligation",
     "working":    "≥1 test listed in `tests:` and those tests exist",
-    "hardened":   "working + fuzz/soak coverage if it parses external input"
-                  " + doc not stale",
+    # "Survives hostile input and time" is measured by the endurance lanes, not
+    # by unit tests — so hardened demands evidence from at least one of them,
+    # whatever the subsystem's input source. A subsystem that additionally eats
+    # untrusted BYTES must specifically be fuzzed.
+    "hardened":   "working + ≥1 fuzz/soak/stress test (and specifically a fuzz"
+                  " test when parses-external-input) + doc not stale",
     "production": "hardened + exercised on every CI platform + a perf claim"
                   " backed by a test",
 }
+
+# Endurance lanes, recognised by test filename (mirrors tests/CMakeLists labels).
+ENDURANCE = ("fuzz", "soak", "stress")
 
 REQUIRED = ["status"]                     # every doc
 REQUIRED_INFO = ["status", "tier"]        # info.md additionally declares tier
@@ -112,29 +119,58 @@ def parse_front_matter(path: Path) -> Doc:
 
     doc.has_fm = True
     doc.body_start = end + 1
+
+    # ` # ...` is a trailing comment (YAML rules: whitespace before the hash).
+    # Values are paths, which may legitimately contain '#', so only a hash
+    # preceded by whitespace ends the value.
+    def strip_comment(s: str) -> str:
+        return re.sub(r"\s+#.*$", "", s).strip()
+
     key = None
     for raw in lines[1:end]:
         line = raw.rstrip()
         if not line.strip() or line.lstrip().startswith("#"):
-            continue
+            continue                       # whole-line comment
         if line.lstrip().startswith("- ") and key:
             doc.meta.setdefault(key, [])
             if not isinstance(doc.meta[key], list):
                 doc.meta[key] = [doc.meta[key]]
-            doc.meta[key].append(line.lstrip()[2:].strip())
+            doc.meta[key].append(strip_comment(line.lstrip()[2:]))
             continue
         m = re.match(r"^([A-Za-z][\w-]*)\s*:\s*(.*)$", line)
         if m:
-            key, val = m.group(1), m.group(2).strip()
+            key, val = m.group(1), strip_comment(m.group(2))
             doc.meta[key] = val if val else []
     return doc
 
 
+def submodule_paths() -> set[str]:
+    """Repo-relative paths of git submodules.
+
+    Their docs belong to THEIR repo and are governed by its contract — this
+    tool must not edit or gate files another project owns (modules/hid is a
+    real engine subsystem but a separate deliverable).
+    """
+    out = set()
+    gm = REPO / ".gitmodules"
+    if not gm.exists():
+        return out
+    for line in gm.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = re.match(r"\s*path\s*=\s*(.+)$", line)
+        if m:
+            out.add(m.group(1).strip())
+    return out
+
+
 def find_docs() -> list[Doc]:
+    subs = submodule_paths()
     out = []
     for p in sorted(REPO.rglob("*.md")):
+        rel = p.relative_to(REPO).as_posix()
         if any(part in EXCLUDE_DIRS for part in p.relative_to(REPO).parts):
             continue
+        if any(rel == s or rel.startswith(s + "/") for s in subs):
+            continue                      # another repo's contract
         if p == STATUS_FILE:
             continue                      # generated; not itself a contract
         out.append(parse_front_matter(p))
@@ -248,14 +284,20 @@ def check_docs(docs: list[Doc], strict_missing: bool) -> list[Finding]:
                                  f"tier `{tier}` requires ≥1 entry in `tests:` "
                                  f"— {TIER_RULES[tier]}"))
             if tier in ("hardened", "production"):
+                endurance = [t for t in tests
+                             if any(k in Path(t).name.lower() for k in ENDURANCE)]
+                if not endurance:
+                    f.append(Finding("error", d.rel,
+                                     f"tier `{tier}` requires ≥1 fuzz/soak/stress "
+                                     "test in `tests:` — unit tests alone do not "
+                                     "show it survives hostile input or time"))
                 if d.meta.get("parses-external-input", "").lower() in ("1", "true", "yes"):
-                    fuzzy = [t for t in tests
-                             if "fuzz" in t.lower() or "soak" in t.lower()
-                             or "stress" in t.lower()]
+                    fuzzy = [t for t in tests if "fuzz" in Path(t).name.lower()]
                     if not fuzzy:
                         f.append(Finding("error", d.rel,
                                          f"tier `{tier}` + parses-external-input "
-                                         "requires a fuzz/soak/stress test in `tests:`"))
+                                         "requires a FUZZ test in `tests:` (untrusted "
+                                         "bytes need a fuzzer, not just stress)"))
                 if status == "as-built" and verified:
                     changed = last_change(d.get_list("covers"))
                     if changed and changed > verified:
@@ -282,7 +324,11 @@ def subsystem_rows(docs: list[Doc]) -> list[dict]:
         verified = str(d.meta.get("verified", "") or "")
         stale = bool(changed and verified and changed > verified)
         rows.append({
-            "name": d.path.parent.relative_to(REPO).as_posix(),
+            # An info.md does not always sit at the root of what it describes
+            # (src/runtime's lives in src/runtime/docs/), so the first `covers:`
+            # entry names the subsystem when present.
+            "name": (covers[0].rstrip("/*") if d.meta.get("covers")
+                     else d.path.parent.relative_to(REPO).as_posix()),
             "tier": d.meta.get("tier", "—"),
             "status": d.meta.get("status", "—"),
             "verified": verified or "never",

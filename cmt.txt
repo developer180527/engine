@@ -1,39 +1,38 @@
-infra: machine-checked doc contract, generated status, tier ladder
+docs: classify every in-repo subsystem against real test evidence
 
-Documentation drifts silently and "stable" was a matter of opinion. Two
-recent examples: a design doc advertised a 107 ms cache restore that held
-only on the day it was measured, and engine_cook reported "0 cooked" after
-every successful cook for weeks. Review didn't catch either, because review
-reads intent. This makes the tree the authority.
+Completes the contract adoption: all 14 in-repo subsystems now declare a tier
+backed by tests that actually exercise them — 4 hardened, 7 working, 3
+prototype. Evidence was derived by mapping each test's includes to the
+subsystem it touches, not by assumption.
 
-scripts/engine_doctor.py (stdlib only, no pip dependency):
-  check   — every doc's front-matter against the tree: covers/tests paths
-            exist, tier claims have evidence, and `as-built` docs whose code
-            changed after their `verified:` date are STALE (git decides).
-  status  — regenerates ENGINE_STATUS.md, the one generated answer to "what
-            is actually true right now"; `--check` fails when out of date,
-            the way a formatter does.
-  bootstrap — placeholder front-matter for new docs. Writes `unreviewed`
-            rather than guessing: fabricated metadata is worse than none
-            because it looks checked.
+The pass found four things worth more than the labels:
 
-docs/engineering-standards.md defines the contract and the tier ladder
-(prototype/working/hardened/production), each tier's evidence mechanical.
-Two deliberate consequences: a subsystem that parses external input cannot
-reach `hardened` without a fuzz/soak test, and a stale doc caps the tier —
-if nobody re-verified the description, nobody knows what it does.
+- src/runtime is deliberately NOT hardened. It is the most-tested subsystem
+  here (11 tests incl. a days-long soak), but its own parsers — input.json,
+  cooked scenes — have never been fuzzed. Volume of tests is not adversarial
+  coverage. Recorded at `working` with the blocker named: a scene-deserializer
+  fuzz target, already next in the testing plan.
+- An over-claim caught by checking: fuzz_mesh_loader_test targets
+  assetlib::loadMesh, not runtime code, so citing it as runtime evidence would
+  have bought a fake `hardened`. Removed.
+- Real drift: src/components/info.md pointed at src/io/entity_serializer.h,
+  which lives at src/scene/. Fixed.
+- modules/hid is a git SUBMODULE — bootstrap had written front-matter into
+  another repo. Reverted; the doctor now skips submodules by design, because
+  this tool must not gate or edit files another project owns. hid gets
+  classified in its own repo.
 
-No dates in the ladder: deadlines coordinate people, and the actual problem
-was not knowing which parts were trustworthy. "hardened by Friday" is still
-sayable, but now Friday has an unambiguous answer.
+Tool corrections the work forced:
+- `hardened` now requires ≥1 fuzz/soak/stress test ALWAYS (a pure-logic
+  subsystem could previously claim it on one unit test), and specifically a
+  FUZZ test when parses-external-input. Verified by deliberate violation.
+- Subsystem names come from `covers:` when present, so src/runtime is no
+  longer reported as src/runtime/docs.
+- Front-matter parser strips YAML trailing comments (` # ...`).
 
-Adoption: 49 docs placed under contract; 4 subsystems classified with real
-evidence (src/assets, modules/assetlib hardened; src/core/memory,
-src/runtime/jobs working); 11 still prototype/unreviewed — visible on
-purpose. Missing front-matter is a warning so adoption is incremental; flip
-CI to --strict-missing --warnings-as-errors once unreviewed hits zero.
+render/systems/editor stay prototype because the evidence says so; each
+info.md records exactly what would raise it. The cheapest real coverage win
+on the board is a unit test driving AnimatorSystem — its >kMaxBones guard is
+a silent-corruption path with nothing asserting it.
 
-Checker verified against deliberate violations (stale date, broken covers
-path, hardened-without-tests) — each caught, tree restored. Wired as
-`ctest -L docs` and a CI step on the gating leg.
-21/21 unit, 2/2 fuzz-regress, 2/2 docs.
+21/21 unit, 2/2 fuzz-regress, 2/2 docs, 0 contract errors.

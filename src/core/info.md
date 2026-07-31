@@ -1,8 +1,14 @@
 ---
-status: unreviewed
-tier: prototype
+status: as-built
+tier: hardened
+verified: 2026-07-31
 covers:
   - src/core/
+tests:
+  - tests/profiler_test.cpp
+  - tests/arena_test.cpp
+  - tests/stress_deep_tree.cpp
+  - tests/stress_swarm.cpp
 ---
 # Core
 

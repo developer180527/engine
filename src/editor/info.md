@@ -1,8 +1,16 @@
 ---
-status: unreviewed
+status: as-built
 tier: prototype
+verified: 2026-07-31
 covers:
   - src/editor/
+# Zero automated tests — an ImGui application whose behavior is mouse-driven
+# is genuinely hard to test, and the engine deliberately keeps the editor OUT
+# of the runtime (nothing else depends on it), so the blast radius of an
+# editor bug is the editor. That is the argument for leaving it here rather
+# than a claim it is solid: known-untested, contained on purpose.
+# Cheapest real coverage if wanted: headless construction of EditorApp +
+# panel state round-trips, which needs no window.
 ---
 # Editor
 

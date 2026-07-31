@@ -70,7 +70,7 @@ engine_doctor.py check`; you cannot claim a tier you have not earned.
 |----------|-------------------------------------|------------------------------------------------------------------------------------------------------|
 |`prototype`|it exists and runs                   |nothing                                                                                               |
 |`working` |correct on the paths we use          |≥1 real test listed in `tests:`                                                                       |
-|`hardened`|survives hostile input and time      |`working` \+ a fuzz/soak/stress test when `parses-external-input: true` \+ doc not stale              |
+|`hardened`|survives hostile input and time      |`working` \+ ≥1 fuzz/soak/stress test \+ specifically a FUZZ test when `parses-external-input: true` \+ doc not stale|
 |`production`|trustworthy on every platform we ship|`hardened` \+ exercised on all CI platforms + `perf-test:` naming the test that holds its performance claim|
 
 Two deliberate consequences:
@@ -137,9 +137,27 @@ be adopted incrementally. Once `unreviewed` reaches zero, flip CI to `
 
 ## 7\. Adoption state
 
-Bootstrapped 2026-07-31: 49 documents placed under contract, 4 subsystems
-classified with real evidence (`src/assets`, `modules/assetlib` at `hardened`; `
-src/core/memory`, `src/runtime/jobs` at `working`), 11 subsystems still `
-prototype`/`unreviewed`. That backlog is *visible on purpose* — the honest
-statement is "nobody has classified these yet", not a fabricated tier.
+Bootstrapped 2026-07-31: 49 documents under contract; **all 14 in-repo
+subsystems classified** against real test evidence — 4 `hardened`, 7 `working`,
+3 `prototype`. Live numbers are in `ENGINE_STATUS.md`; the remaining
+`unreviewed` docs are issue logs and plans, which make no tier claim.
+
+Git **submodules are excluded** from the contract: `modules/hid` is a genuine
+engine subsystem but a separate repo, and this tool must not gate or edit files
+another project owns. Classify it there.
+
+Three subsystems sit at `prototype` because the evidence says so, and each
+`info.md` records exactly what would raise it:
+
+- `src/render` — the pipeline has no test at all (no GPU harness); registries
+  are only exercised incidentally by asset tests.
+- `src/systems` — `AnimatorSystem` has no direct test; notably its
+  `>kMaxBones` guard is a silent-corruption path.
+- `src/editor` — zero automated tests, deliberately contained (nothing else
+  depends on it).
+
+And the most-tested subsystem in the tree is deliberately **not** `hardened`:
+`src/runtime` has 11 tests including a days-long soak, but its own parsers
+(`input.json`, cooked scenes) have never been fuzzed. Volume of tests is not
+adversarial coverage — that distinction is the entire value of the ladder.
 

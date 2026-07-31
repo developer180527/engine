@@ -1,8 +1,13 @@
 ---
-status: unreviewed
-tier: prototype
+status: as-built
+tier: working
+verified: 2026-07-31
 covers:
   - src/components/
+tests:
+  - tests/event_test.cpp
+  - tests/sim_purity_check.cpp
+  - tests/stress_churn.cpp
 ---
 # Components
 
@@ -34,7 +39,7 @@ No logic beyond trivial helpers — systems and plugins own behavior.
 
 ## Rules
 - Components must stay POD-ish and serializable: every field either round-
-  trips through the scene serializer (`src/io/entity_serializer.h`) or is
+  trips through the scene serializer (`src/scene/entity_serializer.h`) or is
   explicitly runtime-only (like `skinMatrices`).
 - New components need: serializer support, MetaRegistry schema (inspector +
   Lua FFI), and inspector UI if user-editable.

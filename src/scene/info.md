@@ -1,8 +1,12 @@
 ---
-status: unreviewed
-tier: prototype
+status: as-built
+tier: working
+verified: 2026-07-31
+parses-external-input: true
 covers:
   - src/scene/
+tests:
+  - tests/kit_lifecycle_test.cpp
 ---
 # Scene
 

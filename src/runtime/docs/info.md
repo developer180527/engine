@@ -1,8 +1,31 @@
 ---
-status: unreviewed
-tier: prototype
+status: as-built
+tier: working
+verified: 2026-07-31
+parses-external-input: true
 covers:
-  - src/runtime/docs/
+  - src/runtime/
+tests:
+  - tests/sim_world_test.cpp
+  - tests/asset_ready_test.cpp
+  - tests/async_loader_test.cpp
+  - tests/script_host_test.cpp
+  - tests/kit_lifecycle_test.cpp
+  - tests/residency_test.cpp
+  - tests/input_test.cpp
+  - tests/input_config_test.cpp
+  - tests/nav_test.cpp
+  - tests/sim_purity_check.cpp
+  - tests/soak_engine.cpp
+# NOT `hardened`, despite being the most-tested subsystem here (11 tests incl.
+# a days-long soak). Endurance evidence is overwhelming; HOSTILE-INPUT evidence
+# is not. The runtime parses input.json itself (hardened by inspection in audit
+# H.4, covered by input_config_test — but never fuzzed), and SceneService reads
+# cooked scene binaries whose byte-level parse lives in assetlib. Volume of
+# tests is not the same as adversarial coverage.
+# Blocker to `hardened`: a fuzz target for the scene deserializer (already the
+# next planned target in docs/automated-testing-soak-fuzz-plan.md) and/or
+# input.json. Raise the tier when one exists — not before.
 ---
 # Runtime Core
 

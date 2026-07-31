@@ -1,8 +1,14 @@
 ---
-status: unreviewed
-tier: prototype
+status: as-built
+tier: working
+verified: 2026-07-31
+parses-external-input: true
 covers:
   - src/animation/
+tests:
+  - tests/anim_pose_test.cpp
+  - tests/clip_binding_test.cpp
+  - tests/import_test.cpp
 ---
 # Animation
 

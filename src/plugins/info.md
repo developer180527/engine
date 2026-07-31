@@ -1,8 +1,12 @@
 ---
-status: unreviewed
-tier: prototype
+status: as-built
+tier: working
+verified: 2026-07-31
 covers:
   - src/plugins/
+tests:
+  - tests/providers_test.cpp
+  - tests/stress_physics.cpp
 ---
 # Plugins
 

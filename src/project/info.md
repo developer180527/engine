@@ -1,8 +1,13 @@
 ---
-status: unreviewed
-tier: prototype
+status: as-built
+tier: working
+verified: 2026-07-31
+parses-external-input: true
 covers:
   - src/project/
+tests:
+  - tests/providers_test.cpp
+  - tests/stress_physics.cpp
 ---
 # Project
 

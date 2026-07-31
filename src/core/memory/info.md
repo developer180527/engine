@@ -1,6 +1,6 @@
 ---
 status: as-built
-tier: working
+tier: hardened
 verified: 2026-07-31
 covers:
   - src/core/memory/
@@ -8,6 +8,7 @@ tests:
   - tests/mem_test.cpp
   - tests/arena_test.cpp
   - tests/stress_swarm.cpp
+  - tests/stress_churn.cpp
 ---
 # mem:: — the engine memory manager
 

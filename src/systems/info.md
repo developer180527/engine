@@ -1,8 +1,16 @@
 ---
-status: unreviewed
+status: as-built
 tier: prototype
+verified: 2026-07-31
 covers:
   - src/systems/
+# AnimatorSystem has NO direct test. The animation math beneath it is covered
+# (anim_pose_test, clip_binding_test) and the system is exercised indirectly
+# whenever the runtime ticks (soak_engine), but nothing asserts ITS behavior:
+# clip advance, looping/clamping, speed scale, the >kMaxBones guard, or the
+# bind-pose fallback. That guard in particular is a silent-corruption path.
+# A unit test driving AnimatorSystem over a fake skeleton would move this to
+# `working` cheaply — the smallest real coverage win on the board.
 ---
 # Systems
 
