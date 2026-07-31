@@ -1,17 +1,19 @@
 ---
 status: as-built
 tier: prototype
-verified: 2026-07-31
+verified: 2026-08-01
 covers:
   - src/render/
-# NO tier claim beyond prototype, deliberately. The GPU registries are
-# exercised indirectly (asset_ready_test, import_test, residency_test all
-# construct them) and sim_purity_check compile-enforces that the sim never
-# includes bgfx — but the PIPELINE itself (passes, draw submission, material
-# binding) has no test, because there is no GPU test harness. The backlog's
-# "live GPU swarm to measure the no-instancing draw-call cliff (headless
-# can't see it)" is exactly this gap. Do not raise this tier until a
-# rendering test exists that can fail.
+tests:
+  - tests/gpu_cache_test.cpp
+# STILL `prototype`, deliberately, even though a test now exists. gpu_cache_test
+# covers GpuResourceCache — a new component that is not yet wired into any
+# render path. The PIPELINE (extraction, culling, sorting, submission, material
+# binding) remains untested, and that is what this subsystem mostly is.
+# Promoting on the strength of a test for an unwired component would be gaming
+# the ladder. See docs/renderer-audit-and-plan.md: 9 ranked findings, 3
+# critical. Phase 2 (VRAM census, duplicate report, leak detector over a real
+# scene) is what will make a higher tier provable.
 ---
 # Render
 

@@ -1,7 +1,18 @@
 ---
-status: unreviewed
+status: target
+verified: 2026-08-01
+covers:
+  - src/render/
 ---
 # Renderer Architecture
+
+> **Superseded in part (2026-08-01).** The GOALS below still stand. The
+> migration plan does not: an audit found that the extraction/RenderWorld split
+> described here was never built — culling, sorting and light packing still
+> live inside `ForwardPipeline`, and `src/render/passes/` remains scaffold that
+> is not in the build. See **`docs/renderer-audit-and-plan.md`** for what the
+> renderer actually is today, the measured budgets, and the sequenced plan that
+> replaces this document's migration section.
 
 > **Status:** This documents the *target* architecture for the default engine
 > renderer and the path to it. Parts already exist (the pipeline seam, the

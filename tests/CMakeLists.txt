@@ -81,6 +81,9 @@ engine_test(jobs_test)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
 engine_test(animator_system_test)
+# GpuResourceCache is payload-agnostic, so its dedup/refcount/LRU/budget logic
+# tests with a fake handle and no GPU — src/render has no render harness yet.
+engine_test(gpu_cache_test)
 
 # ── Rust FFI seam ────────────────────────────────────────────────────────────
 # Only when the Rust module is actually built. Links engine_net directly rather

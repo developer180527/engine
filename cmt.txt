@@ -1,36 +1,37 @@
-render: RenderStatsChannel — GPU handle churn, VRAM and draw budget
+render: GpuResourceCache — identity, refcounts and a byte budget for GPU data
 
-Instruments' graphics track showed the editor making an unreasonable number of
-GPU allocations, but a platform profiler reports Metal objects, not which
-engine system created them. This reports the same truth from inside bgfx, per
-frame, on every backend.
+Phase 1 of docs/renderer-audit-and-plan.md. Audit finding R1: GPU resources
+have no identity, no refcount and no dedup — TextureRegistry::addTexture is a
+slot allocator, so two materials naming the same image get two copies in VRAM,
+and nothing can say when either is free.
 
-The diagnostic that matters is handle CHURN, not absolute counts: a steady
-scene should create and destroy nothing while the camera merely moves. Counts
-rising = leak; oscillating = per-frame create/destroy; flat = the traffic is
-transient buffers (ImGui, debug lines), which is by design. The channel
-reports the delta and a one-line verdict.
+Three consequences, all addressed:
+  - Duplicates are prevented STRUCTURALLY: resources are keyed by content, so
+    asking twice returns the same handle. Not a cleanup pass — a duplicate
+    cannot be created.
+  - Leaks become definable: "unused" means refs == 0, a fact rather than a
+    guess, so a detector can assert on it.
+  - The render tooling becomes a query over one table. The census, per-material
+    profile and duplicate report were impossible before not because nobody
+    wrote them, but because the data did not exist.
 
-Also the VRAM budget instrument. The target machine is an Intel UHD 630 with
-128 MB shared and 4 GB system RAM, so texture + render-target memory is a hard
-constraint and "graphics tuned down" needs to be measurable, not hoped for.
+C++, not Rust, applying the rule set in modules/net: Rust pays where untrusted
+data or complex ownership lives. This touches no untrusted bytes (keys are DDC
+hashes), and putting it in Rust would SPLIT ownership across the FFI boundary —
+Rust holding refcounts, C++ holding live bgfx handles — which is the exact bug
+class the cache exists to remove.
 
-First measurement, fps_shooter, 600 fixed frames via engine_host --frames:
-  draws avg 14.7 / max 19        (nowhere near a draw-call cliff)
-  VRAM  tex 76.0 MB  rt 71.0 MB  peak 147.1 MB
-  transient vb 0.2 KB/frame      (nothing)
-  CHURN 0/600 frames             -> STEADY
+Design: sits ON TOP of the existing registries (the factory does the real
+create + insert on a miss), so the six addTexture sites migrate one at a time
+and registry RAII is untouched. Payload-agnostic, so dedup/refcount/LRU/budget
+logic is unit-testable with a fake handle and no GPU — src/render has no render
+harness. refs == 0 means EVICTABLE, not dead: a cache, not a unique_ptr.
 
-So the RUNTIME renderer is clean — the Instruments finding is editor-specific
-(ImGui suspected, not yet measured). The resize path was checked first and is
-already guarded (>8px + 5 stable frames).
+gpu_cache_test, 33 assertions. Verified it can fail: deleting the refs==0
+filter in evictOverBudget reports "referenced resource survives eviction
+(freed 5000)". Restored byte-identical. Also fixed dedupSavedBytes(), which was
+documented but never incremented and would have reported 0 forever.
 
-Two real findings instead: 147 MB peak exceeds the 128 MB target budget with a
-three-mesh scene, and rt memory is 5x the naive 1280x720 figure (~14 MB
-expected, 71 MB reported) — unexplained, and the highest-value thing to chase.
-
-Lives in engine_host rather than the runtime: renderer.h and runtime.h are
-compiled against poison bgfx headers by sim_purity_check, and this channel
-needs bgfx. A tool has no such constraint.
-
-23/23 unit, 2/2 docs.
+src/render stays `prototype`: this component is tested but not yet wired into
+any render path, and the pipeline remains untested.
+24/24 unit, 2/2 docs.
