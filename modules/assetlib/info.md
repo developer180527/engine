@@ -1,3 +1,15 @@
+---
+status: as-built
+tier: hardened
+verified: 2026-07-31
+parses-external-input: true
+covers:
+  - modules/assetlib/
+tests:
+  - tests/cook_infra_test.cpp
+  - tests/fuzz_ddc_manifest_test.cpp
+  - tests/fuzz_mesh_loader_test.cpp
+---
 # assetlib
 
 ## Purpose

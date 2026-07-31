@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Automated Engine Testing Suite — Seeded Fuzzing, Soak Farm & Profiling
 
 > **STATUS (2026-07-29).** Partially built, and the rollout order at the bottom

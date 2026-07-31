@@ -1,3 +1,9 @@
+---
+status: unreviewed
+tier: prototype
+covers:
+  - src/animation/
+---
 # Animation
 
 ## Purpose

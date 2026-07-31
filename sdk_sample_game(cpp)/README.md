@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # SDK Sample Game
 
 A complete fly-around scene built only from the engine SDK — no editor, no

@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Animation Subsystem — Architecture & Build Plan
 
 ## 1. Design Principles

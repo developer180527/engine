@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Renderer Architecture
 
 > **Status:** This documents the *target* architecture for the default engine

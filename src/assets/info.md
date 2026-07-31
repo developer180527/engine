@@ -1,3 +1,17 @@
+---
+status: as-built
+tier: hardened
+verified: 2026-07-31
+parses-external-input: true
+covers:
+  - src/assets/
+tests:
+  - tests/cooker_test.cpp
+  - tests/cook_infra_test.cpp
+  - tests/import_test.cpp
+  - tests/residency_test.cpp
+  - tests/fuzz_mesh_loader_test.cpp
+---
 # Assets
 
 ## Purpose

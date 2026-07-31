@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Fuzz corpus — the regression gate
 
 One `.seeds` file per origin, one decimal seed per line (`#` comments allowed).

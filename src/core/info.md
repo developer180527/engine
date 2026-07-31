@@ -1,3 +1,9 @@
+---
+status: unreviewed
+tier: prototype
+covers:
+  - src/core/
+---
 # Core
 
 ## Purpose

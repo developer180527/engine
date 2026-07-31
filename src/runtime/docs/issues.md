@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Engine Runtime — Consolidated Issues Report
 
 This supersedes the standalone `docs/issues.md`, `docs/runtime-core-issues-report.md`, and the earlier input/hid report. Every issue below has been verified against actual source lines (not inferred from comments or documentation) as of this review. Grouped into **Architecture** (structural violations of the engine's own layering rules) and **Bugs** (severity-ranked, each with the precise mechanism, not just the symptom).

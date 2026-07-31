@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Infrastructure Backlog & Execution Plan
 
 *Last updated: July 2026. The single source of truth for deferred engine

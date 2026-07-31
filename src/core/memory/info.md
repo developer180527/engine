@@ -1,3 +1,14 @@
+---
+status: as-built
+tier: working
+verified: 2026-07-31
+covers:
+  - src/core/memory/
+tests:
+  - tests/mem_test.cpp
+  - tests/arena_test.cpp
+  - tests/stress_swarm.cpp
+---
 # mem:: — the engine memory manager
 
 Tagged heaps over a 2MB-block OS backend (mem.h has the full layer diagram).

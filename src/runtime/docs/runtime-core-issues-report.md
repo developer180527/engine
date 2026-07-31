@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Runtime Core — Issue Report
 
 Covers `runtime.cpp`/`runtime.h`, `event_sweeper.h`, `kit_host.h`, `module_loader.h`, `mem_channel.h`, `plugin_registry.h`, `plugin.h`, `runtime_context.h`, and `world_query_cache.h`. Findings are grouped by severity, each with what's wrong, why it matters, and how to test for it.

@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Game Engine Compiler Test Sheet (Mon Jul 6)
 
 A practical checklist for using your compiler and toolchain to catch bugs before they hit a build. Organized so you can work through it top to bottom, or use it as a CI setup reference.

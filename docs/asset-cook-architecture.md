@@ -1,3 +1,18 @@
+---
+status: as-built
+verified: 2026-07-31
+covers:
+  - modules/assetlib/src/cook_*.cpp
+  - modules/assetlib/src/ddc*.cpp
+  - modules/assetlib/src/task_graph.cpp
+  - src/assets/cookers/
+  - src/tools/engine_cook.cpp
+  - src/tools/engine_cook_worker.cpp
+tests:
+  - tests/cook_infra_test.cpp
+  - tests/cooker_test.cpp
+  - tests/fuzz_ddc_manifest_test.cpp
+---
 # Offline Asset Cook Architecture
 
 > **Status:** Sections 1–5 document the architecture **as built** — content-

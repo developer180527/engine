@@ -1,3 +1,12 @@
+---
+status: as-built
+tier: working
+verified: 2026-07-31
+covers:
+  - src/runtime/jobs/
+tests:
+  - tests/jobs_test.cpp
+---
 # engine::jobs — the engine-wide task scheduler
 
 One worker pool for the whole engine, spawned once at `EngineRuntime::init`

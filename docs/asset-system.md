@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Asset Management System
 
 **Last updated:** June 8, 2026 — Phase 1 + Phase 2 + Phase 3 complete

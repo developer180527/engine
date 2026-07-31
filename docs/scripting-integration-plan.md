@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # C# and C++ Scripting Integration Plan
 
 **Last updated:** June 8, 2026

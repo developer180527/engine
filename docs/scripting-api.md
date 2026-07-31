@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Scripting API Reference
 
 **Last updated:** June 8, 2026

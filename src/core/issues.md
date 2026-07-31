@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # technical gaps hidden across the core files:
 
 •	Recursive Transform Bottleneck: Both getWorldMatrix and getWorldMatrixLerp lack a transform cache, meaning they recursively walk the flecs ChildOf parent chain up to a depth of 256 every single time an entity's matrix is evaluated. This triggers redundant parent matrix lookups and heavy bx::mtxMul calls across rendering and editor operations.

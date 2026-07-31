@@ -1,3 +1,9 @@
+---
+status: unreviewed
+tier: prototype
+covers:
+  - src/runtime/docs/
+---
 # Runtime Core
 
 ## Purpose

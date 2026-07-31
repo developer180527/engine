@@ -171,3 +171,24 @@ engine_test(stress_physics   LABEL stress TIMEOUT 600)
 if(ENGINE_WITH_SOURCE_IMPORTERS)
     engine_test(stress_assets LABEL stress TIMEOUT 600)   # importer fuzz
 endif()
+
+# ── docs lane — the documentation/maturity contract ──────────────────────────
+# engine_doctor validates every doc's front-matter against the TREE: covers/
+# tests paths exist, tier claims have mechanical evidence, and `as-built` docs
+# whose code changed after their `verified:` date are flagged stale. Docs drift
+# silently otherwise — this makes drift a test failure instead of a discovery
+# months later. See docs/engineering-standards.md.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME docs_contract
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/scripts/engine_doctor.py check)
+    set_tests_properties(docs_contract PROPERTIES LABELS docs TIMEOUT 120)
+
+    # ENGINE_STATUS.md is generated; treat it like a formatter's output so it
+    # can never silently disagree with the tree.
+    add_test(NAME docs_status_current
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/scripts/engine_doctor.py status --check)
+    set_tests_properties(docs_status_current PROPERTIES LABELS docs TIMEOUT 120)
+endif()

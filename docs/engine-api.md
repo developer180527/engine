@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Engine SDK — C API Reference
 
 **Header:** `include/engine/engine_api.h` · **Last updated:** June 30, 2026

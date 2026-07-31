@@ -1,3 +1,6 @@
+---
+status: unreviewed
+---
 # Hot-reloadable game module
 
 C++ hot reload via the game-DLL pattern: your game compiles to a shared

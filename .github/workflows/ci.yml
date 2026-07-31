@@ -161,6 +161,15 @@ jobs:
         shell: bash
         run: ctest --test-dir build -L fuzz-regress --output-on-failure
 
+      # Documentation/maturity contract (docs/engineering-standards.md): doc
+      # front-matter must match the tree, tier claims must have evidence, and
+      # ENGINE_STATUS.md must be regenerated. Platform-independent, so it runs
+      # only on the gating leg — the other legs would just repeat it.
+      - name: Test (docs contract)
+        if: matrix.name == 'macOS (arm64, AppleClang)'
+        shell: bash
+        run: ctest --test-dir build -L docs --output-on-failure
+
       # The exploration lane is NOT run here: it uses fresh seeds, so it could
       # fail on a commit that did not cause the bug, which would make CI a coin
       # flip. It belongs on a schedule (nightly / self-hosted soak), where a
