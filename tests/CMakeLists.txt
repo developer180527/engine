@@ -78,6 +78,9 @@ engine_test(event_test)
 engine_test(input_test)
 engine_test(script_host_test)
 engine_test(jobs_test)
+# Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
+# no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
+engine_test(animator_system_test)
 engine_test(input_config_test)
 engine_test(asset_ready_test)
 engine_test(sim_world_test)

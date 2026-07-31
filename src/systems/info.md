@@ -1,16 +1,19 @@
 ---
 status: as-built
-tier: prototype
+tier: working
 verified: 2026-07-31
 covers:
   - src/systems/
-# AnimatorSystem has NO direct test. The animation math beneath it is covered
-# (anim_pose_test, clip_binding_test) and the system is exercised indirectly
-# whenever the runtime ticks (soak_engine), but nothing asserts ITS behavior:
-# clip advance, looping/clamping, speed scale, the >kMaxBones guard, or the
-# bind-pose fallback. That guard in particular is a silent-corruption path.
-# A unit test driving AnimatorSystem over a fake skeleton would move this to
-# `working` cheaply — the smallest real coverage win on the board.
+tests:
+  - tests/animator_system_test.cpp
+# Raised prototype -> working 2026-07-31: animator_system_test now asserts
+# AnimatorSystem's OWN behavior (time advance + speed, looping wrap incl. the
+# negative case, clamp-and-auto-stop both directions, bind-pose fallback,
+# cleared flag on a missing skeleton) and — the reason it was written — the
+# >kMaxBones guard. Deleting that guard does not merely fail an assertion:
+# the 129-bone bind-pose path overruns `float worldMatrices[128*16]` and the
+# stack protector aborts the process (SIGABRT, exit 134). Verified by
+# deliberate removal.
 ---
 # Systems
 

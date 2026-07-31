@@ -1,38 +1,32 @@
-docs: classify every in-repo subsystem against real test evidence
+test: AnimatorSystem behavior — incl. the kMaxBones stack-smash guard
 
-Completes the contract adoption: all 14 in-repo subsystems now declare a tier
-backed by tests that actually exercise them — 4 hardened, 7 working, 3
-prototype. Evidence was derived by mapping each test's includes to the
-subsystem it touches, not by assumption.
+The animation MATH was covered (anim_pose_test, clip_binding_test) but the
+ECS system driving it had no test at all. Closes the gap ENGINE_STATUS.md
+flagged as the cheapest real coverage win.
 
-The pass found four things worth more than the labels:
+The reason this file exists is the `boneCount > kMaxBones` guard, which is a
+silent-corruption path: computeBindPosePalette declares
+`float worldMatrices[kMaxBones * 16]` on the stack and SkinnedMesh carries a
+fixed skinMatrices[128 * 16]. A 129-bone skeleton slipping past the check
+smashes both, with no error reported. So the asserted contract is not "it
+returns false" — it is "an oversized skeleton NEVER writes a palette", on
+BOTH routes into the writer (clip sampling and the no-clip bind-pose path).
 
-- src/runtime is deliberately NOT hardened. It is the most-tested subsystem
-  here (11 tests incl. a days-long soak), but its own parsers — input.json,
-  cooked scenes — have never been fuzzed. Volume of tests is not adversarial
-  coverage. Recorded at `working` with the blocker named: a scene-deserializer
-  fuzz target, already next in the testing plan.
-- An over-claim caught by checking: fuzz_mesh_loader_test targets
-  assetlib::loadMesh, not runtime code, so citing it as runtime evidence would
-  have bought a fake `hardened`. Removed.
-- Real drift: src/components/info.md pointed at src/io/entity_serializer.h,
-  which lives at src/scene/. Fixed.
-- modules/hid is a git SUBMODULE — bootstrap had written front-matter into
-  another repo. Reverted; the doctor now skips submodules by design, because
-  this tool must not gate or edit files another project owns. hid gets
-  classified in its own repo.
+Proven to fail: deleting the two guards aborts the process via the stack
+protector (SIGABRT, exit 134) after the first assertion. Restored
+byte-identical afterwards.
 
-Tool corrections the work forced:
-- `hardened` now requires ≥1 fuzz/soak/stress test ALWAYS (a pure-logic
-  subsystem could previously claim it on one unit test), and specifically a
-  FUZZ test when parses-external-input. Verified by deliberate violation.
-- Subsystem names come from `covers:` when present, so src/runtime is no
-  longer reported as src/runtime/docs.
-- Front-matter parser strips YAML trailing comments (` # ...`).
+Also covered: the 128-bone boundary (the guard is `>`, not `>=` — an
+off-by-one would silently kill skinning on max-size rigs), bind-pose fallback
+with no clip, cleared palette flag on a missing skeleton (not left stale),
+time += dt*speed, paused animators frozen, looping fmod wrap, non-looping
+clamp-and-auto-stop, and both reverse-playback paths — reverse loop matters
+because fmod(-0.2, 1.0) is negative in C, so the duration must be added back
+or ozz gets a negative ratio and the pose silently stops updating.
 
-render/systems/editor stay prototype because the evidence says so; each
-info.md records exactly what would raise it. The cheapest real coverage win
-on the board is a unit test driving AnimatorSystem — its >kMaxBones guard is
-a silent-corruption path with nothing asserting it.
+Hermetic: skeletons and clips are built straight through ozz's offline
+builders, so no Assimp, no asset files, no GPU — it belongs in the `unit`
+lane and gates CI, unlike anim_pose_test/clip_binding_test.
 
-21/21 unit, 2/2 fuzz-regress, 2/2 docs, 0 contract errors.
+src/systems raised prototype -> working (evidence recorded in its info.md).
+22/22 unit, 2/2 fuzz-regress, 2/2 docs.
