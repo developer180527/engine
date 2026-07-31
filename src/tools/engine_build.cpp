@@ -23,6 +23,15 @@
 #include <fstream>
 #include <set>
 #include <string>
+#include <thread>
+#include <algorithm>
+#include <cstdint>
+#if defined(__APPLE__)
+  #include <sys/sysctl.h>
+#elif defined(__linux__)
+  #include <unistd.h>
+#endif
+
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -39,6 +48,64 @@ static int run(const std::string& cmd) {
     return std::system(cmd.c_str());
 }
 static std::string q(const fs::path& p) { return "\"" + p.string() + "\""; }
+
+// ── Bounded build parallelism ────────────────────────────────────────────────
+// A BARE `-j` (what this used to pass) means UNLIMITED jobs to make: one
+// compiler process per ready target, all at once. Packaging configures a fresh
+// ship tree, so `--target engine_player` compiles the whole engine — Assimp,
+// bgfx, Jolt, ozz, hundreds of translation units. At roughly 0.5–2 GB per heavy
+// C++ TU that exhausted 24 GB of RAM and froze the machine outright.
+//
+// Same policy the cooker already follows (docs/asset-cook-architecture.md §4.3,
+// "an offline chore is a background chore"): leave the OS and the developer's
+// editor a couple of cores, and stay explicit about it. Packaging had simply
+// never been held to the rule the cook was.
+//
+// ENGINE_BUILD_JOBS overrides for a build farm, where saturating the box IS
+// the goal.
+// Bounded by cores AND by RAM. Cores alone is not enough: a compiler process
+// on a heavy templated TU peaks well past a gigabyte, so the limit that
+// actually matters is memory. ~2 GB per job is deliberately pessimistic —
+// this is the mirror of the cooker's memory-budget admission, and for the same
+// reason (an estimate that is too low costs time; too high costs the machine).
+//
+// The formula must also be right on the low end: a 4-core / 4 GB box gets 2
+// jobs, not 2 because of cores but because of RAM.
+static std::string jobFlag() {
+    unsigned byCores = std::thread::hardware_concurrency();
+    if (byCores == 0) byCores = 2;
+    byCores = (byCores > 2) ? byCores - 2 : 1;      // leave the OS + editor room
+
+    unsigned byMem = byCores;
+#if defined(__APPLE__) || defined(__linux__)
+    uint64_t ramBytes = 0;
+  #if defined(__APPLE__)
+    size_t len = sizeof(ramBytes);
+    if (sysctlbyname("hw.memsize", &ramBytes, &len, nullptr, 0) != 0) ramBytes = 0;
+  #else
+    const long pages = sysconf(_SC_PHYS_PAGES), psz = sysconf(_SC_PAGE_SIZE);
+    if (pages > 0 && psz > 0) ramBytes = (uint64_t)pages * (uint64_t)psz;
+  #endif
+    if (ramBytes) {
+        // 60% of RAM, not all of it — the same fraction the cooker's
+        // COOK_MEM_BUDGET_MB defaults to, and for the same reason: the OS, the
+        // editor and a browser are still running. Budgeting 100% of physical
+        // memory is how a "safe" limit still swaps the machine to death.
+        const uint64_t usable = ramBytes * 3 / 5;
+        const uint64_t perJob = 2ull * 1024 * 1024 * 1024;   // 2 GB per compile
+        byMem = (unsigned)std::max<uint64_t>(1, usable / perJob);
+    }
+#endif
+
+    unsigned n = std::min(byCores, byMem);
+    if (const char* env = std::getenv("ENGINE_BUILD_JOBS")) {
+        const long v = std::strtol(env, nullptr, 10);
+        if (v > 0) n = (unsigned)v;   // build farms: saturating the box IS the goal
+    }
+    std::printf("[engine_build] build parallelism: -j %u "
+                "(cores allow %u, RAM allows %u)\n", n, byCores, byMem);
+    return " -j " + std::to_string(n);
+}
 
 // Runtime-consumed asset formats — the WHITELIST. Everything else in
 // assets/ is authoring-side input (source meshes, source textures for
@@ -122,7 +189,7 @@ int main(int argc, char** argv) {
     if (run("cmake -S " + q(engineRoot) + " -B " + q(shipTree) +
             " -DENGINE_WITH_SOURCE_IMPORTERS=OFF -DCMAKE_BUILD_TYPE=Release") != 0)
         return 1;
-    if (run("cmake --build " + q(shipTree) + " --target engine_player -j") != 0)
+    if (run("cmake --build " + q(shipTree) + " --target engine_player" + jobFlag()) != 0)
         return 1;
 
     // ── 3. Kits + game module, rebuilt Release ────────────────────────────
@@ -159,7 +226,7 @@ int main(int argc, char** argv) {
         if (run("cmake -S " + q(srcDir) + " -B " + q(kitBuild) +
                 " -DCMAKE_BUILD_TYPE=Release -DENGINE_ROOT=" + q(engineRoot)) != 0)
             return 1;
-        if (run("cmake --build " + q(kitBuild) + " -j") != 0) return 1;
+        if (run("cmake --build " + q(kitBuild) + jobFlag()) != 0) return 1;
 
         const fs::path shipped = dist / "kits" / module.filename();
         if (!fs::copy_file(kitBuild / module.filename(), shipped,

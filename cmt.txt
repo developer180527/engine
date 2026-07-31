@@ -1,25 +1,26 @@
-assets: fix silently untextured shipped builds; sibling .ctex never resolved
+build: engine_build passed a bare -j — unlimited compilers, 24 GB, frozen machine
 
-A cooked mesh's embedded textures are extra outputs written BESIDE the cooked
-file, with the material storing only a basename — src/assets/info.md states the
-rule: "the loader resolves that against the cooked file's own directory". Both
-resolveTexture (sync) and resolveTextureGPU (worker) ignored it and resolved
-exclusively through AssetRegistry::findBySourcePath. Siblings are not registry
-assets, so that lookup could never succeed.
+`cmake --build <ship-tree> --target engine_player -j` with no number means
+UNLIMITED jobs to make. Packaging configures a fresh ship tree, so that target
+compiles the whole engine (~1300 TUs: Assimp, bgfx, Jolt, ozz) and make
+launched a compiler per ready target simultaneously. At ~0.5-2 GB per heavy C++
+TU it exhausted 24 GB of RAM and froze the machine's UI outright. Both call
+sites (player, and each kit) had it.
 
-The failure was silent and looked like a success: every material resolved to no
-texture, the game rendered untextured, and the resulting "textures 0.0 MB" was
-reported (by me) as a BC-compression win rather than a bug. Only counting live
-handles — 6, exactly the built-ins — exposed it.
+The cooker was given thermal citizenship precisely because this machine melted
+once already — cores-2, memory-budget admission, background QoS. Packaging was
+never held to the same rule.
 
-Both paths now try the direct sibling file first and fall back to the registry
-for genuine source-asset references. The sync path routes through
-loadTextureFromCooked, which is cache-backed, so materials naming the same
-sibling share one upload.
+jobFlag() now bounds by cores AND RAM, because cores alone would not have
+helped here: memory was the binding constraint. Budgets 60% of physical RAM at
+~2 GB per compile — the same fraction COOK_MEM_BUDGET_MB defaults to, and for
+the same reason (the OS and editor are still running; budgeting 100% of RAM is
+how a "safe" limit still swaps a machine to death).
 
-Measured, shipped fps_shooter: textures 6 -> 11 live, 0.0 -> 40.7 MB. The
-pistol's 4 material references produced 2 uploads, confirming the per-mesh
-staging dedup works. Budget at low tier: 63.7 MB total (over on render
-targets), and 51.7 MB — PASS — with shadowResolution 1024.
+  this Mac  (12c/24GB): -j 7   (cores allow 10, RAM allows 7)
+  potato PC ( 4c/ 4GB): -j 1   (cores allow  2, RAM allows 1)
 
-25/25 unit, 2/2 fuzz-regress.
+ENGINE_BUILD_JOBS overrides for build farms. The chosen value is printed every
+run so the decision is never invisible again.
+
+25/25 unit.
