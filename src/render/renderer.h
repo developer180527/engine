@@ -36,6 +36,16 @@ public:
     void resize(int w, int h);          // bgfx::reset
     void createSceneFB(int w, int h);   // (re)create the offscreen scene framebuffer
 
+    // Shadow-map edge length, from project.json's graphics.shadowResolution.
+    // The default pipeline's shadow map is the single largest GPU allocation
+    // in the engine (size² × 4 B), so this is the main graphics-quality knob:
+    // 1024 = 4 MB, 2048 = 16 MB, 4096 = 64 MB.
+    //
+    // Safe to call before OR after init(): a change after the pipeline is
+    // attached re-attaches it, because the shadow map is created at attach
+    // time and never resized. That happens on project open, not per frame.
+    void setShadowResolution(uint32_t px);
+
     // Frame flip + device caps — the runtime orchestrates THROUGH these so
     // runtime*.cpp never touches bgfx directly (the Renderer owns the whole
     // GPU device lifecycle; audit A.1).
@@ -85,6 +95,7 @@ private:
 
     std::unique_ptr<IRenderPipeline>                  m_pipeline;
     bool                                              m_initialized = false;
+    uint32_t                                          m_shadowResolution = 2048;
     flecs::query<const Transform, const MeshRenderer> m_itemQuery;   // editor world
     flecs::query<const Transform, const Light>        m_lightQuery;  // editor world
     WorldQueryCache<const Transform, const MeshRenderer> m_gameItemQuery;  // sim world

@@ -99,6 +99,16 @@ class ForwardPipeline final : public IRenderPipeline {
 public:
     const char* name() const override { return "Forward PBR"; }
 
+    // Must be called BEFORE onAttach() — the shadow map is created there and
+    // is not resized afterwards. Values are validated at the project layer
+    // (clamped, rounded to a power of two); this only guards against a caller
+    // that bypasses it.
+    void setShadowResolution(uint32_t px) {
+        if (px < 256)  px = 256;
+        if (px > 8192) px = 8192;
+        SHADOW_SIZE = (uint16_t)px;
+    }
+
     void onAttach(RenderContext&) override {
         m_program = bgfx::createProgram(
             bgfx::createShader(bgfx::makeRef(VS_TRIANGLE_DATA, VS_TRIANGLE_SIZE)),
@@ -132,6 +142,11 @@ public:
             | BGFX_SAMPLER_U_CLAMP   | BGFX_SAMPLER_V_CLAMP;
         m_shadowMap = bgfx::createTexture2D(SHADOW_SIZE, SHADOW_SIZE, false, 1,
                                             bgfx::TextureFormat::D32F, smFlags);
+        // Report the cost. This one allocation dominates GPU memory on a
+        // low-end machine, so it should never be a silent decision.
+        std::printf("[Renderer] Shadow map %ux%u D32F = %.1f MB\n",
+                    SHADOW_SIZE, SHADOW_SIZE,
+                    (double)SHADOW_SIZE * SHADOW_SIZE * 4.0 / (1024.0 * 1024.0));
         m_shadowFB  = bgfx::createFrameBuffer(1, &m_shadowMap, false);
         m_sShadowMap    = bgfx::createUniform("s_shadowMap",    bgfx::UniformType::Sampler);
         m_uShadowMtx    = bgfx::createUniform("u_shadowMtx",    bgfx::UniformType::Mat4);
@@ -422,7 +437,13 @@ private:
     bgfx::UniformHandle m_sNormalMap   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uLights      = BGFX_INVALID_HANDLE;
     std::vector<uint32_t> m_visible;
-    static constexpr uint16_t SHADOW_SIZE         = 4096;
+    // Shadow-map edge length. NOT a constant any more: it is the single
+    // biggest VRAM lever in the engine (cost is size² × 4 bytes for D32F), and
+    // the right value depends on the machine the GAME ships to. Set from
+    // project.json's "graphics.shadowResolution" via setShadowResolution()
+    // BEFORE init(). The old hardcoded 4096 cost 64 MB — by itself 90% of a
+    // shipped game's GPU footprint, more than every mesh and texture combined.
+    uint16_t SHADOW_SIZE = 2048;   // 16 MB; see ProjectContext::Graphics
     static constexpr float    SHADOW_ORTHO_RADIUS = 22.0f;  // half-width of the light box (world units) — tighten to fit the scene
     static constexpr float    SHADOW_EYE_DIST     = 60.0f;  // light-camera distance from the box center
     static constexpr float    SHADOW_NEAR         = 20.0f;  // tightened depth range -> better precision -> less acne

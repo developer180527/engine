@@ -1,36 +1,30 @@
-render+cook: measure the SHIPPED path; fix two bugs that hid it
+render: shadow resolution is a project quality setting (71 MB -> 23 MB)
 
-Measured engine_player (cooked/BC) against engine_host (source importer/raw
-RGBA8), 400 fixed frames each:
-                    textures   render targets   peak
-  DEV  engine_host    76.0 MB      71.0 MB     147.1 MB
-  SHIP engine_player   0.0 MB      71.0 MB      71.1 MB
+SHADOW_SIZE was hardcoded at 4096. That one constant allocated a 4096x4096
+D32F depth texture = 64 MB, which measured as 90% of a shipped game's entire
+71 MB GPU footprint — more than every mesh and texture in the scene combined,
+and instantly fatal on an integrated GPU with ~128 MB.
 
-The shipped game already fits the 128 MB target machine. Its texture cost is
-effectively nil — BC + mips through AssetService — and its whole footprint is
-render targets, which measured 71 MB even in a run where NO meshes loaded.
-That is fixed overhead, ~57 MB above the naive 1280x720 figure, and is now the
-#1 renderer item (audit R6). Draw calls 12.9, zero handle churn.
+Now project.json data, alongside the providers block:
+    "graphics": { "shadowResolution": 2048 }
 
-engine_player gains --frames N and --gpu-stats. A shipped player needs them
-because the numbers that matter are measured ON the target machine; they are
-opt-in and leave the default shipping posture unchanged.
+Default 2048 (16 MB): sharp enough for a normal scene and 4x cheaper than what
+shipped. Measured on fps_shooter, shipped path:
+    1024 ->  4 MB shadow -> 11.1 MB total VRAM
+    2048 -> 16 MB shadow -> 23.1 MB total   (new default, was 71.1)
+    4096 -> 64 MB shadow -> 71.1 MB total   (previous behaviour)
 
-Two bugs, both introduced by me, both silent:
+Validated at the project layer, because the cost is quadratic and the failure
+is not a crash but a machine quietly running out of VRAM: clamped to
+[256, 8192] and rounded DOWN to a power of two (2000 -> 1024; GPUs want POT
+depth targets and a typo must not become a driver rejection). Verified all
+four paths, including 99999 -> 8192.
 
-1. Scenes could no longer be cooked by the CLI AT ALL. fileSettled()'s
-   stability map is per-process, so a fresh engine_cook always defers a scene
-   on its only pass; scene deferrals were not counted in `deferred`, so
-   cookOnce() concluded "up to date" and exited printing "0 cooked". Fixed by
-   reporting scene deferrals and assigning m_stats.deferred AFTER the scene
-   scan — the previous assignment ran before it and only knew about assets.
+Renderer::setShadowResolution works before or after init: a change once the
+pipeline is attached re-attaches it, since the shadow map is created at attach
+time and never resized. That is project-open, not per-frame.
 
-2. SceneCooker trusted a stale "cookedPath" cached in the scene JSON,
-   consulting the asset DB only when that field was empty. A UUID from a dead
-   registry generation was copied through verbatim, producing a scene that
-   cooked successfully and loaded NOTHING (every mesh "Cannot stat"). This hits
-   any teammate who clones, anyone whose registry.db regenerates, and every
-   fresh CI machine. The DB now wins; stale refs are healed and logged.
-   Verified: 3/3 refs healed, 0 load failures.
+The size is printed at creation ("Shadow map 2048x2048 D32F = 16.0 MB") — the
+engine's largest single allocation should never be a silent decision.
 
-24/24 unit, 2/2 fuzz-regress, 2/2 docs.
+24/24 unit, 2/2 fuzz-regress, 0 doc contract errors.

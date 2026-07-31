@@ -42,6 +42,23 @@ struct ProjectContext {
         std::string audio     = "miniaudio";
     };
 
+    // Graphics quality — project data, because the right answer depends on the
+    // machine the GAME ships to, not on the machine it was built on.
+    //
+    // shadowResolution is the single biggest VRAM lever in the engine. The
+    // shadow map is one square depth texture, so cost is resolution² × 4 bytes:
+    //     1024 →   4 MB      2048 →  16 MB
+    //     4096 →  64 MB      8192 → 256 MB
+    // It was hardcoded at 4096, which by itself was 90% of a shipped game's
+    // 71 MB GPU footprint — more than every mesh and texture combined, and
+    // instantly fatal on an integrated GPU with a ~128 MB budget.
+    struct Graphics {
+        // 2048 (16 MB) is a deliberate default: sharp enough for a normal
+        // scene, ~4x cheaper than what shipped before. Drop to 1024 for
+        // low-spec targets; raise only with a measurement to justify it.
+        uint32_t shadowResolution = 2048;
+    };
+
     std::filesystem::path projectRoot;   // folder containing project.json
     std::filesystem::path assetsRoot;    // projectRoot/assets by default
     std::string           name          = "Untitled Project";
@@ -49,6 +66,7 @@ struct ProjectContext {
     int                   version       = 1;
     std::vector<Kit>      kits;          // plugged-in gameplay kits (see Kit)
     Providers             providers;     // engine service selection (see above)
+    Graphics              graphics;      // quality knobs (see above)
 
     bool valid() const {
         return !assetsRoot.empty()
@@ -92,6 +110,7 @@ struct ProjectContext {
         j["providers"] = {{"physics",   providers.physics},
                           {"scripting", providers.scripting},
                           {"audio",     providers.audio}};
+        j["graphics"]  = {{"shadowResolution", graphics.shadowResolution}};
 
         std::ofstream f(projectRoot / "project.json");
         f << j.dump(2);
@@ -117,6 +136,21 @@ struct ProjectContext {
                     ctx.providers.physics   = p->value("physics",   ctx.providers.physics);
                     ctx.providers.scripting = p->value("scripting", ctx.providers.scripting);
                     ctx.providers.audio     = p->value("audio",     ctx.providers.audio);
+                }
+                if (auto g = j.find("graphics"); g != j.end() && g->is_object()) {
+                    // VALIDATED, because the cost is quadratic and the failure
+                    // is not a crash but a machine that quietly runs out of
+                    // VRAM: a stray 16384 here would ask for 1 GB of shadow
+                    // map. Clamped to a sane range and rounded DOWN to a power
+                    // of two (GPUs want POT depth targets; a typo like 2000
+                    // becomes 1024, never something the driver rejects).
+                    uint32_t r = g->value("shadowResolution",
+                                          ctx.graphics.shadowResolution);
+                    if (r < 256)  r = 256;
+                    if (r > 8192) r = 8192;
+                    uint32_t pot = 256;
+                    while (pot * 2 <= r) pot *= 2;
+                    ctx.graphics.shadowResolution = pot;
                 }
                 if (auto it = j.find("kits"); it != j.end() && it->is_array()) {
                     for (const auto& jk : *it) {

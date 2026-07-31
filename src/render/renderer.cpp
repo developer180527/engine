@@ -99,12 +99,33 @@ bool Renderer::init(void* nwh, int width, int height,
     m_itemQuery  = editorWorld.query_builder<const Transform, const MeshRenderer>().build();
     m_lightQuery = editorWorld.query_builder<const Transform, const Light>().build();
 
-    if (!m_pipeline) m_pipeline = std::make_unique<ForwardPipeline>();
+    if (!m_pipeline) {
+        auto fp = std::make_unique<ForwardPipeline>();
+        fp->setShadowResolution(m_shadowResolution);   // before onAttach
+        m_pipeline = std::move(fp);
+    }
     RenderContext rc = makeContext();
     m_pipeline->onAttach(rc);
 
     m_initialized = true;
     return true;
+}
+
+void Renderer::setShadowResolution(uint32_t px) {
+    if (px == m_shadowResolution) return;
+    m_shadowResolution = px;
+    if (!m_initialized) return;          // picked up by init()
+
+    // The shadow map is created at attach time and never resized, so applying
+    // a new size means re-attaching. Only a custom pipeline that is not the
+    // default forward one is left alone — it owns its own targets and this
+    // setting says nothing about them.
+    if (auto* fp = dynamic_cast<ForwardPipeline*>(m_pipeline.get())) {
+        fp->onDetach();
+        fp->setShadowResolution(px);
+        RenderContext rc = makeContext();
+        fp->onAttach(rc);
+    }
 }
 
 void Renderer::setPipeline(std::unique_ptr<IRenderPipeline> pipeline) {

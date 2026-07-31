@@ -122,6 +122,10 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
         return true;
     }
     void* nwh = m_platform->nativeWindowHandle();
+    // Graphics quality from project data, applied BEFORE init so the shadow
+    // map is created at the right size the first time (a later openProject
+    // re-applies it). This is the engine's largest single GPU allocation.
+    m_renderer.setShadowResolution(m_project.graphics.shadowResolution);
     return m_renderer.init(nwh, cfg.width, cfg.height,
                            m_ecs, m_assets, m_textures, m_materials,
                            m_skeletons);
