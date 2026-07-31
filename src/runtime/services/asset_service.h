@@ -1,6 +1,9 @@
 #pragma once
 
 #include "core/handle.h"
+// Header-only and deliberately bgfx-free, so including it here does not drag
+// the graphics API into every consumer of AssetService.
+#include "render/gpu_resource_cache.h"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -155,6 +158,14 @@ private:
     std::filesystem::path     m_projectRoot;
     std::filesystem::path     m_cacheRoot;    // m_projectRoot / ".cache"
     uint64_t                  m_residencyBudget = 0;   // bytes; 0 = unbounded
+
+    // Texture identity + refcounts (renderer audit R1). Before this, every
+    // load of the same cooked texture uploaded ANOTHER copy to the GPU —
+    // loadTextureFromCooked had no dedup whatsoever, and two materials naming
+    // the same image paid for it twice. Keyed by cooked path; the cache owns
+    // the mapping, TextureRegistry still owns the resource.
+    // See docs/renderer-audit-and-plan.md Phase 1.
+    gpucache::GpuResourceCache<TextureHandle> m_texCache;
 
     // Sync helpers
     TextureHandle loadTextureFromCooked(const std::filesystem::path& absPath);

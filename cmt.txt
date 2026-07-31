@@ -1,37 +1,41 @@
-render: GpuResourceCache — identity, refcounts and a byte budget for GPU data
+render+cook: GpuResourceCache wiring, and 32 MB of cook-time texture duplication
 
-Phase 1 of docs/renderer-audit-and-plan.md. Audit finding R1: GPU resources
-have no identity, no refcount and no dedup — TextureRegistry::addTexture is a
-slot allocator, so two materials naming the same image get two copies in VRAM,
-and nothing can say when either is free.
+Two halves, one of which did not do what was expected — recorded because the
+negative result is what found the real bug.
 
-Three consequences, all addressed:
-  - Duplicates are prevented STRUCTURALLY: resources are keyed by content, so
-    asking twice returns the same handle. Not a cleanup pass — a duplicate
-    cannot be created.
-  - Leaks become definable: "unused" means refs == 0, a fact rather than a
-    guess, so a detector can assert on it.
-  - The render tooling becomes a query over one table. The census, per-material
-    profile and duplicate report were impossible before not because nobody
-    wrote them, but because the data did not exist.
+WIRING: loadTextureFromCooked now goes through GpuResourceCache, keyed by
+normalised cooked path, with the whole load as the factory so a hit skips the
+file read as well as the upload. Previously that path had NO dedup at all.
+Measured effect on fps_shooter: none — the scene loads textures through
+resolveTextureGPU on the async worker, not this path.
 
-C++, not Rust, applying the rule set in modules/net: Rust pays where untrusted
-data or complex ownership lives. This touches no untrusted bytes (keys are DDC
-hashes), and putting it in Rust would SPLIT ownership across the FFI boundary —
-Rust holding refcounts, C++ holding live bgfx handles — which is the exact bug
-class the cache exists to remove.
+The async sites are deliberately NOT wired. bgfx memory from copy() is freed
+only when a create call consumes it, and at those sites the worker has already
+allocated; a cache hit would leave it unconsumed. That is a leak, introduced
+while building leak infrastructure. The fix belongs earlier — the worker should
+stage each .ctex once per mesh — and is scoped as follow-up.
 
-Design: sits ON TOP of the existing registries (the factory does the real
-create + insert on a miss), so the six addTexture sites migrate one at a time
-and registry RAII is untouched. Payload-agnostic, so dedup/refcount/LRU/budget
-logic is unit-testable with a fake handle and no GPU — src/render has no render
-harness. refs == 0 means EVICTABLE, not dead: a cache, not a unique_ptr.
+THE ACTUAL DUPLICATION was at cook time. The pistol's four sibling .ctex files
+were two byte-identical pairs (t0==t2 at 10.7 MB, t1==t3 at 21.3 MB): its glTF
+has several materials naming the same images, and the cooker re-encoded and
+re-wrote each into its own slot. 32 MB duplicated on disk, in the DDC and in
+VRAM, for a three-mesh scene against a 128 MB target.
 
-gpu_cache_test, 33 assertions. Verified it can fail: deleting the refs==0
-filter in evictOverBudget reports "referenced resource survives eviction
-(freed 5000)". Restored byte-identical. Also fixed dedupSavedBytes(), which was
-documented but never incremented and would have reported 0 forever.
+Note the runtime cache could never fix this: the duplicates had DIFFERENT
+filenames, so path identity cannot see them. MeshCooker now keys siblings by
+content (BLAKE3 over encoded payload + the header fields that change
+interpretation) and reuses the earlier file. Dedup state is thread_local and
+cleared per cook() — sibling names carry the mesh's uuid stem, so a stale entry
+would hand out another mesh's file, and the in-process fallback reuses threads.
 
-src/render stays `prototype`: this component is tested but not yet wired into
-any render path, and the pipeline remains untested.
-24/24 unit, 2/2 docs.
+MeshCooker kVersion 12 -> 13.
+
+Measured: pistol siblings 4 -> 2 files, 64 MB -> 32 MB, zero duplicate content
+hashes remaining. VRAM is still 76 MB because the cooked mesh now holds 4
+material references to 2 files and the async path uploads each separately —
+but they are now PATH-identical, which is what makes runtime dedup tractable.
+
+Also noted, not fixed: .cache has no GC, so the version bump left orphaned
+siblings behind and total cache size grew to 113 MB.
+
+24/24 unit, 2/2 fuzz-regress, 2/2 docs.

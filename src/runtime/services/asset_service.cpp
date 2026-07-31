@@ -152,6 +152,12 @@ AssetService::AssetService(Config cfg)
     , m_projectRoot(cfg.projectRoot)
     , m_cacheRoot(cfg.projectRoot.empty() ? std::filesystem::path{}
                                           : cfg.projectRoot / ".cache")
+    // Eviction hands the resource back to the registry, whose RAII destroys
+    // the bgfx texture. The cache never calls bgfx itself — that is what keeps
+    // it testable without a GPU. No budget yet: eviction needs the reference
+    // counts to be complete first (only the sync path is wired), and evicting
+    // against partial refcounts would drop textures that are still in use.
+    , m_texCache([this](const TextureHandle& h) { m_textures.removeTexture(h); })
 {}
 
 AssetService::~AssetService() {
@@ -358,31 +364,55 @@ size_t AssetService::materialCount() const { return m_materials.materialCount();
 
 TextureHandle AssetService::loadTextureFromCooked(
         const std::filesystem::path& absPath) {
-    assetlib::TextureAsset texAsset;
-    if (!assetlib::loadTexture(texAsset, absPath)) {
-        LOG_ERROR("AssetService", "Failed to load cooked texture: %s",
-                  absPath.string().c_str());
-        return {};
-    }
+    // Keyed by the cooked path, normalised so "a/./b.ctex" and "a/b.ctex" are
+    // one resource. The ENTIRE load is the factory, so a cache hit skips the
+    // file read as well as the upload — the previous code re-read and
+    // re-uploaded the same texture for every material that referenced it.
+    //
+    // Path, not content hash: the hash the DDC computes at cook time is not
+    // carried in the .ctex header (which is full at 32 bytes), so two
+    // byte-identical textures at different paths still upload twice. That is a
+    // format change, tracked as a follow-up; path identity already removes the
+    // duplicates that actually occur.
+    const std::string key = absPath.lexically_normal().generic_string();
 
-    // Format-aware: BC7/BC5 blocks + mips upload as-is (render/cooked_texture.h).
-    bgfx::TextureHandle th = createCookedTexture(texAsset);
+    TextureHandle out{};
+    const bool ok = m_texCache.acquire(
+        key, absPath.filename().string(),
+        [&](TextureHandle& created, size_t& bytes) {
+            assetlib::TextureAsset texAsset;
+            if (!assetlib::loadTexture(texAsset, absPath)) {
+                LOG_ERROR("AssetService", "Failed to load cooked texture: %s",
+                          absPath.string().c_str());
+                return false;
+            }
 
-    if (!bgfx::isValid(th)) {
-        LOG_ERROR("AssetService", "bgfx texture creation failed: %s",
-                  absPath.string().c_str());
-        return {};
-    }
+            // Format-aware: BC7/BC5 blocks + mips upload as-is
+            // (render/cooked_texture.h).
+            bgfx::TextureHandle th = createCookedTexture(texAsset);
+            if (!bgfx::isValid(th)) {
+                LOG_ERROR("AssetService", "bgfx texture creation failed: %s",
+                          absPath.string().c_str());
+                return false;
+            }
 
-    Texture tex(th,
-                static_cast<uint16_t>(texAsset.header.width),
-                static_cast<uint16_t>(texAsset.header.height));
+            Texture tex(th,
+                        static_cast<uint16_t>(texAsset.header.width),
+                        static_cast<uint16_t>(texAsset.header.height));
 
-    TextureHandle handle = m_textures.addTexture(std::move(tex));
-    LOG_INFO("AssetService", "Loaded texture: %s (%ux%u, handle=%u)",
-             absPath.filename().string().c_str(),
-             texAsset.header.width, texAsset.header.height, handle.id);
-    return handle;
+            created = m_textures.addTexture(std::move(tex));
+            // GPU cost is the uploaded payload: BC blocks + the whole mip
+            // chain, which is what the .ctex already holds.
+            bytes = texAsset.pixels.size();
+            LOG_INFO("AssetService", "Loaded texture: %s (%ux%u, handle=%u, %.1f MB)",
+                     absPath.filename().string().c_str(),
+                     texAsset.header.width, texAsset.header.height, created.id,
+                     (double)bytes / (1024.0 * 1024.0));
+            return true;
+        },
+        out);
+
+    return ok ? out : TextureHandle{};
 }
 
 TextureHandle AssetService::resolveTexture(

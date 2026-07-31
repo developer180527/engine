@@ -1,5 +1,6 @@
 #include "assets/cookers/mesh_cooker.h"
 #include "assets/cookers/texture_encode.h"   // BC7/BC5 + mips for .ctex
+#include <assetlib/ddc.h>                    // blake3Bytes — sibling dedup
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
@@ -199,6 +200,68 @@ static std::vector<uint8_t> drainOzzStream(ozz::io::MemoryStream& ms) {
     return out;
 }
 
+// ── Sibling texture writing, with CONTENT DEDUP ─────────────────────────────
+// Materials routinely share images: the fps_shooter pistol has several
+// materials naming the same base-colour and normal maps, and the cooker used to
+// encode and write each one to its OWN slot file. Measured cost: t0 and t2 were
+// byte-identical (10.7 MB each) and t1 and t3 were byte-identical (21.3 MB
+// each) — 32 MB duplicated on disk, in the shipped dist, AND in VRAM, for a
+// three-mesh scene against a 128 MB target budget.
+//
+// Note the runtime cache CANNOT fix this: the duplicates have different
+// filenames, so path identity does not see them. Content identity does, and the
+// cheapest place to apply it is here — one write instead of two, which shrinks
+// the cook, the DDC, the dist and the GPU upload at once.
+//
+// Keyed by the ENCODED bytes (post BC compression + mips), so two source images
+// that compress identically also collapse.
+namespace {
+// Per-cook, per-thread: cleared at the start of every MeshCooker::cook(). It
+// MUST NOT persist across assets — sibling names are qualified by the mesh's
+// own uuid stem, so a stale entry would hand out a filename belonging to a
+// different mesh. (Out-of-process workers are one asset per process anyway;
+// this keeps the in-process fallback correct too.)
+thread_local std::unordered_map<std::string, std::string> g_siblingByContent;
+
+std::string writeSiblingTexture(const assetlib::TextureAsset& tex,
+                                const CookContext& ctx, int slot,
+                                uint32_t w, uint32_t h, bool isNormalMap,
+                                const char* origin) {
+    // Hash the payload plus the header fields that change interpretation, so
+    // two textures with identical blocks but different dimensions/format can
+    // never collide.
+    char hdr[64];
+    std::snprintf(hdr, sizeof(hdr), "%u|%u|%u|%u|", tex.header.width,
+                  tex.header.height, tex.header.format, tex.header.mipCount);
+    std::string blob(hdr);
+    blob.append(reinterpret_cast<const char*>(tex.pixels.data()),
+                tex.pixels.size());
+    const std::string key = assetlib::blake3Bytes(blob.data(), blob.size());
+
+    if (auto it = g_siblingByContent.find(key); it != g_siblingByContent.end()) {
+        std::printf("[MeshCooker] %s texture -> %s (DEDUP: identical to an "
+                    "earlier slot, %.1f MB saved)\n",
+                    origin, it->second.c_str(),
+                    (double)tex.pixels.size() / (1024.0 * 1024.0));
+        return it->second;          // reference the existing sibling
+    }
+
+    char name[64];
+    std::snprintf(name, sizeof(name), "%s_t%d.ctex",
+                  ctx.outputPath.stem().string().c_str(), slot);
+    const auto outPath = ctx.outputPath.parent_path() / name;
+    if (!assetlib::saveTexture(tex, outPath)) return {};
+    if (ctx.addOutput) ctx.addOutput(outPath);   // travels with the DDC record
+
+    g_siblingByContent.emplace(key, name);
+    std::printf("[MeshCooker] %s texture -> %s (%ux%u %s, %u mips, %.1f MB)\n",
+                origin, name, w, h, isNormalMap ? "BC5" : "BC7",
+                tex.header.mipCount,
+                (double)tex.pixels.size() / (1024.0 * 1024.0));
+    return name;
+}
+} // namespace
+
 // ── Materials (shared by static + skinned cooks) ────────────────────────────
 // Embedded FBX textures have no on-disk source for the TextureCooker to see;
 // they are decoded HERE (stb) and written as sibling .ctex files (TextureAsset
@@ -239,15 +302,7 @@ static std::string resolveCookTexture(const aiScene* scene, const aiString& tp,
     assetlib::TextureAsset tex;
     if (!cook::encodeTexture(rgba.data(), tw, th, isNormalMap, tex)) return {};
 
-    char name[64];
-    std::snprintf(name, sizeof(name), "%s_t%d.ctex",
-                  ctx.outputPath.stem().string().c_str(), slot);
-    const auto outPath = ctx.outputPath.parent_path() / name;
-    if (!assetlib::saveTexture(tex, outPath)) return {};
-    if (ctx.addOutput) ctx.addOutput(outPath);   // travels with the DDC record
-    std::printf("[MeshCooker] embedded texture -> %s (%ux%u %s, %u mips)\n",
-                name, tw, th, isNormalMap ? "BC5" : "BC7", tex.header.mipCount);
-    return name;
+    return writeSiblingTexture(tex, ctx, slot, tw, th, isNormalMap, "embedded");
 }
 
 static void emitMaterials(const aiScene* scene, MeshAsset& asset,
@@ -541,15 +596,8 @@ static std::string gltfCookTexture(const cgltf_image* img,
     stbi_image_free(px);
     if (!ok) return {};
 
-    char name[64];
-    std::snprintf(name, sizeof(name), "%s_t%d.ctex",
-                  ctx.outputPath.stem().string().c_str(), slot);
-    const auto outPath = ctx.outputPath.parent_path() / name;
-    if (!assetlib::saveTexture(tex, outPath)) return {};
-    if (ctx.addOutput) ctx.addOutput(outPath);   // travels with the DDC record
-    std::printf("[MeshCooker] glTF texture -> %s (%dx%d %s, %u mips)\n",
-                name, w, h, isNormalMap ? "BC5" : "BC7", tex.header.mipCount);
-    return name;
+    return writeSiblingTexture(tex, ctx, slot, (uint32_t)w, (uint32_t)h,
+                               isNormalMap, "glTF");
 }
 
 static CookResult cookGltf(const CookContext& ctx) {
@@ -770,6 +818,13 @@ void MeshCooker::enumerateOutputs(const std::filesystem::path& primary,
 }
 
 CookResult MeshCooker::cook(const CookContext& ctx) {
+    // Sibling-texture dedup is scoped to ONE asset: entries map content to a
+    // filename qualified by THIS mesh's uuid stem, so carrying them into the
+    // next cook would hand out another mesh's sibling. Cleared here rather
+    // than trusted to process lifetime, because the in-process fallback
+    // (COOK_INPROC=1) reuses threads across assets.
+    g_siblingByContent.clear();
+
     // glTF/GLB goes through cgltf — Assimp is built without those importers
     // (cgltf owns the format engine-wide). Everything else: Assimp.
     {

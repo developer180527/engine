@@ -6,7 +6,10 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 12; // 10: glTF/GLB cook (cgltf).
+    static constexpr uint32_t kVersion = 13; // 13: sibling .ctex content dedup
+                                             // (materials sharing an image now
+                                             // write ONE file, not one each).
+                                             // 10: glTF/GLB cook (cgltf).
                                              // 11: DDC transition — embedded
                                              // .ctex outputs reported via
                                              // ctx.addOutput.
