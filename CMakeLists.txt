@@ -164,6 +164,15 @@ set(BGFX_INSTALL OFF CACHE BOOL "")
 add_subdirectory(modules/assetlib)
 add_subdirectory(modules/hid)       # raw-input module (devices + timestamped events)
 
+# Rust modules. OFF unless explicitly enabled OR cargo happens to be present —
+# Rust is a genuine new dependency for contributors and CI, so the tree must
+# still configure without it. modules/net skips itself when cargo is missing,
+# so this is safe to leave ON.
+option(ENGINE_WITH_RUST "Build the Rust modules (engine_net) — needs cargo" ON)
+if(ENGINE_WITH_RUST)
+    add_subdirectory(modules/net)   # networking core behind a C ABI
+endif()
+
 add_subdirectory(third_party/bgfx.cmake)
 
 # Sanitizer lanes instrument the whole tree — but bgfx's HOST BUILD TOOLS

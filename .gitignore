@@ -48,3 +48,7 @@ imgui.ini
 Icon?
 
 
+
+# Rust build output. Cargo's own target dir (from a bare `cargo test` inside
+# modules/net) and the CMake-driven one (CARGO_TARGET_DIR=<build>/rust).
+modules/net/target/

@@ -146,6 +146,17 @@ jobs:
           echo "CC=${{ matrix.cc }}"   >> "$GITHUB_ENV"
           echo "CXX=${{ matrix.cxx }}" >> "$GITHUB_ENV"
 
+      # modules/net is a Rust staticlib. The runners ship a Rust toolchain, so
+      # this only pins/reports it — but do it explicitly rather than relying on
+      # the image, because modules/net SKIPS ITSELF when cargo is missing and
+      # the build would still go green having quietly tested nothing.
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust unit tests (engine_net)
+        shell: bash
+        run: cargo test --manifest-path modules/net/Cargo.toml
+
       - name: Configure
         shell: bash
         run: |

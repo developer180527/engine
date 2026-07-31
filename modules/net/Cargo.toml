@@ -1,0 +1,33 @@
+[package]
+name    = "engine_net"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Engine networking module — Rust core behind a C ABI."
+
+[lib]
+name       = "engine_net"
+# staticlib, NOT cdylib: this is engine infrastructure linked into
+# engine_runtime, not a hot-reloadable kit. No dlopen, no ABI drift between a
+# running host and a rebuilt module, no second allocator in the process.
+crate-type = ["staticlib"]
+
+# panic = "abort" in BOTH profiles is load-bearing, not a size tweak.
+# A Rust panic unwinding across the `extern "C"` boundary into C++ is undefined
+# behaviour. Aborting makes a panic a loud, immediate crash at the point of the
+# bug instead of silent corruption in the host — the same posture the cook
+# workers take (out-of-process, crash one task not the editor).
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic     = "abort"
+opt-level = 3
+lto       = true
+# Keep symbol names for profilers/crash dumps; the engine strips at package time.
+debug     = 1
+
+[dependencies]
+# Deliberately none yet. The transport's dependencies (UDP vs QUIC, reliability
+# layer) are an OPEN design decision — see docs/networking-plan.md. Adding a
+# crate here commits the protocol before it has been chosen.

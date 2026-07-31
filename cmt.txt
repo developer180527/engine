@@ -1,18 +1,44 @@
-ci: stop cancelling main runs; don't build 4 platforms for a Markdown edit
+net: Rust toolchain + engine_net skeleton behind a C ABI
 
-Two independent causes of the cancelled-run noise:
+Establishes Rust in the build in the one place it clearly pays — and stops
+there. Networking parses untrusted bytes off the wire, carries a stateful
+connection machine, and is new code with no rewrite cost. That is where memory
+safety earns its keep. This is NOT a blanket migration: ozz-animation and Jolt
+keep the hot numeric loops, which touch no untrusted input and would cost two
+mature libraries to rewrite for ~zero safety gain.
 
-- `cancel-in-progress: true` applied to pushes on main. Because work lands as
-  a short series of direct commits, each push cancelled the previous in-flight
-  run, so every commit but the last ended with no verdict at all. Now scoped
-  to pull requests, where a superseded run genuinely is stale. Main is the
-  ratchet: every commit on it gets a full result.
-- Doc-only commits triggered the whole matrix — Assimp and bgfx compiled from
-  source on four platforms to validate Markdown. Today's documentation work
-  alone would have burned hours of runner time.
+modules/net is a staticlib, not a kit: infrastructure should not dlopen (ABI
+drift between a running host and a rebuilt module, plus a second allocator in
+the process). Rust gameplay kits stay viable separately — EngineGameModuleV1
+is plain C.
 
-ci.yml now ignores '**.md' and 'docs/**'; a new docs.yml runs the same
-engine_doctor contract in ~15s (pure Python, no CMake, no submodules, but full
-history since staleness needs git dates). A commit touching code AND docs still
-takes the full path, so the `docs` ctest lane still catches staleness whenever
-code actually moves — the only case that can cause it.
+Boundary rules, all enforced in code and asserted in tests:
+  1. No allocation crosses — callers own buffers; TLSF and Rust's allocator
+     never meet.
+  2. No panic crosses — panic = "abort" in both profiles; unwinding across
+     extern "C" into C++ is UB.
+  3. Every call returns a status code.
+  4. Versioned init catches a stale staticlib (C++ rebuilt, Rust not) at boot.
+  5. Null pointers/lengths validated — from_raw_parts on null is UB even at
+     len 0.
+
+Deliberately protocol-free: Cargo.toml has no dependencies, and the entry
+points (checksum, log callback) exist only to exercise the SHAPES the real
+transport needs — buffers in, callbacks out, status codes. Transport choice
+(raw UDP + reliability vs QUIC) and the engine/kit scope split are open; see
+modules/net/info.md.
+
+Optional by design: ENGINE_WITH_RUST (default ON) and the module skips itself
+when cargo is missing. Verified -DENGINE_WITH_RUST=OFF configures clean with
+rust_ffi_test absent. CI installs the toolchain explicitly rather than trusting
+the runner image — a silent skip would go green having tested nothing.
+
+Rust staticlibs don't carry their std deps, so the per-platform link libraries
+are listed up front (they surface as undefined symbols that never mention Rust).
+Note: multi-config generators always get the debug Rust profile; needs
+IMPORTED_LOCATION_<CONFIG> before Windows ships this.
+
+tests/rust_ffi_test.cpp (18 assertions) + 4 cargo tests. The FNV vector is
+pinned on BOTH sides so a divergence between `cargo test` and the linked
+staticlib fails a test instead of becoming a protocol mismatch later.
+23/23 unit, 2/2 fuzz-regress, 2/2 docs.

@@ -81,6 +81,19 @@ engine_test(jobs_test)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
 engine_test(animator_system_test)
+
+# ── Rust FFI seam ────────────────────────────────────────────────────────────
+# Only when the Rust module is actually built. Links engine_net directly rather
+# than through engine_runtime: this test is about the BOUNDARY, so it should
+# fail if the staticlib is broken, not be masked by whatever else pulls it in.
+if(TARGET engine_net)
+    add_executable(rust_ffi_test rust_ffi_test.cpp)
+    target_link_libraries(rust_ffi_test PRIVATE engine_net)
+    set_target_properties(rust_ffi_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    add_test(NAME rust_ffi_test COMMAND rust_ffi_test)
+    set_tests_properties(rust_ffi_test PROPERTIES LABELS unit TIMEOUT 60)
+endif()
 engine_test(input_config_test)
 engine_test(asset_ready_test)
 engine_test(sim_world_test)
