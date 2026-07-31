@@ -191,6 +191,28 @@ static TexGPU resolveTextureGPU(const char* texPath,
                                  const std::filesystem::path& projectRoot,
                                  const std::filesystem::path& cacheRoot) {
     if (!texPath || texPath[0] == '\0') return {};
+
+    // SIBLING .ctex FIRST. A cooked mesh's embedded textures are written by
+    // MeshCooker as extra outputs BESIDE the cooked file, and the material
+    // stores only their basename — "the loader resolves that against the
+    // cooked file's own directory" (src/assets/info.md). They are not
+    // registry assets, so the registry lookup below can never find them.
+    //
+    // Skipping this step is why shipped builds rendered UNTEXTURED while
+    // reporting success: every material's texture resolved to nothing, and
+    // "0.0 MB of textures" looked like a BC-compression win instead of a bug.
+    {
+        std::error_code sec;
+        const auto direct = sourceDir / texPath;
+        if (std::filesystem::exists(direct, sec)) {
+            assetlib::TextureAsset sibling;
+            if (assetlib::loadTexture(sibling, direct))
+                return stageTexGPU(sibling);
+        }
+    }
+
+    // Otherwise it names a SOURCE asset (assets/foo.png) that the registry
+    // maps to its own cooked output.
     if (!assetLib || projectRoot.empty()) return {};
 
     std::filesystem::path absTexPath = sourceDir / texPath;
@@ -418,6 +440,16 @@ TextureHandle AssetService::loadTextureFromCooked(
 TextureHandle AssetService::resolveTexture(
         const char* texPath, const std::filesystem::path& sourceDir) {
     if (!texPath || texPath[0] == '\0') return {};
+
+    // Sibling .ctex beside the cooked mesh — see resolveTextureGPU for why the
+    // registry cannot resolve these. loadTextureFromCooked is cache-backed, so
+    // two materials naming the same sibling share one upload.
+    {
+        std::error_code sec;
+        const auto direct = sourceDir / texPath;
+        if (std::filesystem::exists(direct, sec))
+            return loadTextureFromCooked(direct);
+    }
 
     if (m_assetLib && !m_projectRoot.empty()) {
         std::filesystem::path absTexPath = sourceDir / texPath;

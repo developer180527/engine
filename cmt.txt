@@ -1,35 +1,25 @@
-render: diagnostics module — churn, budget, census (one concern per file)
+assets: fix silently untextured shipped builds; sibling .ctex never resolved
 
-Phase 2 of docs/renderer-audit-and-plan.md. src/render was the least verified
-subsystem in the engine (prototype tier, no test that could fail) because
-rendering needs a GPU. These modules are built so the parts worth testing
-don't.
-render_stats_channel.h was 151 lines doing sampling, judging, budgeting and
-formatting. Split into src/render/diag/:
-  frame_gpu_stats.{h,cpp}  sample bgfx counters + churn verdict (only file
-                           touching bgfx; sampleExplicit() is the test seam)
-  gpu_budget.{h,cpp}       target tiers, ceilings, PASS/OVER — pure policy
-  resource_census.h        resident set, per-owner cost, duplicates, leaks
-  diag_report.h            formatting, isolated so the logic has no I/O
-render_stats_channel.h is now a 32-line profiler adapter.
-engine_player gains --budget low|mid|high, exiting 4 when over, so it can gate
-a packaging step or fail loudly on the low-spec machine itself.
+A cooked mesh's embedded textures are extra outputs written BESIDE the cooked
+file, with the material storing only a basename — src/assets/info.md states the
+rule: "the loader resolves that against the cooked file's own directory". Both
+resolveTexture (sync) and resolveTextureGPU (worker) ignored it and resolved
+exclusively through AssetRegistry::findBySourcePath. Siblings are not registry
+assets, so that lookup could never succeed.
 
-TWO FINDINGS FROM ACTUALLY RUNNING IT:
-- The test caught my own wrong expectation. The shipped 23 MB frame does NOT
-  pass the low tier: 23 MB of render targets exceeds the 20 MB sub-ceiling
-  even though total VRAM is 18% used. That is the budget working — sub-limits
-  are what push a project to shadowResolution 1024 (11 MB, PASS) instead of
-  letting one allocation eat the whole allowance. Test now documents it.
-- A "known limitation" I had written into info.md was really a defect: draw
-  calls were formatted as megabytes, rendering "13 / 500" as "0.0 / 0.0 MB".
-  Added BudgetUnit; the line now reads correctly.
+The failure was silent and looked like a success: every material resolved to no
+texture, the game rendered untextured, and the resulting "textures 0.0 MB" was
+reported (by me) as a BC-compression win rather than a bug. Only counting live
+handles — 6, exactly the built-ins — exposed it.
 
-tests/render_diag_test.cpp: 26 assertions, headless — churn (steady /
-per-frame / leak / occasional), budget verdicts incl. peak-not-final and
-unknown-tier-is-strictest, census totals + owner ranking + duplicate
-detection, and leak baseline compare naming and costing the offender.
+Both paths now try the direct sibling file first and fall back to the registry
+for genuine source-asset references. The sync path routes through
+loadTextureFromCooked, which is cache-backed, so materials naming the same
+sibling share one upload.
 
-src/render/diag registered as `working`; src/render itself stays prototype
-(the pipeline is still untested).
-25/25 unit, 2/2 fuzz-regress, 2/2 docs.
+Measured, shipped fps_shooter: textures 6 -> 11 live, 0.0 -> 40.7 MB. The
+pistol's 4 material references produced 2 uploads, confirming the per-mesh
+staging dedup works. Budget at low tier: 63.7 MB total (over on render
+targets), and 51.7 MB — PASS — with shadowResolution 1024.
+
+25/25 unit, 2/2 fuzz-regress.
