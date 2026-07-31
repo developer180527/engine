@@ -59,8 +59,7 @@ int main(int argc, char** argv) {
     cook.setScope(cookAll ? CookService::Scope::WholeProject
                           : CookService::Scope::SceneClosure);
 
-    const int failed = cook.cookOnce();
-    const auto stats = cook.stats();
-    LOG_INFO("Cook", "Done — %d cooked, %d failed", stats.cooked, failed);
-    return failed > 0 ? 1 : 0;
+    const auto run = cook.cookOnce();   // cumulative, not the last pass
+    LOG_INFO("Cook", "Done — %d cooked, %d failed", run.cooked, run.failed);
+    return run.failed > 0 ? 1 : 0;
 }

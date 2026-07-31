@@ -33,9 +33,12 @@ public:
     // Launch background cook thread — call once after editor opens
     void start();
 
+    // Cumulative result of a whole cookOnce() run, summed across its passes.
+    // NOT the same as stats(), which is a live per-pass snapshot for UI polling.
+    struct RunSummary { int cooked = 0; int failed = 0; };
+
     // Run synchronous cook passes on the calling thread until they converge —
-    // no background thread. For CLI tooling (engine_cook). Returns the number
-    // of assets that failed to cook (0 = success).
+    // no background thread. For CLI tooling (engine_cook).
     //
     // Loops rather than running a single pass because fileSettled() defers any
     // file whose (size, mtime) it hasn't seen stable across two polls — the
@@ -44,17 +47,23 @@ public:
     // while a pass still cooks or defers work, with a short sleep so genuinely
     // active writes can advance, and a hard cap so a perpetually-written file
     // can't spin us forever.
-    int cookOnce() {
-        int totalFailed = 0;
+    //
+    // Returns the CUMULATIVE totals: reading stats() after this call reports
+    // the LAST pass, and convergence requires that pass to have cooked nothing
+    // — so a caller printing stats().cooked always said "0 cooked" no matter
+    // how much work actually happened.
+    RunSummary cookOnce() {
+        RunSummary total;
         for (int pass = 0; pass < 240; ++pass) {   // ~cap; static trees exit in 2
             runOneCookPass();
             const Stats s = m_stats.load();
-            totalFailed = s.failed;
+            total.cooked += s.cooked;
+            total.failed  = s.failed;   // standing failures, not per-pass news
             if (s.deferred == 0 && s.cooked == 0) break;   // converged
             if (s.deferred > 0)
                 std::this_thread::sleep_for(std::chrono::milliseconds(400));
         }
-        return totalFailed;
+        return total;
     }
 
     // Re-scan assets/ and cook anything new or stale.
