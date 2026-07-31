@@ -20,6 +20,7 @@
 #include "runtime/module_loader.h"   // shared dlopen + gauntlet (also used by KitHost)
 #include "core/profiler.h"           // periodic frame-profile dump (dev runner)
 #include "runtime/frame_stats_channel.h"  // frame-time distribution + CSV
+#include "render/render_stats_channel.h"  // GPU handle churn + VRAM budget
 #include "core/memory/mem.h"         // periodic tagged-heap dump
 
 #include <cstdio>
@@ -182,6 +183,14 @@ int main(int argc, char** argv) {
     // Explicit loop rather than engine.run() so --frames can stop it: a
     // measurement whose length depends on when someone closes a window is not
     // a measurement.
+    // GPU-side truth: draw calls, VRAM, and — the reason it exists — whether
+    // live bgfx handle counts MOVE between frames. A steady scene should
+    // create and destroy nothing while the camera merely moves; anything else
+    // is the "unreasonable GPU allocations" that a platform profiler can only
+    // hint at, because it sees Metal objects and not which system made them.
+    RenderStatsChannel renderStats;
+    prof::Profiler::get().addChannel(&renderStats);
+
     long  profFrame = 0;
     float dt = 0.0f;
     while (engine.frameBegin(dt)) {
@@ -199,10 +208,13 @@ int main(int argc, char** argv) {
                 engine.inputLatency()->logLastFrame("engine_host");
             if (engine.frameStats())
                 engine.frameStats()->logSummary("engine_host");
+            renderStats.report("engine_host");
         }
         engine.frameEnd();
         if (frameLimit > 0 && profFrame >= frameLimit) break;
     }
+    renderStats.report("engine_host final");
+    prof::Profiler::get().removeChannel(&renderStats);
     // Written before shutdown, which is where the distribution report prints.
     if (!frameCsv.empty() && engine.frameStats()) {
         if (engine.frameStats()->writeCsv(frameCsv.string()))

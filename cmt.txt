@@ -1,44 +1,36 @@
-net: Rust toolchain + engine_net skeleton behind a C ABI
+render: RenderStatsChannel — GPU handle churn, VRAM and draw budget
 
-Establishes Rust in the build in the one place it clearly pays — and stops
-there. Networking parses untrusted bytes off the wire, carries a stateful
-connection machine, and is new code with no rewrite cost. That is where memory
-safety earns its keep. This is NOT a blanket migration: ozz-animation and Jolt
-keep the hot numeric loops, which touch no untrusted input and would cost two
-mature libraries to rewrite for ~zero safety gain.
+Instruments' graphics track showed the editor making an unreasonable number of
+GPU allocations, but a platform profiler reports Metal objects, not which
+engine system created them. This reports the same truth from inside bgfx, per
+frame, on every backend.
 
-modules/net is a staticlib, not a kit: infrastructure should not dlopen (ABI
-drift between a running host and a rebuilt module, plus a second allocator in
-the process). Rust gameplay kits stay viable separately — EngineGameModuleV1
-is plain C.
+The diagnostic that matters is handle CHURN, not absolute counts: a steady
+scene should create and destroy nothing while the camera merely moves. Counts
+rising = leak; oscillating = per-frame create/destroy; flat = the traffic is
+transient buffers (ImGui, debug lines), which is by design. The channel
+reports the delta and a one-line verdict.
 
-Boundary rules, all enforced in code and asserted in tests:
-  1. No allocation crosses — callers own buffers; TLSF and Rust's allocator
-     never meet.
-  2. No panic crosses — panic = "abort" in both profiles; unwinding across
-     extern "C" into C++ is UB.
-  3. Every call returns a status code.
-  4. Versioned init catches a stale staticlib (C++ rebuilt, Rust not) at boot.
-  5. Null pointers/lengths validated — from_raw_parts on null is UB even at
-     len 0.
+Also the VRAM budget instrument. The target machine is an Intel UHD 630 with
+128 MB shared and 4 GB system RAM, so texture + render-target memory is a hard
+constraint and "graphics tuned down" needs to be measurable, not hoped for.
 
-Deliberately protocol-free: Cargo.toml has no dependencies, and the entry
-points (checksum, log callback) exist only to exercise the SHAPES the real
-transport needs — buffers in, callbacks out, status codes. Transport choice
-(raw UDP + reliability vs QUIC) and the engine/kit scope split are open; see
-modules/net/info.md.
+First measurement, fps_shooter, 600 fixed frames via engine_host --frames:
+  draws avg 14.7 / max 19        (nowhere near a draw-call cliff)
+  VRAM  tex 76.0 MB  rt 71.0 MB  peak 147.1 MB
+  transient vb 0.2 KB/frame      (nothing)
+  CHURN 0/600 frames             -> STEADY
 
-Optional by design: ENGINE_WITH_RUST (default ON) and the module skips itself
-when cargo is missing. Verified -DENGINE_WITH_RUST=OFF configures clean with
-rust_ffi_test absent. CI installs the toolchain explicitly rather than trusting
-the runner image — a silent skip would go green having tested nothing.
+So the RUNTIME renderer is clean — the Instruments finding is editor-specific
+(ImGui suspected, not yet measured). The resize path was checked first and is
+already guarded (>8px + 5 stable frames).
 
-Rust staticlibs don't carry their std deps, so the per-platform link libraries
-are listed up front (they surface as undefined symbols that never mention Rust).
-Note: multi-config generators always get the debug Rust profile; needs
-IMPORTED_LOCATION_<CONFIG> before Windows ships this.
+Two real findings instead: 147 MB peak exceeds the 128 MB target budget with a
+three-mesh scene, and rt memory is 5x the naive 1280x720 figure (~14 MB
+expected, 71 MB reported) — unexplained, and the highest-value thing to chase.
 
-tests/rust_ffi_test.cpp (18 assertions) + 4 cargo tests. The FNV vector is
-pinned on BOTH sides so a divergence between `cargo test` and the linked
-staticlib fails a test instead of becoming a protocol mismatch later.
-23/23 unit, 2/2 fuzz-regress, 2/2 docs.
+Lives in engine_host rather than the runtime: renderer.h and runtime.h are
+compiled against poison bgfx headers by sim_purity_check, and this channel
+needs bgfx. A tool has no such constraint.
+
+23/23 unit, 2/2 docs.
