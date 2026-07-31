@@ -192,6 +192,9 @@ add_library(engine_runtime STATIC
     ${ENGINE_PLATFORM_SOURCES}
     runtime/platform/platform_factory.cpp
     render/renderer.cpp
+    # Render diagnostics — one concern per TU (see src/render/diag/info.md).
+    render/diag/frame_gpu_stats.cpp
+    render/diag/gpu_budget.cpp
     runtime/services/asset_service.cpp
     runtime/services/scene_service.cpp
     runtime/services/nav_service.cpp

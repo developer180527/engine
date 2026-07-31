@@ -35,11 +35,13 @@ int main(int argc, char** argv) {
     // and neither changes the default shipping posture.
     long frameLimit = 0;      // --frames N: stop after N frames (repeatable)
     bool gpuStats   = false;  // --gpu-stats: VRAM / draws / handle churn
+    const char* budgetTier = nullptr;   // --budget low|mid|high: PASS/OVER
     std::string projectArg;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--frames" && i + 1 < argc)  frameLimit = std::strtol(argv[++i], nullptr, 10);
         else if (a == "--gpu-stats")          gpuStats   = true;
+        else if (a == "--budget" && i + 1 < argc) { budgetTier = argv[++i]; gpuStats = true; }
         else if (projectArg.empty() && a[0] != '-') projectArg = a;
     }
 
@@ -118,6 +120,15 @@ int main(int argc, char** argv) {
             if (frameLimit > 0 && ++frame >= frameLimit) break;
         }
         if (gpuStats) stats.report("engine_player (SHIPPED path)");
+        // --budget turns the measurement into a verdict against real target
+        // hardware. Non-zero exit on OVER, so it can gate a build step or run
+        // on the low-spec machine itself and fail loudly there.
+        if (budgetTier) {
+            const auto report = rdiag::evaluate(stats.stats(),
+                                                rdiag::parseTier(budgetTier));
+            rdiag::printBudget(report);
+            if (!report.pass) return 4;
+        }
     }
 
     engine.stopSimulation();

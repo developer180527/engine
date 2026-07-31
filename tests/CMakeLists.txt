@@ -84,6 +84,9 @@ engine_test(animator_system_test)
 # GpuResourceCache is payload-agnostic, so its dedup/refcount/LRU/budget logic
 # tests with a fake handle and no GPU — src/render has no render harness yet.
 engine_test(gpu_cache_test)
+# Render diagnostics: churn/budget/census logic is deliberately GPU-free so the
+# least-verified subsystem finally has a test that can fail.
+engine_test(render_diag_test)
 
 # ── Rust FFI seam ────────────────────────────────────────────────────────────
 # Only when the Rust module is actually built. Links engine_net directly rather

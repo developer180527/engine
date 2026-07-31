@@ -1,34 +1,35 @@
-cook: .cache garbage collection (engine_cook --gc / --gc-prune)
+render: diagnostics module — churn, budget, census (one concern per file)
 
-Cooked output accumulates: a cooker version bump re-cooks under a new key, a
-deleted source leaves output behind, and a regenerated registry.db mints fresh
-UUIDs so every previous file is instantly unreferenced. Measured: one version
-bump grew fps_shooter/.cache from 72 MB to 113 MB, all growth orphaned.
+Phase 2 of docs/renderer-audit-and-plan.md. src/render was the least verified
+subsystem in the engine (prototype tier, no test that could fail) because
+rendering needs a GPU. These modules are built so the parts worth testing
+don't.
+render_stats_channel.h was 151 lines doing sampling, judging, budgeting and
+formatting. Split into src/render/diag/:
+  frame_gpu_stats.{h,cpp}  sample bgfx counters + churn verdict (only file
+                           touching bgfx; sampleExplicit() is the test seam)
+  gpu_budget.{h,cpp}       target tiers, ceilings, PASS/OVER — pure policy
+  resource_census.h        resident set, per-owner cost, duplicates, leaks
+  diag_report.h            formatting, isolated so the logic has no I/O
+render_stats_channel.h is now a 32-line profiler adapter.
+engine_player gains --budget low|mid|high, exiting 4 when over, so it can gate
+a packaging step or fail loudly on the low-spec machine itself.
 
-Keep set = every registry record's cookedPath, plus its sibling .ctex files
-re-derived via ICooker::enumerateOutputs (the exactness the DDC dedup already
-needed), plus cooked scenes whose source .scene still exists. Sweep is an
-ALLOWLIST: only .cooked/.ctex are candidates, so registry.db (+wal/shm),
-anim/*.ozzclip and anything a future cooker adds survive by default. A GC that
-deletes what it does not recognise is how caches eat real data.
+TWO FINDINGS FROM ACTUALLY RUNNING IT:
+- The test caught my own wrong expectation. The shipped 23 MB frame does NOT
+  pass the low tier: 23 MB of render targets exceeds the 20 MB sub-ceiling
+  even though total VRAM is 18% used. That is the budget working — sub-limits
+  are what push a project to shadowResolution 1024 (11 MB, PASS) instead of
+  letting one allocation eat the whole allowance. Test now documents it.
+- A "known limitation" I had written into info.md was really a defect: draw
+  calls were formatted as megabytes, rendering "13 / 500" as "0.0 / 0.0 MB".
+  Added BudgetUnit; the line now reads correctly.
 
-DRY RUN BY DEFAULT; --gc-prune deletes.
+tests/render_diag_test.cpp: 26 assertions, headless — churn (steady /
+per-frame / leak / occasional), budget verdicts incl. peak-not-final and
+unknown-tier-is-strictest, census totals + owner ranking + duplicate
+detection, and leak baseline compare naming and costing the offender.
 
-THE SAFETY TEST FOUND A REAL BUG. Moving registry.db aside did NOT fail:
-AssetRegistry::open() CREATES the database when missing, so the GC opened an
-empty registry, concluded nothing was referenced, and deleted 8 of 9 files.
-Two guards now, both verified to delete nothing:
-  - registry.db absent            -> refuse (open()'s return cannot be trusted)
-  - registry present but EMPTY    -> refuse (a rebuilt/mid-scan DB is not
-                                     "every asset was deleted")
-
-Reported size is LOGICAL, not disk, and the log says so: materialized outputs
-are hardlinks to DDC blobs, so removing a .cache entry drops one link, not the
-inode. Measured 72.7 MB of orphans removed with total disk unchanged at 55 MB.
-Claiming freed disk would be a lie a user could check.
-
-Verified: 7 orphans found and removed, second pass finds 0, game loads with 0
-failures afterwards, both fail-closed paths protect all 9 files.
-
-24/24 unit, 2/2 fuzz-regress, 2/2 docs.
-
+src/render/diag registered as `working`; src/render itself stays prototype
+(the pipeline is still untested).
+25/25 unit, 2/2 fuzz-regress, 2/2 docs.
