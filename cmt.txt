@@ -1,32 +1,18 @@
-test: AnimatorSystem behavior — incl. the kMaxBones stack-smash guard
+ci: stop cancelling main runs; don't build 4 platforms for a Markdown edit
 
-The animation MATH was covered (anim_pose_test, clip_binding_test) but the
-ECS system driving it had no test at all. Closes the gap ENGINE_STATUS.md
-flagged as the cheapest real coverage win.
+Two independent causes of the cancelled-run noise:
 
-The reason this file exists is the `boneCount > kMaxBones` guard, which is a
-silent-corruption path: computeBindPosePalette declares
-`float worldMatrices[kMaxBones * 16]` on the stack and SkinnedMesh carries a
-fixed skinMatrices[128 * 16]. A 129-bone skeleton slipping past the check
-smashes both, with no error reported. So the asserted contract is not "it
-returns false" — it is "an oversized skeleton NEVER writes a palette", on
-BOTH routes into the writer (clip sampling and the no-clip bind-pose path).
+- `cancel-in-progress: true` applied to pushes on main. Because work lands as
+  a short series of direct commits, each push cancelled the previous in-flight
+  run, so every commit but the last ended with no verdict at all. Now scoped
+  to pull requests, where a superseded run genuinely is stale. Main is the
+  ratchet: every commit on it gets a full result.
+- Doc-only commits triggered the whole matrix — Assimp and bgfx compiled from
+  source on four platforms to validate Markdown. Today's documentation work
+  alone would have burned hours of runner time.
 
-Proven to fail: deleting the two guards aborts the process via the stack
-protector (SIGABRT, exit 134) after the first assertion. Restored
-byte-identical afterwards.
-
-Also covered: the 128-bone boundary (the guard is `>`, not `>=` — an
-off-by-one would silently kill skinning on max-size rigs), bind-pose fallback
-with no clip, cleared palette flag on a missing skeleton (not left stale),
-time += dt*speed, paused animators frozen, looping fmod wrap, non-looping
-clamp-and-auto-stop, and both reverse-playback paths — reverse loop matters
-because fmod(-0.2, 1.0) is negative in C, so the duration must be added back
-or ozz gets a negative ratio and the pose silently stops updating.
-
-Hermetic: skeletons and clips are built straight through ozz's offline
-builders, so no Assimp, no asset files, no GPU — it belongs in the `unit`
-lane and gates CI, unlike anim_pose_test/clip_binding_test.
-
-src/systems raised prototype -> working (evidence recorded in its info.md).
-22/22 unit, 2/2 fuzz-regress, 2/2 docs.
+ci.yml now ignores '**.md' and 'docs/**'; a new docs.yml runs the same
+engine_doctor contract in ~15s (pure Python, no CMake, no submodules, but full
+history since staleness needs git dates). A commit touching code AND docs still
+takes the full path, so the `docs` ctest lane still catches staleness whenever
+code actually moves — the only case that can cause it.

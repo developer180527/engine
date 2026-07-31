@@ -1,0 +1,49 @@
+name: Docs
+
+# The documentation/maturity contract (docs/engineering-standards.md) is pure
+# Python over the tree — it needs no compiler, no CMake, and no submodules.
+# Splitting it out means a Markdown commit costs ~15 seconds instead of a
+# 4-platform build of Assimp and bgfx from source.
+#
+# ci.yml owns the same check for CODE commits (as the `docs` ctest lane), which
+# is the case that actually matters: staleness is "code moved after the doc was
+# verified", and only a code commit can cause it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.md'
+      - 'scripts/engine_doctor.py'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - '**.md'
+      - 'scripts/engine_doctor.py'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  contract:
+    name: Doc contract
+    runs-on: ubuntu-latest
+    steps:
+      # Submodules are deliberately NOT checked out: engine_doctor skips them
+      # (they are other repos' contracts) and they are the slow part of a clone.
+      # Full history, though — staleness compares `verified:` against the last
+      # commit touching the covered paths, which a shallow clone cannot answer.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Validate doc front-matter, tiers and staleness
+        run: python3 scripts/engine_doctor.py check
+
+      - name: ENGINE_STATUS.md is regenerated
+        run: python3 scripts/engine_doctor.py status --check

@@ -9,15 +9,31 @@ name: CI
 on:
   push:
     branches: [main]
+    # Documentation-only commits do NOT need a 4-platform build of Assimp and
+    # bgfx from source. They are validated by docs.yml, which runs the same
+    # engine_doctor contract in seconds without configuring CMake.
+    # NOTE: a commit touching code AND docs still lands here (path filters are
+    # per-commit, not per-file), so the docs ctest lane below still guards
+    # staleness whenever code actually moves — which is the case that matters.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'ENGINE_STATUS.md'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
 
-# A new push supersedes an in-flight run of the same branch; these builds are
-# expensive (Assimp + bgfx from source) and there's no value in finishing a
-# run whose result is already stale.
+# Supersede in-flight runs for PULL REQUESTS only: a PR's older run is
+# genuinely stale, and iterating on a PR should not queue four builds.
+# Pushes to main are NOT cancelled — main is the ratchet, every commit on it
+# is a release candidate, and a cancelled run leaves that commit with no
+# verdict at all (which is what was happening: pushing a short series of
+# commits cancelled every run but the last).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
