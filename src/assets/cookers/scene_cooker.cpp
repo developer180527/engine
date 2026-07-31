@@ -182,14 +182,29 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
 
             // Resolve cookedPath via the asset DB (shared resolver — same
             // logic drives the dependency staleness check).
-            if (cookedPath.empty()) {
-                auto rec = resolveMeshRecord(mr, assetLib, projectRoot);
-                if (rec && rec->state == assetlib::AssetState::Ready
-                        && !rec->cookedPath.empty()) {
-                    cookedPath = rec->cookedPath;
-                    // Keep the runtime's source fallback current too.
-                    if (!rec->sourcePath.empty()) srcPath = rec->sourcePath;
-                }
+            //
+            // The DB WINS over any cookedPath cached in the scene JSON. That
+            // field is a stale snapshot of a previous registry generation: a
+            // teammate who clones the repo, anyone whose registry.db is
+            // regenerated, or a machine that cooks fresh will mint different
+            // UUIDs for the same files, and the JSON's remembered
+            // "meshs/<old-uuid>.cooked" then points at a file that does not
+            // exist. Trusting it produced a scene that cooked "successfully"
+            // and loaded NOTHING at runtime — every mesh reported
+            // "Cannot stat" and the level came up empty.
+            //
+            // AssetRef's contract is uuid-first, path-fallback precisely so
+            // identity survives this; the resolver honours it, so ask it first
+            // and keep the JSON value only as a last resort.
+            if (auto rec = resolveMeshRecord(mr, assetLib, projectRoot);
+                rec && rec->state == assetlib::AssetState::Ready
+                    && !rec->cookedPath.empty()) {
+                if (!cookedPath.empty() && cookedPath != rec->cookedPath)
+                    LOG_INFO("SceneCook", "Healed stale cooked ref: %s -> %s",
+                             cookedPath.c_str(), rec->cookedPath.c_str());
+                cookedPath = rec->cookedPath;
+                // Keep the runtime's source fallback current too.
+                if (!rec->sourcePath.empty()) srcPath = rec->sourcePath;
             }
 
             auto [coff, clen] = intern(cookedPath);

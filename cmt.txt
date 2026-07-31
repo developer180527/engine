@@ -1,29 +1,36 @@
-assets: stage each .ctex once per mesh; measure reveals dev path uploads raw RGBA8
+render+cook: measure the SHIPPED path; fix two bugs that hid it
 
-Worker staging: materials sharing an image (the pistol has 4 material
-references to 2 files after the cooker's content dedup) each read the file and
-bgfx::copy'd it again. The worker now stages a given .ctex once per mesh and
-the drain resolves skipped materials to the first user's handle by name.
+Measured engine_player (cooked/BC) against engine_host (source importer/raw
+RGBA8), 400 fixed frames each:
+                    textures   render targets   peak
+  DEV  engine_host    76.0 MB      71.0 MB     147.1 MB
+  SHIP engine_player   0.0 MB      71.0 MB      71.1 MB
 
-The skip MUST happen on the worker, not at the drain: bgfx memory from copy()
-is freed only when a create call consumes it, so discarding an
-already-allocated duplicate later would leak it. Not allocating is the only
-safe form of "don't upload this twice". Scope is one mesh; cross-mesh sharing
-needs the worker to consult the main-thread cache safely, which is next.
+The shipped game already fits the 128 MB target machine. Its texture cost is
+effectively nil — BC + mips through AssetService — and its whole footprint is
+render targets, which measured 71 MB even in a run where NO meshes loaded.
+That is fixed overhead, ~57 MB above the naive 1280x720 figure, and is now the
+#1 renderer item (audit R6). Draw calls 12.9, zero handle churn.
 
-MEASUREMENT REFRAMES THE PROBLEM. VRAM did not move (76 MB), because
-engine_host does not use this path at all:
-  engine_host  (dev)     SceneSerializer -> ImporterRegistry -> glTF importer
-  engine_player (shipped) SceneService   -> AssetService     -> cooked .ctex
-gltf_importer's uploadRGBA creates TextureFormat::RGBA8 with mips=false, so one
-4096x4096 texture costs 64 MB uncompressed and unmipped. That single upload is
-essentially the whole 76 MB, and it means the BC7/BC5 pipeline is bypassed
-entirely in the dev runtime.
+engine_player gains --frames N and --gpu-stats. A shipped player needs them
+because the numbers that matter are measured ON the target machine; they are
+opt-in and leave the default shipping posture unchanged.
 
-This is the likely source of the "unreasonable GPU allocations" seen in
-Instruments: not churn (measured at 0/600 frames) but magnitude.
+Two bugs, both introduced by me, both silent:
 
-Consequence: the 128 MB budget question is still open, because the shipped
-player was never the thing being measured.
+1. Scenes could no longer be cooked by the CLI AT ALL. fileSettled()'s
+   stability map is per-process, so a fresh engine_cook always defers a scene
+   on its only pass; scene deferrals were not counted in `deferred`, so
+   cookOnce() concluded "up to date" and exited printing "0 cooked". Fixed by
+   reporting scene deferrals and assigning m_stats.deferred AFTER the scene
+   scan — the previous assignment ran before it and only knew about assets.
 
-24/24 unit.
+2. SceneCooker trusted a stale "cookedPath" cached in the scene JSON,
+   consulting the asset DB only when that field was empty. A UUID from a dead
+   registry generation was copied through verbatim, producing a scene that
+   cooked successfully and loaded NOTHING (every mesh "Cannot stat"). This hits
+   any teammate who clones, anyone whose registry.db regenerates, and every
+   fresh CI machine. The DB now wins; stale refs are healed and logged.
+   Verified: 3/3 refs healed, 0 load failures.
+
+24/24 unit, 2/2 fuzz-regress, 2/2 docs.

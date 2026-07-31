@@ -92,10 +92,16 @@ private:
     // assets, so it cooks the moment they land (the old flow cooked every
     // scene sequentially after ALL assets finished). scenesCooked/scenesFailed
     // are bumped from the graph's drain lane (the cook thread).
+    // `scenesDeferred` counts scenes skipped by the write-settle check. It MUST
+    // reach the caller: cookOnce() converges when nothing cooked and nothing
+    // deferred, and fileSettled()'s stability map is per-process, so a fresh
+    // engine_cook always defers on its only pass. Not reporting it made the
+    // CLI exit before scenes ever cooked — silently, since "0 cooked" looks
+    // like "up to date".
     std::vector<assetlib::CookPipeline::ExtraTask> buildSceneTasks(
         assetlib::AssetRegistry& registry,
         const std::unordered_set<std::string>& cooking,
-        int* scenesCooked, int* scenesFailed);
+        int* scenesCooked, int* scenesFailed, int* scenesDeferred);
     // Files mid-write by external tools defer to a follow-up pass.
     void requeueIfDeferred(int deferred);
     // Scene source dirs: <project>/scenes and <assets>/scenes (whichever exist).

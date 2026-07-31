@@ -222,9 +222,16 @@ void CookService::runOneCookPass() {
     // exactly the cooking assets it references: a scene cooks the moment
     // its own assets land (and immediately, in parallel, when none are
     // cooking) instead of every scene waiting for the whole batch.
-    int scenesCooked = 0, scenesFailed = 0;
+    int scenesCooked = 0, scenesFailed = 0, scenesDeferred = 0;
     auto sceneTasks = buildSceneTasks(registry, todoSet,
-                                      &scenesCooked, &scenesFailed);
+                                      &scenesCooked, &scenesFailed,
+                                      &scenesDeferred);
+    // Fold scene deferrals into the pass's deferred total so the synchronous
+    // cookOnce() loop keeps going until they settle. Assigned to m_stats HERE,
+    // after the scene scan: the earlier assignment only knew about assets, so
+    // a deferred scene was invisible to the convergence check.
+    deferred += scenesDeferred;
+    m_stats.deferred = deferred;
 
     if (total == 0 && sceneTasks.empty()) {
         if (standingFailures > 0)
@@ -283,7 +290,7 @@ void CookService::requeueIfDeferred(int deferred) {
 std::vector<assetlib::CookPipeline::ExtraTask> CookService::buildSceneTasks(
         assetlib::AssetRegistry& registry,
         const std::unordered_set<std::string>& cooking,
-        int* scenesCooked, int* scenesFailed) {
+        int* scenesCooked, int* scenesFailed, int* scenesDeferred) {
     namespace fs = std::filesystem;
     std::vector<assetlib::CookPipeline::ExtraTask> tasks;
     fs::path sceneCacheDir = m_cacheRoot / "scenes";
@@ -307,8 +314,14 @@ std::vector<assetlib::CookPipeline::ExtraTask> CookService::buildSceneTasks(
             / (entry.path().stem().string() + ".cooked");
 
         // A scene mid-save by the editor/user gets the same settle
-        // treatment as assets — never cook a half-written JSON.
-        if (!fileSettled(entry.path())) continue;   // next pass picks it up
+        // treatment as assets — never cook a half-written JSON. Reported so
+        // cookOnce() runs another pass instead of concluding "up to date":
+        // fileSettled()'s stability map is per-process, so the FIRST sight of
+        // any scene always defers, and a one-pass CLI would never cook it.
+        if (!fileSettled(entry.path())) {
+            if (scenesDeferred) ++*scenesDeferred;
+            continue;
+        }
 
         // This scene's asset refs, intersected with what's cooking NOW —
         // the graph edges that let it cook the moment its assets land.

@@ -16,18 +16,35 @@
 #include <engine/input.h>
 
 #include <cstdio>
+#include <cstdlib>   // strtol — --frames
 #include <filesystem>
 #include <string>
 
 #include "plugins/stock_plugins.h"
+#include "render/render_stats_channel.h"   // --gpu-stats (measure on target)
 
 namespace fs = std::filesystem;
 
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IOLBF, 0);   // logs stream live to pipes/files
 
+    // Diagnostic flags. A shipped player needs these because the numbers that
+    // matter are the ones measured ON THE TARGET MACHINE — the whole point of
+    // the low-spec box is that our development Mac cannot answer for it. They
+    // cost nothing when unused: --gpu-stats reads counters bgfx already keeps,
+    // and neither changes the default shipping posture.
+    long frameLimit = 0;      // --frames N: stop after N frames (repeatable)
+    bool gpuStats   = false;  // --gpu-stats: VRAM / draws / handle churn
+    std::string projectArg;
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--frames" && i + 1 < argc)  frameLimit = std::strtol(argv[++i], nullptr, 10);
+        else if (a == "--gpu-stats")          gpuStats   = true;
+        else if (projectArg.empty() && a[0] != '-') projectArg = a;
+    }
+
     EngineConfig cfg;
-    if (argc > 1) cfg.projectRoot = argv[1];
+    if (!projectArg.empty()) cfg.projectRoot = projectArg;
     cfg.defaultScene      = false;   // a game ships its own scene
     cfg.openAssetDatabase = false;   // no registry.db in a shipped build
     cfg.enableProfiler    = false;   // release posture (flip for profiling builds)
@@ -77,10 +94,31 @@ int main(int argc, char** argv) {
     }
 
     engine.startSimulation();   // in-place: boot = play
-    engine.run([&](float dt) {
-        InputSystem::get().processEvents();
-        engine.tick(dt);
-    });
+
+    if (!gpuStats && frameLimit <= 0) {
+        engine.run([&](float dt) {          // normal shipping loop, untouched
+            InputSystem::get().processEvents();
+            engine.tick(dt);
+        });
+    } else {
+        // Measurement loop. Explicit rather than engine.run() so --frames can
+        // bound it: a number whose sample length depends on when someone
+        // closed the window is not a measurement.
+        RenderStatsChannel stats;
+        long  frame = 0;
+        float dt    = 0.0f;
+        while (engine.frameBegin(dt)) {
+            InputSystem::get().processEvents();
+            engine.tick(dt);
+            // Driven directly, not through the profiler hub: the shipping
+            // posture leaves the profiler disabled (cfg.enableProfiler=false),
+            // and this must work regardless of that.
+            if (gpuStats) stats.endFrame();
+            engine.frameEnd();
+            if (frameLimit > 0 && ++frame >= frameLimit) break;
+        }
+        if (gpuStats) stats.report("engine_player (SHIPPED path)");
+    }
 
     engine.stopSimulation();
     engine.shutdown();
