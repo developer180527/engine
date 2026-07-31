@@ -493,7 +493,24 @@ void AssetService::workerLoop() {
                 }
 
                 // Materials + texture resolution (all I/O on worker)
+                //
+                // STAGE EACH .ctex ONCE PER MESH. Materials routinely share an
+                // image — the fps_shooter pistol has 4 material references to
+                // 2 files after the cooker's content dedup — and staging each
+                // reference separately read the file and bgfx::copy'd it again,
+                // uploading the same texture twice.
+                //
+                // The skip has to happen HERE, on the worker, not at the drain:
+                // bgfx memory from copy() is only freed when a create call
+                // consumes it, so dropping an already-allocated duplicate at
+                // the drain would leak it. Not allocating is the only safe
+                // form of "don't upload this twice".
+                //
+                // Scope is ONE MESH. Cross-mesh sharing still uploads twice;
+                // that needs the worker to consult the (main-thread) texture
+                // cache safely and is the next step.
                 const auto sourceDir = std::filesystem::path(req.absPath).parent_path();
+                std::unordered_map<std::string, uint32_t> stagedTex; // name -> first user
                 for (uint32_t mi = 0; mi < static_cast<uint32_t>(asset.materials.size()); ++mi) {
                     const auto& cm = asset.materials[mi];
                     MatGPU mg;
@@ -501,17 +518,22 @@ void AssetService::workerLoop() {
                     mg.roughness = cm.roughness;
                     mg.metallic  = cm.metallic;
 
+                    // The NAME is always recorded, staged or not: it is what
+                    // the drain uses to resolve a skipped material to the
+                    // handle the first one created.
                     if (cm.flags & assetlib::kMatFlag_HasBaseColor) {
-                        mg.baseColor     = resolveTextureGPU(cm.baseColorPath,
+                        mg.baseColorName = cm.baseColorPath;
+                        if (stagedTex.emplace(cm.baseColorPath, mi).second)
+                            mg.baseColor = resolveTextureGPU(cm.baseColorPath,
                                                sourceDir, m_assetLib,
                                                m_projectRoot, m_cacheRoot);
-                        mg.baseColorName = cm.baseColorPath;
                     }
                     if (cm.flags & assetlib::kMatFlag_HasNormalMap) {
-                        mg.normalMap     = resolveTextureGPU(cm.normalMapPath,
+                        mg.normalMapName = cm.normalMapPath;
+                        if (stagedTex.emplace(cm.normalMapPath, mi).second)
+                            mg.normalMap = resolveTextureGPU(cm.normalMapPath,
                                                sourceDir, m_assetLib,
                                                m_projectRoot, m_cacheRoot);
-                        mg.normalMapName = cm.normalMapPath;
                     }
                     result.materials.push_back(std::move(mg));
                 }
@@ -752,6 +774,13 @@ bool AssetService::drainUploads() {
 
         // Finalize materials
         std::vector<MaterialHandle> matHandles;
+        // Resolves materials the worker deliberately did NOT stage (see the
+        // staging comment): a null `mem` with a non-empty name means "another
+        // material in this mesh already uploaded this file" — share its handle
+        // instead of uploading a second copy. Populated in the same order the
+        // worker staged, so the first user is always seen first.
+        std::unordered_map<std::string, TextureHandle> texByName;
+
         for (auto& mg : item.materials) {
             Material mat;
             std::memcpy(mat.baseColorFactor, mg.baseColorFactor,
@@ -763,16 +792,33 @@ bool AssetService::drainUploads() {
 
             if (mg.baseColor.mem) {
                 auto th = createTexFromGPU(mg.baseColor);   // format-aware
-                if (bgfx::isValid(th))
+                if (bgfx::isValid(th)) {
                     mat.baseColorTexture = m_textures.addTexture(
                         Texture(th, mg.baseColor.w, mg.baseColor.h));
+                    if (!mg.baseColorName.empty())
+                        texByName[mg.baseColorName] = mat.baseColorTexture;
+                }
+            } else if (!mg.baseColorName.empty()) {
+                auto it = texByName.find(mg.baseColorName);
+                if (it != texByName.end()) mat.baseColorTexture = it->second;
+                // A miss means the FIRST user failed to load; leaving the
+                // handle invalid falls back to the white texture, which is
+                // the same behaviour as before.
             }
+
             if (mg.normalMap.mem) {
                 auto th = createTexFromGPU(mg.normalMap);
-                if (bgfx::isValid(th))
+                if (bgfx::isValid(th)) {
                     mat.normalMapTexture = m_textures.addTexture(
                         Texture(th, mg.normalMap.w, mg.normalMap.h));
+                    if (!mg.normalMapName.empty())
+                        texByName[mg.normalMapName] = mat.normalMapTexture;
+                }
+            } else if (!mg.normalMapName.empty()) {
+                auto it = texByName.find(mg.normalMapName);
+                if (it != texByName.end()) mat.normalMapTexture = it->second;
             }
+
             matHandles.push_back(m_materials.addMaterial(std::move(mat)));
         }
 

@@ -1,41 +1,29 @@
-render+cook: GpuResourceCache wiring, and 32 MB of cook-time texture duplication
+assets: stage each .ctex once per mesh; measure reveals dev path uploads raw RGBA8
 
-Two halves, one of which did not do what was expected — recorded because the
-negative result is what found the real bug.
+Worker staging: materials sharing an image (the pistol has 4 material
+references to 2 files after the cooker's content dedup) each read the file and
+bgfx::copy'd it again. The worker now stages a given .ctex once per mesh and
+the drain resolves skipped materials to the first user's handle by name.
 
-WIRING: loadTextureFromCooked now goes through GpuResourceCache, keyed by
-normalised cooked path, with the whole load as the factory so a hit skips the
-file read as well as the upload. Previously that path had NO dedup at all.
-Measured effect on fps_shooter: none — the scene loads textures through
-resolveTextureGPU on the async worker, not this path.
+The skip MUST happen on the worker, not at the drain: bgfx memory from copy()
+is freed only when a create call consumes it, so discarding an
+already-allocated duplicate later would leak it. Not allocating is the only
+safe form of "don't upload this twice". Scope is one mesh; cross-mesh sharing
+needs the worker to consult the main-thread cache safely, which is next.
 
-The async sites are deliberately NOT wired. bgfx memory from copy() is freed
-only when a create call consumes it, and at those sites the worker has already
-allocated; a cache hit would leave it unconsumed. That is a leak, introduced
-while building leak infrastructure. The fix belongs earlier — the worker should
-stage each .ctex once per mesh — and is scoped as follow-up.
+MEASUREMENT REFRAMES THE PROBLEM. VRAM did not move (76 MB), because
+engine_host does not use this path at all:
+  engine_host  (dev)     SceneSerializer -> ImporterRegistry -> glTF importer
+  engine_player (shipped) SceneService   -> AssetService     -> cooked .ctex
+gltf_importer's uploadRGBA creates TextureFormat::RGBA8 with mips=false, so one
+4096x4096 texture costs 64 MB uncompressed and unmipped. That single upload is
+essentially the whole 76 MB, and it means the BC7/BC5 pipeline is bypassed
+entirely in the dev runtime.
 
-THE ACTUAL DUPLICATION was at cook time. The pistol's four sibling .ctex files
-were two byte-identical pairs (t0==t2 at 10.7 MB, t1==t3 at 21.3 MB): its glTF
-has several materials naming the same images, and the cooker re-encoded and
-re-wrote each into its own slot. 32 MB duplicated on disk, in the DDC and in
-VRAM, for a three-mesh scene against a 128 MB target.
+This is the likely source of the "unreasonable GPU allocations" seen in
+Instruments: not churn (measured at 0/600 frames) but magnitude.
 
-Note the runtime cache could never fix this: the duplicates had DIFFERENT
-filenames, so path identity cannot see them. MeshCooker now keys siblings by
-content (BLAKE3 over encoded payload + the header fields that change
-interpretation) and reuses the earlier file. Dedup state is thread_local and
-cleared per cook() — sibling names carry the mesh's uuid stem, so a stale entry
-would hand out another mesh's file, and the in-process fallback reuses threads.
+Consequence: the 128 MB budget question is still open, because the shipped
+player was never the thing being measured.
 
-MeshCooker kVersion 12 -> 13.
-
-Measured: pistol siblings 4 -> 2 files, 64 MB -> 32 MB, zero duplicate content
-hashes remaining. VRAM is still 76 MB because the cooked mesh now holds 4
-material references to 2 files and the async path uploads each separately —
-but they are now PATH-identical, which is what makes runtime dedup tractable.
-
-Also noted, not fixed: .cache has no GC, so the version bump left orphaned
-siblings behind and total cache size grew to 113 MB.
-
-24/24 unit, 2/2 fuzz-regress, 2/2 docs.
+24/24 unit.
