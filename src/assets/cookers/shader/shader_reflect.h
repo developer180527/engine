@@ -34,6 +34,12 @@ struct ReflectedUniform {
     uint16_t    regIndex = 0;
     uint16_t    regCount = 0;    // vec4 registers occupied
     bool        fragment = false;
+    // Set from the type byte's sampler bit, which some backends use and others
+    // don't — see the flag note in shader_reflect.cpp. Prefer this over
+    // `kind == Sampler` when asking "is this a texture slot?".
+    bool        sampler  = false;
+    bool        compare  = false;   // shadow/compare sampler
+    bool        readOnly = false;
 };
 
 struct Reflection {

@@ -243,4 +243,4 @@ routes the widgets to ImGui. The kit links no UI code and loads identically in
 
 - **Module contract** (how a kit/game exposes itself as a loadable module):
   `include/engine/game_module.h`.
-- **Scripting layer** (Lua over the same surface): `docs/scripting-api.md`.
+- **Scripting layer** (Lua over the same surface): `docs/guides/scripting-api.md`.

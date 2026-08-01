@@ -15,7 +15,7 @@
 //     so it stays reorderable and reusable.
 //   • EXTRACTION CAN BE PARALLEL. Flat arrays of independent items.
 //
-// See docs/renderer-architecture.md §5.
+// See docs/architecture/renderer-architecture.md §5.
 #include "core/handle.h"
 #include "core/math_types.h"      // Vec3/Vec4/Mat4 (bx math — not the GPU API)
 #include "components/light.h"     // LightType

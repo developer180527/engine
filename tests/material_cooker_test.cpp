@@ -1,6 +1,6 @@
 // ── material_cooker_test — materials as data ────────────────────────────────
 //
-// Phase 5 of docs/renderer-audit-and-plan.md. This is the payoff of the shader
+// Phase 5 of docs/plans/renderer-audit-and-plan.md. This is the payoff of the shader
 // interface: a material names a shader and supplies values, and EVERY name is
 // checked against what that shader declared. What is asserted here is precisely
 // the set of mistakes that would otherwise be invisible — a misspelled

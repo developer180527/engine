@@ -1,5 +1,5 @@
-#include "assets/cookers/texture_cooker.h"
-#include "assets/cookers/texture_encode.h"
+#include "assets/cookers/texture/texture_cooker.h"
+#include "assets/cookers/texture/texture_encode.h"
 #include <stb_image.h>
 #include <cstdio>
 #include <cstdlib>

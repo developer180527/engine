@@ -23,6 +23,122 @@ tests:
 > economics) is the part most likely to be got wrong by a well-meaning future
 > change. Section 8 records what we deliberately did **not** build, and why.
 
+## 0. The whole thing in one picture
+
+Source files get a UUID, get **cooked** into GPU-ready binaries, the cooked bytes
+get cached by their **content hash** so nothing is ever cooked twice, and at
+runtime the engine hands those binaries to the GPU with no parsing.
+
+```
+   AUTHORING                 OFFLINE (cook time)                RUNTIME
+   ─────────                 ───────────────────                ───────
+
+  rust_albedo.png ─┐
+  pistol.glb       │      ┌──────────────┐
+  standard.shader  ├─────►│ AssetRegistry│  UUID + BLAKE3 of the bytes
+  rust.material    │      │  (SQLite)    │  — a ledger, not a cache
+  main.scene      ─┘      └──────┬───────┘
+                                 │  "which of these are stale?"
+                                 ▼
+                          ┌──────────────┐
+                          │ CookPipeline │  task graph, memory + thermal budget
+                          └──────┬───────┘
+                    ┌────────────┼────────────┐
+                    ▼            ▼            ▼
+              TextureCooker  MeshCooker  ShaderCooker    each in its own
+                    │            │       MaterialCooker  child process
+                    └────────────┼────────────┘          SceneCooker
+                                 ▼
+                          ┌──────────────┐
+                          │     DDC      │  content-addressed blob store
+                          └──────┬───────┘  ~/.engine/ddc (+ shared tier)
+                                 │ hardlink
+                                 ▼
+                        <project>/.cache/<type>/<uuid>.cooked
+                                 │                    ▲
+                                 │              collectGarbage() prunes
+                                 ▼              what nothing claims
+                          ┌──────────────┐
+                          │ AssetService │  residency budget, LRU
+                          └──────┬───────┘
+                                 ▼
+                       ┌────────────────────┐
+                       │  GpuResourceCache  │  content key, refcount, budget
+                       └─────────┬──────────┘
+                                 ▼
+                RenderWorld → visibility → ForwardPipeline → screen
+```
+
+### One file, end to end
+
+**1 — The registry notices.** `AssetRegistry::scan()` assigns a UUID and records
+a BLAKE3 hash of the file's bytes in `<project>/.cache/registry.db`. It is a
+*ledger*: it says what exists and what state it is in, and stores no content.
+
+**2 — Is it stale?** The recipe is hashed, not just the file:
+
+```
+DDC key = BLAKE3( cooker id ⊕ cooker version ⊕ settingsFingerprint ⊕ source hash )
+```
+
+The **cooker id** namespaces the key, which is why bumping `TextureCooker::kVersion`
+re-cooks textures *and only textures*. **`settingsFingerprint`** carries
+everything else that changes output for identical source bytes — the texture
+quality tier; for shaders, the target profiles, the `shaderc` binary's mtime, and
+a transitive hash of the `.sc`/`.sh` sources (those are inputs but not registry
+assets, so nothing else can see them).
+
+**3 — The DDC answers.** On a **hit** it *hardlinks* the existing blob into
+`.cache` — no work. This is the 8 min → 1.8 s difference, and with
+`ENGINE_DDC_SHARED` a teammate never re-cooks what you already cooked. (Hardlinks
+are also why `du` under-reports `.cache`: the entry and the DDC blob are one
+inode.) On a **miss**, the cooker actually runs.
+
+**4 — Cooking.** Each cook runs in an `engine_cook_worker` child process, because
+a corrupt FBX can `SIGSEGV` and no `try/catch` traps that; in a child it kills
+one asset instead of the editor. Two governors decide *when*: a **memory** budget
+admits work against `estimatePeakBytes()` (an 8K texture decodes to 256 MB, so
+those serialize while cheap cooks pack in parallel), and **thermal citizenship**
+caps workers at cores−2 at background QoS.
+
+**5 — Output lands** at `<project>/.cache/<type>/<uuid>.cooked`, and the DDC
+records a manifest of every file that cook produced — including siblings, so a
+cache hit on another machine materializes the whole set.
+
+**6 — GC.** `collectGarbage()` walks `.cache` and deletes what the registry no
+longer claims (deleted sources, outputs orphaned by a version bump). It is
+deliberately paranoid — a missing *or empty* registry aborts the sweep, because
+`AssetRegistry::open()` **creates** a missing database, so a naive "does the DB
+exist?" check passes against a brand-new empty one and everything looks orphaned.
+
+**7 — Runtime.** `AssetService` reads cooked bytes under a residency budget with
+LRU eviction. Underneath, `GpuResourceCache` is content-keyed: the same texture
+requested twice returns the *same* GPU handle with a bumped refcount.
+`refs == 0` means **evictable, not dead** — eviction is a budget decision made
+later, never mid-frame, because dropping a resource a queued draw points at is a
+use-after-free.
+
+### Shaders and materials
+
+`standard.shader` is a manifest naming its `.sc` sources **and declaring its
+interface** — which parameters a material may set, their types, defaults, and
+where each lands in GPU memory. `ShaderCooker` compiles the (features × profiles)
+matrix, then **reads the compiled bytecode's own uniform table back and verifies
+the declaration against it, on every variant**. Without that check the manifest
+could lie and a material would set a value that writes nowhere.
+
+`rust.material` names a shader and supplies values. `MaterialCooker` resolves
+those names against the declared interface *at cook time* and emits finished
+float blocks, so the runtime does no lookup and no validation — it uploads bytes.
+Unknown name ⇒ failed cook. Unset parameter ⇒ the shader's default, never a gap
+(a sparse block would inherit whatever the previous draw wrote).
+
+See `src/assets/cookers/shader/info.md` and `src/assets/cookers/material/info.md`.
+
+> **Not yet wired:** `ForwardPipeline` still `#include`s compile-time shader
+> blobs and reads the fixed `Material` struct. `.cshader` and `.cmat` are cooked,
+> tested, and currently inert. See `docs/process/roadmap.md` §3.
+
 ## 1. The reframe: cooking is a caching problem
 
 The naive cooker walks every asset and compresses it here, now, on all cores.

@@ -1,5 +1,5 @@
-#include "assets/cookers/mesh_cooker.h"
-#include "assets/cookers/texture_encode.h"   // BC7/BC5 + mips for .ctex
+#include "assets/cookers/mesh/mesh_cooker.h"
+#include "assets/cookers/texture/texture_encode.h"   // BC7/BC5 + mips for .ctex
 #include <assetlib/ddc.h>                    // blake3Bytes — sibling dedup
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>

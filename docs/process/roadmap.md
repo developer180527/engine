@@ -12,7 +12,7 @@ subsystem, with tiers derived from each `info.md`. This document answers the
 question generation cannot: **what is missing, and in what order should it be
 built.**
 
-Maturity uses the ladder in `docs/engineering-standards.md`:
+Maturity uses the ladder in `docs/process/engineering-standards.md`:
 `prototype → working → hardened → production`. Nothing is `production` yet, and
 nothing should be until a shipped game has run on it.
 
@@ -53,7 +53,7 @@ out-of-process crash isolation, GC. It is genuinely studio-shaped.
 
 ---
 
-## 2. The renderer — findings from `docs/renderer-audit-and-plan.md`
+## 2. The renderer — findings from `docs/plans/renderer-audit-and-plan.md`
 
 | # | Finding | State |
 |---|---|---|

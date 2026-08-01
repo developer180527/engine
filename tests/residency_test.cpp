@@ -15,7 +15,7 @@
 #include <bgfx/bgfx.h>
 
 #include "runtime/services/asset_service.h"
-#include "assets/cookers/mesh_cooker.h"
+#include "assets/cookers/mesh/mesh_cooker.h"
 #include "render/asset_registry.h"
 #include "render/texture_registry.h"
 #include "render/material_registry.h"

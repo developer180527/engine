@@ -16,7 +16,7 @@ namespace rworld {
 
 // Fixed forward-lighting budget. Lights beyond this are DROPPED — the honest
 // limitation of a plain forward path, and the reason clustered forward is the
-// stated target (docs/renderer-architecture.md §2).
+// stated target (docs/architecture/renderer-architecture.md §2).
 constexpr int kMaxLights   = 16;
 constexpr int kFloatsPerLight = 16;   // 4 vec4s
 

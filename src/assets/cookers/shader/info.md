@@ -20,7 +20,7 @@ Today [`material.h`](../../../render/material.h) hardcodes five fields
 `metallic`). "Custom material" therefore means "recompile the engine". Once a
 shader declares its own parameters, a material is a shader reference plus
 values — and a project can define its own look without touching engine source.
-That is Phase 5 of `docs/renderer-audit-and-plan.md`, finding R3.
+That is Phase 5 of `docs/plans/renderer-audit-and-plan.md`, finding R3.
 
 ## The anti-bloat rule
 > **Features are a closed list the shader author declares. A material selects a
@@ -58,7 +58,26 @@ all otherwise invisible until someone notices the render looks wrong:
 
 The reverse direction (shader has it, declaration doesn't) is a **warning**:
 `u_lights`, `u_viewProj`, `u_shadowMtx` and friends are engine-driven and
-legitimately not material parameters.
+legitimately not material parameters. Warnings dedup by name across stages and
+across variants — one fact about the shader, reported once.
+
+**Every variant on every profile is verified**, not just the first. That is what
+makes the declared interface a contract rather than a convention: a feature may
+add engine-driven uniforms (warnings), but it may not remove a declared material
+parameter, so conditional material parameters are mechanically impossible.
+Backends differ too — a uniform surviving dead-code elimination on one profile
+can vanish on another. Verifying only the first variant skipped
+`2^n × profiles − 1` of the compiled outputs; when that was fixed it immediately
+caught a real bug in our own reflector (see `issues.md`).
+
+## Source invalidation
+`.sc` stage sources and the `.sh` headers they include are real inputs but not
+registry assets, so they cannot be declared through `addDependency(UUID)`.
+`hashSourceTree()` walks `#include "..."` transitively and hashes the whole tree
+into `settingsFingerprint`. Without it, editing shading code looked like "my edit
+did nothing". It scans rather than preprocesses, so an include under a false
+`#if` is still hashed — over-approximating re-cooks unnecessarily, which is the
+safe direction.
 
 ## Parameter packing
 Parameters do not each get their own GPU uniform. They pack into a shared `vec4`
@@ -90,12 +109,6 @@ or bumping bgfx re-cooks instead of serving a blob that lacks the profile.
 - **Not consumed by the renderer yet.** `ForwardPipeline` still `#include`s the
   compile-time shader headers. Wiring it to load `.cshader` through
   `AssetService`/`GpuResourceCache` comes with material assets — the next step.
-- **`.sc` edits do not invalidate the cooked shader.** Stage sources are inputs
-  but not registry assets, so they can't be reported through
-  `addDependency(UUID)`. Editing a `.sc` needs a touch of the `.shader` (or a
-  `--all` with the cache cleared) to re-cook. Fixing this properly means either
-  registering `.sc` files as assets or hashing them into
-  `settingsFingerprint`.
 - **`standard.shader` declares zero features.** Skinning is currently a separate
   vertex source (`vs_skinned.sc`) rather than a define; folding it in is the
   natural first real use of the variant matrix.

@@ -30,7 +30,7 @@
 #include "core/logger.h"
 #include <assetlib/asset_registry.h>
 #include <assetlib/scene_asset.h>
-#include "assets/cookers/scene_cooker.h"
+#include "assets/cookers/scene/scene_cooker.h"
 
 // SceneSerializer is now a thin orchestration layer over EntitySerde: it owns
 // which entities are persisted and the async asset plumbing, while all

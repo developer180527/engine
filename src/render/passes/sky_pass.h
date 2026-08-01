@@ -1,7 +1,7 @@
 #pragma once
 #include "render/passes/i_render_pass.h"
 // ── SkyPass ──────────────────────────────────────────────────────────────────
-// SCAFFOLD — see docs/renderer-architecture.md.
+// SCAFFOLD — see docs/architecture/renderer-architecture.md.
 //
 // WHAT IT DOES (today just the background-view clear — to be owned here):
 //   Establishes what sits behind opaque geometry. MVP: a clear color.

@@ -15,7 +15,7 @@ parses-external-input: true
 Make a material **a shader reference plus values**, instead of a fixed C++
 struct. This is the payoff of the declared interface built in
 `src/assets/cookers/shader/`, and the second half of Phase 5 /
-finding R3 in `docs/renderer-audit-and-plan.md`.
+finding R3 in `docs/plans/renderer-audit-and-plan.md`.
 
 [`material.h`](../../../render/material.h) hardcodes five fields, so the set of
 things a material can express is compiled into the engine. A `.material` names

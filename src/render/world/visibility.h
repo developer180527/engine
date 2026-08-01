@@ -8,7 +8,7 @@
 // instead of inside ForwardPipeline: a project that swaps the pipeline to
 // change how surfaces LOOK should not have to reimplement culling and sorting
 // to do it. Today it must, which is why `IRenderPipeline` is a customization
-// point nobody can actually use (docs/renderer-architecture.md §3).
+// point nobody can actually use (docs/architecture/renderer-architecture.md §3).
 //
 // GPU-free by construction — RenderItem carries its own bounds, so nothing
 // here touches Mesh or bgfx and all of it is unit-testable.

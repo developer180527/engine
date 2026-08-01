@@ -1,6 +1,6 @@
 #pragma once
 // ── IRenderPass ──────────────────────────────────────────────────────────────
-// SCAFFOLD — not yet wired into the build. See docs/renderer-architecture.md.
+// SCAFFOLD — not yet wired into the build. See docs/architecture/renderer-architecture.md.
 //
 // A render pass is ONE self-contained stage of a frame: it claims a bgfx view,
 // reads prepared render data + any resources earlier passes produced, and

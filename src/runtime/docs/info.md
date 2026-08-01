@@ -24,7 +24,7 @@ tests:
 # cooked scene binaries whose byte-level parse lives in assetlib. Volume of
 # tests is not the same as adversarial coverage.
 # Blocker to `hardened`: a fuzz target for the scene deserializer (already the
-# next planned target in docs/automated-testing-soak-fuzz-plan.md) and/or
+# next planned target in docs/plans/automated-testing-soak-fuzz-plan.md) and/or
 # input.json. Raise the tier when one exists — not before.
 ---
 # Runtime Core
@@ -139,7 +139,7 @@ The flat C API (`engine/engine_api.h`, impl `scripting/engine_api.cpp`) is the
 physics, audio, assets, scenes, cursor, plus the **editor-UI facade**
 (`engineUi*`). UI calls route to a host-registered `EngineUiBackend` (the editor
 provides one over ImGui); with no backend (engine_host / headless) they no-op,
-so a kit's `onEditorUI()` is safe everywhere. Full reference: `docs/engine-api.md`.
+so a kit's `onEditorUI()` is safe everywhere. Full reference: `docs/guides/engine-api.md`.
 
 ## Distribution
 Two supported modes:

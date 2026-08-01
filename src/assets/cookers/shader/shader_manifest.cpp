@@ -75,7 +75,7 @@ ManifestParseResult parseShaderManifest(const std::string& text,
     // ── features ────────────────────────────────────────────────────────────
     if (j.contains("features")) {
         if (!j["features"].is_array()) { r.error = "\"features\" must be an array"; return r; }
-        std::set<std::string> seen;
+        std::set<std::string> seen, seenDefines;
         for (const auto& fj : j["features"]) {
             ManifestFeature f;
             if (fj.is_string()) {
@@ -94,6 +94,16 @@ ManifestParseResult parseShaderManifest(const std::string& text,
             // under different masks.
             if (!seen.insert(f.name).second) {
                 r.error = "duplicate feature \"" + f.name + "\"";
+                return r;
+            }
+            // Two features sharing one define is the same collapse one level
+            // down: the variant matrix still doubles, but half the variants
+            // compile to byte-identical output. The cook looks like it produced
+            // distinct variants and the DDC fills with duplicates.
+            if (!seenDefines.insert(f.define).second) {
+                r.error = "feature \"" + f.name + "\" reuses define \"" + f.define
+                        + "\" — two features mapping to one define double the "
+                          "variant matrix while producing identical bytecode";
                 return r;
             }
             out.features.push_back(std::move(f));

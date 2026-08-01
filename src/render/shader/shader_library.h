@@ -7,7 +7,7 @@
 // This is what lets a project ship its own shading. `ForwardPipeline` currently
 // #includes compiled-in byte arrays, so the only shaders that can ever run are
 // the ones the engine was built with — the concrete reason `IRenderPipeline`
-// isn't a usable customization point (docs/renderer-audit-and-plan.md R3).
+// isn't a usable customization point (docs/plans/renderer-audit-and-plan.md R3).
 //
 // Programs are content-keyed through GpuResourceCache, the same machinery the
 // textures use: two materials on the same variant share one program, refcounted

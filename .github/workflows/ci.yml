@@ -188,7 +188,7 @@ jobs:
         shell: bash
         run: ctest --test-dir build -L fuzz-regress --output-on-failure
 
-      # Documentation/maturity contract (docs/engineering-standards.md): doc
+      # Documentation/maturity contract (docs/process/engineering-standards.md): doc
       # front-matter must match the tree, tier claims must have evidence, and
       # ENGINE_STATUS.md must be regenerated. Platform-independent, so it runs
       # only on the gating leg — the other legs would just repeat it.

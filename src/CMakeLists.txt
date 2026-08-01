@@ -61,10 +61,10 @@ set(ENGINE_SHADER_SOURCES
 # fully-cooked runtime that never parses FBX and never links Assimp.
 if(ENGINE_WITH_SOURCE_IMPORTERS)
     set(ENGINE_COOKER_SOURCES
-        assets/cookers/mesh_cooker.cpp
-        assets/cookers/scene_cooker.cpp
-        assets/cookers/texture_cooker.cpp
-        assets/cookers/texture_encode.cpp
+        assets/cookers/mesh/mesh_cooker.cpp
+        assets/cookers/scene/scene_cooker.cpp
+        assets/cookers/texture/texture_cooker.cpp
+        assets/cookers/texture/texture_encode.cpp
         assets/cookers/cook_service.cpp
         # Shader cooking — one concern per TU (src/assets/cookers/shader/info.md).
         # No bgfx: shaderc runs as a child process, so engine_core stays GPU-free.
@@ -165,7 +165,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         set_source_files_properties(
             ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
             ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
-            assets/cookers/texture_encode.cpp
+            assets/cookers/texture/texture_encode.cpp
             PROPERTIES COMPILE_OPTIONS "-O2")
     elseif(MSVC)
         # NOT applied in Debug: MSVC's Debug config carries /RTC1, and
@@ -181,7 +181,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         set_source_files_properties(
             ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
             ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
-            assets/cookers/texture_encode.cpp
+            assets/cookers/texture/texture_encode.cpp
             PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:/O2>")
     endif()
 endif()

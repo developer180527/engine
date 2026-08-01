@@ -1,6 +1,6 @@
 name: Docs
 
-# The documentation/maturity contract (docs/engineering-standards.md) is pure
+# The documentation/maturity contract (docs/process/engineering-standards.md) is pure
 # Python over the tree — it needs no compiler, no CMake, and no submodules.
 # Splitting it out means a Markdown commit costs ~15 seconds instead of a
 # 4-platform build of Assimp and bgfx from source.

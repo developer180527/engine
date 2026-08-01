@@ -17,8 +17,8 @@
 //     OUTPUT <extra output path>     (mesh's sibling .ctex files)
 //     DEP    <uuid>
 // Exit code 0 means "result file written"; anything else means crash.
-#include "assets/cookers/mesh_cooker.h"
-#include "assets/cookers/texture_cooker.h"
+#include "assets/cookers/mesh/mesh_cooker.h"
+#include "assets/cookers/texture/texture_cooker.h"
 #include "assets/cookers/shader/shader_cooker.h"
 #include "assets/cookers/material/material_cooker.h"
 

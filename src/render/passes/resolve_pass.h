@@ -1,7 +1,7 @@
 #pragma once
 #include "render/passes/i_render_pass.h"
 // ── ResolvePass ──────────────────────────────────────────────────────────────
-// SCAFFOLD — see docs/renderer-architecture.md.
+// SCAFFOLD — see docs/architecture/renderer-architecture.md.
 //
 // WHAT IT DOES (today: the resolve-view MSAA blit — to be owned here):
 //   Resolves the (optionally multisampled) scene color into the final target

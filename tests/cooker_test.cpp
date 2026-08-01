@@ -15,9 +15,9 @@
 #include <filesystem>
 #include <fstream>
 
-#include "assets/cookers/mesh_cooker.h"
-#include "assets/cookers/scene_cooker.h"
-#include "assets/cookers/texture_encode.h"
+#include "assets/cookers/mesh/mesh_cooker.h"
+#include "assets/cookers/scene/scene_cooker.h"
+#include "assets/cookers/texture/texture_encode.h"
 // Assimp's matrix members are inline templates defined in .inl headers this
 // TU must instantiate ITSELF: with assimp built -O0 the archive happened to
 // carry weak out-of-line copies to link against, but an optimized assimp

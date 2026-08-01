@@ -1,6 +1,6 @@
 // ── render_diag_test — the render diagnostics, headlessly ───────────────────
 //
-// Phase 2 of docs/renderer-audit-and-plan.md. `src/render` is the least
+// Phase 2 of docs/plans/renderer-audit-and-plan.md. `src/render` is the least
 // verified subsystem in the engine (tier `prototype`, no test that can fail)
 // precisely because rendering needs a GPU. These modules are deliberately
 // built so the parts worth testing DON'T:

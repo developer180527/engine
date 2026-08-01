@@ -1,6 +1,6 @@
 // ── shader_cooker_test — the declared interface, without a compiler ─────────
 //
-// Phase 5 of docs/renderer-audit-and-plan.md: shaders become cooked assets
+// Phase 5 of docs/plans/renderer-audit-and-plan.md: shaders become cooked assets
 // that PUBLISH the parameters a material may set, so a material can stop being
 // a fixed C++ struct.
 //
@@ -52,10 +52,16 @@ struct BlobBuilder {
     }
     void uniform(const char* name, UniformKind kind, uint8_t num,
                  uint16_t regIndex, uint16_t regCount, bool fragment) {
+        uniformRaw(name, (uint8_t)((uint8_t)kind | (fragment ? 0x10 : 0x00)),
+                   num, regIndex, regCount);
+    }
+    // The type byte verbatim, so a backend's exact flag encoding can be tested.
+    void uniformRaw(const char* name, uint8_t typeByte, uint8_t num,
+                    uint16_t regIndex, uint16_t regCount) {
         const uint8_t len = (uint8_t)std::strlen(name);
         u8(len);
         for (uint8_t i = 0; i < len; ++i) u8((uint8_t)name[i]);
-        u8((uint8_t)((uint8_t)kind | (fragment ? 0x10 : 0x00)));
+        u8(typeByte);
         u8(num); u16(regIndex); u16(regCount);
         u8(0); u8(0); u16(0);   // texComponent, texDimension, texFormat
     }
@@ -173,6 +179,17 @@ int main() {
             " \"features\":[\"A\",\"A\"]}", base, m);
         CHECK(!dupFeature.ok, "a duplicate feature is rejected");
 
+        // Two features mapping to one DEFINE doubles the variant matrix while
+        // half of it compiles to byte-identical output — distinct-looking
+        // variants, redundant DDC entries.
+        auto dupDefine = parseShaderManifest(
+            "{\"name\":\"x\",\"vertex\":\"v.sc\",\"fragment\":\"f.sc\","
+            " \"features\":[{\"name\":\"A\",\"define\":\"USE_V\"},"
+            "                {\"name\":\"B\",\"define\":\"USE_V\"}]}", base, m);
+        CHECK(!dupDefine.ok
+              && dupDefine.error.find("USE_V") != std::string::npos,
+              "two features sharing one define are rejected");
+
         std::string many = "{\"name\":\"x\",\"vertex\":\"v.sc\",\"fragment\":\"f.sc\","
                            " \"features\":[";
         for (int i = 0; i <= (int)assetlib::kMaxShaderFeatures; ++i)
@@ -235,6 +252,38 @@ int main() {
             }
         }
         CHECK(true, "every truncation point is detected, none read past the end");
+
+        // Bytecode is external input. A duplicate name would make find()
+        // return the first and ignore the rest, so the declared interface
+        // could verify against a uniform the shader doesn't actually use.
+        BlobBuilder dup;
+        dup.header('F');
+        dup.u16(2);
+        dup.uniform("u_params", UniformKind::Vec4, 1, 0, 1, true);
+        dup.uniform("u_params", UniformKind::Vec4, 1, 1, 1, true);
+        const Reflection dr = reflectShaderBinary(dup.b.data(), dup.b.size());
+        CHECK(!dr.ok && dr.error.find("duplicate") != std::string::npos,
+              "a duplicate uniform name is rejected");
+
+        // REGRESSION: bgfx's type byte carries four flag bits (bgfx_p.h:1598).
+        // SPIR-V writes samplers as `Sampler | kUniformSamplerBit (0x20)`
+        // (shaderc_spirv.cpp:790) while Metal omits that bit. Masking off only
+        // the fragment bit made every SPIR-V sampler reflect as Unknown, so the
+        // interface check failed on Vulkan builds — invisible while only one
+        // profile was verified.
+        BlobBuilder spv;
+        spv.header('F');
+        spv.u16(2);
+        spv.uniformRaw("s_baseColor", (uint8_t)(0x00 | 0x20 | 0x10), 1, 0, 1);
+        spv.uniformRaw("s_shadowMap", (uint8_t)(0x00 | 0x20 | 0x10 | 0x80), 1, 1, 1);
+        const Reflection sr = reflectShaderBinary(spv.b.data(), spv.b.size());
+        CHECK(sr.ok, "a SPIR-V uniform table reflects (%s)", sr.error.c_str());
+        CHECK(sr.find("s_baseColor")
+              && sr.find("s_baseColor")->kind == UniformKind::Sampler
+              && sr.find("s_baseColor")->sampler,
+              "a SPIR-V sampler reflects as a SAMPLER, not Unknown");
+        CHECK(sr.find("s_shadowMap") && sr.find("s_shadowMap")->compare,
+              "the compare bit is decoded (shadow sampler)");
     }
 
     // ── verification ────────────────────────────────────────────────────────
@@ -254,6 +303,21 @@ int main() {
         CHECK(good.warnings.size() == 3,
               "undeclared uniforms warn, they do not fail (%zu)",
               good.warnings.size());
+
+        // A uniform present in BOTH stages is one fact about the shader, not
+        // two. Warning twice per variant buries the diagnostics around it.
+        BlobBuilder both;
+        both.header('V');
+        both.u16(1);
+        both.uniform("u_shadowMtx", UniformKind::Mat4, 1, 0, 4, false);
+        const Reflection rvBoth = reflectShaderBinary(both.b.data(), both.b.size());
+        const VerifyResult dedup = verifyInterface({}, {}, rvBoth, rf);
+        int shadowMtxWarnings = 0;
+        for (const auto& w : dedup.warnings)
+            if (w.find("u_shadowMtx") != std::string::npos) ++shadowMtxWarnings;
+        CHECK(shadowMtxWarnings == 1,
+              "a uniform in both stages warns ONCE, not twice (%d)",
+              shadowMtxWarnings);
 
         // THE bug this whole mechanism exists to catch: a typo'd uniform. The
         // material would set "roughness" forever and nothing would happen.

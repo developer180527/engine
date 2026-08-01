@@ -4,7 +4,7 @@
 // live in render/world (rworld::), so a project that swaps this pipeline to
 // change how surfaces LOOK inherits the machinery instead of reimplementing it.
 // That was the whole reason IRenderPipeline was a customization point nobody
-// could use; see docs/renderer-architecture.md §3 and §5.
+// could use; see docs/architecture/renderer-architecture.md §3 and §5.
 #include "render/render_pipeline.h"
 #include "render/world/light_packing.h"
 #include "render/world/visibility.h"
@@ -381,7 +381,7 @@ private:
 
     // NOTE: culling moved to render/world/frustum.{h,cpp} and lighting's fixed
     // cap to rworld::kMaxLights. Replacing the fixed-cap forward path with
-    // clustered forward is docs/renderer-architecture.md §2 — lights beyond the
+    // clustered forward is docs/architecture/renderer-architecture.md §2 — lights beyond the
     // cap are still dropped today.
     bgfx::ProgramHandle m_program              = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_skinnedProgram       = BGFX_INVALID_HANDLE;

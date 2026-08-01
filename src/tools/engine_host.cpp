@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
     InputSystem::get().init(plat->backendWindowHandle());
 #endif
     // (Legacy InputMap axis bindings removed: gameplay reads ACTIONS from
-    // the project's input.json — see docs/engine-api.md. InputSystem remains
+    // the project's input.json — see docs/guides/engine-api.md. InputSystem remains
     // for editor/meta polling only.)
 
     // Stock providers first (by NAME from project.json's "providers" block —

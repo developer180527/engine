@@ -5,9 +5,18 @@
 namespace shadercook {
 
 namespace {
-// shaderc ORs this into the type byte for fragment-stage uniforms
-// (kUniformFragmentBit in bgfx).
+// The type byte carries FOUR flag bits, not one (bgfx_p.h:1598-1607). Masking
+// off only the fragment bit was a real bug: the SPIR-V backend writes samplers
+// as `Sampler | kUniformSamplerBit` (shaderc_spirv.cpp:790), so the masked
+// value came out as 0x20 — larger than Mat4 — and every sampler reflected as
+// Unknown. Metal does not set that bit, which is exactly why verifying one
+// profile and assuming the rest hid this.
 constexpr uint8_t kFragmentBit = 0x10;
+constexpr uint8_t kSamplerBit  = 0x20;
+constexpr uint8_t kReadOnlyBit = 0x40;
+constexpr uint8_t kCompareBit  = 0x80;
+constexpr uint8_t kFlagMask    = kFragmentBit | kSamplerBit
+                               | kReadOnlyBit | kCompareBit;
 
 // A cursor that can never read past the end. Every field goes through it, so
 // a truncated or hostile blob returns an error instead of walking off the
@@ -79,16 +88,35 @@ Reflection reflectShaderBinary(const uint8_t* data, size_t size) {
         u.name = c.readStr(nameLen);
         const uint8_t type = c.read<uint8_t>();
         u.fragment = (type & kFragmentBit) != 0;
-        const uint8_t kind = type & ~kFragmentBit;
+        u.sampler  = (type & kSamplerBit)  != 0;
+        u.compare  = (type & kCompareBit)  != 0;
+        u.readOnly = (type & kReadOnlyBit) != 0;
+        const uint8_t kind = type & ~kFlagMask;
         u.kind = kind <= (uint8_t)UniformKind::Mat4
                ? (UniformKind)kind : UniformKind::Unknown;
+        // The sampler BIT is authoritative where present; backends that omit it
+        // still encode Sampler as the base type.
+        if (u.sampler) u.kind = UniformKind::Sampler;
         u.num      = c.read<uint8_t>();
         u.regIndex = c.read<uint16_t>();
         u.regCount = c.read<uint16_t>();
         c.read<uint8_t>();    // texComponent
         c.read<uint8_t>();    // texDimension
         c.read<uint16_t>();   // texFormat
-        if (c.ok) r.uniforms.push_back(std::move(u));
+        if (!c.ok) break;
+        // Bytecode is EXTERNAL INPUT (another process wrote it, and a cooked
+        // blob can arrive from a shared DDC). Two uniforms under one name would
+        // make find() return the first and silently ignore the rest, so the
+        // declared interface could verify against a uniform that isn't the one
+        // the shader actually uses.
+        for (const auto& seen : r.uniforms) {
+            if (seen.name == u.name) {
+                r.error = "duplicate uniform \"" + u.name + "\" in uniform table";
+                r.uniforms.clear();
+                return r;
+            }
+        }
+        r.uniforms.push_back(std::move(u));
     }
 
     if (!c.ok) { r.error = "truncated uniform table"; r.uniforms.clear(); return r; }

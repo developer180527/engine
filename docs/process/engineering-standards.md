@@ -117,7 +117,7 @@ What "landed" means for a change of any size:
 |What is stable right now? |`ENGINE_STATUS.md` (generated — never hand-edit) |
 |How does subsystem X work?|that subsystem's `info.md`                       |
 |Why is it built this way? |a `decided`/`as-built` doc in `docs/`            |
-|What are we going to do?  |`docs/infrastructure-backlog.md` (`plan`)        |
+|What are we going to do?  |`docs/plans/infrastructure-backlog.md` (`plan`)        |
 |What is broken in X?      |`issues.md` beside the code, with resolution status|
 
 One rule: `ENGINE_STATUS.md`** is generated.** Editing it by hand reintroduces

@@ -1,6 +1,6 @@
 // ── gpu_cache_test — identity, refcounts and budget for GPU resources ───────
 //
-// Phase 1 of docs/renderer-audit-and-plan.md. The audit's finding R1 was that
+// Phase 1 of docs/plans/renderer-audit-and-plan.md. The audit's finding R1 was that
 // GPU resources have no identity, no refcount and no dedup, which is why
 // duplicates cannot be prevented, leaks cannot be defined, and the render
 // tooling cannot be written at all.

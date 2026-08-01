@@ -39,7 +39,7 @@ payload are bounds-checked against it — a `.cshader` variant slice pointing pa
 its blob is rejected rather than handed to a GPU driver.
 
 ### The cook layer — one concern per TU
-Design doc: **`docs/asset-cook-architecture.md`** — the key recipe, the
+Design doc: **`docs/architecture/asset-cook-architecture.md`** — the key recipe, the
 invariants that are load-bearing (and silent when broken), the
 transformation-graph target, and the decisions deliberately not taken. Read §5
 (invariants) and §6.2 (stage-boundary economics) before changing cook code.

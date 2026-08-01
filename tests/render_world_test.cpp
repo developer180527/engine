@@ -1,6 +1,6 @@
 // ── render_world_test — culling, sort keys, visibility, light packing ───────
 //
-// Phase 3 of docs/renderer-audit-and-plan.md: the renderer's MACHINERY, split
+// Phase 3 of docs/plans/renderer-audit-and-plan.md: the renderer's MACHINERY, split
 // out of ForwardPipeline into src/render/world so it can be tested at all.
 //
 // Everything asserted here used to live inside a 442-line pipeline class that

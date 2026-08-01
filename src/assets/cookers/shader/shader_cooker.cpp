@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <fstream>
+#include <set>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -23,6 +24,64 @@ std::string slurp(const fs::path& p) {
     std::ostringstream ss;
     ss << f.rdbuf();
     return ss.str();
+}
+
+std::string hex(uint32_t v) {
+    char b[16];
+    std::snprintf(b, sizeof(b), "%x", v);
+    return b;
+}
+
+// Hash a stage source AND everything it #includes, transitively.
+//
+// Hashing only the root .sc left the same hole one level down: shading code
+// factored into a shared .sh header could be edited and nothing would re-cook,
+// because the .sc bytes were unchanged. Headers are not registry assets either,
+// so this is the only place that can see them.
+//
+// `visited` makes the walk terminate on include cycles and keeps a diamond from
+// being hashed twice; `depth` bounds a pathological chain. Order is stable
+// because it follows the file's own include order — the hash must be
+// deterministic across machines or the DDC key differs for identical input.
+void hashSourceTree(const fs::path& file, const std::vector<fs::path>& includeDirs,
+                    std::set<fs::path>& visited, std::string& fp, int depth = 0) {
+    if (depth > 16) return;
+    std::error_code ec;
+    const fs::path canon = fs::weakly_canonical(file, ec);
+    const fs::path key = ec ? file : canon;
+    if (!visited.insert(key).second) return;
+
+    const std::string text = slurp(file);
+    if (text.empty()) {
+        fp += "missing:" + file.filename().string() + ",";
+        return;
+    }
+    fp += assetlib::blake3Bytes(text.data(), text.size()).substr(0, 16) + ",";
+
+    // Deliberately a plain scan for `#include "..."`, not a preprocessor: an
+    // include inside an #if that is currently false still gets hashed. That
+    // over-approximates (an edit to it re-cooks when it needn't have), which is
+    // the safe direction — under-approximating serves stale bytecode.
+    for (size_t i = 0; (i = text.find("#include", i)) != std::string::npos; ) {
+        i += 8;
+        const size_t open = text.find('"', i);
+        if (open == std::string::npos) continue;
+        const size_t nl = text.find('\n', i);
+        if (nl != std::string::npos && open > nl) continue;   // <bracket> form
+        const size_t close = text.find('"', open + 1);
+        if (close == std::string::npos) break;
+        const std::string name = text.substr(open + 1, close - open - 1);
+        i = close;
+
+        std::vector<fs::path> candidates{ file.parent_path() / name };
+        for (const auto& d : includeDirs) candidates.push_back(d / name);
+        for (const auto& c : candidates) {
+            if (fs::exists(c, ec) && fs::is_regular_file(c, ec)) {
+                hashSourceTree(c, includeDirs, visited, fp, depth + 1);
+                break;
+            }
+        }
+    }
 }
 
 std::vector<std::string> splitCsv(const std::string& s) {
@@ -102,15 +161,13 @@ std::string ShaderCooker::settingsFingerprint(const assetlib::CookContext& ctx) 
     ShaderManifest man;
     if (parseShaderManifest(slurp(ctx.sourcePath), ctx.sourcePath.parent_path(),
                             man).ok) {
+        // Transitively, so an edit to a shared .sh header re-cooks too.
+        const std::vector<fs::path> incs = defaultIncludeDirs();
+        std::set<fs::path> visited;
         fp += ";stages=";
         for (const auto* p : { &man.vertexPath, &man.fragmentPath,
-                               &man.varyingPath }) {
-            const std::string h = assetlib::blake3File(*p);
-            // "" means unreadable. Substituting a constant would make two
-            // different broken states share a key; the path keeps them apart.
-            fp += h.empty() ? ("missing:" + p->filename().string()) : h.substr(0, 16);
-            fp += ',';
-        }
+                               &man.varyingPath })
+            hashSourceTree(*p, incs, visited, fp);
     }
 
     // The compiler is part of the recipe. Two shaderc builds can emit different
@@ -188,7 +245,15 @@ assetlib::CookResult ShaderCooker::cook(const assetlib::CookContext& ctx) {
         includes.push_back(ctx.sourcePath.parent_path());
 
     const uint32_t variants = man.variantCount();
-    bool verified = false;
+    // Warnings repeat across every variant and profile; report each once.
+    std::set<std::string> warned;
+
+    // Say the workload up front. A cook that suddenly takes minutes should be
+    // explicable from the log without re-deriving 2^features x profiles x 2 in
+    // your head — this is the number CI diagnostics need.
+    LOG_INFO("ShaderCooker", "%s: %u variant(s) x %zu profile(s) x 2 stage(s) "
+             "= %zu shaderc invocation(s)", man.name.c_str(), variants,
+             profiles.size(), (size_t)variants * profiles.size() * 2);
 
     for (uint32_t profile : profiles) {
         for (uint32_t mask = 0; mask < variants; ++mask) {
@@ -221,26 +286,42 @@ assetlib::CookResult ShaderCooker::cook(const assetlib::CookContext& ctx) {
             }
 
             // ── 4. verify the declaration against the real uniform table ────
-            // Once per shader, not once per variant. The interface is a
-            // property of the shader; running it on every variant would report
-            // the same mismatch 2^n × profiles times. The FIRST variant is the
-            // baseline — feature defines can only add uniforms, and an added
-            // uniform is a warning, not an error.
-            if (!verified) {
+            // EVERY variant, not just the first. The declared interface is a
+            // contract the shader must satisfy under ALL feature combinations
+            // and on ALL backends, and nothing else enforces that:
+            //
+            //   • a parameter guarded by #ifdef would verify on the variant
+            //     that defines it and silently write nowhere on the ones that
+            //     don't. Conditional MATERIAL PARAMETERS are therefore not
+            //     allowed — a feature may add engine-driven uniforms (those
+            //     only warn), but it may not remove a declared one.
+            //   • backends differ. A uniform unused after SPIRV-Cross's dead-
+            //     code elimination can vanish from one profile's uniform table
+            //     while surviving in another, so checking metal alone would
+            //     ship a broken Vulkan build.
+            //
+            // Verifying once was a real hole: it skipped 2^n × profiles − 1 of
+            // the compiled outputs.
+            {
                 const Reflection rv = reflectShaderBinary(vs.bytecode.data(),
                                                           vs.bytecode.size());
                 const Reflection rf = reflectShaderBinary(fsr.bytecode.data(),
                                                           fsr.bytecode.size());
                 const VerifyResult v = verifyInterface(man.params, man.samplers,
                                                        rv, rf);
+                // Warnings are about the SHADER, not about a variant, so they
+                // are reported once however many variants repeat them.
                 for (const auto& w : v.warnings)
-                    LOG_INFO("ShaderCooker", "%s: %s", man.name.c_str(), w.c_str());
+                    if (warned.insert(w).second)
+                        LOG_INFO("ShaderCooker", "%s: %s", man.name.c_str(),
+                                 w.c_str());
                 if (!v.ok) {
                     res.error = "declared interface does not match the compiled "
-                                "shader:\n  " + v.joined();
+                                "shader [" + std::string(assetlib::profileName(profile))
+                              + ", feature mask 0x" + hex(mask) + "]:\n  "
+                              + v.joined();
                     return res;
                 }
-                verified = true;
             }
 
             assetlib::ShaderVariant var;

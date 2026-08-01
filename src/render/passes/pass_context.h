@@ -1,7 +1,7 @@
 #pragma once
 #include <bgfx/bgfx.h>
 // ── PassContext ──────────────────────────────────────────────────────────────
-// SCAFFOLD — see docs/renderer-architecture.md.
+// SCAFFOLD — see docs/architecture/renderer-architecture.md.
 //
 // The per-frame "blackboard" handed to every pass. Carries the prepared data,
 // engine-side handles, the output target, and HAND-OFF SLOTS where one pass

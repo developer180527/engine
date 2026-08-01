@@ -8,7 +8,7 @@ covers:
 
 > Part 1 is an **audit** — what the renderer is today, from reading the code and
 > measuring it, with no proposals mixed in. Part 2 is the **plan** that follows
-> from it. `docs/renderer-architecture.md` (June) already described a target
+> from it. `docs/architecture/renderer-architecture.md` (June) already described a target
 > architecture; the most important finding here is that it was never built, so
 > this document supersedes its migration plan and keeps its goals.
 

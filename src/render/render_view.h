@@ -3,7 +3,7 @@
 // RenderWorld) now lives in render/world/render_world.h so culling, sorting
 // and light packing can be compiled and TESTED without bgfx. What remains here
 // is the part that genuinely needs the graphics API: render targets and view
-// ids. See docs/renderer-architecture.md §5.
+// ids. See docs/architecture/renderer-architecture.md §5.
 #include "render/world/render_world.h"
 
 #include <bgfx/bgfx.h>

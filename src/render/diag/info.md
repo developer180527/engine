@@ -16,7 +16,7 @@ Answer three questions about the renderer with numbers instead of opinion:
 2. **Does this frame fit the machine we ship to?** (budget)
 3. **What is resident, who owns it, and did anything leak?** (census)
 
-Phase 2 of `docs/renderer-audit-and-plan.md`. These reports were impossible
+Phase 2 of `docs/plans/renderer-audit-and-plan.md`. These reports were impossible
 before the GPU resource cache existed — not because nobody wrote them, but
 because "unused" has no meaning without refcounts (audit finding R1).
 
@@ -52,7 +52,7 @@ is why the verdict, not the count, is the headline.
 ## Budget tiers
 `TargetTier::Low` is not hypothetical — it is the Intel UHD 630 / 4 GB machine
 this engine is validated against, and it is the tier that decided the renderer
-is forward rather than deferred (`docs/renderer-architecture.md` §2).
+is forward rather than deferred (`docs/architecture/renderer-architecture.md` §2).
 
 Sub-limits deliberately sum to less than the total (80 MB of 128 MB): a budget
 with no slack is one you blow on the first feature. They are also what push a

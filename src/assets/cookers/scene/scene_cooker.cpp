@@ -1,4 +1,4 @@
-#include "assets/cookers/scene_cooker.h"
+#include "assets/cookers/scene/scene_cooker.h"
 #include <assetlib/scene_asset.h>
 #include <assetlib/asset_registry.h>
 #include "core/logger.h"

@@ -1,7 +1,7 @@
 #pragma once
 #include "render/passes/i_render_pass.h"
 // ── PostPass (NOT BUILT — future) ────────────────────────────────────────────
-// SCAFFOLD — see docs/renderer-architecture.md.
+// SCAFFOLD — see docs/architecture/renderer-architecture.md.
 //
 // WHAT IT WILL DO:
 //   Full-screen post over the scene color: tonemap + exposure, then optional

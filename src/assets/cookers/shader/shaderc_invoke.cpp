@@ -192,6 +192,7 @@ CompileResult compileShader(const fs::path& shadercExe, const CompileRequest& re
         if (r < 0 && errno == EINTR) continue;
         res.error = "waitpid failed on shaderc";
         fs::remove(logPath, ec);
+        fs::remove(outPath, ec);   // every other error path clears both
         return res;
     }
 

@@ -8,7 +8,7 @@ covers:
 
 > **This is the design we are building toward, not what exists.** For what the
 > renderer *is* today — 9 ranked findings, 3 critical, with measurements — see
-> **`docs/renderer-audit-and-plan.md`**. This document supersedes the June 2026
+> **`docs/plans/renderer-audit-and-plan.md`**. This document supersedes the June 2026
 > version of this file, whose migration plan was never executed.
 
 ## 1. What this renderer is for
@@ -276,7 +276,7 @@ of them costs more maintenance than it looks like it will.
 ## 11. Migration
 
 Ordered so each step leaves a working renderer and delivers something on its
-own. Detail and current status live in `docs/renderer-audit-and-plan.md`.
+own. Detail and current status live in `docs/plans/renderer-audit-and-plan.md`.
 
 1. **GPU resource cache** — identity, refcounts, budget. *Done.*
 2. **Render tooling** — VRAM census, duplicate report, leak detector. Turns

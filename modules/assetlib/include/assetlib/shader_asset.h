@@ -12,7 +12,7 @@
 // "recompile the engine". Once a shader publishes its own parameter list, a
 // material is just a shader reference plus values, and a project can define
 // its own look without touching the engine — the stated goal of
-// docs/renderer-audit-and-plan.md Phase 5.
+// docs/plans/renderer-audit-and-plan.md Phase 5.
 //
 // THE ANTI-BLOAT RULE: features are a CLOSED list declared by the shader
 // author, not an open node graph. Unreal's permutation explosion — and every

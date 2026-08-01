@@ -1,7 +1,7 @@
 #pragma once
 #include "render/passes/i_render_pass.h"
 // ── ShadowPass ───────────────────────────────────────────────────────────────
-// SCAFFOLD — see docs/renderer-architecture.md.
+// SCAFFOLD — see docs/architecture/renderer-architecture.md.
 //
 // WHAT IT DOES (today inside ForwardPipeline::renderShadow — to be MOVED here):
 //   Renders scene depth from the first directional light with castShadows=true

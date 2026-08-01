@@ -164,7 +164,7 @@ private:
     // loadTextureFromCooked had no dedup whatsoever, and two materials naming
     // the same image paid for it twice. Keyed by cooked path; the cache owns
     // the mapping, TextureRegistry still owns the resource.
-    // See docs/renderer-audit-and-plan.md Phase 1.
+    // See docs/plans/renderer-audit-and-plan.md Phase 1.
     gpucache::GpuResourceCache<TextureHandle> m_texCache;
 
     // Sync helpers

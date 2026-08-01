@@ -1,4 +1,4 @@
-#include "assets/cookers/texture_encode.h"
+#include "assets/cookers/texture/texture_encode.h"
 
 // Fast CPU block compression (third_party/bc7enc — Rich Geldreich's
 // bc7enc_rdo encoders, MIT/public domain):

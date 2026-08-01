@@ -11,7 +11,7 @@ tests:
 # render path. The PIPELINE (extraction, culling, sorting, submission, material
 # binding) remains untested, and that is what this subsystem mostly is.
 # Promoting on the strength of a test for an unwired component would be gaming
-# the ladder. See docs/renderer-audit-and-plan.md: 9 ranked findings, 3
+# the ladder. See docs/plans/renderer-audit-and-plan.md: 9 ranked findings, 3
 # critical. Phase 2 (VRAM census, duplicate report, leak detector over a real
 # scene) is what will make a higher tier provable.
 ---

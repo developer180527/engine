@@ -217,7 +217,7 @@ endif()
 # tests paths exist, tier claims have mechanical evidence, and `as-built` docs
 # whose code changed after their `verified:` date are flagged stale. Docs drift
 # silently otherwise — this makes drift a test failure instead of a discovery
-# months later. See docs/engineering-standards.md.
+# months later. See docs/process/engineering-standards.md.
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME docs_contract

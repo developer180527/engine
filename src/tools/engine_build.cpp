@@ -56,7 +56,7 @@ static std::string q(const fs::path& p) { return "\"" + p.string() + "\""; }
 // bgfx, Jolt, ozz, hundreds of translation units. At roughly 0.5–2 GB per heavy
 // C++ TU that exhausted 24 GB of RAM and froze the machine outright.
 //
-// Same policy the cooker already follows (docs/asset-cook-architecture.md §4.3,
+// Same policy the cooker already follows (docs/architecture/asset-cook-architecture.md §4.3,
 // "an offline chore is a background chore"): leave the OS and the developer's
 // editor a couple of cores, and stay explicit about it. Packaging had simply
 // never been held to the rule the cook was.

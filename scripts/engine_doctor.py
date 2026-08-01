@@ -413,7 +413,7 @@ def render_status(docs: list[Doc]) -> str:
 
     out.append("## Tier ladder")
     out.append("")
-    out.append("See `docs/engineering-standards.md`. Each tier's evidence is "
+    out.append("See `docs/process/engineering-standards.md`. Each tier's evidence is "
                "checked mechanically by `engine_doctor.py check`:")
     out.append("")
     for t in TIERS:

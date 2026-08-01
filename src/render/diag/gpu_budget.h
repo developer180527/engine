@@ -19,7 +19,7 @@ class FrameGpuStats;
 
 // The hardware class a project targets. `Low` is not hypothetical: it is the
 // Intel UHD 630 / 4 GB machine this engine is being validated against, and it
-// is the tier that decides most architecture (see docs/renderer-architecture.md
+// is the tier that decides most architecture (see docs/architecture/renderer-architecture.md
 // §2 — it is why the renderer is forward, not deferred).
 enum class TargetTier { Low, Mid, High };
 

@@ -1,7 +1,7 @@
 #pragma once
 // ── GpuResourceCache — identity, refcounts and a byte budget for GPU data ────
 //
-// Phase 1 of docs/renderer-audit-and-plan.md, and the foundation the render
+// Phase 1 of docs/plans/renderer-audit-and-plan.md, and the foundation the render
 // tooling needs. Finding R1 of that audit: GPU resources have no identity, no
 // refcount and no dedup. `TextureRegistry::addTexture` is a slot allocator —
 // every call makes a new GPU texture, so two materials naming the same image

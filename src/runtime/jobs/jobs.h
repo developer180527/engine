@@ -38,7 +38,7 @@
 //     stalls). parallelFor bodies MAY scope: it blocks, so its scopes
 //     always close inside the frame.
 //
-// See docs/engine-api.md (Jobs) — kits do NOT get this header; parallelism
+// See docs/guides/engine-api.md (Jobs) — kits do NOT get this header; parallelism
 // inside kits goes through the C API once that surface exists.
 
 #include <cstdint>

@@ -17,7 +17,7 @@ and your game looks different. It was not usable as one. Culling, sort order,
 batching and light packing all lived *inside* `ForwardPipeline`, so a studio that
 wanted a cartoon look — different shading, nothing else — had to reimplement
 frustum culling to get it. That is the gap this directory closes
-(`docs/renderer-architecture.md` §3, §5).
+(`docs/architecture/renderer-architecture.md` §3, §5).
 
 Everything here is **GPU-free**. Nothing includes bgfx; nothing dereferences
 `Mesh`. That is a hard constraint, not a stylistic one, and it buys two things:
@@ -62,7 +62,7 @@ changes.
   class yet, because the pipeline has no transparent path wired. The sort key
   handles transparency correctly; nothing produces it. Stated rather than hidden.
 - **`kMaxLights = 16`, hard.** Lights past the cap are dropped. The fix is
-  clustered forward (`docs/renderer-architecture.md` §2), not a bigger array.
+  clustered forward (`docs/architecture/renderer-architecture.md` §2), not a bigger array.
 - **No instancing yet.** `batchRunLength()` exists and is tested; `ForwardPipeline`
   does not yet collapse a run into one instanced submit.
 - **Single-threaded.** `buildVisibleSet` is a serial scan. The data layout is

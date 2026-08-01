@@ -1,50 +1,63 @@
-render: cooked shaders can become programs, ShaderLibrary + roadmap audit
+cook: verify every shader variant, and fix the reflector bug that found
 
-ForwardPipeline #includes metal/fs_triangle.sc.bin.h and friends, so the only
-shaders that can ever execute are the ones the engine binary was compiled with.
-That is the concrete mechanism behind finding R3. ShaderLibrary is the piece
-that removes it: cooked .cshader in, bgfx program out.
+Someone audited the shader cooker. Every claim re-checked against source before
+acting; two didn't hold up, the rest were real.
 
-Split so the part with decisions in it is testable:
+THE ONE THAT MATTERED: `verified = true` after the first variant meant
+2^n x profiles - 1 of the compiled outputs were never checked. Now every variant
+on every profile is reflected and verified.
 
-  shader_select.h/.cpp   which variant does this machine want?   GPU-FREE
-  shader_library.h/.cpp  load it, make the program, cache it     all bgfx
+It paid for itself on the first run, failing the cook with:
 
-Two failures this guards, both silent otherwise and with completely different
-fixes, so they get different messages:
+  declared interface does not match the compiled shader [spirv, feature mask 0x0]:
+    sampler "baseColor" targets "s_baseColor", which is a unknown, not a sampler
 
-  A PACKAGE COOKED FOR THE WRONG BACKEND. macOS cannot emit D3D bytecode, so a
-  Mac-cooked package on a D3D11 machine has no usable variant. The program never
-  builds and a renderer with no program draws NOTHING, a black screen with no
-  error. The failure names the profiles that WERE cooked.
+A genuine bug in OUR OWN reflector, invisible while only Metal was checked.
+bgfx's uniform type byte carries FOUR flag bits, fragment 0x10, sampler 0x20,
+read-only 0x40, compare 0x80 (bgfx_p.h:1598-1607). We masked off only 0x10.
+SPIR-V writes samplers as `Sampler | kUniformSamplerBit` (shaderc_spirv.cpp:790);
+Metal omits that bit. So on SPIR-V the masked value came out 0x20, larger than
+Mat4, and every sampler reflected as Unknown. Any Vulkan build would have
+failed its interface check, or bound samplers against a misread table.
+Regression-tested against the exact SPIR-V byte encoding.
 
-  A FEATURE MASK NEVER COOKED. Selection is an exact match, never nearest.
-  Falling back to a different feature set renders confidently wrong output: a
-  skinned mesh drawn with the unskinned program collapses into a heap at the
-  origin, which reads as an animation bug and costs a day.
+That also settles the design question the report raised (forbid
+interface-changing defines, or verify all variants): verifying every variant IS
+the enforcement. A feature may add engine-driven uniforms, those only warn,
+but it may not remove a declared material parameter. Conditional material
+parameters are now mechanically impossible rather than discouraged by a comment.
 
-Programs are content-keyed through GpuResourceCache like textures, keyed by
-path # featureMask # profile, all three axes, because dropping any one means the
-second material silently draws with the first's program. bgfx::copy not
-makeRef: makeRef needs the bytes to outlive the frame and the parsed asset is
-free to move.
+Also fixed: nested .sh includes now hash into settingsFingerprint via a
+transitive #include walk (same hole as the .sc gap, one level down, shading
+code in a shared header could be edited and nothing re-cooked); duplicate
+feature DEFINES rejected (two features on one define double the variant matrix
+while half compiles to identical bytecode); cross-stage uniform warnings
+deduplicated; duplicate uniform names in a reflected table rejected (bytecode is
+external input, and find() would have returned the first and ignored the rest);
+waitpid's failure path no longer leaves the output file behind; the expected
+shaderc invocation count is logged before work begins.
 
-Uniform handles are deduplicated here too. bgfx refcounts uniforms internally
-but returns a NEW handle per createUniform call, so destroying one would destroy
-a uniform another material still uses.
+REJECTED, with reasons in issues.md:
+  - "readDefaults leaves uninitialized stack garbage", FALSE. ShaderParam has
+    an NSDMI (`float defaults[4] = {0,0,0,0}`); unfilled components are a
+    deterministic 0.
+  - "size < 12 guard despite a 14-byte header", the count is right but every
+    read goes through a bounds-checked cursor, so short blobs are detected, not
+    overrun. The existing test already asserts this at every offset from 12.
+  - "parameter/sampler name collisions", separate namespaces by construction.
 
-Tier is deliberately `prototype`, not `working`: the selection logic has real
-coverage but NO running code path executes any of this yet.
+DEFERRED, with reasons: a shaderc watchdog (already bounded by the worker's
+COOK_TASK_TIMEOUT_SEC), parallelizing the variant matrix (would silently blow
+past the memory governor's admission budget, which assumes one child at a time),
+pipe-vs-tempfile, a reflection hash map, JSON source locations.
 
-Which is the point of docs/roadmap.md, added here. Three consecutive layers are
-now built and unused, .cshader cooking, .material cooking, and this. That is
-the moment to stop adding a fourth. The audit records what exists by tier, what
-each renderer finding's real state is (verified against source, not memory: R4
-is still live at forward_pipeline.h:272, R7 has no state comparison anywhere),
-and names the single decision gating Phase 5, where the engine's own cooked
-default assets live and how engine_build packages them, with a recommendation
-rather than a guess.
+Alongside: the cooker file moves are wired up (mesh/, texture/, scene/
+subdirectories) across CMake, tests, and every #include; docs/ is reorganized
+into architecture/ guides/ process/ plans/ with all cross-references updated and
+a docs/README.md index; and asset-cook-architecture.md gains a §0 that walks one
+file from disk to screen, registry, DDC key, hardlink materialization, worker
+isolation, the two governors, GC, then AssetService and GpuResourceCache.
 
-Verified: full build clean, ctest unit 29/29 (was 28), engine_doctor 57 docs /
-0 errors.
-
+Verified: full build clean, ctest unit 29/29, docs 2/2, engine_doctor 59 docs /
+0 errors, fps_shooter cooks clean, and a real cook of standard.shader now passes
+across metal/spirv/glsl.

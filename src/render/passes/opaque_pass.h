@@ -1,7 +1,7 @@
 #pragma once
 #include "render/passes/i_render_pass.h"
 // ── OpaquePass ───────────────────────────────────────────────────────────────
-// SCAFFOLD — see docs/renderer-architecture.md.
+// SCAFFOLD — see docs/architecture/renderer-architecture.md.
 //
 // WHAT IT DOES (today: the main body of ForwardPipeline::render — to be MOVED here):
 //   The lit forward submit of all OPAQUE geometry. Packs the light array into

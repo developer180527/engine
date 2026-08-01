@@ -68,7 +68,7 @@ inline uint16_t usageFromName(const char* n) {
 
 // TODO(#13 gamepad): pad-facing tables land here — hid Axis usages
 // (GenericDesktop 0x30..0x39) -> stable pad-axis names, and the
-// GCController/XInput curation mapping. See docs/infrastructure-backlog.md.
+// GCController/XInput curation mapping. See docs/plans/infrastructure-backlog.md.
 
 // GLFW keycode -> binding-spec key name (FULL reverse of usageFromGlfw —
 // audit M.7: F7-F12 and the right-side/Super modifiers were missing, so the

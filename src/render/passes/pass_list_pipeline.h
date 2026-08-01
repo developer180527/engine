@@ -4,7 +4,7 @@
 #include <memory>
 #include <vector>
 // ── PassListPipeline ─────────────────────────────────────────────────────────
-// SCAFFOLD — see docs/renderer-architecture.md.
+// SCAFFOLD — see docs/architecture/renderer-architecture.md.
 //
 // The migration target that replaces the monolithic ForwardPipeline. It IS an
 // IRenderPipeline (so Renderer::setPipeline keeps working unchanged), but its

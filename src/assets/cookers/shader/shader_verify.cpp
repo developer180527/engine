@@ -82,10 +82,16 @@ VerifyResult verifyInterface(const std::vector<assetlib::ShaderParam>& params,
     // and those are not material parameters. Reporting them as errors would
     // make the check unusable; reporting them not at all would hide the case
     // where an author added a uniform and forgot to expose it.
+    //
+    // Deduplicated by name across the two stages: a uniform declared in BOTH
+    // the vertex and fragment shader is one fact about the shader, not two, and
+    // emitting it twice per variant buries the diagnostics it sits among.
+    std::set<std::string> warned;
     for (const auto* refl : { &vs, &fs }) {
         for (const auto& u : refl->uniforms) {
             if (u.kind == UniformKind::End) continue;
             if (declared.count(u.name)) continue;
+            if (!warned.insert(u.name).second) continue;
             r.warnings.push_back("shader declares \"" + u.name + "\" ("
                                + uniformKindName(u.kind)
                                + "), not exposed as a material parameter");
