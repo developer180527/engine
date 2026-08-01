@@ -7,7 +7,7 @@ namespace assetlib {
 namespace {
 
 constexpr uint32_t kMagic   = 0x54414D43;   // 'CMAT'
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;   // v2: shaderName
 
 void wr(FILE* f, const void* p, size_t n) { std::fwrite(p, 1, n, f); }
 void wrU32(FILE* f, uint32_t v)           { wr(f, &v, 4); }
@@ -46,6 +46,7 @@ bool saveMaterial(const MaterialAsset& m, const std::filesystem::path& outPath) 
     wrU32(f, kMagic);
     wrU32(f, kVersion);
     wrStr(f, m.name);
+    wrStr(f, m.shaderName);
     wrStr(f, m.shaderPath);
     wrU32(f, m.featureMask);
     wrU32(f, m.doubleSided ? 1u : 0u);
@@ -80,6 +81,7 @@ bool loadMaterial(MaterialAsset& out, const std::filesystem::path& inPath) {
     if (!rdU32(f, magic) || magic != kMagic)       return fail();
     if (!rdU32(f, version) || version != kVersion) return fail();
     if (!rdStr(f, out.name))       return fail();
+    if (!rdStr(f, out.shaderName)) return fail();
     if (!rdStr(f, out.shaderPath)) return fail();
     if (!rdU32(f, out.featureMask)) return fail();
     if (!rdU32(f, flag))            return fail();

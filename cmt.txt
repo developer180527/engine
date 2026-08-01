@@ -1,46 +1,47 @@
-docs+fix: HEAD did not build, .gitignore silently ate src/tools/build/
+render: materials become data at the draw call
 
-Updating the docs turned up something worse than stale prose: the last three
-commits are INCOMPLETE. src/tools/build/package_closure.{h,cpp} were never
-committed, because .gitignore's `build/` is unanchored and matches at any depth.
-`git add -A` skipped them without a word.
+The .cmat half of Phase 5. A material authored as JSON, cooked against a
+shader's declared interface, now reaches an actual draw call, and the engine
+never learns what it looks like.
 
-HEAD therefore does not build from a fresh clone. src/CMakeLists.txt lists
-tools/build/package_closure.cpp and engine_build.cpp includes its header; both
-are committed, the implementation is not. It compiles here only because the
-files exist locally.
+Verified live in fps_shooter, the whole chain in one run:
 
-Anchoring the pattern is not an option, Kits/*/build and
-fps_shooter/scripts/build genuinely rely on matching at depth. Naming source
-`build/` fights too strong a convention anyway (IDE indexers, CI caches, docker
-ignores all assume it is output), so the directory is now src/tools/packaging/,
-which is also just a better name for what it holds.
+  [ForwardPipeline] standard program: cooked .cshader
+  [AssetService] Loaded material: zombie_sickly -> shader "standard"
+                 (2 block(s), 2 texture(s), features 0x0)
+  [Game] zombie material asset -> handle 5
+  [ForwardPipeline] data-driven bind: material 5 on shader "standard"
 
-THE SAME OVER-BROAD MATCH WAS IN engine_doctor. EXCLUDE_DIRS tested every path
-component, so src/tools/build/info.md was invisible to the checker, a doc that
-silently does not exist, which is the exact failure the tool exists to prevent.
-Split into EXCLUDE_ROOTS (build outputs, matched at the repo root only) and
-EXCLUDE_DIRS (things that nest by nature: .git, .cache, .kitbuild, node_modules,
-third_party, vendored code lives under modules/ too). Doc count 59 -> 60.
+That last line exists because "the .cmat loaded" and "the .cmat is what you are
+looking at" are different claims, and only the second one is the feature. It
+logs once per material from inside the bind branch.
 
-Docs then updated for what actually shipped. Five claims had gone false, and the
-doctor could not catch any of them: it compares `verified:` against the git
-history of covered code, which says nothing about whether the PROSE is still
-true. Worth knowing about the contract's reach.
+THE DESIGN PROBLEM WORTH RECORDING. u_params packed material values (roughness,
+metallic) alongside ENGINE-DRIVEN flags (hasBaseColor, hasNormalMap) in one
+vec4. A cooked material's uniform block covers its whole register, that is what
+makes blocks complete rather than sparse, so binding one would have zeroed
+those flags and every textured surface would have gone flat white. Split in
+fs_triangle.sc: u_params is material-owned, u_texFlags is engine-driven and
+derived from what is actually resident. The rule is general, not a patch: a
+material owns whole registers, so nothing engine-driven may share one.
 
-  src/render/shader/info.md          prototype -> working; "nothing calls this
-                                     yet" was wrong, it runs in a shipped dist
-  cookers/shader/info.md             "not consumed by the renderer yet"
-  cookers/material/info.md           sharpened: shaders landed, materials didn't
-  asset-cook-architecture.md §0      "not yet wired" -> what is and isn't
-  process/roadmap.md                 the packaging gate is resolved; R3 is half
+The runtime does NO name lookup and NO validation on the material path. The
+cooker resolved every name, checked arity and filled defaults offline; repeating
+any of it here would be a second source of truth free to drift from the first.
+AssetService copies blocks verbatim and resolves textures through the existing
+dedup/residency path, so a material sharing an image with a mesh uploads once.
 
-New src/tools/packaging/info.md records the three packaging bugs and the rule
-they produced, ship what the cooked asset REFERENCES, never what its filename
-suggests, plus the honest note that the ordering assertions are vacuous on a
-filesystem that returns sorted entries.
+.cmat gains the shader's declared NAME (v1 -> v2). It stored only the authored
+path, but the runtime resolves by name, a dist has no registry, and deriving
+the name from a filename would have been a third convention to keep in sync.
 
-ENGINE_STATUS: 21 subsystems, 4 hardened / 14 working / 3 prototype.
+Two small engine-API additions, which are the actual feature rather than test
+scaffolding: engineAssetLoadMaterial(path) and engineEntitySetMaterial(entity,
+handle). A game applies an authored look; the engine knows nothing about it.
 
-Verified: full build clean, ctest unit 30/30, docs 2/2, engine_doctor 60 docs /
-0 errors, and `git add -n` now lists all three previously-invisible files.
+A data-driven material picks its own program per draw, reset per submesh so it
+cannot leak to the next range. If that program is missing (wrong backend,
+uncooked variant) the draw falls through to the fixed path rather than
+vanishing, and ShaderLibrary has already said why, once.
+
+Verified: full build clean, ctest unit 30/30, engine_doctor 60 docs / 0 errors.

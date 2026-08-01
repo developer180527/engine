@@ -7,7 +7,13 @@ SAMPLER2D(s_baseColor,  0);
 SAMPLER2D(s_normalMap,  1);
 SAMPLER2D(s_shadowMap,  2);
 
-uniform vec4 u_params;       // x=hasBaseColor y=roughness z=metallic w=hasNormalMap
+// MATERIAL-OWNED. A cooked material writes this whole vec4, so nothing
+// engine-driven may live here — a material's uniform block covers the entire
+// register and would zero anything it does not know about.
+uniform vec4 u_params;       // y=roughness z=metallic  (x,w reserved)
+// ENGINE-DRIVEN. Which optional textures the renderer actually bound. Derived
+// from what is resident, never authored, so it is kept out of u_params.
+uniform vec4 u_texFlags;     // x=hasBaseColor y=hasNormalMap
 uniform vec4 u_colorFactor;
 uniform vec4 u_lightParams;  // x=ambient  y=lightCount
 uniform vec4 u_camPos;
@@ -55,7 +61,7 @@ void main() {
     float roughness = clamp(u_params.y, 0.045, 1.0);
     float metallic  = u_params.z;
 
-    vec4 albedo = (u_params.x > 0.5)
+    vec4 albedo = (u_texFlags.x > 0.5)
         ? texture2D(s_baseColor, v_texcoord0) * u_colorFactor
         : u_colorFactor;
     if (albedo.a < 0.01) discard;
@@ -63,7 +69,7 @@ void main() {
 
     vec3 N_geo = normalize(v_worldNormal);
     vec3 N;
-    if (u_params.w > 0.5) {
+    if (u_texFlags.y > 0.5) {
         vec3 N_ts = texture2D(s_normalMap, v_texcoord0).xyz * 2.0 - vec3_splat(1.0);
         vec3 T  = normalize(v_worldTangent.xyz);
         T = normalize(T - dot(T, N_geo) * N_geo);

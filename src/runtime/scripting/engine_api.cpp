@@ -160,6 +160,11 @@ bool engineNavReady(void) { return g_host && g_host->navReady(); }
 // ── Assets ───────────────────────────────────────────────────────────────────
 uint32_t engineAssetLoadMesh(const char* p)       { return (g_host && p) ? g_host->assetLoadMesh(p) : 0; }
 bool     engineAssetUnloadMesh(uint32_t id)       { return g_host ? g_host->assetUnloadMesh(id) : false; }
+uint32_t engineAssetLoadMaterial(const char* p)   { return (g_host && p) ? g_host->assetLoadMaterial(p) : 0; }
+bool     engineEntitySetMaterial(EngineEntity e, uint32_t m) {
+    ScriptHost* h = hostWithWorld();
+    return h && h->entitySetMaterial(resolve(h, e), m);
+}
 uint32_t engineAssetLoadTexture(const char* p)    { return (g_host && p) ? g_host->assetLoadTexture(p) : 0; }
 bool     engineAssetUnloadTexture(uint32_t id)    { return g_host ? g_host->assetUnloadTexture(id) : false; }
 void     engineAssetLoadMeshAsync(const char* p)  { if (g_host && p) g_host->assetLoadMeshAsync(p); }

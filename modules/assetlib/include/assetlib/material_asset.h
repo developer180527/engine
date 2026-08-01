@@ -40,9 +40,13 @@ struct MaterialTexture {
 
 struct MaterialAsset {
     std::string name;
-    // Project-relative path to the .shader this material instances. Resolved
-    // by the runtime rather than baked to a UUID so a cooked material stays
-    // readable and portable across registries.
+    // The shader's DECLARED NAME ("standard"). This is what the runtime
+    // resolves by: a dist has no registry, so ShaderLibrary indexes cooked
+    // shaders by the name each one carries inside itself. Storing only the
+    // authored path would force the runtime to re-derive this from a filename.
+    std::string shaderName;
+    // Project-relative path as authored. Kept for diagnostics and tooling —
+    // "which file do I edit?" — never for resolution.
     std::string shaderPath;
     uint32_t    featureMask = 0;    // which shader features this variant needs
 

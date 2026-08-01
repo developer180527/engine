@@ -124,6 +124,14 @@ void     engineStopSound  (uint32_t handle);
 /* ── Assets (cooked binaries; returns handle ids, 0 = invalid) ───────────── */
 uint32_t engineAssetLoadMesh      (const char* cookedPath);
 bool     engineAssetUnloadMesh    (uint32_t handleId);
+/* Cooked .material -> MaterialHandle id. The material is DATA: its shader and
+   parameter values came from the cook, already checked against that shader's
+   declared interface, so a misspelled parameter failed the cook rather than
+   silently doing nothing here. */
+uint32_t engineAssetLoadMaterial  (const char* cookedPath);
+/* Point an entity's MeshRenderer at a loaded material. This is how a game
+   applies an authored look without the engine knowing what that look is. */
+bool     engineEntitySetMaterial  (EngineEntity e, uint32_t materialId);
 uint32_t engineAssetLoadTexture   (const char* cookedPath);
 bool     engineAssetUnloadTexture (uint32_t handleId);
 void     engineAssetLoadMeshAsync   (const char* cookedPath);

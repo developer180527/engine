@@ -20,6 +20,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <set>
+#include <string>
 
 // Compiled shaders — bgfx cmake compiles per-platform; pick the right binary.
 // Variable names follow bgfx convention: vs_triangle_mtl, vs_triangle_spv, etc.
@@ -149,6 +151,7 @@ public:
         }
         m_sBaseColor   = bgfx::createUniform("s_baseColor",   bgfx::UniformType::Sampler);
         m_uParams      = bgfx::createUniform("u_params",      bgfx::UniformType::Vec4);
+        m_uTexFlags    = bgfx::createUniform("u_texFlags",    bgfx::UniformType::Vec4);
         m_uColorFactor = bgfx::createUniform("u_colorFactor", bgfx::UniformType::Vec4);
         m_uLightParams = bgfx::createUniform("u_lightParams", bgfx::UniformType::Vec4);
         m_uLights      = bgfx::createUniform("u_lights",      bgfx::UniformType::Vec4, rworld::kMaxLights * 4);
@@ -198,7 +201,7 @@ public:
 
     void onDetach() override {
         auto d = [](bgfx::UniformHandle& h){ if (bgfx::isValid(h)) bgfx::destroy(h); h = BGFX_INVALID_HANDLE; };
-        d(m_sBaseColor); d(m_uParams); d(m_uColorFactor); d(m_uLights);
+        d(m_sBaseColor); d(m_uParams); d(m_uTexFlags); d(m_uColorFactor); d(m_uLights);
         d(m_uLightParams); d(m_uCamPos); d(m_sNormalMap);
         d(m_sShadowMap); d(m_uShadowMtx); d(m_uShadowParams);
         d(m_uBoneMatrices);
@@ -281,7 +284,11 @@ public:
 
             // Select skinned or static program
             const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
-            const bgfx::ProgramHandle prog = skinned ? m_skinnedProgram : m_program;
+            // The default. A data-driven material overrides it with its own
+            // shader's program — which is what "a project defines its own look"
+            // actually means at the draw call.
+            const bgfx::ProgramHandle defaultProg = skinned ? m_skinnedProgram : m_program;
+            bgfx::ProgramHandle drawProgram = defaultProg;
 
             // Resolve ONE material handle to its uniforms/textures + bind. Runs
             // per submesh, so a merged multi-material mesh draws each range with
@@ -289,32 +296,107 @@ public:
             // instead of the whole mesh sharing a single material.
             auto bindMaterial = [&](MaterialHandle mh) {
                 const Material* mat = mh.valid() ? ctx.materials.getMaterial(mh) : nullptr;
+
+                // ── Data-driven: a cooked .material ─────────────────────────
+                // Upload what the cook produced. No name lookup, no defaulting,
+                // no validation — all of that happened offline against the
+                // shader's declared interface, and repeating it here would be a
+                // second source of truth that can drift from the first.
+                if (mat && mat->dataDriven && ctx.shaders) {
+                    const bgfx::ProgramHandle mp = programFor(*mat, ctx);
+                    if (bgfx::isValid(mp)) {
+                        for (const auto& b : mat->blocks) {
+                            if (b.values.empty()) continue;
+                            const bgfx::UniformHandle u = ctx.shaders->uniform(
+                                b.name, bgfx::UniformType::Vec4,
+                                (uint16_t)(b.values.size() / 4));
+                            bgfx::setUniform(u, b.values.data(),
+                                             (uint16_t)(b.values.size() / 4));
+                        }
+                        // Every DECLARED sampler binds, set or not: an unbound
+                        // stage keeps whatever the previous draw left there.
+                        float texFlags[4] = { 0, 0, 0, 0 };
+                        for (const auto& tb : mat->textureBinds) {
+                            const Texture* t = tb.texture.valid()
+                                             ? ctx.textures.getTexture(tb.texture) : nullptr;
+                            const bgfx::TextureHandle h = t ? t->handle
+                                : (tb.fallback == "flatNormal" ? ctx.flatNormalTex
+                                                               : ctx.whiteTex);
+                            bgfx::setTexture((uint8_t)tb.stage,
+                                ctx.shaders->uniform(tb.uniform,
+                                                     bgfx::UniformType::Sampler),
+                                h);
+                            // Engine-driven, never authored: which optional
+                            // maps are actually resident. Kept out of the
+                            // material's own vec4 (see fs_triangle.sc) because a
+                            // material block owns its whole register.
+                            if (t && tb.stage == 0) texFlags[0] = 1.0f;
+                            if (t && tb.stage == 1) texFlags[1] = 1.0f;
+                        }
+                        bgfx::setUniform(m_uTexFlags, texFlags);
+                        bgfx::setTexture(2, m_sShadowMap, m_shadowMap);
+                        if (skinned)
+                            bgfx::setUniform(m_uBoneMatrices, it.boneMatrices,
+                                             (uint16_t)(it.boneCount * 4));
+                        bgfx::setState(mat->doubleSided
+                            ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
+                               | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS
+                               | BGFX_STATE_MSAA)
+                            : state);
+                        bgfx::setTransform(it.model.ptr());
+                        bgfx::setVertexBuffer(0, it.mesh->vbh);
+                        // Once per material. The difference between "the
+                        // .cmat loaded" and "the .cmat is what you are looking
+                        // at" is exactly this branch being taken.
+                        if (m_boundDataDriven.insert(mat->shaderName + "/"
+                                + std::to_string(mh.id)).second)
+                            std::printf("[ForwardPipeline] data-driven bind: "
+                                        "material %u on shader \"%s\" "
+                                        "(%zu block(s), %zu texture(s))\n",
+                                        mh.id, mat->shaderName.c_str(),
+                                        mat->blocks.size(),
+                                        mat->textureBinds.size());
+                        drawProgram = mp;
+                        return;
+                    }
+                    // Program missing (wrong backend, uncooked variant) —
+                    // ShaderLibrary already said which, once. Fall through to
+                    // the fixed path rather than dropping the draw entirely.
+                }
+
+                // ── Fixed path: materials embedded in cooked geometry ───────
                 const Texture*  tex = (mat && mat->hasTexture())
                                     ? ctx.textures.getTexture(mat->baseColorTexture) : nullptr;
                 const Texture*  nm  = (mat && mat->normalMapTexture.valid())
                                     ? ctx.textures.getTexture(mat->normalMapTexture) : nullptr;
                 const float rough = mat ? mat->roughness : 0.7f;
                 const float metal = mat ? mat->metallic  : 0.0f;
-                float params[4] = { tex ? 1.0f : 0.0f, rough, metal, nm ? 1.0f : 0.0f };
+                float params[4] = { 0.0f, rough, metal, 0.0f };
+                float texFlags[4] = { tex ? 1.0f : 0.0f, nm ? 1.0f : 0.0f, 0, 0 };
                 float factor[4] = { 1, 1, 1, 1 };
                 if (mat) { factor[0]=mat->baseColorFactor[0]; factor[1]=mat->baseColorFactor[1];
                            factor[2]=mat->baseColorFactor[2]; factor[3]=mat->baseColorFactor[3]; }
                 const bgfx::TextureHandle base = tex ? tex->handle : ctx.whiteTex;
                 const bgfx::TextureHandle norm = nm  ? nm->handle  : ctx.flatNormalTex;
+                bgfx::setUniform(m_uTexFlags, texFlags);
                 if (skinned)
                     bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
                 bind(params, factor, base, norm, state, it);
             };
 
             if (it.mesh->submeshes.empty()) {
+                drawProgram = defaultProg;
                 bindMaterial(it.material);
                 bgfx::setIndexBuffer(it.mesh->ibh);
-                bgfx::submit(id, prog);
+                bgfx::submit(id, drawProgram);
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
+                    // Reset per submesh: each range picks its own material, so
+                    // a data-driven one must not leak its program to the next.
+                    drawProgram = defaultProg;
                     bindMaterial(sub.material.valid() ? sub.material : it.material);
                     bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
-                    bgfx::submit(id, prog);
+                    bgfx::submit(id, drawProgram);
                 }
             }
         }
@@ -323,6 +405,22 @@ public:
     }
 
 private:
+    // The program a data-driven material wants: its own shader, its own
+    // feature mask. Cached per (path, mask, profile) by ShaderLibrary, so this
+    // is a hash lookup after the first draw and not a per-draw load.
+    bgfx::ProgramHandle programFor(const Material& mat, RenderContext& ctx) {
+        if (!ctx.shaders || mat.shaderName.empty()) return BGFX_INVALID_HANDLE;
+        const auto path = ctx.shaders->resolveByName(mat.shaderName);
+        if (path.empty()) {
+            if (m_missingShaders.insert(mat.shaderName).second)
+                std::printf("[ForwardPipeline] material wants shader \"%s\", "
+                            "which is not in the cooked cache\n",
+                            mat.shaderName.c_str());
+            return BGFX_INVALID_HANDLE;
+        }
+        return ctx.shaders->program(path, mat.featureMask);
+    }
+
     void renderShadow(const RenderView& v, RenderContext& ctx,
                       const rworld::PackedLights& lights) {
         m_hasShadowCaster = false;
@@ -426,6 +524,14 @@ private:
     bgfx::UniformHandle m_uBoneMatrices        = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_sBaseColor   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uParams      = BGFX_INVALID_HANDLE;
+    // Engine-driven texture presence, kept OUT of u_params so a material's
+    // uniform block (which owns its whole vec4) cannot zero it.
+    bgfx::UniformHandle m_uTexFlags    = BGFX_INVALID_HANDLE;
+    // Shader names already reported missing — otherwise one bad material logs
+    // per draw, per frame.
+    std::set<std::string> m_missingShaders;
+    // Materials already reported as bound through the data-driven path.
+    std::set<std::string> m_boundDataDriven;
     bgfx::UniformHandle m_uColorFactor = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uLightParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uCamPos      = BGFX_INVALID_HANDLE;

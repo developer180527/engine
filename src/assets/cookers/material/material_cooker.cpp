@@ -121,7 +121,8 @@ assetlib::CookResult MaterialCooker::cook(const assetlib::CookContext& ctx) {
 
     assetlib::MaterialAsset out;
     out.name = man.name.empty() ? ctx.sourcePath.stem().string() : man.name;
-    out.shaderPath  = man.shaderRef;
+    out.shaderName  = shader.name;      // what the runtime resolves by
+    out.shaderPath  = man.shaderRef;    // what a human edits
     out.doubleSided = man.doubleSided;
 
     const auto resolved = resolveMaterial(shader.params, shader.samplers,

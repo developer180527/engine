@@ -78,6 +78,17 @@ public:
     // against the project's .cache directory.
     TextureHandle loadTexture(const char* cookedPath);
 
+    // Load a cooked MATERIAL (.cmat, written as <uuid>.cooked). Returns a
+    // MaterialHandle whose Material is `dataDriven` — its uniform blocks came
+    // straight from the cook, already resolved against the shader's declared
+    // interface. Textures the material names are loaded through the same
+    // dedup/residency path as any other texture.
+    //
+    // Invalid handle on failure, having logged why. A material that will not
+    // load must NOT silently fall back to the fixed struct: that renders
+    // something plausible and hides the problem.
+    MaterialHandle loadMaterialAsset(const char* cookedPath);
+
     // ----- Async Load -----
     // Queue a cooked asset for background loading. The worker thread parses
     // the file and prepares GPU data; call drainUploads() each frame on the

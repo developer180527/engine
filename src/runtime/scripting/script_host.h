@@ -8,6 +8,7 @@
 #include "core/transform_utils.h"   // safeReparent (depth/cycle-guarded parenting)
 #include "core/debug_draw.h"
 #include "components/name.h"
+#include "components/mesh_renderer.h"
 #include "runtime/input/input.h"
 #include "runtime/input/input_event.h"
 #include "core/logger.h"
@@ -254,6 +255,22 @@ public:
     bool assetUnloadMesh(uint32_t handleId) {
         return m_assetService ? m_assetService->unloadMesh(MeshHandle{handleId}) : false;
     }
+    // Load a cooked .material and get a MaterialHandle id. The returned
+    // material is data-driven: its shader and parameter values came from the
+    // cook, already checked against the shader's declared interface.
+    uint32_t assetLoadMaterial(const char* cookedPath) {
+        return m_assetService ? m_assetService->loadMaterialAsset(cookedPath).id : 0;
+    }
+    // Point an entity's MeshRenderer at a material. This is how a game applies
+    // an authored look without the engine knowing anything about that look.
+    bool entitySetMaterial(flecs::entity e, uint32_t materialId) {
+        if (!e.is_alive()) return false;
+        MeshRenderer* mr = e.try_get_mut<MeshRenderer>();
+        if (!mr) return false;
+        mr->materialOverride = MaterialHandle{ materialId };
+        return true;
+    }
+
     uint32_t assetLoadTexture(const char* cookedPath) {
         return m_assetService ? m_assetService->loadTexture(cookedPath).id : 0;
     }

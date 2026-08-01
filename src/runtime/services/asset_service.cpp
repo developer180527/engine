@@ -1,5 +1,7 @@
 #include "runtime/services/asset_service.h"
 
+#include <assetlib/material_asset.h>
+
 #include "render/asset_registry.h"
 #include "render/texture_registry.h"
 #include "render/material_registry.h"
@@ -366,6 +368,62 @@ TextureHandle AssetService::loadTexture(const char* cookedPath) {
     if (absPath.is_relative() && !m_cacheRoot.empty())
         absPath = m_cacheRoot / absPath;
     return loadTextureFromCooked(absPath);
+}
+
+MaterialHandle AssetService::loadMaterialAsset(const char* cookedPath) {
+    if (!cookedPath || cookedPath[0] == '\0') return {};
+    std::filesystem::path absPath(cookedPath);
+    if (absPath.is_relative() && !m_cacheRoot.empty())
+        absPath = m_cacheRoot / absPath;
+
+    assetlib::MaterialAsset ma;
+    if (!assetlib::loadMaterial(ma, absPath)) {
+        LOG_ERROR("AssetService", "cannot load cooked material: %s",
+                  absPath.string().c_str());
+        return {};
+    }
+
+    Material mat;
+    mat.dataDriven  = true;
+    mat.shaderName  = ma.shaderName;
+    mat.featureMask = ma.featureMask;
+    mat.doubleSided = ma.doubleSided;
+
+    // Blocks are copied verbatim. The cooker already resolved every name,
+    // checked arity and filled defaults against the shader's declared
+    // interface, so there is nothing left to validate here — validating again
+    // would be a second, drifting source of truth.
+    mat.blocks.reserve(ma.uniforms.size());
+    for (const auto& u : ma.uniforms)
+        mat.blocks.push_back({ u.name, u.values });
+
+    // Textures go through the same dedup/residency path as everything else, so
+    // a material sharing an image with a mesh does not upload it twice.
+    // Resolved relative to the PROJECT root: a .material names source paths
+    // ("textures/rust.png") the way an author typed them.
+    mat.textureBinds.reserve(ma.textures.size());
+    for (const auto& t : ma.textures) {
+        Material::TextureBind bind;
+        bind.uniform  = t.uniform;
+        bind.stage    = t.stage;
+        bind.fallback = t.fallback;
+        if (!t.path.empty()) {
+            bind.texture = resolveTexture(t.path.c_str(), m_projectRoot);
+            if (!bind.texture.valid())
+                LOG_WARN("AssetService", "material %s: texture %s did not "
+                         "load — binding the %s fallback", ma.name.c_str(),
+                         t.path.c_str(),
+                         t.fallback.empty() ? "default" : t.fallback.c_str());
+        }
+        mat.textureBinds.push_back(std::move(bind));
+    }
+
+    const MaterialHandle h = m_materials.addMaterial(std::move(mat));
+    LOG_INFO("AssetService", "Loaded material: %s -> shader \"%s\" "
+             "(%zu block(s), %zu texture(s), features 0x%x)",
+             ma.name.c_str(), ma.shaderName.c_str(), ma.uniforms.size(),
+             ma.textures.size(), ma.featureMask);
+    return h;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
