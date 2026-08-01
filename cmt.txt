@@ -1,63 +1,42 @@
-cook: verify every shader variant, and fix the reflector bug that found
+cook: engine default assets are a second asset root
 
-Someone audited the shader cooker. Every claim re-checked against source before
-acting; two didn't hold up, the rest were real.
+Wiring ForwardPipeline to cooked shaders was blocked on a question I'd deferred
+twice: where do the engine's OWN cooked default assets live, and how does
+engine_build package them? The engine's shaders sit in /shaders, but cooked
+assets live in a PROJECT's .cache.
 
-THE ONE THAT MATTERED: `verified = true` after the first variant meant
-2^n x profiles - 1 of the compiled outputs were never checked. Now every variant
-on every profile is reflected and verified.
+The cheap answer turns out to be the right one: make the engine's shader
+directory a second asset root. CookService scans it alongside the project's
+assets, so standard.shader cooks into each project's .cache like any other
+asset. That means:
 
-It paid for itself on the first run, failing the cook with:
+  - no new packaging concept, engine_build already ships .cache
+  - the duplication is free, every project cooks byte-identical sources to the
+    same DDC key, so it is cooked once per MACHINE, not once per project
+  - a project can override an engine default by shipping its own
+  - ShaderLibrary needs no special resolution: one lookup path
 
-  declared interface does not match the compiled shader [spirv, feature mask 0x0]:
-    sampler "baseColor" targets "s_baseColor", which is a unknown, not a sampler
+Engine assets are ALWAYS IN SCOPE, including under SceneClosure. No scene
+references a .shader, so a scoped cook would otherwise produce no programs and
+the game would boot to a black screen, precisely the silent failure the shader
+asset work exists to make loud.
 
-A genuine bug in OUR OWN reflector, invisible while only Metal was checked.
-bgfx's uniform type byte carries FOUR flag bits, fragment 0x10, sampler 0x20,
-read-only 0x40, compare 0x80 (bgfx_p.h:1598-1607). We masked off only 0x10.
-SPIR-V writes samplers as `Sampler | kUniformSamplerBit` (shaderc_spirv.cpp:790);
-Metal omits that bit. So on SPIR-V the masked value came out 0x20, larger than
-Mat4, and every sampler reflected as Unknown. Any Vulkan build would have
-failed its interface check, or bound samplers against a misread table.
-Regression-tested against the exact SPIR-V byte encoding.
+Their sourcePath comes out relative and escaping ("../shaders/standard.shader").
+That is fine and deliberate: registry.db lives in .cache, is machine-local, and
+is rebuilt by a re-scan. Cooked output is keyed by UUID, so nothing downstream
+cares.
 
-That also settles the design question the report raised (forbid
-interface-changing defines, or verify all variants): verifying every variant IS
-the enforcement. A feature may add engine-driven uniforms, those only warn,
-but it may not remove a declared material parameter. Conditional material
-parameters are now mechanically impossible rather than discouraged by a comment.
+Resolution order: setEngineAssetsRoot(), else $ENGINE_ASSETS, else the
+build-time ENGINE_DEFAULT_ASSETS_DIR. Absent is normal and silent, a shipped
+dist has no engine source tree and needs none.
 
-Also fixed: nested .sh includes now hash into settingsFingerprint via a
-transitive #include walk (same hole as the .sc gap, one level down, shading
-code in a shared header could be edited and nothing re-cooked); duplicate
-feature DEFINES rejected (two features on one define double the variant matrix
-while half compiles to identical bytecode); cross-stage uniform warnings
-deduplicated; duplicate uniform names in a reflected table rejected (bytecode is
-external input, and find() would have returned the first and ignored the rest);
-waitpid's failure path no longer leaves the output file behind; the expected
-shaderc invocation count is logged before work begins.
+Also renames docs/process/info_strcuture.md -> info-structure.md, and re-verifies
+three info.md files that the doc contract flagged stale purely because the docs
+reorg touched comments in files they cover (no behaviour changed).
 
-REJECTED, with reasons in issues.md:
-  - "readDefaults leaves uninitialized stack garbage", FALSE. ShaderParam has
-    an NSDMI (`float defaults[4] = {0,0,0,0}`); unfilled components are a
-    deterministic 0.
-  - "size < 12 guard despite a 14-byte header", the count is right but every
-    read goes through a bounds-checked cursor, so short blobs are detected, not
-    overrun. The existing test already asserts this at every offset from 12.
-  - "parameter/sampler name collisions", separate namespaces by construction.
+Verified: fps_shooter's DEFAULT scene-scoped cook now reports "13 asset(s) in
+closure (+10 engine default(s))" and produces a real .cshader (magic CSHD, v1,
+30553 bytes) in fps_shooter/.cache/shaders. Idempotent on rerun. Wiping .cache
+entirely and re-cooking serves all 4 assets from the DDC in 105 ms. Full build
+clean, ctest unit 29/29, engine_doctor 59 docs / 0 errors.
 
-DEFERRED, with reasons: a shaderc watchdog (already bounded by the worker's
-COOK_TASK_TIMEOUT_SEC), parallelizing the variant matrix (would silently blow
-past the memory governor's admission budget, which assumes one child at a time),
-pipe-vs-tempfile, a reflection hash map, JSON source locations.
-
-Alongside: the cooker file moves are wired up (mesh/, texture/, scene/
-subdirectories) across CMake, tests, and every #include; docs/ is reorganized
-into architecture/ guides/ process/ plans/ with all cross-references updated and
-a docs/README.md index; and asset-cook-architecture.md gains a §0 that walks one
-file from disk to screen, registry, DDC key, hardlink materialization, worker
-isolation, the two governors, GC, then AssetService and GpuResourceCache.
-
-Verified: full build clean, ctest unit 29/29, docs 2/2, engine_doctor 59 docs /
-0 errors, fps_shooter cooks clean, and a real cook of standard.shader now passes
-across metal/spirv/glsl.

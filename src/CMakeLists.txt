@@ -158,6 +158,14 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         message(STATUS "engine: bgfx::shaderc target absent — shader cooking "
                        "will need ENGINE_SHADERC at runtime")
     endif()
+    # The engine's own default assets (shaders today, default materials later).
+    # CookService scans this as a SECOND asset root so engine defaults cook into
+    # each project's .cache — no new packaging concept, and the DDC dedups the
+    # work across projects since the sources are byte-identical. $ENGINE_ASSETS
+    # overrides; absent is normal in a shipped dist, where the cooked output
+    # already travelled inside .cache.
+    target_compile_definitions(engine_core PRIVATE
+        ENGINE_DEFAULT_ASSETS_DIR="${CMAKE_SOURCE_DIR}/shaders")
     # Block encoders + mip filter are hot inner loops over gigapixels; at
     # Debug -O0 they dominate cook time 5-10x. They're deterministic vendored
     # codecs nobody steps through with the engine — always optimize them.

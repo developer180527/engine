@@ -11,8 +11,25 @@
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <cstdlib>
 #include <optional>
 #include <utility>
+
+std::filesystem::path CookService::defaultEngineAssetsRoot() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (const char* env = std::getenv("ENGINE_ASSETS")) {
+        const fs::path p(env);
+        if (fs::exists(p, ec)) return p;
+    }
+#ifdef ENGINE_DEFAULT_ASSETS_DIR
+    {
+        const fs::path p(ENGINE_DEFAULT_ASSETS_DIR);
+        if (fs::exists(p, ec)) return p;
+    }
+#endif
+    return {};   // shipped dist: cooked output already travelled in .cache
+}
 
 CookService::CookService(const std::filesystem::path& dbPath,
                          const std::filesystem::path& projectRoot,
@@ -129,6 +146,17 @@ void CookService::runOneCookPass() {
     if (std::filesystem::exists(m_assetsRoot))
         registry.scan(m_assetsRoot, m_projectRoot);
 
+    // The engine's own assets, scanned against the SAME project root so their
+    // records live in this project's registry. Their sourcePath comes out
+    // relative and escaping ("../../engine/shaders/standard.shader"), which is
+    // fine: registry.db lives in .cache, is machine-local, and is rebuilt by a
+    // re-scan. Nothing downstream cares — cooked output is keyed by UUID.
+    std::error_code engEc;
+    if (!m_engineAssetsRoot.empty()
+        && std::filesystem::exists(m_engineAssetsRoot, engEc)) {
+        registry.scan(m_engineAssetsRoot, m_projectRoot);
+    }
+
     assetlib::CookPipeline pipeline(registry, m_projectRoot, m_cacheRoot);
     pipeline.registerCooker(std::make_unique<MeshCooker>());
     pipeline.registerCooker(std::make_unique<TextureCooker>());
@@ -169,8 +197,26 @@ void CookService::runOneCookPass() {
     std::optional<std::unordered_set<std::string>> scope;
     if (m_scope == Scope::SceneClosure) {
         scope = collectSceneAssetClosure(sceneDirs(), &registry, m_projectRoot);
-        LOG_INFO("CookService", "Scene-scoped cook: %zu asset(s) in closure",
-                 scope->size());
+        // Engine defaults join the closure unconditionally. No scene references
+        // a .shader, so a scoped cook would produce no programs and the game
+        // would boot into a black screen — the exact failure mode the whole
+        // shader-asset design exists to make loud rather than silent.
+        int engineAdded = 0;
+        if (!m_engineAssetsRoot.empty()) {
+            std::error_code ec;
+            const auto engRoot = std::filesystem::weakly_canonical(
+                m_engineAssetsRoot, ec);
+            for (const auto& rec : all) {
+                const auto abs = std::filesystem::weakly_canonical(
+                    m_projectRoot / rec.sourcePath, ec);
+                if (ec) { ec.clear(); continue; }
+                const auto rel = std::filesystem::relative(abs, engRoot, ec);
+                if (ec || rel.empty() || *rel.begin() == "..") { ec.clear(); continue; }
+                if (scope->insert(rec.uuid.toString()).second) ++engineAdded;
+            }
+        }
+        LOG_INFO("CookService", "Scene-scoped cook: %zu asset(s) in closure "
+                 "(+%d engine default(s))", scope->size(), engineAdded);
     }
 
     int deferred = 0, backfilled = 0;

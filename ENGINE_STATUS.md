@@ -64,7 +64,7 @@ Bootstrapped or unclassified — they make no checkable claim yet.
 - `docs/plans/future/To_be_implemented.md`
 - `docs/plans/infrastructure-backlog.md`
 - `docs/plans/scripting-integration-plan.md`
-- `docs/process/info_strcuture.md`
+- `docs/process/info-structure.md`
 - `samples/hot_reload_game/README.md`
 - `sdk_sample_game(cpp)/README.md`
 - `src/assets/cookers/issues.md`

@@ -105,6 +105,28 @@ public:
     enum class Scope { WholeProject, SceneClosure };
     void setScope(Scope s) { m_scope = s; }
 
+    // ── Engine-owned default assets ─────────────────────────────────────────
+    // A SECOND asset root, outside the project: the engine's own shaders (and
+    // eventually its default materials). They cook into the project's .cache
+    // like any other asset, which means they need no new packaging concept —
+    // engine_build already ships .cache — and the DDC makes the duplication
+    // free, since every project cooks byte-identical sources to the same key.
+    //
+    // Resolution: this setter, else $ENGINE_ASSETS, else the build-time
+    // ENGINE_DEFAULT_ASSETS_DIR. Absent is NORMAL and silent: a shipped dist
+    // has no engine source tree and needs none, because the cooked output
+    // already travelled in .cache.
+    //
+    // Engine assets are ALWAYS IN SCOPE, even under SceneClosure — a .shader
+    // is referenced by no scene, so a scoped cook would otherwise never
+    // produce it and the game would boot with no programs.
+    void setEngineAssetsRoot(const std::filesystem::path& p) {
+        m_engineAssetsRoot = p;
+    }
+    // The resolved root, or empty. Static so tools can report it before a
+    // CookService exists.
+    static std::filesystem::path defaultEngineAssetsRoot();
+
 private:
     void cookLoop();
     void runOneCookPass();
@@ -135,6 +157,7 @@ private:
     std::filesystem::path m_dbPath;
     std::filesystem::path m_projectRoot;
     std::filesystem::path m_assetsRoot;
+    std::filesystem::path m_engineAssetsRoot = defaultEngineAssetsRoot();
     std::filesystem::path m_cacheRoot;
 
     std::thread             m_thread;

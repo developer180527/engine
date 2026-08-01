@@ -10,9 +10,11 @@ build-asan/
 build-ship/
 build-ab/
 build-sdl3/
+
 # RelWithDebInfo + -DENGINE_PROFILE=1 — the frame-time measurement tree
 build-prof/
 .buildlog/
+
 # Linux container build tree + ccache (docker/linux-build.Dockerfile)
 build-linux/
 .ccache-linux/
@@ -47,8 +49,6 @@ imgui.ini
 # macOS custom-folder-icon file; its name ends in a carriage return, so the
 # `?` is a single-character wildcard rather than punctuation.
 Icon?
-
-
 
 # Rust build output. Cargo's own target dir (from a bare `cargo test` inside
 # modules/net) and the CMake-driven one (CARGO_TARGET_DIR=<build>/rust).
