@@ -1,8 +1,13 @@
 #pragma once
 // Default render pipeline: single-pass forward PBR. Owns its shader program +
-// uniforms (a swappable pipeline brings its own shaders). The engine hands it a
-// RenderView (camera + unculled draw list + frustum); it culls, sorts, submits.
+// uniforms — and NOTHING ELSE. Culling, sort keys, visibility and light packing
+// live in render/world (rworld::), so a project that swaps this pipeline to
+// change how surfaces LOOK inherits the machinery instead of reimplementing it.
+// That was the whole reason IRenderPipeline was a customization point nobody
+// could use; see docs/renderer-architecture.md §3 and §5.
 #include "render/render_pipeline.h"
+#include "render/world/light_packing.h"
+#include "render/world/visibility.h"
 #include "render/mesh.h"
 #include "render/material.h"
 #include "render/texture.h"
@@ -118,7 +123,7 @@ public:
         m_uParams      = bgfx::createUniform("u_params",      bgfx::UniformType::Vec4);
         m_uColorFactor = bgfx::createUniform("u_colorFactor", bgfx::UniformType::Vec4);
         m_uLightParams = bgfx::createUniform("u_lightParams", bgfx::UniformType::Vec4);
-        m_uLights      = bgfx::createUniform("u_lights",      bgfx::UniformType::Vec4, MAX_LIGHTS * 4);
+        m_uLights      = bgfx::createUniform("u_lights",      bgfx::UniformType::Vec4, rworld::kMaxLights * 4);
         m_uCamPos      = bgfx::createUniform("u_camPos",      bgfx::UniformType::Vec4);
         m_sNormalMap   = bgfx::createUniform("s_normalMap",   bgfx::UniformType::Sampler);
 
@@ -196,7 +201,11 @@ public:
     }
 
     void render(const RenderView& v, RenderContext& ctx) override {
-        renderShadow(v, ctx);
+        // Lights are packed FIRST, because the shadow pass and the lighting
+        // shader must agree on which slot is shadowed, and only packing knows
+        // the packed slot numbering (rworld::PackedLights::shadowLightIndex).
+        const rworld::PackedLights lights = rworld::packLights(v.lights, v.ambient);
+        renderShadow(v, ctx, lights);
 
         const bgfx::ViewId id = v.baseViewId;
 
@@ -211,43 +220,12 @@ public:
         bgfx::setViewTransform(id, v.view.ptr(), v.proj.ptr());
         bgfx::touch(id);
 
-        // TODO (Jun 3, 04:00 PM):
-        // Long-term renderer architecture:
-        // ECS World -> Render Extraction -> RenderWorld -> Visibility -> Submission.
-        // Keep extraction, culling, sorting and submission as separate stages.
-        // ForwardPipeline should eventually consume pre-extracted render data only.
-        // Pack lights into u_lights[4*N]; fall back to the legacy sun when none.
-        // TODO (Jun 3, 04:00 PM):
-        // Move light packing into a dedicated render extraction stage.
-        // Build GPU-ready RenderLight data before entering the render pipeline.
-        // The pipeline should consume extracted render data rather than ECS-derived scene data.
-        // Consider replacing float-encoded light type with packed integer/light flags.
-        float packed[MAX_LIGHTS * 4 * 4] = { 0.0f };
-        int   count = 0;
-        auto add = [&](LightType type, const Vec3& pos, const Vec3& dir,
-                       const Vec3& col, float inten, float range,
-                       float spotInnerCos, float spotOuterCos) {
-            if (count >= MAX_LIGHTS) return;
-            float* b = &packed[count * 4 * 4];
-            b[0]=pos.x; b[1]=pos.y; b[2]=pos.z; b[3]=(float)(uint32_t)type;
-            b[4]=col.x; b[5]=col.y; b[6]=col.z; b[7]=inten;
-            b[8]=dir.x; b[9]=dir.y; b[10]=dir.z; b[11]=range;
-            b[12]=spotInnerCos; b[13]=spotOuterCos;
-            ++count;
-        };
-        if (v.lights.empty()) {
-            add(LightType::Directional, bx::Vec3{0.0f,0.0f,0.0f},
-                bx::normalize(bx::Vec3{0.6f, 0.8f, 0.4f}),
-                bx::Vec3{1.0f, 0.98f, 0.92f}, 2.2f, 0.0f, 1.0f, 0.0f);
-        } else {
-            for (uint32_t i = 0; i < (uint32_t)v.lights.size() && count < MAX_LIGHTS; ++i) {
-                const LightItem& l = v.lights[i];
-                add(l.type, l.position, l.direction, l.color, l.intensity, l.range,
-                    l.spotInnerCos, l.spotOuterCos);
-            }
-        }
-        bgfx::setUniform(m_uLights, packed, (uint16_t)(count * 4));
-        const float lp[4] = { v.ambient, (float)count, 0.0f, 0.0f };
+        // Light packing lives in rworld::packLights now. It used to be ~30
+        // lines here, which meant a project swapping the pipeline to change how
+        // surfaces LOOK also had to reimplement the uniform layout — and the
+        // layout was invisible to any test.
+        bgfx::setUniform(m_uLights, lights.data, (uint16_t)lights.vec4Count());
+        const float lp[4] = { lights.ambient, (float)lights.count, 0.0f, 0.0f };
         bgfx::setUniform(m_uLightParams, lp);
         bgfx::setUniform(m_uCamPos, v.camPos.ptr());
         bgfx::setUniform(m_uShadowMtx, m_shadowMtx);
@@ -255,27 +233,14 @@ public:
                               1.0f / (float)SHADOW_SIZE, (float)m_shadowLightIndex };
         bgfx::setUniform(m_uShadowParams, sp);
 
-        // cull against the engine-provided frustum
-        // TODO (Jun 3, 04:00 PM):
-        // Separate visibility/culling from pipeline submission.
-        // Visibility should eventually operate on a RenderWorld produced by extraction.
-        m_visible.clear();
-        for (uint32_t i = 0; i < (uint32_t)v.items.size(); ++i) {
-            const RenderItem& it = v.items[i];
-            if (!it.mesh) continue;
-            if (it.mesh->hasBounds() && culled(it, v.frustum)) continue;
-            m_visible.push_back(i);
-        }
-        // TODO (Jun 3, 04:00 PM):
-        // Introduce packed render sort keys to reduce per-frame comparison cost.
-        std::sort(m_visible.begin(), m_visible.end(), [&](uint32_t a, uint32_t b){
-            const RenderItem& A = v.items[a]; const RenderItem& B = v.items[b];
-            if (A.meshKey != B.meshKey) return A.meshKey < B.meshKey;
-            return A.matKey < B.matKey;
-        });
+        // Cull + key + sort. This is rworld::buildVisibleSet now: a pipeline is
+        // a statement about how surfaces LOOK, and it should not have to own
+        // visibility to make one. m_visible is reused across frames for its
+        // capacity (buildVisibleSet clears it).
+        rworld::buildVisibleSet(v.world(), v.camera(), m_visible);
 
-        for (uint32_t idx : m_visible) {
-            const RenderItem& it = v.items[idx];
+        for (const rworld::VisibleDraw& d : m_visible.draws) {
+            const RenderItem& it = v.items[d.index];
             const uint64_t state = it.mesh->doubleSided
                 ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
                    BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA)
@@ -325,11 +290,22 @@ public:
     }
 
 private:
-    void renderShadow(const RenderView& v, RenderContext& ctx) {
+    void renderShadow(const RenderView& v, RenderContext& ctx,
+                      const rworld::PackedLights& lights) {
         m_hasShadowCaster = false;
         const LightItem* sun = nullptr;
-        for (uint32_t i = 0; i < (uint32_t)v.lights.size(); ++i)
-            if (v.lights[i].type == LightType::Directional && v.lights[i].castShadows) { sun = &v.lights[i]; m_shadowLightIndex = (int)i; break; }
+        for (uint32_t i = 0; i < (uint32_t)v.lights.size(); ++i) {
+            if (v.lights[i].type != LightType::Directional
+                || !v.lights[i].castShadows) continue;
+            // The shader indexes the PACKED array, not the source list. Packing
+            // is order-preserving, so the two agree — but only below the cap. A
+            // caster past kMaxLights was never uploaded, so shadowing it would
+            // point the shader at some other light's direction.
+            if (i >= (uint32_t)lights.count) break;
+            sun = &v.lights[i];
+            m_shadowLightIndex = (int)i;
+            break;
+        }
         if (!sun) return;
         m_hasShadowCaster = true;
 
@@ -403,26 +379,10 @@ private:
         bgfx::setVertexBuffer(0, it.mesh->vbh);
     }
 
-    static bool culled(const RenderItem& it, const float planes[6][4]) {
-        const bx::Vec3 c = it.mesh->boundsCenter();
-        const bx::Vec3 s = it.mesh->boundsSize();
-        const float* m = it.model.m;
-        const float wx = m[0]*c.x + m[4]*c.y + m[8]*c.z  + m[12];
-        const float wy = m[1]*c.x + m[5]*c.y + m[9]*c.z  + m[13];
-        const float wz = m[2]*c.x + m[6]*c.y + m[10]*c.z + m[14];
-        auto rl = [&](int i){ return std::sqrt(m[i]*m[i] + m[i+1]*m[i+1] + m[i+2]*m[i+2]); };
-        const float maxS = std::max({ rl(0), rl(4), rl(8) });
-        const float r = bx::length(s) * 0.5f * maxS;
-        for (int p = 0; p < 6; ++p)
-            if (planes[p][0]*wx + planes[p][1]*wy + planes[p][2]*wz + planes[p][3] < -r)
-                return true;
-        return false;
-    }
-
-    // TODO (Jun 3, 04:00 PM):
-    // Replace fixed MAX_LIGHTS forward path with Forward+ or clustered lighting.
-    // Current renderer truncates visible lights beyond MAX_LIGHTS.
-    static constexpr int MAX_LIGHTS = 16;
+    // NOTE: culling moved to render/world/frustum.{h,cpp} and lighting's fixed
+    // cap to rworld::kMaxLights. Replacing the fixed-cap forward path with
+    // clustered forward is docs/renderer-architecture.md §2 — lights beyond the
+    // cap are still dropped today.
     bgfx::ProgramHandle m_program              = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_skinnedProgram       = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_skinnedShadowProgram = BGFX_INVALID_HANDLE;
@@ -436,7 +396,7 @@ private:
     bgfx::UniformHandle m_uCamPos      = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_sNormalMap   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uLights      = BGFX_INVALID_HANDLE;
-    std::vector<uint32_t> m_visible;
+    rworld::VisibleSet m_visible;   // reused across frames for its capacity
     // Shadow-map edge length. NOT a constant any more: it is the single
     // biggest VRAM lever in the engine (cost is size² × 4 bytes for D32F), and
     // the right value depends on the machine the GAME ships to. Set from

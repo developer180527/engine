@@ -284,6 +284,18 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         it.meshKey = mr.mesh.id;
         it.matKey  = mh.id;
 
+        // Bounds are COPIED here, not read through `mesh` during culling.
+        // Extraction is where a Mesh pointer is legitimately live; visibility
+        // runs once per view (and shadow cascades multiply that), so it should
+        // scan contiguous PODs rather than chase a pointer into a GPU-resource
+        // object per item per view. It also keeps rworld:: free of bgfx, which
+        // is what makes culling testable at all (tests/render_world_test.cpp).
+        it.hasBounds = mesh->hasBounds();
+        if (it.hasBounds) {
+            it.boundsCenter = mesh->boundsCenter();
+            it.boundsSize   = mesh->boundsSize();
+        }
+
         // Skinned mesh: pass the bone palette to the pipeline
         const SkinnedMesh* skin = e.try_get<SkinnedMesh>();
         if (skin && skin->hasSkinMatrices && m_skeletons) {

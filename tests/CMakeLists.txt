@@ -87,6 +87,11 @@ engine_test(gpu_cache_test)
 # Render diagnostics: churn/budget/census logic is deliberately GPU-free so the
 # least-verified subsystem finally has a test that can fail.
 engine_test(render_diag_test)
+# Render machinery: culling, sort keys, visibility and light packing are pure
+# functions over PODs by design, so the two things that fail SILENTLY in a
+# renderer — geometry popping at the frustum edge, batching quietly collapsing
+# — finally have assertions. Links without bgfx or Mesh.
+engine_test(render_world_test)
 
 # ── Rust FFI seam ────────────────────────────────────────────────────────────
 # Only when the Rust module is actually built. Links engine_net directly rather

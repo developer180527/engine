@@ -195,6 +195,10 @@ add_library(engine_runtime STATIC
     # Render diagnostics — one concern per TU (see src/render/diag/info.md).
     render/diag/frame_gpu_stats.cpp
     render/diag/gpu_budget.cpp
+    # Render machinery — GPU-free, one concern per TU (src/render/world/info.md).
+    render/world/frustum.cpp
+    render/world/visibility.cpp
+    render/world/light_packing.cpp
     runtime/services/asset_service.cpp
     runtime/services/scene_service.cpp
     runtime/services/nav_service.cpp

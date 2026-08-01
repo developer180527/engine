@@ -65,7 +65,7 @@ Worth stating plainly, because the gaps below are not a verdict on the whole:
 | # | Finding | Evidence | Severity |
 |---|---|---|---|
 | **R1** | **GPU resources have no identity, no refcount, no dedup.** `TextureRegistry::addTexture` is a slot allocator: every call makes a new GPU texture. Two materials referencing the same image file get two copies of it in VRAM. Nothing tracks who references a resource, so nothing can know when it is free. | `src/render/texture_registry.h` — `addTexture` appends; `removeTexture` is manual and unreferenced by any owner | **Critical** |
-| **R2** | **Extraction/submission split never happened.** Culling, sorting, light packing and material binding all live inside `ForwardPipeline`. A dev who swaps the pipeline inherits *none* of it and must rewrite culling and sorting to draw a single triangle differently. | `forward_pipeline.h:243–307` | **Critical** |
+| **R2** ✅ | **Extraction/submission split never happened.** Culling, sorting, light packing and material binding all lived inside `ForwardPipeline`. A dev who swapped the pipeline inherited *none* of it and had to rewrite culling and sorting to draw a single triangle differently. **FIXED in Phase 3** — all four moved to `src/render/world/`; the pipeline now owns only shaders, uniforms and binds. Material *assets* remain fixed-struct (R3). | `src/render/world/`, `forward_pipeline.h` | **Critical** |
 | **R3** | **Shaders are compile-time blobs.** `.sc` sources are compiled to per-platform C arrays (`vs_triangle_mtl`, `_dxbc`, `_spv`) and `#include`d. There is no shader asset, no variant system, no runtime load. A game cannot add a material type without rebuilding the engine. | `forward_pipeline.h:34–104`, `shaders/*.sc` | **Critical** (for the customization goal) |
 | **R4** | **Bone palette uploaded per submesh.** `setUniform(m_uBoneMatrices, …, boneCount*4)` sits inside `bindMaterial`, which runs once per submesh. The 73-bone zombie re-uploads its whole palette for every submesh, every frame. | `forward_pipeline.h:291–293` | High |
 | **R5** | **No instancing.** The sort already groups identical meshes adjacently — the setup for batching is done, the batch is not. | no `setInstanceDataBuffer` anywhere in the tree | High (at scale) |
@@ -123,17 +123,30 @@ textures, materials and meshes.
 
 *Unlocks:* the `hardened` tier for `src/render`, which today has no test at all.
 
-### Phase 3 — RenderWorld: finish the extraction split (R2)
+### Phase 3 — RenderWorld: finish the extraction split (R2) — **DONE**
 
-Move culling, sorting and light packing out of `ForwardPipeline` into
-extraction, producing a **`RenderWorld`**: pre-culled, pre-sorted, bucketed
-(opaque / transparent / shadow) draw lists with **packed 64-bit sort keys**.
+Culling, sorting and light packing now live in `src/render/world/` (`rworld::`)
+instead of inside `ForwardPipeline`, producing a **`RenderWorld`** consumed
+through `RenderView::world()` / `::camera()`, with **packed 64-bit sort keys**.
 
-`IRenderPipeline` then consumes `RenderWorld` instead of raw `RenderView`. A
-custom pipeline inherits culling, sorting and light data for free and only
+A custom pipeline inherits culling, sorting and light data for free and only
 decides *how* to draw — which is what "customizable" has to mean to be real.
 
-*Unlocks:* R2, and makes R5/R7 cheap.
+Landed, with the deviations worth recording:
+
+- **`RenderItem` carries its own bounds**, copied at extraction. This is what
+  removes the `Mesh` dependency and makes the whole directory GPU-free — and so
+  testable. `tests/render_world_test.cpp` is the first test in `src/render`'s
+  history that can fail on a culling or sort-order regression.
+- **Buckets are not materialized.** One `VisibleSet` sorted by a key whose top
+  bits are the blend class gives the same ordering with one array and one sort;
+  separate opaque/transparent/shadow vectors would be three allocations to
+  express what two bits already say.
+- **`BlendClass` is always `Opaque`** until `RenderItem` carries one — the key
+  handles transparency, nothing produces it yet. See `src/render/world/info.md`.
+
+*Unlocked:* R2; R5/R7 are now cheap — `batchRunLength()` is the instancing hook
+and is already tested.
 
 ### Phase 4 — Submission efficiency
 
