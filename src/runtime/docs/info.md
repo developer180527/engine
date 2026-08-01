@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-01
+verified: 2026-08-02
 parses-external-input: true
 covers:
   - src/runtime/
@@ -12,6 +12,7 @@ tests:
   - tests/script_host_test.cpp
   - tests/kit_lifecycle_test.cpp
   - tests/residency_test.cpp
+  - tests/material_name_test.cpp
   - tests/input_test.cpp
   - tests/input_config_test.cpp
   - tests/nav_test.cpp
@@ -56,7 +57,15 @@ required.
   `onPostPhysics`. Editor UI is NOT part of this interface — see
   `src/editor/editor_plugin.h`.
 - **`AssetService`/`SceneService`** — async asset loading (worker thread
-  decode, main thread GPU upload) and binary scene loading.
+  decode, main thread GPU upload) and binary scene loading. Meshes and textures
+  are addressed by cooked PATH; **materials by authored NAME** (`"rust"`, not
+  `<uuid>.cooked`) resolved through an index over `<cache>/materials`, because a
+  shipped dist has no registry to turn a path into a uuid. Two invariants there:
+  one Material per name (a spawner calls it per entity, so repeat calls return
+  the same handle), and `unloadMaterial` must evict that name — `MaterialHandle`
+  is a bare slot index over a free list with no generation counter, so a stale
+  cache entry does not go invalid, it starts naming whatever material next took
+  the slot. Pinned by `tests/material_name_test.cpp`.
 - **`AsyncLoader`** (`async_loader.h/.cpp`) — legacy import path used by the
   editor for source-format assets (FBX via Assimp etc.).
 - **Input** (`input_system.h`, `input_map.h`) — polled GLFW state with
