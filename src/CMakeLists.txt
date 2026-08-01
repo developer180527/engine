@@ -238,6 +238,10 @@ add_library(engine_runtime STATIC
     render/world/frustum.cpp
     render/world/visibility.cpp
     render/world/light_packing.cpp
+    # Cooked-shader loading. shader_select is GPU-free (and tested); only
+    # shader_library touches bgfx.
+    render/shader/shader_select.cpp
+    render/shader/shader_library.cpp
     runtime/services/asset_service.cpp
     runtime/services/scene_service.cpp
     runtime/services/nav_service.cpp

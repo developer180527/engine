@@ -1,67 +1,50 @@
-cook: materials become data — values resolved against a shader's interface
+render: cooked shaders can become programs, ShaderLibrary + roadmap audit
 
-The payoff of the declared interface. material.h hardcodes five fields, so the
-set of things a material can express is compiled into the engine. A .material
-now names a .shader and supplies values for the parameters THAT shader
-declared, so a project defines its own look without touching engine source.
-Phase 5 / R3 of docs/renderer-audit-and-plan.md.
+ForwardPipeline #includes metal/fs_triangle.sc.bin.h and friends, so the only
+shaders that can ever execute are the ones the engine binary was compiled with.
+That is the concrete mechanism behind finding R3. ShaderLibrary is the piece
+that removes it: cooked .cshader in, bgfx program out.
 
-    {
-      "shader": "shaders/standard.shader",
-      "parameters": { "roughness": 0.85, "baseColorFactor": [0.72,0.25,0.10,1] },
-      "textures":   { "baseColor": "textures/rust_albedo.png" }
-    }
+Split so the part with decisions in it is testable:
 
-NAMES RESOLVE AT COOK TIME. The cooker checks every parameter and sampler
-against the shader's declaration, validates arity, fills defaults, and emits
-finished float blocks. The runtime does no lookup and no validation — it
-uploads bytes. A misspelled parameter is a failed cook, not a silent no-op at
-60 Hz, and the error lists what IS declared so the fix is obvious:
+  shader_select.h/.cpp   which variant does this machine want?   GPU-FREE
+  shader_library.h/.cpp  load it, make the program, cache it     all bgfx
 
-  parameter "roughtness" is not declared by the shader
-    (declared: baseColorFactor, roughness, metallic)
-  texture "emissive" is not a sampler declared by the shader
-    (declared: baseColor, normalMap)
+Two failures this guards, both silent otherwise and with completely different
+fixes, so they get different messages:
 
-BLOCKS ARE COMPLETE, NEVER SPARSE. Uniform blocks are sized and filled from the
-SHADER's parameter list, not from what the material happened to set, so an
-unset parameter carries the shader's default. A sparse block would leave
-whatever the previous draw wrote in the gaps — "looks right alone, wrong next
-to another object", which is miserable to diagnose because every material is
-individually fine. Same rule for samplers: every declared sampler emits a
-binding, so an unset stage gets its fallback instead of the last texture bound
-there.
+  A PACKAGE COOKED FOR THE WRONG BACKEND. macOS cannot emit D3D bytecode, so a
+  Mac-cooked package on a D3D11 machine has no usable variant. The program never
+  builds and a renderer with no program draws NOTHING, a black screen with no
+  error. The failure names the profiles that WERE cooked.
 
-The cooker reads the .shader SOURCE manifest, not the cooked .cshader. The
-interface is authored; compiling only VERIFIES it, and ShaderCooker already
-does that once against the real uniform table. This removes any cook-order
-dependency between a material and its shader — which matters because ICooker
-has no "my input isn't ready" result and registry dependency edges only exist
-after a first successful cook has recorded them. The cost, stated in info.md: a
-material can cook against a shader whose own cook failed. That surfaces at
-load, and the shader failure is already loud.
+  A FEATURE MASK NEVER COOKED. Selection is an exact match, never nearest.
+  Falling back to a different feature set renders confidently wrong output: a
+  skinned mesh drawn with the unskinned program collapses into a heap at the
+  origin, which reads as an animation bug and costs a day.
 
-Also fixes the .sc invalidation gap flagged when shader cooking landed: stage
-sources are inputs but not registry assets, so they can't go through
-addDependency(UUID). Their bytes now hash into ShaderCooker's
-settingsFingerprint. Before: editing a shader looked like "my edit did
-nothing". Verified — a .sc edit re-cooks, an unchanged tree stays up to date.
-Materials hash only the .shader manifest, not the .sc files, because a material's
-output depends on the declared interface alone; hashing shading code would
-re-cook every material in the project on every shader edit.
+Programs are content-keyed through GpuResourceCache like textures, keyed by
+path # featureMask # profile, all three axes, because dropping any one means the
+second material silently draws with the first's program. bgfx::copy not
+makeRef: makeRef needs the bytes to outlive the frame and the parsed asset is
+free to move.
 
-engine_doctor caught modules/assetlib/info.md going stale from the new asset
-formats and, being tier `hardened`, made it an ERROR rather than a warning.
-Doc updated with the cooked-format section, including the untrusted-input rule
-those loaders follow.
+Uniform handles are deduplicated here too. bgfx refcounts uniforms internally
+but returns a NEW handle per createUniform call, so destroying one would destroy
+a uniform another material still uses.
 
-One concern per file: material_manifest (parse), material_resolve (bind values
-to an interface, pure), material_cooker (sequence), assetlib/material_asset
-(container).
+Tier is deliberately `prototype`, not `working`: the selection logic has real
+coverage but NO running code path executes any of this yet.
 
-Verified: full build clean, ctest unit 28/28 (was 27), engine_doctor 55 docs /
-0 errors. Really cooking a .material against shaders/standard.shader gives
-u_colorFactor = the authored colour, u_params = [0, 0.85, 0, 0] (roughness
-authored, metallic defaulted), s_normalMap bound to its flatNormal fallback.
-MUTATION-PROVED on a real cook: a typo'd parameter and an undeclared texture
-both fail and name the declared set.
+Which is the point of docs/roadmap.md, added here. Three consecutive layers are
+now built and unused, .cshader cooking, .material cooking, and this. That is
+the moment to stop adding a fourth. The audit records what exists by tier, what
+each renderer finding's real state is (verified against source, not memory: R4
+is still live at forward_pipeline.h:272, R7 has no state comparison anywhere),
+and names the single decision gating Phase 5, where the engine's own cooked
+default assets live and how engine_build packages them, with a recommendation
+rather than a guess.
+
+Verified: full build clean, ctest unit 29/29 (was 28), engine_doctor 57 docs /
+0 errors.
+

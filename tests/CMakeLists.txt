@@ -101,6 +101,10 @@ engine_test(shader_cooker_test LIB engine_core)
 # interface, and uniform blocks proven COMPLETE (an unset parameter must read
 # its default, not the previous draw's register).
 engine_test(material_cooker_test LIB engine_core)
+# Which cooked shader variant this machine wants. Guards two silent failures: a
+# package cooked for the wrong backend (no program -> nothing renders) and a
+# feature mask with no cooked variant (the nearest variant is confidently wrong).
+engine_test(shader_select_test)
 
 # ── Rust FFI seam ────────────────────────────────────────────────────────────
 # Only when the Rust module is actually built. Links engine_net directly rather
