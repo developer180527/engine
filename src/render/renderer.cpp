@@ -45,6 +45,7 @@ BgfxMemAllocator s_bgfxAllocator;
 #include "components/light.h"
 
 #include "render/forward_pipeline.h"     // ForwardPipeline + compiled shader bins (single TU)
+#include "render/shader/shader_library.h"
 #include "components/skinned_mesh.h"
 #include "animation/skeleton_registry.h"
 
@@ -99,6 +100,10 @@ bool Renderer::init(void* nwh, int width, int height,
     m_itemQuery  = editorWorld.query_builder<const Transform, const MeshRenderer>().build();
     m_lightQuery = editorWorld.query_builder<const Transform, const Light>().build();
 
+    // Before the pipeline attaches: onAttach() asks for programs.
+    m_shaderLib = std::make_unique<ShaderLibrary>();
+    m_shaderLib->setSearchRoot(m_shaderCacheRoot);   // may be empty until openProject
+
     if (!m_pipeline) {
         auto fp = std::make_unique<ForwardPipeline>();
         fp->setShadowResolution(m_shadowResolution);   // before onAttach
@@ -126,6 +131,24 @@ void Renderer::setShadowResolution(uint32_t px) {
         RenderContext rc = makeContext();
         fp->onAttach(rc);
     }
+}
+
+void Renderer::setShaderCacheRoot(const std::filesystem::path& cacheRoot) {
+    if (!m_shaderLib) {                      // headless / pre-init
+        m_shaderCacheRoot = cacheRoot;
+        return;
+    }
+    m_shaderCacheRoot = cacheRoot;
+    m_shaderLib->setSearchRoot(cacheRoot);
+    if (!m_initialized || !m_pipeline) return;
+
+    // openProject() runs after init(), so the pipeline already attached against
+    // an empty cache and built the compiled-in fallback. Re-attach so the cooked
+    // program actually gets used — without this the whole path silently no-ops
+    // and every shader edit appears to do nothing.
+    m_pipeline->onDetach();
+    RenderContext rc = makeContext();
+    m_pipeline->onAttach(rc);
 }
 
 void Renderer::setPipeline(std::unique_ptr<IRenderPipeline> pipeline) {
@@ -346,6 +369,9 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
 
 RenderContext Renderer::makeContext() {
     RenderContext rc{ *m_assets, *m_textures, *m_materials };
+    rc.shaders = m_shaderLib.get();
+    // Resolved by NAME from the cooked cache — a dist has no registry.
+    if (m_shaderLib) rc.standardShader = m_shaderLib->resolveByName("standard");
     rc.whiteTex      = m_whiteTex;
     rc.flatNormalTex = m_flatNormalTex;
     rc.viewCursor    = &m_viewCursor;
@@ -361,6 +387,8 @@ void Renderer::resetWorldCaches() {
 
 void Renderer::shutdown() {
     if (m_pipeline) m_pipeline->onDetach();
+    // After the pipeline released its programs, before bgfx goes down.
+    if (m_shaderLib) { m_shaderLib->shutdown(); m_shaderLib.reset(); }
     if (bgfx::isValid(m_sceneFB))       bgfx::destroy(m_sceneFB);
     if (bgfx::isValid(m_sceneColorTex)) bgfx::destroy(m_sceneColorTex);
     if (bgfx::isValid(m_sceneDepthTex)) bgfx::destroy(m_sceneDepthTex);

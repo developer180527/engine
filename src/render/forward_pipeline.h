@@ -8,6 +8,7 @@
 #include "render/render_pipeline.h"
 #include "render/world/light_packing.h"
 #include "render/world/visibility.h"
+#include "render/shader/shader_library.h"
 #include "render/mesh.h"
 #include "render/material.h"
 #include "render/texture.h"
@@ -114,11 +115,38 @@ public:
         SHADOW_SIZE = (uint16_t)px;
     }
 
-    void onAttach(RenderContext&) override {
-        m_program = bgfx::createProgram(
-            bgfx::createShader(bgfx::makeRef(VS_TRIANGLE_DATA, VS_TRIANGLE_SIZE)),
-            bgfx::createShader(bgfx::makeRef(FS_TRIANGLE_DATA, FS_TRIANGLE_SIZE)),
-            true);
+    void onAttach(RenderContext& attachCtx) override {
+        // THE COOKED SHADER IS PREFERRED. This is the point of Phase 5: the
+        // program a game runs is content it ships, not a byte array the engine
+        // was compiled with. `standard.shader` cooks into the project's .cache
+        // as an engine default asset (CookService's second asset root).
+        //
+        // The compiled-in blob remains as a FALLBACK, and deliberately so — a
+        // tree that has never been cooked, a bare tool, or a unit test with no
+        // project must still render rather than showing a black screen. The
+        // fallback goes away once every shipping path is confirmed cooked; see
+        // docs/plans/renderer-audit-and-plan.md Phase 5 step 4.
+        m_program = BGFX_INVALID_HANDLE;
+        if (attachCtx.shaders && !attachCtx.standardShader.empty()) {
+            m_program = attachCtx.shaders->program(attachCtx.standardShader,
+                                                   /*featureMask*/ 0);
+            // Record which path won, once, at attach. Silently falling back is
+            // how "my shader edits do nothing" happens.
+            m_programFromAsset = bgfx::isValid(m_program);
+            std::printf("[ForwardPipeline] standard program: %s\n",
+                        m_programFromAsset ? "cooked .cshader"
+                                           : "compiled-in (cook failed/absent)");
+        } else {
+            std::printf("[ForwardPipeline] standard program: compiled-in "
+                        "(no cooked shader supplied)\n");
+        }
+        if (!bgfx::isValid(m_program)) {
+            m_program = bgfx::createProgram(
+                bgfx::createShader(bgfx::makeRef(VS_TRIANGLE_DATA, VS_TRIANGLE_SIZE)),
+                bgfx::createShader(bgfx::makeRef(FS_TRIANGLE_DATA, FS_TRIANGLE_SIZE)),
+                true);
+            m_programFromAsset = false;
+        }
         m_sBaseColor   = bgfx::createUniform("s_baseColor",   bgfx::UniformType::Sampler);
         m_uParams      = bgfx::createUniform("u_params",      bgfx::UniformType::Vec4);
         m_uColorFactor = bgfx::createUniform("u_colorFactor", bgfx::UniformType::Vec4);
@@ -174,7 +202,12 @@ public:
         d(m_uLightParams); d(m_uCamPos); d(m_sNormalMap);
         d(m_sShadowMap); d(m_uShadowMtx); d(m_uShadowParams);
         d(m_uBoneMatrices);
-        if (bgfx::isValid(m_program)) { bgfx::destroy(m_program); m_program = BGFX_INVALID_HANDLE; }
+        // A cooked program belongs to ShaderLibrary's cache (refcounted, shared
+        // with any other material on the same variant); destroying it here
+        // would pull it out from under them. Only the fallback is ours.
+        if (!m_programFromAsset && bgfx::isValid(m_program)) bgfx::destroy(m_program);
+        m_program = BGFX_INVALID_HANDLE;
+        m_programFromAsset = false;
         if (bgfx::isValid(m_skinnedProgram))       { bgfx::destroy(m_skinnedProgram);       m_skinnedProgram       = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_skinnedShadowProgram)) { bgfx::destroy(m_skinnedShadowProgram); m_skinnedShadowProgram = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowFB))      { bgfx::destroy(m_shadowFB);      m_shadowFB      = BGFX_INVALID_HANDLE; }
@@ -384,6 +417,8 @@ private:
     // clustered forward is docs/architecture/renderer-architecture.md §2 — lights beyond the
     // cap are still dropped today.
     bgfx::ProgramHandle m_program              = BGFX_INVALID_HANDLE;
+    // True when m_program came from a .cshader — i.e. ShaderLibrary owns it.
+    bool                m_programFromAsset     = false;
     bgfx::ProgramHandle m_skinnedProgram       = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_skinnedShadowProgram = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_lineProgram          = BGFX_INVALID_HANDLE;   // debug lines

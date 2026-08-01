@@ -25,6 +25,44 @@ rshader::RendererKind ShaderLibrary::currentRenderer() {
     }
 }
 
+void ShaderLibrary::setSearchRoot(const fs::path& cacheRoot) {
+    if (m_searchRoot == cacheRoot) return;
+    m_searchRoot = cacheRoot;
+    m_byName.clear();
+    m_indexed = false;
+}
+
+void ShaderLibrary::buildIndex() {
+    if (m_indexed) return;
+    m_indexed = true;
+    if (m_searchRoot.empty()) return;
+
+    std::error_code ec;
+    const fs::path dir = m_searchRoot / "shaders";
+    if (!fs::exists(dir, ec)) return;
+
+    for (const auto& e : fs::directory_iterator(dir, ec)) {
+        if (!e.is_regular_file(ec)) continue;
+        // Read the header to learn the shader's own name. Cheap: the parse
+        // stops caring after the interface, and there are a handful of files.
+        assetlib::ShaderAsset sh;
+        if (!assetlib::loadShader(sh, e.path()) || sh.name.empty()) continue;
+        // First writer wins, deterministically by filename, so a stale
+        // duplicate from an older cook can't shadow the current one at random.
+        auto it = m_byName.find(sh.name);
+        if (it == m_byName.end() || e.path().filename() < it->second.filename())
+            m_byName[sh.name] = e.path();
+    }
+    LOG_INFO("ShaderLibrary", "indexed %zu cooked shader(s) under %s",
+             m_byName.size(), dir.string().c_str());
+}
+
+fs::path ShaderLibrary::resolveByName(const std::string& name) {
+    buildIndex();
+    const auto it = m_byName.find(name);
+    return it == m_byName.end() ? fs::path{} : it->second;
+}
+
 const assetlib::ShaderAsset* ShaderLibrary::load(const fs::path& cookedPath) {
     const std::string key = cookedPath.string();
     if (const auto it = m_assets.find(key); it != m_assets.end())

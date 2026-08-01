@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <assetlib/mesh_asset.h>
 #include <fstream>
 #include <set>
 #include <string>
@@ -266,14 +267,64 @@ int main(int argc, char** argv) {
                          "missing cooked mesh: %s\n", rel.c_str());
             continue;
         }
-        const std::string stem = cooked.stem().string();    // uuid
-        for (auto& sib : fs::directory_iterator(cooked.parent_path(), ec))
-            if (sib.path().filename().string().rfind(stem, 0) == 0) {
-                if (!copyFile(sib.path(), dist / ".cache" / "meshs"
-                                               / sib.path().filename())) return 1;
+        if (!copyFile(cooked, dist / ".cache" / "meshs" / cooked.filename()))
+            return 1;
+        ++shippedMeshFiles;
+
+        // Sibling .ctex by what the mesh ACTUALLY REFERENCES, not by guessing
+        // "<meshUuid>_t*.ctex" from the filename.
+        //
+        // That guess held only while a mesh and its siblings were cooked
+        // together in one pass. It is false the moment the DDC materializes a
+        // cache: the manifest restores siblings under the names they were first
+        // written with, while the mesh output takes the CURRENT uuid — so a
+        // clean rebuild against a warm DDC shipped a game with no textures.
+        // Silently: the meshes are all there, the game runs, everything is
+        // untextured. Reading the reference is the only version that cannot
+        // drift from what the runtime will look for.
+        assetlib::MeshAsset ma;
+        if (!assetlib::loadMesh(ma, cooked)) {
+            std::fprintf(stderr, "[engine_build] WARNING: cannot read cooked "
+                         "mesh %s — its textures will not ship\n", rel.c_str());
+            continue;
+        }
+        for (const auto& mat : ma.materials) {
+            for (const char* texRel : { mat.baseColorPath, mat.normalMapPath }) {
+                if (!texRel || !*texRel) continue;
+                const fs::path src = cooked.parent_path() / fs::path(texRel).filename();
+                if (!fs::exists(src, ec)) {
+                    std::fprintf(stderr, "[engine_build] WARNING: mesh %s "
+                                 "references missing texture %s\n",
+                                 rel.c_str(), texRel);
+                    continue;
+                }
+                const fs::path dst = dist / ".cache" / "meshs" / src.filename();
+                if (fs::exists(dst, ec)) continue;      // shared between meshes
+                if (!copyFile(src, dst)) return 1;
                 ++shippedMeshFiles;
             }
+        }
     }
+    // Cooked shaders. The runtime resolves these BY NAME from .cache/shaders
+    // (a dist has no registry), so the whole directory ships — it is a handful
+    // of KB, and the closed-feature rule keeps it that way. Without this the
+    // player silently falls back to compiled-in shaders and a project's custom
+    // shading never runs in the shipped game.
+    size_t shippedShaders = 0;
+    if (fs::exists(cache / "shaders")) {
+        for (auto& e : fs::directory_iterator(cache / "shaders", ec))
+            if (e.path().extension() == ".cooked") {
+                if (!copyFile(e.path(), dist / ".cache" / "shaders"
+                                             / e.path().filename())) return 1;
+                ++shippedShaders;
+            }
+    }
+    if (shippedShaders == 0)
+        std::fprintf(stderr, "[engine_build] WARNING: no cooked shaders — the "
+                     "player will fall back to compiled-in ones\n");
+    else
+        std::printf("[engine_build] cooked shaders: %zu\n", shippedShaders);
+
     if (fs::exists(cache / "anim"))
         for (auto& e : fs::directory_iterator(cache / "anim", ec))
             if (!copyFile(e.path(), dist / ".cache" / "anim"

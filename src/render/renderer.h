@@ -1,5 +1,8 @@
 #pragma once
+#include <filesystem>
 #include <memory>
+
+class ShaderLibrary;   // render/shader/shader_library.h
 #include <vector>
 #include <bgfx/bgfx.h>
 #include <flecs.h>
@@ -46,6 +49,12 @@ public:
     // time and never resized. That happens on project open, not per frame.
     void setShadowResolution(uint32_t px);
 
+    // Where cooked shaders live (the project's .cache). Set from openProject,
+    // which happens AFTER init() — so this re-attaches the pipeline, exactly as
+    // setShadowResolution does, or the programs would already have been built
+    // from the compiled-in fallback.
+    void setShaderCacheRoot(const std::filesystem::path& cacheRoot);
+
     // Frame flip + device caps — the runtime orchestrates THROUGH these so
     // runtime*.cpp never touches bgfx directly (the Renderer owns the whole
     // GPU device lifecycle; audit A.1).
@@ -88,6 +97,11 @@ private:
     // Borrowed (owned by EngineRuntime)
     flecs::world*      m_editorWorld = nullptr;
     AssetRegistry*     m_assets      = nullptr;
+    std::filesystem::path m_shaderCacheRoot;
+    // Owns every program built from a .cshader; content-keyed and refcounted,
+    // so two materials on one variant share a program. Destroyed in shutdown()
+    // BEFORE bgfx goes down.
+    std::unique_ptr<ShaderLibrary> m_shaderLib;
     TextureRegistry*   m_textures    = nullptr;
     MaterialRegistry*  m_materials   = nullptr;
     SkeletonRegistry*  m_skeletons   = nullptr;

@@ -1,42 +1,52 @@
-cook: engine default assets are a second asset root
+render: the shipped game runs on a cooked shader
 
-Wiring ForwardPipeline to cooked shaders was blocked on a question I'd deferred
-twice: where do the engine's OWN cooked default assets live, and how does
-engine_build package them? The engine's shaders sit in /shaders, but cooked
-assets live in a PROJECT's .cache.
+Three layers had been built and none of them ran: .cshader cooking, .cmat
+cooking, ShaderLibrary. This closes the first path end to end, so what was
+designed is now known to work.
 
-The cheap answer turns out to be the right one: make the engine's shader
-directory a second asset root. CookService scans it alongside the project's
-assets, so standard.shader cooks into each project's .cache like any other
-asset. That means:
+    [ShaderLibrary] indexed 1 cooked shader(s) under .../dist/.cache/shaders
+    [ShaderLibrary] loaded standard: 3 variant(s), 3 param(s), 2 sampler(s)
+    [ForwardPipeline] standard program: cooked .cshader
 
-  - no new packaging concept, engine_build already ships .cache
-  - the duplication is free, every project cooks byte-identical sources to the
-    same DDC key, so it is cooked once per MACHINE, not once per project
-  - a project can override an engine default by shipping its own
-  - ShaderLibrary needs no special resolution: one lookup path
+Two things I had assumed, both wrong, both found by running it:
 
-Engine assets are ALWAYS IN SCOPE, including under SceneClosure. No scene
-references a .shader, so a scoped cook would otherwise produce no programs and
-the game would boot to a black screen, precisely the silent failure the shader
-asset work exists to make loud.
+RESOLUTION CANNOT GO THROUGH THE REGISTRY. engine_player sets
+openAssetDatabase=false, a shipped dist has no registry.db and resolves
+everything by paths baked into cooked content. My first attempt looked the
+shader up by source path and silently found nothing. ShaderLibrary now indexes
+<cache>/shaders/*.cooked by the name each .cshader carries INSIDE itself:
+identical in dev and dist, no manifest to keep in sync, and cheap precisely
+because the closed-feature rule keeps shader counts small.
 
-Their sourcePath comes out relative and escaping ("../shaders/standard.shader").
-That is fine and deliberate: registry.db lives in .cache, is machine-local, and
-is rebuilt by a re-scan. Cooked output is keyed by UUID, so nothing downstream
-cares.
+ORDERING. openProject() runs after Renderer::init(), so the pipeline had already
+attached against an empty cache and built the fallback. setShaderCacheRoot()
+re-attaches, mirroring setShadowResolution. Without it the entire path no-ops
+and every shader edit appears to do nothing, the exact silent failure this work
+exists to eliminate.
 
-Resolution order: setEngineAssetsRoot(), else $ENGINE_ASSETS, else the
-build-time ENGINE_DEFAULT_ASSETS_DIR. Absent is normal and silent, a shipped
-dist has no engine source tree and needs none.
+The compiled-in blob stays as a FALLBACK, deliberately: a never-cooked tree, a
+bare tool, or a test with no project must still render rather than showing a
+black screen. Which path won is logged once at attach, because silently falling
+back is how "my shader does nothing" happens. Removing it is Phase 5 step 4,
+once every shipping path is confirmed cooked.
 
-Also renames docs/process/info_strcuture.md -> info-structure.md, and re-verifies
-three info.md files that the doc contract flagged stale purely because the docs
-reorg touched comments in files they cover (no behaviour changed).
+ForwardPipeline does NOT destroy a cooked program in onDetach: it belongs to
+ShaderLibrary's refcounted cache and is shared with anything else on that
+variant. Only the fallback is ours to free.
 
-Verified: fps_shooter's DEFAULT scene-scoped cook now reports "13 asset(s) in
-closure (+10 engine default(s))" and produces a real .cshader (magic CSHD, v1,
-30553 bytes) in fps_shooter/.cache/shaders. Idempotent on rerun. Wiping .cache
-entirely and re-cooking serves all 4 assets from the DDC in 105 ms. Full build
-clean, ctest unit 29/29, engine_doctor 59 docs / 0 errors.
+ALSO FIXES A PRE-EXISTING PACKAGING BUG that a cache wipe exposed. engine_build
+copied a mesh's sibling .ctex by guessing "<meshUuid>_t*.ctex" from the
+filename. That guess holds only while a mesh and its siblings are cooked in one
+pass, it is false the moment the DDC materializes a cache, because the manifest
+restores siblings under the names they were FIRST written with while the mesh
+output takes the current uuid. A clean rebuild against a warm DDC therefore
+shipped a game with no textures at all. Silently: every mesh present, the game
+runs, everything untextured. engine_build now reads the texture paths the cooked
+mesh actually references, which cannot drift from what the runtime looks for.
+Dist went 53.6 MB -> 13.1 MB (broken) -> 53.7 MB (fixed).
 
+engine_build also ships .cache/shaders, and warns when there are none.
+
+Verified end to end in the SHIPPED DIST: cooked .cshader program, 5 textures
+resident, physics running, 24 gameplay raycasts landing, no unresolved assets.
+Full build clean, ctest unit 29/29, engine_doctor 59 docs / 0 errors.

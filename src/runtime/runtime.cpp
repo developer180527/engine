@@ -136,6 +136,11 @@ bool EngineRuntime::openProject(const std::filesystem::path& root) {
         m_assetService->setAssetLib(&m_assetLib);
         m_assetService->setProjectRoot(m_project.projectRoot);
     }
+    // Cooked shaders resolve by NAME from .cache/shaders — no registry lookup,
+    // because a shipped dist has none (engine_player sets
+    // openAssetDatabase=false and resolves everything by baked paths).
+    m_renderer.setShaderCacheRoot(cacheRoot);
+
     if (m_sceneService) m_sceneService->setCacheRoot(cacheRoot);
     if (m_platform)     m_platform->setTitle(m_project.name);
     return true;

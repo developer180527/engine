@@ -33,6 +33,17 @@ public:
     ShaderLibrary(const ShaderLibrary&)            = delete;
     ShaderLibrary& operator=(const ShaderLibrary&) = delete;
 
+    // ── Resolution by NAME, not by registry ─────────────────────────────────
+    // A shipped dist has no registry.db (engine_player sets
+    // openAssetDatabase=false) — everything resolves by paths baked into cooked
+    // content. Shaders need the same property, so the library indexes
+    // <root>/shaders/*.cooked by the name each .cshader carries inside itself.
+    // Identical in dev and dist, no manifest to keep in sync, and the index is
+    // cheap precisely because the closed-feature rule keeps shader counts small.
+    void setSearchRoot(const std::filesystem::path& cacheRoot);
+    // Cooked path for a shader by its declared name ("standard"), or empty.
+    std::filesystem::path resolveByName(const std::string& name);
+
     // Load (or reuse) a cooked shader and return the program for `featureMask`
     // on the live renderer. Returns an invalid handle on any failure, having
     // logged WHY — a renderer with no program draws nothing, and "nothing
@@ -76,4 +87,9 @@ private:
     std::unordered_map<std::string, bool> m_reported;
 
     const assetlib::ShaderAsset* load(const std::filesystem::path& cookedPath);
+
+    std::filesystem::path m_searchRoot;
+    std::unordered_map<std::string, std::filesystem::path> m_byName;
+    bool m_indexed = false;
+    void buildIndex();
 };
