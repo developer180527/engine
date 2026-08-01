@@ -19,6 +19,7 @@
 // Exit code 0 means "result file written"; anything else means crash.
 #include "assets/cookers/mesh_cooker.h"
 #include "assets/cookers/texture_cooker.h"
+#include "assets/cookers/shader/shader_cooker.h"
 
 #include <algorithm>
 #include <cctype>
@@ -116,6 +117,10 @@ int main(int argc, char** argv) {
     std::vector<std::unique_ptr<assetlib::ICooker>> cookers;
     cookers.push_back(std::make_unique<MeshCooker>());
     cookers.push_back(std::make_unique<TextureCooker>());
+    // Shader compiles spawn shaderc, a third-party compiler stack already
+    // known to abort under sanitizers — exactly the kind of blast radius this
+    // child process exists to contain.
+    cookers.push_back(std::make_unique<ShaderCooker>());
 
     std::string ext = sourcePath.extension().string();
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);

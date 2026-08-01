@@ -77,6 +77,10 @@ AssetType assetTypeFromExtension(const std::string& ext) {
     if (ext==".mat")                            return AssetType::Material;
     if (ext==".scene")                          return AssetType::Scene;
     if (ext==".prefab")                         return AssetType::Prefab;
+    // `.shader` is the COOKABLE unit — a manifest naming its .sc sources plus
+    // the material interface they publish. The raw stage sources are inputs to
+    // it, registered as assets but handled by no cooker of their own.
+    if (ext==".shader")                         return AssetType::Shader;
     if (ext==".glsl"||ext==".sc"||ext==".hlsl") return AssetType::Shader;
     if (ext==".wav"||ext==".ogg"||ext==".mp3")  return AssetType::Audio;
     return AssetType::Unknown;

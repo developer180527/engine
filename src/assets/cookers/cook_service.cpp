@@ -2,6 +2,7 @@
 #include "assets/cookers/mesh_cooker.h"
 #include "assets/cookers/texture_cooker.h"
 #include "assets/cookers/scene_cooker.h"
+#include "assets/cookers/shader/shader_cooker.h"
 #include "assets/asset_path.h"
 #include "core/logger.h"
 #include <assetlib/scene_asset.h>   // header peek: version-aware staleness
@@ -130,6 +131,7 @@ void CookService::runOneCookPass() {
     assetlib::CookPipeline pipeline(registry, m_projectRoot, m_cacheRoot);
     pipeline.registerCooker(std::make_unique<MeshCooker>());
     pipeline.registerCooker(std::make_unique<TextureCooker>());
+    pipeline.registerCooker(std::make_unique<ShaderCooker>());
 
     // Out-of-process cooking: run each cook in an engine_cook_worker child
     // (crash isolation + hard per-task memory caps). The worker ships next

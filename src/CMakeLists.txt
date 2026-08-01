@@ -66,6 +66,13 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         assets/cookers/texture_cooker.cpp
         assets/cookers/texture_encode.cpp
         assets/cookers/cook_service.cpp
+        # Shader cooking — one concern per TU (src/assets/cookers/shader/info.md).
+        # No bgfx: shaderc runs as a child process, so engine_core stays GPU-free.
+        assets/cookers/shader/shader_manifest.cpp
+        assets/cookers/shader/shader_reflect.cpp
+        assets/cookers/shader/shader_verify.cpp
+        assets/cookers/shader/shaderc_invoke.cpp
+        assets/cookers/shader/shader_cooker.cpp
         # Fast CPU block compression (rgbcx BC1/3/5 + bc7enc BC7) — offline only
         ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
         ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp)
@@ -119,6 +126,33 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # of ms at equal-or-better quality.)
     target_include_directories(engine_core PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/bc7enc)
+    # Where the ShaderCooker finds the compiler. Baked in rather than searched
+    # for at runtime so a cook from any working directory resolves it; the
+    # ENGINE_SHADERC env var overrides, which is how a Windows runner points at
+    # its own build to produce the D3D profiles this host cannot emit.
+    if(TARGET bgfx::shaderc)
+        target_compile_definitions(engine_core PRIVATE
+            ENGINE_SHADERC_PATH="$<TARGET_FILE:bgfx::shaderc>")
+        add_dependencies(engine_core bgfx::shaderc)
+        # Every .sc includes bgfx_shader.sh, which lives in bgfx's own tree.
+        # The build-time shader step gets this via BGFX_SHADER_INCLUDE_PATH;
+        # the cooker needs the same list or every compile fails at the first
+        # #include. ';'-separated (ENGINE_SHADER_INCLUDES overrides).
+        # Emitted as a C initializer list ("a","b",) rather than a separated
+        # string. A semicolon cannot survive the trip: as a literal it splits
+        # target_compile_definitions' LIST argument into two broken -D flags,
+        # and as $<SEMICOLON> it reaches the shell as a command separator.
+        # Commas and quotes have neither problem.
+        set(ENGINE_SHADER_INCLUDE_INIT "")
+        foreach(_dir ${BGFX_SHADER_INCLUDES})
+            string(APPEND ENGINE_SHADER_INCLUDE_INIT "\"${_dir}\",")
+        endforeach()
+        target_compile_definitions(engine_core PRIVATE
+            ENGINE_SHADER_INCLUDE_LIST=${ENGINE_SHADER_INCLUDE_INIT})
+    else()
+        message(STATUS "engine: bgfx::shaderc target absent — shader cooking "
+                       "will need ENGINE_SHADERC at runtime")
+    endif()
     # Block encoders + mip filter are hot inner loops over gigapixels; at
     # Debug -O0 they dominate cook time 5-10x. They're deterministic vendored
     # codecs nobody steps through with the engine — always optimize them.

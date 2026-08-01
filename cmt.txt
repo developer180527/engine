@@ -1,50 +1,62 @@
-render: the world split — culling, sorting, lights leave the pipeline
+cook: shaders become assets with a machine-checked declared interface
 
-`IRenderPipeline` was advertised as THE customization point: swap it, your
-game looks different. It was not usable as one. Culling, sort order, batching
-and light packing all lived inside `ForwardPipeline`, so a studio wanting a
-cartoon look — different shading, nothing else — had to reimplement frustum
-culling to get it. That is audit finding R2, rated Critical.
+Phase 5 of docs/renderer-audit-and-plan.md, finding R3. material.h hardcodes
+five fields, so "custom material" means "recompile the engine". A material can
+only become data once a SHADER publishes what a material may set — so that
+comes first.
 
-All four move to `src/render/world/` (`rworld::`), one concern per file:
+A .shader is JSON naming its .sc sources plus the interface they expose:
+parameters (name, type, target uniform + float offset, defaults) and samplers
+(name, uniform, stage, fallback). The cooker compiles the variant matrix per
+backend profile and writes a .cshader container.
 
-  render_world.h        the frozen frame description, no behaviour
-  frustum.h/.cpp        is this volume outside the view?
-  sort_key.h            "how should this draw be ordered?" as one uint64
-  visibility.h/.cpp     cull -> key -> sort, plus the batch-run predicate
-  light_packing.h/.cpp  LightItem[] -> the layout the shader expects
+THE PART THAT MATTERS: the declaration is verified against the real compiled
+shader, not trusted. bgfx's shader binary carries its own uniform table
+(shaderc_metal.cpp:240-260 and the equivalent in every backend), so the cooker
+compiles, reflects the truth back, and REJECTS a mismatch. Without that, a
+declared interface is a JSON file that can lie — a material sets "roughness",
+the value writes nowhere, and nothing reports it. Three failures caught:
 
-Everything here is GPU-FREE. That is a hard constraint, not tidiness. It is
-what makes `tests/render_world_test.cpp` possible — 42 assertions, and the
-first test in src/render's history that can fail on a culling or sort-order
-regression. Both are things that fail SILENTLY: geometry pops out of existence
-at the screen edge, batching quietly collapses to one draw per object, and
-neither crashes. Mutation-proved: inverting the opaque key layout and culling
-unbounded items each produce failures (9 total); reverting restores PASS.
+  • a parameter naming a uniform the shader doesn't declare
+  • a parameter whose offset runs past the uniform's registers (the tail lands
+    in adjacent uniform memory)
+  • a sampler declared against a value uniform, or vice versa
 
-Two design calls worth recording:
+The reverse direction is a WARNING: u_lights, u_viewProj and u_shadowMtx are
+engine-driven and legitimately not material parameters. Erroring on those would
+make the check unusable; ignoring them would hide a forgotten exposure.
 
-RenderItem carries its own bounds, copied at extraction. Culling used to reach
-through `mesh->boundsCenter()` per item per view, and shadow cascades multiply
-the view count. Six floats make the cull loop a linear scan over contiguous
-PODs — and remove the Mesh dependency that would otherwise drag bgfx in here.
+THE ANTI-BLOAT RULE, enforced not just documented: features are a closed list
+the shader author declares, and a material selects a combination — it can never
+author one. Unreal's permutation explosion, and every piece of machinery built
+to survive it, follows from letting materials generate shader code. Refusing
+that keeps the matrix (2^features x profiles) small enough to simply cook all
+of it, with no stripping infrastructure. kMaxShaderFeatures = 8, rejected at
+parse time so the rule can't erode quietly.
 
-Opaque sorts by MATERIAL before depth. Blend class always leads (opaque before
-transparent is correctness). Below that, opaque keeps material above depth
-because the pipeline this replaces sorted by (meshKey, matKey) — pure batching
-— and flipping to depth-first would trade that away for early-Z on a guess.
-Depth rides along as the tiebreaker. Transparent inverts the layout entirely:
-depth dominates, far first, or blending is wrong.
+Cross-compilation is checked rather than discovered on the target machine.
+shaderc cannot emit D3D bytecode off Windows — shaderc_hlsl.cpp:21,91 guards
+D3DCompiler on BX_PLATFORM_WINDOWS, and shaderc_dxil.cpp:169-175's macOS
+fallback is literally "dxcompiler???". profileCookableOnThisHost mirrors those
+guards, so COOK_SHADER_PROFILES=metal,dx11 on macOS cooks metal and says dx11
+needs its own runner. Silently dropping it would ship a package that renders
+nothing.
 
-Also fixed while moving it: the shadow-light index the shader reads is an index
-into the PACKED array, but the pipeline was assigning it from the SOURCE light
-list. The two diverge once lights are dropped at the 16-light cap, so a caster
-past the cap would have pointed the shader at some other light's direction.
+Shaders go through ICooker rather than a bespoke build step so they inherit the
+DDC, the thermal governor, memory-budgeted admission and .cache GC for free.
+Compiles run out-of-process, matching the worker model — shaderc is a compiler
+stack already excluded from the sanitizer lanes because it aborts under them
+(CMakeLists.txt:179-185), and its diagnostics are captured verbatim so a broken
+shader reports WHY.
 
-forward_pipeline.h 463 -> 423 lines, and what remains is shaders, uniforms and
-binds — which is what a pipeline should be. Three stale TODOs asking for
-exactly this work are now deleted rather than described.
+One concern per file: shader_manifest (parse+validate), shaderc_invoke (one
+compile), shader_reflect (read the uniform table), shader_verify (compare),
+shader_cooker (sequence), assetlib/shader_asset (container).
 
-Verified: full build clean, ctest unit 26/26 (was 25), engine_doctor 53 docs /
-0 errors, fps_shooter runs live — 5 textures resident, 2048 shadow map, physics
-and gameplay raycasts intact.
+Verified: full build clean, ctest unit 27/27 (was 26), engine_doctor 54 docs /
+0 errors. Really cooking shaders/standard.shader produces 3 profiles
+(metal/spirv/glsl), real VSH/FSH bytecode, interface round-tripped.
+MUTATION-PROVED on a real cook: renaming u_params to u_parms in the manifest
+fails the cook and names both affected parameters.
+
+Also removes shaders/vs_triangle.sc.bak, stale in-tree.

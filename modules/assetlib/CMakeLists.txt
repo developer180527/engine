@@ -10,6 +10,7 @@ add_library(assetlib STATIC
     src/asset_registry.cpp
     src/mesh_asset.cpp
     src/texture_asset.cpp
+    src/shader_asset.cpp
     src/scene_asset.cpp
     src/dependency_graph.cpp
     src/file_watcher.cpp
