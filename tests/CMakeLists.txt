@@ -124,6 +124,7 @@ if(TARGET engine_net)
 endif()
 engine_test(input_config_test)
 engine_test(asset_ready_test)
+engine_test(material_name_test)   # by-name addressing + the slot-reuse alias
 engine_test(sim_world_test)
 engine_test(keymap_test)
 engine_test(nav_test)

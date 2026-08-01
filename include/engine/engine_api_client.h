@@ -186,6 +186,8 @@ uint32_t engineSceneLoad(const char* p)    { return eapiGuard(EAPI_ASSETS,"scene
 bool     engineSceneUnload(uint32_t h)     { return eapiGuard(EAPI_ASSETS,"sceneUnload") && g_eapi->assets.sceneUnload(h); }
 void     engineScenePreload(const char* p) { if (eapiGuard(EAPI_ASSETS,"scenePreload")) g_eapi->assets.scenePreload(p); }
 bool     engineSceneIsReady(const char* p) { return eapiGuard(EAPI_ASSETS,"sceneIsReady") && g_eapi->assets.sceneIsReady(p); }
+uint32_t engineAssetLoadMaterial(const char* n) { return eapiGuard(EAPI_ASSETS,"loadMaterial") ? g_eapi->assets.loadMaterial(n) : 0; }
+bool     engineEntitySetMaterial(EngineEntity e, uint32_t m) { return eapiGuard(EAPI_ASSETS,"entitySetMaterial") && g_eapi->assets.entitySetMaterial(e, m); }
 
 /* anim */
 bool  engineAnimPlay(EngineEntity e, const char* c, float f) { return eapiGuard(EAPI_ANIM,"play") && g_eapi->anim.play(e, c, f); }

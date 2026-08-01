@@ -370,11 +370,83 @@ TextureHandle AssetService::loadTexture(const char* cookedPath) {
     return loadTextureFromCooked(absPath);
 }
 
-MaterialHandle AssetService::loadMaterialAsset(const char* cookedPath) {
-    if (!cookedPath || cookedPath[0] == '\0') return {};
-    std::filesystem::path absPath(cookedPath);
-    if (absPath.is_relative() && !m_cacheRoot.empty())
-        absPath = m_cacheRoot / absPath;
+void AssetService::buildMaterialIndex() {
+    if (m_materialIndexBuilt) return;
+    // NOT latched yet. m_cacheRoot is late-bound (setProjectRoot, at project
+    // open), and the editor boots projectless into the project hub — so an
+    // early caller (the material picker) would otherwise mark the index
+    // built-and-empty for the whole process and no material would ever resolve
+    // again after a project opened. Nothing to scan is not the same as scanned.
+    if (m_cacheRoot.empty()) return;
+
+    std::error_code ec;
+    const auto dir = m_cacheRoot / "materials";
+    if (!std::filesystem::exists(dir, ec)) return;
+    m_materialIndexBuilt = true;
+
+    // Sorted, so a duplicated name resolves the same way on every machine
+    // rather than depending on directory order.
+    std::vector<std::filesystem::path> files;
+    for (const auto& e : std::filesystem::directory_iterator(dir, ec))
+        if (e.is_regular_file(ec) && e.path().extension() == ".cooked")
+            files.push_back(e.path());
+    std::sort(files.begin(), files.end());
+
+    for (const auto& f : files) {
+        assetlib::MaterialAsset ma;
+        if (!assetlib::loadMaterial(ma, f) || ma.name.empty()) continue;
+        if (!m_materialByName.emplace(ma.name, f).second)
+            LOG_WARN("AssetService", "two cooked materials are both named "
+                     "\"%s\" — the first wins (stale cook?)", ma.name.c_str());
+    }
+    LOG_INFO("AssetService", "indexed %zu cooked material(s)",
+             m_materialByName.size());
+}
+
+std::vector<std::string> AssetService::materialNames() {
+    buildMaterialIndex();
+    std::vector<std::string> out;
+    out.reserve(m_materialByName.size());
+    for (const auto& [n, _] : m_materialByName) out.push_back(n);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+MaterialHandle AssetService::loadMaterialAsset(const char* name) {
+    if (!name || name[0] == '\0') return {};
+    const std::string key = name;
+
+    // One Material per name. A spawner calling this per entity is the expected
+    // usage, and allocating a registry slot per spawn would leak steadily.
+    if (const auto it = m_materialLoaded.find(key); it != m_materialLoaded.end())
+        return it->second;
+
+    buildMaterialIndex();
+    const auto it = m_materialByName.find(key);
+    if (it == m_materialByName.end()) {
+        // The miss is deliberately NOT memoized: the index is already a cache,
+        // and a second one layered on top would be a second thing to invalidate
+        // for no gain — the lookup it saves is one hash probe. What must not
+        // repeat is the DIAGNOSTIC: building the known-names list allocates,
+        // sorts and concatenates, and a spawner asking per entity for a
+        // misspelled name would pay that plus a log line every frame.
+        //
+        // NOTE: m_materialIndexBuilt latches after the first successful scan,
+        // so a material cooked LATER in this process is not picked up by either
+        // path. Live re-cook needs index invalidation, which nothing requests
+        // yet — see materialNames().
+        if (m_materialMissWarned.insert(key).second) {
+            std::string known;
+            for (const auto& n : materialNames()) {
+                if (!known.empty()) known += ", ";
+                known += n;
+            }
+            LOG_ERROR("AssetService", "no cooked material named \"%s\" (have: %s)",
+                      name, known.empty() ? "none" : known.c_str());
+        }
+        return {};
+    }
+    const std::filesystem::path absPath = it->second;
 
     assetlib::MaterialAsset ma;
     if (!assetlib::loadMaterial(ma, absPath)) {
@@ -419,6 +491,11 @@ MaterialHandle AssetService::loadMaterialAsset(const char* cookedPath) {
     }
 
     const MaterialHandle h = m_materials.addMaterial(std::move(mat));
+    m_materialLoaded.emplace(key, h);
+    // insert_or_assign, not emplace: addMaterial reuses freed slots, so this id
+    // may still carry the name of a material unloaded some other way.
+    m_materialByHandle.insert_or_assign(h.id, key);
+    m_materialMissWarned.erase(key);   // it exists now; a future miss is news again
     LOG_INFO("AssetService", "Loaded material: %s -> shader \"%s\" "
              "(%zu block(s), %zu texture(s), features 0x%x)",
              ma.name.c_str(), ma.shaderName.c_str(), ma.uniforms.size(),
@@ -432,7 +509,20 @@ MaterialHandle AssetService::loadMaterialAsset(const char* cookedPath) {
 
 bool AssetService::unloadMesh(MeshHandle h)       { return m_meshes.removeMesh(h); }
 bool AssetService::unloadTexture(TextureHandle h)  { return m_textures.removeTexture(h); }
-bool AssetService::unloadMaterial(MaterialHandle h) { return m_materials.removeMaterial(h); }
+bool AssetService::unloadMaterial(MaterialHandle h) {
+    if (!m_materials.removeMaterial(h)) return false;
+    // The name cache must let go in the same breath. MaterialHandle is a bare
+    // slot index over a free list with no generation counter, so the next
+    // addMaterial hands this exact id back out — and a stale entry here would
+    // make loadMaterialAsset("rust") return whatever material now owns the slot.
+    // Renders something plausible, hides the problem: the one outcome
+    // loadMaterialAsset is documented to refuse.
+    if (const auto it = m_materialByHandle.find(h.id); it != m_materialByHandle.end()) {
+        m_materialLoaded.erase(it->second);
+        m_materialByHandle.erase(it);
+    }
+    return true;
+}
 
 size_t AssetService::meshCount()     const { return m_meshes.meshCount(); }
 size_t AssetService::textureCount()  const { return m_textures.textureCount(); }

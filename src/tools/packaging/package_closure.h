@@ -84,4 +84,20 @@ struct ShaderSet {
 
 ShaderSet shaderFiles(const std::filesystem::path& shadersDir);
 
+// ── Cooked materials ────────────────────────────────────────────────────────
+// Same shape as shaders, and for the same reason: a game asks for a material by
+// its authored NAME, so a package can hold material files and still not provide
+// the one the game names. Materials are not reachable from scenes yet, so the
+// whole directory ships — a .cmat is a few hundred bytes.
+struct MaterialSet {
+    std::vector<std::filesystem::path> files;   // sorted
+    std::vector<std::string> names;             // declared names, sorted
+    std::vector<std::string> unreadable;
+    std::vector<std::string> duplicateNames;    // one name, two files
+
+    bool provides(const std::string& name) const;
+};
+
+MaterialSet materialFiles(const std::filesystem::path& materialsDir);
+
 } // namespace pkg

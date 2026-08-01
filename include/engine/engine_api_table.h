@@ -39,7 +39,7 @@ extern "C" {
 #define ENGINE_API_INPUT_V   2  /* v2: + lookTotal (cumulative look)       */
 #define ENGINE_API_PHYSICS_V 1  /* body forces, raycast, character         */
 #define ENGINE_API_AUDIO_V   1
-#define ENGINE_API_ASSETS_V  1  /* cooked assets + scenes                  */
+#define ENGINE_API_ASSETS_V  2  /* v2: + loadMaterial / entitySetMaterial  */
 #define ENGINE_API_ANIM_V    1
 #define ENGINE_API_UI_V      1  /* editor-UI WIDGETS (negotiated; 0 headless)*/
 #define ENGINE_API_NAV_V     1  /* navmesh path queries (Recast/Detour)    */
@@ -115,6 +115,11 @@ typedef struct EngineApiAssetsV1 {
     bool     (*sceneUnload)(uint32_t);
     void     (*scenePreload)(const char*);
     bool     (*sceneIsReady)(const char*);
+    /* v2 — APPENDED, per the evolution rules above. A cooked material by its
+       authored NAME, and applying one to an entity. This is how a game ships a
+       look the engine knows nothing about. */
+    uint32_t (*loadMaterial)(const char* name);
+    bool     (*entitySetMaterial)(EngineEntity, uint32_t materialId);
 } EngineApiAssetsV1;
 
 typedef struct EngineApiAnimV1 {

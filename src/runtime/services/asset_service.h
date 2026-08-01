@@ -18,6 +18,8 @@ class AnimClipRegistry;
 namespace assetlib { class AssetRegistry; }
 
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
 
 // ---------------------------------------------------------------------------
 // AssetService — flat, FFI-friendly API for loading and unloading cooked
@@ -78,16 +80,24 @@ public:
     // against the project's .cache directory.
     TextureHandle loadTexture(const char* cookedPath);
 
-    // Load a cooked MATERIAL (.cmat, written as <uuid>.cooked). Returns a
-    // MaterialHandle whose Material is `dataDriven` — its uniform blocks came
-    // straight from the cook, already resolved against the shader's declared
-    // interface. Textures the material names are loaded through the same
-    // dedup/residency path as any other texture.
+    // Load a cooked MATERIAL **by its authored name** ("zombie_sickly").
+    //
+    // By name, not by cooked path: a cooked file is <uuid>.cooked, and no one
+    // should hand-write a uuid to reference their own material. The name is the
+    // addressable identity — the same rule shaders follow, and for the same
+    // reason (a shipped dist has no registry to map paths to uuids).
+    //
+    // Repeat calls return the SAME handle: a spawner asking per entity must not
+    // allocate a Material per spawn.
     //
     // Invalid handle on failure, having logged why. A material that will not
-    // load must NOT silently fall back to the fixed struct: that renders
+    // load must NOT silently fall back to the fixed struct — that renders
     // something plausible and hides the problem.
-    MaterialHandle loadMaterialAsset(const char* cookedPath);
+    MaterialHandle loadMaterialAsset(const char* name);
+
+    // Every cooked material name available, sorted. For the editor's material
+    // picker, and for telling an author what they could have typed.
+    std::vector<std::string> materialNames();
 
     // ----- Async Load -----
     // Queue a cooked asset for background loading. The worker thread parses
@@ -182,6 +192,20 @@ private:
     TextureHandle loadTextureFromCooked(const std::filesystem::path& absPath);
     TextureHandle resolveTexture(const char* texPath,
                                  const std::filesystem::path& sourceDir);
+
+    // name -> cooked path, built once by scanning <cache>/materials. Mirrors
+    // ShaderLibrary's index; see loadMaterialAsset for why it is by name.
+    void buildMaterialIndex();
+    std::unordered_map<std::string, std::filesystem::path> m_materialByName;
+    std::unordered_map<std::string, MaterialHandle>        m_materialLoaded;
+    // Reverse of m_materialLoaded, so unloadMaterial can drop the name entry
+    // for a handle. Kept as a map rather than searched linearly because unload
+    // is on the same per-entity path as load.
+    std::unordered_map<uint32_t, std::string>             m_materialByHandle;
+    // Names already reported missing — the error is loud and expensive to
+    // build, and the lookup that produces it runs every call by design.
+    std::unordered_set<std::string>                       m_materialMissWarned;
+    bool m_materialIndexBuilt = false;
 
     // Async internals (pimpl — keeps threading headers out of this header)
     struct AsyncState;

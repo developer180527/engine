@@ -309,6 +309,24 @@ int main(int argc, char** argv) {
         std::printf("[engine_build] cooked shaders: %zu file(s) providing %zu "
                     "name(s)\n", shaders.files.size(), shaders.names.size());
 
+    // Cooked materials. Shipped wholesale for the same reason as shaders: a
+    // game names them at runtime, and nothing in a scene references them yet,
+    // so there is no closure to walk. A .cmat is a few hundred bytes.
+    const auto materials = pkg::materialFiles(cache / "materials");
+    for (const std::string& bad : materials.unreadable)
+        std::fprintf(stderr, "[engine_build] WARNING: unreadable cooked material "
+                     "%s — the look it provides will be missing\n", bad.c_str());
+    for (const std::string& dup : materials.duplicateNames)
+        std::fprintf(stderr, "[engine_build] WARNING: two cooked materials both "
+                     "declare \"%s\" — one shadows the other (stale cook?)\n",
+                     dup.c_str());
+    for (const fs::path& f : materials.files)
+        if (!copyFile(f, dist / ".cache" / "materials" / f.filename())) return 1;
+    if (!materials.files.empty())
+        std::printf("[engine_build] cooked materials: %zu file(s) providing "
+                    "%zu name(s)\n", materials.files.size(),
+                    materials.names.size());
+
     if (fs::exists(cache / "anim"))
         for (auto& e : fs::directory_iterator(cache / "anim", ec))
             if (!copyFile(e.path(), dist / ".cache" / "anim"

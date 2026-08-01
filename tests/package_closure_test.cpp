@@ -24,6 +24,7 @@
 
 #include <assetlib/mesh_asset.h>
 #include <assetlib/scene_asset.h>
+#include <assetlib/material_asset.h>
 #include <assetlib/shader_asset.h>
 
 #include "tools/packaging/package_closure.h"
@@ -94,6 +95,15 @@ static bool writeShader(const fs::path& p, const std::string& name) {
     sh.blob.assign(16, 0);
     sh.variants.push_back({ 0, assetlib::kProfileMetal, 0, 8, 8, 8 });
     return assetlib::saveShader(sh, p);
+}
+
+static bool writeMaterial(const fs::path& p, const std::string& name,
+                          const std::string& shader) {
+    assetlib::MaterialAsset m;
+    m.name = name;
+    m.shaderName = shader;
+    m.uniforms.push_back({ "u_params", { 0, 0.5f, 0, 0 } });
+    return assetlib::saveMaterial(m, p);
 }
 
 static bool listed(const std::vector<std::string>& v, const std::string& s) {
@@ -389,6 +399,51 @@ int main() {
         CHECK(none.files.empty() && none.names.empty()
               && !none.provides("standard"),
               "an absent shader directory provides nothing, and does not throw");
+    }
+
+    // ═══ cooked materials ═══════════════════════════════════════════════════
+    // Same shape as shaders: a game asks by NAME, so a package can hold
+    // material files and still not provide the one the game names — and the
+    // game then renders on whatever material the mesh had baked in, which looks
+    // like the author's material silently doing nothing.
+    const fs::path matDir = dir / "materials";
+    fs::create_directories(matDir, ec);
+    {
+        CHECK(writeMaterial(matDir / "b-uuid.cooked", "zombie_sickly", "standard"),
+              "wrote a cooked material named \"zombie_sickly\"");
+        CHECK(writeMaterial(matDir / "a-uuid.cooked", "rust", "standard"),
+              "wrote a second named \"rust\"");
+
+        const auto m = pkg::materialFiles(matDir);
+        CHECK(m.files.size() == 2, "both ship (%zu)", m.files.size());
+        CHECK(m.provides("zombie_sickly") && m.provides("rust"),
+              "provides() answers by declared name");
+        CHECK(!m.provides("nope"), "an absent name is absent");
+        CHECK(std::is_sorted(m.files.begin(), m.files.end()),
+              "files sorted for a deterministic package");
+        CHECK(m.names.size() == 2 && m.names[0] == "rust",
+              "names sorted independently");
+        CHECK(m.unreadable.empty() && m.duplicateNames.empty(),
+              "nothing unreadable or duplicated");
+    }
+    {
+        { std::ofstream f(matDir / "corrupt.cooked", std::ios::binary);
+          f << "not a material"; }
+        const auto m = pkg::materialFiles(matDir);
+        CHECK(m.unreadable.size() == 1 && m.unreadable[0] == "corrupt.cooked",
+              "an unreadable cooked material is named");
+        CHECK(m.files.size() == 2, "...and the good ones still ship");
+        fs::remove(matDir / "corrupt.cooked", ec);
+
+        writeMaterial(matDir / "z-stale.cooked", "rust", "standard");
+        const auto d = pkg::materialFiles(matDir);
+        CHECK(d.duplicateNames.size() == 1 && d.duplicateNames[0] == "rust",
+              "a duplicated material name is reported");
+        fs::remove(matDir / "z-stale.cooked", ec);
+
+        const auto none = pkg::materialFiles(dir / "no_materials");
+        CHECK(none.files.empty() && !none.provides("rust"),
+              "an absent material directory provides nothing, and does not throw");
     }
 
     fs::remove_all(dir, ec);

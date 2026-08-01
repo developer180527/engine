@@ -2,6 +2,7 @@
 
 #include <assetlib/mesh_asset.h>
 #include <assetlib/scene_asset.h>
+#include <assetlib/material_asset.h>
 #include <assetlib/shader_asset.h>
 
 #include <algorithm>
@@ -108,6 +109,41 @@ ShaderSet shaderFiles(const fs::path& shadersDir) {
                 out.duplicateNames.push_back(sh.name);
         } else {
             out.names.push_back(sh.name);
+        }
+    }
+    std::sort(out.names.begin(), out.names.end());
+    return out;
+}
+
+bool MaterialSet::provides(const std::string& name) const {
+    return std::find(names.begin(), names.end(), name) != names.end();
+}
+
+MaterialSet materialFiles(const fs::path& materialsDir) {
+    MaterialSet out;
+    std::error_code ec;
+    if (!fs::exists(materialsDir, ec)) return out;
+
+    std::vector<fs::path> found;
+    for (const auto& e : fs::directory_iterator(materialsDir, ec))
+        if (e.is_regular_file(ec) && e.path().extension() == ".cooked")
+            found.push_back(e.path());
+    std::sort(found.begin(), found.end());
+
+    std::set<std::string> seen;
+    for (const auto& path : found) {
+        assetlib::MaterialAsset ma;
+        if (!assetlib::loadMaterial(ma, path) || ma.name.empty()) {
+            out.unreadable.push_back(path.filename().string());
+            continue;
+        }
+        out.files.push_back(path);
+        if (!seen.insert(ma.name).second) {
+            if (std::find(out.duplicateNames.begin(), out.duplicateNames.end(),
+                          ma.name) == out.duplicateNames.end())
+                out.duplicateNames.push_back(ma.name);
+        } else {
+            out.names.push_back(ma.name);
         }
     }
     std::sort(out.names.begin(), out.names.end());
