@@ -24,6 +24,7 @@
 
 #include <assetlib/mesh_asset.h>
 #include <assetlib/scene_asset.h>
+#include <assetlib/shader_asset.h>
 
 #include "tools/build/package_closure.h"
 
@@ -84,6 +85,15 @@ static bool writeScene(const fs::path& p,
     sc.header.entityCount     = (uint32_t)sc.entities.size();
     sc.header.stringTableSize = (uint32_t)sc.stringTable.size();
     return assetlib::saveScene(sc, p);
+}
+
+// A real cooked shader carrying `name`, written through assetlib::saveShader.
+static bool writeShader(const fs::path& p, const std::string& name) {
+    assetlib::ShaderAsset sh;
+    sh.name = name;
+    sh.blob.assign(16, 0);
+    sh.variants.push_back({ 0, assetlib::kProfileMetal, 0, 8, 8, 8 });
+    return assetlib::saveShader(sh, p);
 }
 
 static bool listed(const std::vector<std::string>& v, const std::string& s) {
@@ -286,6 +296,99 @@ int main() {
         CHECK(none.meshes.empty() && none.scenesRead == 0
               && none.unreadableScenes.empty(),
               "an absent scenes directory yields nothing, and does not throw");
+    }
+
+    // ═══ cooked shaders ═════════════════════════════════════════════════════
+    // The runtime resolves these by the NAME inside each file, so a package can
+    // hold shader files and still leave the game on compiled-in fallbacks —
+    // which renders correctly, so nothing looks wrong.
+    const fs::path shaderDir = dir / "shaders";
+    fs::create_directories(shaderDir, ec);
+    {
+        CHECK(writeShader(shaderDir / "b-uuid.cooked", "standard"),
+              "wrote a cooked shader declaring \"standard\"");
+        CHECK(writeShader(shaderDir / "a-uuid.cooked", "unlit"),
+              "wrote a second declaring \"unlit\"");
+
+        const auto s = pkg::shaderFiles(shaderDir);
+        CHECK(s.files.size() == 2, "both files ship (%zu)", s.files.size());
+        CHECK(s.unreadable.empty() && s.duplicateNames.empty(),
+              "nothing reported unreadable or duplicated");
+        // THE assertion that matters: the name the pipeline asks for is present.
+        CHECK(s.provides("standard"),
+              "the package provides \"standard\" — without it the player falls "
+              "back to compiled-in shaders and custom shading never runs");
+        CHECK(s.provides("unlit") && !s.provides("nope"),
+              "provides() answers by declared name, not filename");
+        // Sorted by FILENAME, so the package is byte-identical run to run.
+        // Asserted as is_sorted rather than by naming an element: that is the
+        // exact contract a caller depends on, and it holds whatever order the
+        // filesystem hands back — unlike an element check, which passes by luck
+        // on a filesystem that already returns sorted entries.
+        CHECK(std::is_sorted(s.files.begin(), s.files.end()),
+              "files come out sorted for a deterministic package");
+        // Same trick as the scene ordering check: a fresh directory written in
+        // reverse alphabetical order, so a filesystem that returns creation
+        // order exposes a missing sort. Vacuous on one that returns sorted
+        // entries — real coverage on some hosts, never a false failure.
+        const fs::path ord = dir / "shaders_ordered";
+        fs::create_directories(ord, ec);
+        writeShader(ord / "zzz.cooked", "z");
+        writeShader(ord / "aaa.cooked", "a");
+        const auto os = pkg::shaderFiles(ord);
+        CHECK(os.files.size() == 2
+              && std::is_sorted(os.files.begin(), os.files.end()),
+              "reverse-written files still come out sorted");
+        CHECK(s.names.size() == 2 && s.names[0] == "standard",
+              "names are sorted independently (%zu)", s.names.size());
+    }
+
+    // A corrupt .cshader is NAMED, not shipped as dead weight that provides
+    // nothing.
+    {
+        { std::ofstream f(shaderDir / "corrupt.cooked", std::ios::binary);
+          f << "not a shader"; }
+        const auto s = pkg::shaderFiles(shaderDir);
+        CHECK(s.unreadable.size() == 1 && s.unreadable[0] == "corrupt.cooked",
+              "an unreadable cooked shader is named");
+        CHECK(s.files.size() == 2 && s.provides("standard"),
+              "...and the good ones still ship");
+        fs::remove(shaderDir / "corrupt.cooked", ec);
+    }
+
+    // Two files declaring one name: normally a stale cook left behind by an
+    // older cooker version. One silently shadows the other at runtime.
+    {
+        writeShader(shaderDir / "z-stale.cooked", "standard");
+        const auto s = pkg::shaderFiles(shaderDir);
+        CHECK(s.duplicateNames.size() == 1 && s.duplicateNames[0] == "standard",
+              "a duplicated shader name is reported");
+        CHECK(s.files.size() == 3,
+              "both copies still ship — dropping one would make the package "
+              "depend on directory order (%zu)", s.files.size());
+        fs::remove(shaderDir / "z-stale.cooked", ec);
+    }
+
+    // The silent case this whole struct exists for: shader files present, but
+    // not the one the pipeline asks for.
+    {
+        const fs::path only = dir / "shaders_no_standard";
+        fs::create_directories(only, ec);
+        writeShader(only / "custom.cooked", "toon");
+        const auto s = pkg::shaderFiles(only);
+        CHECK(s.files.size() == 1 && !s.provides("standard"),
+              "a package with shaders but no \"standard\" is detectable");
+    }
+
+    // Non-.cooked files ignored; an absent directory is empty, not a throw.
+    {
+        { std::ofstream f(shaderDir / "readme.txt"); f << "hi"; }
+        CHECK(pkg::shaderFiles(shaderDir).files.size() == 2,
+              "non-.cooked files are ignored");
+        const auto none = pkg::shaderFiles(dir / "no_shaders_here");
+        CHECK(none.files.empty() && none.names.empty()
+              && !none.provides("standard"),
+              "an absent shader directory provides nothing, and does not throw");
     }
 
     fs::remove_all(dir, ec);

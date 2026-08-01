@@ -287,20 +287,27 @@ int main(int argc, char** argv) {
     // of KB, and the closed-feature rule keeps it that way. Without this the
     // player silently falls back to compiled-in shaders and a project's custom
     // shading never runs in the shipped game.
-    size_t shippedShaders = 0;
-    if (fs::exists(cache / "shaders")) {
-        for (auto& e : fs::directory_iterator(cache / "shaders", ec))
-            if (e.path().extension() == ".cooked") {
-                if (!copyFile(e.path(), dist / ".cache" / "shaders"
-                                             / e.path().filename())) return 1;
-                ++shippedShaders;
-            }
-    }
-    if (shippedShaders == 0)
-        std::fprintf(stderr, "[engine_build] WARNING: no cooked shaders — the "
-                     "player will fall back to compiled-in ones\n");
+    const auto shaders = pkg::shaderFiles(cache / "shaders");
+    for (const std::string& bad : shaders.unreadable)
+        std::fprintf(stderr, "[engine_build] WARNING: unreadable cooked shader "
+                     "%s — the shader it provides will be missing\n", bad.c_str());
+    for (const std::string& dup : shaders.duplicateNames)
+        std::fprintf(stderr, "[engine_build] WARNING: two cooked shaders both "
+                     "declare \"%s\" — one shadows the other (stale cook?)\n",
+                     dup.c_str());
+    for (const fs::path& f : shaders.files)
+        if (!copyFile(f, dist / ".cache" / "shaders" / f.filename())) return 1;
+
+    // Name-level, not file-level. ForwardPipeline asks for "standard" by name;
+    // without it the player falls back to compiled-in shaders and renders
+    // CORRECTLY, so nothing looks wrong while the project's shading never runs.
+    if (!shaders.provides("standard"))
+        std::fprintf(stderr, "[engine_build] WARNING: no cooked shader declares "
+                     "\"standard\" — the player will fall back to compiled-in "
+                     "shaders and custom shading will not run\n");
     else
-        std::printf("[engine_build] cooked shaders: %zu\n", shippedShaders);
+        std::printf("[engine_build] cooked shaders: %zu file(s) providing %zu "
+                    "name(s)\n", shaders.files.size(), shaders.names.size());
 
     if (fs::exists(cache / "anim"))
         for (auto& e : fs::directory_iterator(cache / "anim", ec))

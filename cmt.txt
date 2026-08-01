@@ -1,38 +1,36 @@
-build: extract + test sceneMeshRefs, a scene that won't load dropped silently
+build: test the shader copy path, by NAME, not by file count
 
-collectSceneMeshRefs decided which meshes ship at all, lived as a static in
-engine_build.cpp, and had no test. Its failure mode was worse than the
-untextured one already fixed: an unreadable cooked scene hit a bare `continue`,
-so every object in it vanished from the package with no output whatsoever. One
-version-bumped or half-written scene and the shipped game is empty.
+The last untested piece of packaging, and the one whose failure is quietest: a
+package can contain cooked shader files and still leave the game on compiled-in
+fallbacks, because the runtime resolves shaders by the NAME each .cshader
+declares inside itself. The game renders correctly. Nothing looks wrong. The
+project's custom shading simply never runs.
 
-Now pkg::sceneMeshRefs(), returning what shipped AND what didn't:
+So pkg::shaderFiles() reports names, not counts, and engine_build now checks the
+name the pipeline actually asks for:
 
-  meshes            deduplicated across scenes, a mesh in two scenes ships once
-  unreadableScenes  named, so engine_build warns instead of continuing past
-  scenesRead        zero, with a directory present, means a package with no content
+  WARNING: no cooked shader declares "standard", the player will fall back to
+  compiled-in shaders and custom shading will not run
 
-Also made deterministic. directory_iterator order is filesystem-defined, so the
-scene walk is sorted first: a package that differs run to run makes "did this
-build change?" unanswerable, and that difference would only ever be noticed as a
-mysterious diff in shipped bytes.
+Also surfaced: an unreadable .cshader is NAMED rather than shipped as dead
+weight providing nothing, and two files declaring one name are flagged (normally
+a stale cook from an older cooker version, one silently shadows the other).
+Both copies still ship in that case: dropping one would make the package depend
+on which file the packager saw first, and ShaderLibrary already resolves the
+ambiguity deterministically.
 
-Tests cover: collection across scenes with dedup, an unreadable scene NAMED
-while readable ones still contribute, meshless entities (lights, cameras, spawn
-points, the common case) skipped rather than collected as empty strings,
-non-.cooked files ignored, and an absent directory yielding nothing instead of
-throwing.
+MUTATION-PROVED three ways: counting files instead of reading declared names
+fails 2 assertions, ignoring duplicate names fails 1, removing the sort fails 1.
 
-MUTATION-PROVED, both ways: restoring the silent `continue` fails the
-unreadable-scene assertion; removing the sort fails the ordering one.
+That last one took two attempts and is worth recording. The first ordering
+assertion named an expected element, and passed with the sort removed, because
+this filesystem returned those entries sorted anyway. It was a test that could
+not fail. Replaced with std::is_sorted (the exact contract a caller depends on)
+plus a fresh directory written in reverse alphabetical order, which is what
+actually gives it teeth: a filesystem returning creation order now exposes a
+missing sort. Still vacuous on one that returns sorted entries, and the test
+says so.
 
-On that ordering assertion, it writes its scenes in REVERSE alphabetical order
-so that a filesystem returning creation order exposes an unsorted walk. On a
-filesystem that returns sorted order it would pass either way. That is real
-coverage on some hosts and vacuous on others, never a false failure, and it is
-said so in the test: a test that cannot fail is worse than no test if you
-believe it can. It does bite on APFS here, verified by removing the sort.
-
-Verified: full build clean, ctest unit 30/30, engine_doctor 59 docs / 0 errors,
-and a real engine_build of fps_shooter still produces an identical 53.7 MB dist
-(3 scene mesh refs, 8 mesh files, 1 cooked shader).
+Verified: full build clean, ctest unit 30/30 (45 assertions in this test),
+engine_doctor 59 docs / 0 errors, and a real engine_build of fps_shooter reports
+"1 file(s) providing 1 name(s)" and produces an identical 53.7 MB dist.
