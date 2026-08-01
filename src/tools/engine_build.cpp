@@ -141,21 +141,6 @@ static bool copyFile(const fs::path& from, const fs::path& to) {
 // embedded-texture extractions share the mesh's uuid stem). Only THAT
 // closure ships — fps_shooter's un-walked .cache was 3.1 GB of cooked
 // textures and stale meshes nothing referenced.
-static std::set<std::string> collectSceneMeshRefs(const fs::path& scenesDir) {
-    std::set<std::string> refs;
-    std::error_code ec;
-    for (auto& e : fs::directory_iterator(scenesDir, ec)) {
-        if (e.path().extension() != ".cooked") continue;
-        assetlib::SceneAsset scene;
-        if (!assetlib::loadScene(scene, e.path())) continue;
-        for (const auto& ent : scene.entities) {
-            std::string p = assetlib::stringTableRead(
-                scene.stringTable, ent.meshCookedOffset, ent.meshCookedLength);
-            if (!p.empty()) refs.insert(std::move(p));
-        }
-    }
-    return refs;
-}
 
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IOLBF, 0);
@@ -259,7 +244,15 @@ int main(int argc, char** argv) {
             if (!copyFile(e.path(), dist / ".cache" / "scenes"
                                          / e.path().filename())) return 1;
 
-    const auto meshRefs = collectSceneMeshRefs(cache / "scenes");
+    const auto sceneRefs = pkg::sceneMeshRefs(cache / "scenes");
+    for (const std::string& bad : sceneRefs.unreadableScenes)
+        std::fprintf(stderr, "[engine_build] WARNING: unreadable cooked scene "
+                     "%s — every object in it is MISSING from the package\n",
+                     bad.c_str());
+    if (sceneRefs.scenesRead == 0)
+        std::fprintf(stderr, "[engine_build] WARNING: no cooked scenes read — "
+                     "the package has no content\n");
+    const auto& meshRefs = sceneRefs.meshes;
     size_t shippedMeshFiles = 0;
     for (const std::string& rel : meshRefs) {               // "meshs/<uuid>.cooked"
         const fs::path cooked = cache / rel;

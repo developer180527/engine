@@ -1,38 +1,38 @@
-build: test the packaging path, it shipped an untextured game silently
+build: extract + test sceneMeshRefs, a scene that won't load dropped silently
 
-The bug fixed in the previous commit had no test, and couldn't have one: the
-logic lived inline in engine_build's main flow, reachable only by running a full
-project build. That is why a filename heuristic survived long enough to ship a
-game with every mesh present and every surface untextured.
+collectSceneMeshRefs decided which meshes ship at all, lived as a static in
+engine_build.cpp, and had no test. Its failure mode was worse than the
+untextured one already fixed: an unreadable cooked scene hit a bare `continue`,
+so every object in it vanished from the package with no output whatsoever. One
+version-bumped or half-written scene and the shipped game is empty.
 
-Extracts it as pkg::meshClosure(), "given a cooked mesh, name every file the
-runtime will look for", and tests it.
+Now pkg::sceneMeshRefs(), returning what shipped AND what didn't:
 
-The central case is deliberately the one the old code got wrong: a cooked mesh
-whose texture references share NO filename prefix with it. That is not exotic,
-it is what a clean rebuild against a warm shared DDC produces, because the
-manifest restores siblings under the names they were FIRST written with while
-the mesh output takes the current uuid.
+  meshes            deduplicated across scenes, a mesh in two scenes ships once
+  unreadableScenes  named, so engine_build warns instead of continuing past
+  scenesRead        zero, with a directory present, means a package with no content
 
-Also covered: a missing texture is NAMED rather than silently dropped (an absent
-texture means the shipped game renders untextured, so the build must look
-suspect); a texture shared by two meshes isn't double-counted, which is the
-normal case given the cooker's content dedup; one texture in both slots of one
-material is listed once; a corrupt or absent mesh is `unreadable` rather than an
-empty success, shipping it as if it were fine loads nothing at that entity; and
-a path-shaped reference is reduced to its filename, because a cooked blob can
-arrive from a shared DDC, i.e. from another machine.
+Also made deterministic. directory_iterator order is filesystem-defined, so the
+scene walk is sorted first: a package that differs run to run makes "did this
+build change?" unanswerable, and that difference would only ever be noticed as a
+mysterious diff in shipped bytes.
 
-MUTATION-PROVED: reinstating the "<meshUuid>_t*.ctex" prefix scan fails 6 of the
-assertions, the headline one included. Restoring passes.
+Tests cover: collection across scenes with dedup, an unreadable scene NAMED
+while readable ones still contribute, meshless entities (lights, cameras, spawn
+points, the common case) skipped rather than collected as empty strings,
+non-.cooked files ignored, and an absent directory yielding nothing instead of
+throwing.
 
-Two things the synthetic fixture had to get right, both worth knowing: the mesh
-reader derives section offsets from the header's counts (writing geometry bytes
-without setting them puts the material section at the wrong offset), and
-saveMesh does not derive materialCount from the vector. The fixture goes through
-the real saveMesh/loadMesh rather than mocking, so it exercises the same reader
-the packager uses.
+MUTATION-PROVED, both ways: restoring the silent `continue` fails the
+unreadable-scene assertion; removing the sort fails the ordering one.
 
-Verified: full build clean, ctest unit 30/30 (was 29), engine_doctor 59 docs /
-0 errors, and a real engine_build of fps_shooter still produces an identical
-53.7 MB dist (3 scene mesh refs, 8 mesh files, 1 cooked shader).
+On that ordering assertion, it writes its scenes in REVERSE alphabetical order
+so that a filesystem returning creation order exposes an unsorted walk. On a
+filesystem that returns sorted order it would pass either way. That is real
+coverage on some hosts and vacuous on others, never a false failure, and it is
+said so in the test: a test that cannot fail is worse than no test if you
+believe it can. It does bite on APFS here, verified by removing the sort.
+
+Verified: full build clean, ctest unit 30/30, engine_doctor 59 docs / 0 errors,
+and a real engine_build of fps_shooter still produces an identical 53.7 MB dist
+(3 scene mesh refs, 8 mesh files, 1 cooked shader).
