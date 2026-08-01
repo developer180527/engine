@@ -1,52 +1,38 @@
-render: the shipped game runs on a cooked shader
+build: test the packaging path, it shipped an untextured game silently
 
-Three layers had been built and none of them ran: .cshader cooking, .cmat
-cooking, ShaderLibrary. This closes the first path end to end, so what was
-designed is now known to work.
+The bug fixed in the previous commit had no test, and couldn't have one: the
+logic lived inline in engine_build's main flow, reachable only by running a full
+project build. That is why a filename heuristic survived long enough to ship a
+game with every mesh present and every surface untextured.
 
-    [ShaderLibrary] indexed 1 cooked shader(s) under .../dist/.cache/shaders
-    [ShaderLibrary] loaded standard: 3 variant(s), 3 param(s), 2 sampler(s)
-    [ForwardPipeline] standard program: cooked .cshader
+Extracts it as pkg::meshClosure(), "given a cooked mesh, name every file the
+runtime will look for", and tests it.
 
-Two things I had assumed, both wrong, both found by running it:
+The central case is deliberately the one the old code got wrong: a cooked mesh
+whose texture references share NO filename prefix with it. That is not exotic,
+it is what a clean rebuild against a warm shared DDC produces, because the
+manifest restores siblings under the names they were FIRST written with while
+the mesh output takes the current uuid.
 
-RESOLUTION CANNOT GO THROUGH THE REGISTRY. engine_player sets
-openAssetDatabase=false, a shipped dist has no registry.db and resolves
-everything by paths baked into cooked content. My first attempt looked the
-shader up by source path and silently found nothing. ShaderLibrary now indexes
-<cache>/shaders/*.cooked by the name each .cshader carries INSIDE itself:
-identical in dev and dist, no manifest to keep in sync, and cheap precisely
-because the closed-feature rule keeps shader counts small.
+Also covered: a missing texture is NAMED rather than silently dropped (an absent
+texture means the shipped game renders untextured, so the build must look
+suspect); a texture shared by two meshes isn't double-counted, which is the
+normal case given the cooker's content dedup; one texture in both slots of one
+material is listed once; a corrupt or absent mesh is `unreadable` rather than an
+empty success, shipping it as if it were fine loads nothing at that entity; and
+a path-shaped reference is reduced to its filename, because a cooked blob can
+arrive from a shared DDC, i.e. from another machine.
 
-ORDERING. openProject() runs after Renderer::init(), so the pipeline had already
-attached against an empty cache and built the fallback. setShaderCacheRoot()
-re-attaches, mirroring setShadowResolution. Without it the entire path no-ops
-and every shader edit appears to do nothing, the exact silent failure this work
-exists to eliminate.
+MUTATION-PROVED: reinstating the "<meshUuid>_t*.ctex" prefix scan fails 6 of the
+assertions, the headline one included. Restoring passes.
 
-The compiled-in blob stays as a FALLBACK, deliberately: a never-cooked tree, a
-bare tool, or a test with no project must still render rather than showing a
-black screen. Which path won is logged once at attach, because silently falling
-back is how "my shader does nothing" happens. Removing it is Phase 5 step 4,
-once every shipping path is confirmed cooked.
+Two things the synthetic fixture had to get right, both worth knowing: the mesh
+reader derives section offsets from the header's counts (writing geometry bytes
+without setting them puts the material section at the wrong offset), and
+saveMesh does not derive materialCount from the vector. The fixture goes through
+the real saveMesh/loadMesh rather than mocking, so it exercises the same reader
+the packager uses.
 
-ForwardPipeline does NOT destroy a cooked program in onDetach: it belongs to
-ShaderLibrary's refcounted cache and is shared with anything else on that
-variant. Only the fallback is ours to free.
-
-ALSO FIXES A PRE-EXISTING PACKAGING BUG that a cache wipe exposed. engine_build
-copied a mesh's sibling .ctex by guessing "<meshUuid>_t*.ctex" from the
-filename. That guess holds only while a mesh and its siblings are cooked in one
-pass, it is false the moment the DDC materializes a cache, because the manifest
-restores siblings under the names they were FIRST written with while the mesh
-output takes the current uuid. A clean rebuild against a warm DDC therefore
-shipped a game with no textures at all. Silently: every mesh present, the game
-runs, everything untextured. engine_build now reads the texture paths the cooked
-mesh actually references, which cannot drift from what the runtime looks for.
-Dist went 53.6 MB -> 13.1 MB (broken) -> 53.7 MB (fixed).
-
-engine_build also ships .cache/shaders, and warns when there are none.
-
-Verified end to end in the SHIPPED DIST: cooked .cshader program, 5 textures
-resident, physics running, 24 gameplay raycasts landing, no unresolved assets.
-Full build clean, ctest unit 29/29, engine_doctor 59 docs / 0 errors.
+Verified: full build clean, ctest unit 30/30 (was 29), engine_doctor 59 docs /
+0 errors, and a real engine_build of fps_shooter still produces an identical
+53.7 MB dist (3 scene mesh refs, 8 mesh files, 1 cooked shader).

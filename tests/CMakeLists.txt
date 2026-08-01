@@ -105,6 +105,10 @@ engine_test(material_cooker_test LIB engine_core)
 # package cooked for the wrong backend (no program -> nothing renders) and a
 # feature mask with no cooked variant (the nearest variant is confidently wrong).
 engine_test(shader_select_test)
+# The packaging path. It once shipped a game with every mesh present and every
+# surface untextured, from an ordinary clean-rebuild-against-a-warm-DDC, and
+# nothing caught it because the logic lived inline in engine_build's main flow.
+engine_test(package_closure_test LIB engine_core)
 
 # ── Rust FFI seam ────────────────────────────────────────────────────────────
 # Only when the Rust module is actually built. Links engine_net directly rather

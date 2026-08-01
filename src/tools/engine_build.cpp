@@ -17,10 +17,11 @@
 //                 assets/ MINUS source-mesh formats (cooked already) + run.sh
 //
 // Dev-posture tool: lives in the dev tree, shells out to cmake.
+#include "tools/build/package_closure.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <assetlib/mesh_asset.h>
 #include <fstream>
 #include <set>
 #include <string>
@@ -267,42 +268,25 @@ int main(int argc, char** argv) {
                          "missing cooked mesh: %s\n", rel.c_str());
             continue;
         }
-        if (!copyFile(cooked, dist / ".cache" / "meshs" / cooked.filename()))
-            return 1;
-        ++shippedMeshFiles;
-
-        // Sibling .ctex by what the mesh ACTUALLY REFERENCES, not by guessing
-        // "<meshUuid>_t*.ctex" from the filename.
-        //
-        // That guess held only while a mesh and its siblings were cooked
-        // together in one pass. It is false the moment the DDC materializes a
-        // cache: the manifest restores siblings under the names they were first
-        // written with, while the mesh output takes the CURRENT uuid — so a
-        // clean rebuild against a warm DDC shipped a game with no textures.
-        // Silently: the meshes are all there, the game runs, everything is
-        // untextured. Reading the reference is the only version that cannot
-        // drift from what the runtime will look for.
-        assetlib::MeshAsset ma;
-        if (!assetlib::loadMesh(ma, cooked)) {
+        // Ship what the mesh REFERENCES, never what its filename suggests —
+        // src/tools/build/package_closure.h records the bug that rule encodes,
+        // and tests/package_closure_test.cpp keeps it from coming back.
+        const auto closure = pkg::meshClosure(cooked);
+        if (closure.unreadable) {
             std::fprintf(stderr, "[engine_build] WARNING: cannot read cooked "
-                         "mesh %s — its textures will not ship\n", rel.c_str());
+                         "mesh %s — it and its textures will not ship\n",
+                         rel.c_str());
             continue;
         }
-        for (const auto& mat : ma.materials) {
-            for (const char* texRel : { mat.baseColorPath, mat.normalMapPath }) {
-                if (!texRel || !*texRel) continue;
-                const fs::path src = cooked.parent_path() / fs::path(texRel).filename();
-                if (!fs::exists(src, ec)) {
-                    std::fprintf(stderr, "[engine_build] WARNING: mesh %s "
-                                 "references missing texture %s\n",
-                                 rel.c_str(), texRel);
-                    continue;
-                }
-                const fs::path dst = dist / ".cache" / "meshs" / src.filename();
-                if (fs::exists(dst, ec)) continue;      // shared between meshes
-                if (!copyFile(src, dst)) return 1;
-                ++shippedMeshFiles;
-            }
+        for (const std::string& miss : closure.missing)
+            std::fprintf(stderr, "[engine_build] WARNING: mesh %s references "
+                         "missing texture %s — it will render untextured\n",
+                         rel.c_str(), miss.c_str());
+        for (const fs::path& f : closure.files) {
+            const fs::path dst = dist / ".cache" / "meshs" / f.filename();
+            if (fs::exists(dst, ec)) continue;   // shared between meshes
+            if (!copyFile(f, dst)) return 1;
+            ++shippedMeshFiles;
         }
     }
     // Cooked shaders. The runtime resolves these BY NAME from .cache/shaders
