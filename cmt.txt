@@ -1,62 +1,67 @@
-cook: shaders become assets with a machine-checked declared interface
+cook: materials become data — values resolved against a shader's interface
 
-Phase 5 of docs/renderer-audit-and-plan.md, finding R3. material.h hardcodes
-five fields, so "custom material" means "recompile the engine". A material can
-only become data once a SHADER publishes what a material may set — so that
-comes first.
+The payoff of the declared interface. material.h hardcodes five fields, so the
+set of things a material can express is compiled into the engine. A .material
+now names a .shader and supplies values for the parameters THAT shader
+declared, so a project defines its own look without touching engine source.
+Phase 5 / R3 of docs/renderer-audit-and-plan.md.
 
-A .shader is JSON naming its .sc sources plus the interface they expose:
-parameters (name, type, target uniform + float offset, defaults) and samplers
-(name, uniform, stage, fallback). The cooker compiles the variant matrix per
-backend profile and writes a .cshader container.
+    {
+      "shader": "shaders/standard.shader",
+      "parameters": { "roughness": 0.85, "baseColorFactor": [0.72,0.25,0.10,1] },
+      "textures":   { "baseColor": "textures/rust_albedo.png" }
+    }
 
-THE PART THAT MATTERS: the declaration is verified against the real compiled
-shader, not trusted. bgfx's shader binary carries its own uniform table
-(shaderc_metal.cpp:240-260 and the equivalent in every backend), so the cooker
-compiles, reflects the truth back, and REJECTS a mismatch. Without that, a
-declared interface is a JSON file that can lie — a material sets "roughness",
-the value writes nowhere, and nothing reports it. Three failures caught:
+NAMES RESOLVE AT COOK TIME. The cooker checks every parameter and sampler
+against the shader's declaration, validates arity, fills defaults, and emits
+finished float blocks. The runtime does no lookup and no validation — it
+uploads bytes. A misspelled parameter is a failed cook, not a silent no-op at
+60 Hz, and the error lists what IS declared so the fix is obvious:
 
-  • a parameter naming a uniform the shader doesn't declare
-  • a parameter whose offset runs past the uniform's registers (the tail lands
-    in adjacent uniform memory)
-  • a sampler declared against a value uniform, or vice versa
+  parameter "roughtness" is not declared by the shader
+    (declared: baseColorFactor, roughness, metallic)
+  texture "emissive" is not a sampler declared by the shader
+    (declared: baseColor, normalMap)
 
-The reverse direction is a WARNING: u_lights, u_viewProj and u_shadowMtx are
-engine-driven and legitimately not material parameters. Erroring on those would
-make the check unusable; ignoring them would hide a forgotten exposure.
+BLOCKS ARE COMPLETE, NEVER SPARSE. Uniform blocks are sized and filled from the
+SHADER's parameter list, not from what the material happened to set, so an
+unset parameter carries the shader's default. A sparse block would leave
+whatever the previous draw wrote in the gaps — "looks right alone, wrong next
+to another object", which is miserable to diagnose because every material is
+individually fine. Same rule for samplers: every declared sampler emits a
+binding, so an unset stage gets its fallback instead of the last texture bound
+there.
 
-THE ANTI-BLOAT RULE, enforced not just documented: features are a closed list
-the shader author declares, and a material selects a combination — it can never
-author one. Unreal's permutation explosion, and every piece of machinery built
-to survive it, follows from letting materials generate shader code. Refusing
-that keeps the matrix (2^features x profiles) small enough to simply cook all
-of it, with no stripping infrastructure. kMaxShaderFeatures = 8, rejected at
-parse time so the rule can't erode quietly.
+The cooker reads the .shader SOURCE manifest, not the cooked .cshader. The
+interface is authored; compiling only VERIFIES it, and ShaderCooker already
+does that once against the real uniform table. This removes any cook-order
+dependency between a material and its shader — which matters because ICooker
+has no "my input isn't ready" result and registry dependency edges only exist
+after a first successful cook has recorded them. The cost, stated in info.md: a
+material can cook against a shader whose own cook failed. That surfaces at
+load, and the shader failure is already loud.
 
-Cross-compilation is checked rather than discovered on the target machine.
-shaderc cannot emit D3D bytecode off Windows — shaderc_hlsl.cpp:21,91 guards
-D3DCompiler on BX_PLATFORM_WINDOWS, and shaderc_dxil.cpp:169-175's macOS
-fallback is literally "dxcompiler???". profileCookableOnThisHost mirrors those
-guards, so COOK_SHADER_PROFILES=metal,dx11 on macOS cooks metal and says dx11
-needs its own runner. Silently dropping it would ship a package that renders
-nothing.
+Also fixes the .sc invalidation gap flagged when shader cooking landed: stage
+sources are inputs but not registry assets, so they can't go through
+addDependency(UUID). Their bytes now hash into ShaderCooker's
+settingsFingerprint. Before: editing a shader looked like "my edit did
+nothing". Verified — a .sc edit re-cooks, an unchanged tree stays up to date.
+Materials hash only the .shader manifest, not the .sc files, because a material's
+output depends on the declared interface alone; hashing shading code would
+re-cook every material in the project on every shader edit.
 
-Shaders go through ICooker rather than a bespoke build step so they inherit the
-DDC, the thermal governor, memory-budgeted admission and .cache GC for free.
-Compiles run out-of-process, matching the worker model — shaderc is a compiler
-stack already excluded from the sanitizer lanes because it aborts under them
-(CMakeLists.txt:179-185), and its diagnostics are captured verbatim so a broken
-shader reports WHY.
+engine_doctor caught modules/assetlib/info.md going stale from the new asset
+formats and, being tier `hardened`, made it an ERROR rather than a warning.
+Doc updated with the cooked-format section, including the untrusted-input rule
+those loaders follow.
 
-One concern per file: shader_manifest (parse+validate), shaderc_invoke (one
-compile), shader_reflect (read the uniform table), shader_verify (compare),
-shader_cooker (sequence), assetlib/shader_asset (container).
+One concern per file: material_manifest (parse), material_resolve (bind values
+to an interface, pure), material_cooker (sequence), assetlib/material_asset
+(container).
 
-Verified: full build clean, ctest unit 27/27 (was 26), engine_doctor 54 docs /
-0 errors. Really cooking shaders/standard.shader produces 3 profiles
-(metal/spirv/glsl), real VSH/FSH bytecode, interface round-tripped.
-MUTATION-PROVED on a real cook: renaming u_params to u_parms in the manifest
-fails the cook and names both affected parameters.
-
-Also removes shaders/vs_triangle.sc.bak, stale in-tree.
+Verified: full build clean, ctest unit 28/28 (was 27), engine_doctor 55 docs /
+0 errors. Really cooking a .material against shaders/standard.shader gives
+u_colorFactor = the authored colour, u_params = [0, 0.85, 0, 0] (roughness
+authored, metallic defaulted), s_normalMap bound to its flatNormal fallback.
+MUTATION-PROVED on a real cook: a typo'd parameter and an undeclared texture
+both fail and name the declared set.

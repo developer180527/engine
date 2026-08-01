@@ -20,6 +20,7 @@
 #include "assets/cookers/mesh_cooker.h"
 #include "assets/cookers/texture_cooker.h"
 #include "assets/cookers/shader/shader_cooker.h"
+#include "assets/cookers/material/material_cooker.h"
 
 #include <algorithm>
 #include <cctype>
@@ -121,6 +122,7 @@ int main(int argc, char** argv) {
     // known to abort under sanitizers — exactly the kind of blast radius this
     // child process exists to contain.
     cookers.push_back(std::make_unique<ShaderCooker>());
+    cookers.push_back(std::make_unique<MaterialCooker>());
 
     std::string ext = sourcePath.extension().string();
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);

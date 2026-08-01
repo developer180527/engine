@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-07-31
+verified: 2026-08-01
 parses-external-input: true
 covers:
   - modules/assetlib/
@@ -25,6 +25,19 @@ is moving toward.
   FNV hashes upgraded in place on scan); records carry source path, content
   hash, cooked path, DDC key of the last cook attempt, and state (used by
   the asset browser's badges).
+### Cooked asset formats
+`mesh_asset` / `texture_asset` / `scene_asset` / `shader_asset` / `material_asset`
+are the on-disk containers cookers write and the runtime reads. They live here
+rather than in the engine because a cooked format is a contract between the
+offline and online halves, and `engine_core` (which hosts the cookers) must stay
+GPU-free.
+
+Every loader treats its input as **untrusted**: cooked blobs travel through a
+SHARED DDC, so "another machine wrote this" is the threat model, not a
+hypothetical. String lengths are capped before allocating, and offsets into a
+payload are bounds-checked against it — a `.cshader` variant slice pointing past
+its blob is rejected rather than handed to a GPU driver.
+
 ### The cook layer — one concern per TU
 Design doc: **`docs/asset-cook-architecture.md`** — the key recipe, the
 invariants that are load-bearing (and silent when broken), the

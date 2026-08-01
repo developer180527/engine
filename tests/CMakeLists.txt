@@ -97,6 +97,10 @@ engine_test(render_world_test)
 # none of it needs shaderc or a GPU. The subprocess path is covered by actually
 # cooking shaders/standard.shader, not here.
 engine_test(shader_cooker_test LIB engine_core)
+# Materials as data: every parameter name checked against the shader's declared
+# interface, and uniform blocks proven COMPLETE (an unset parameter must read
+# its default, not the previous draw's register).
+engine_test(material_cooker_test LIB engine_core)
 
 # ── Rust FFI seam ────────────────────────────────────────────────────────────
 # Only when the Rust module is actually built. Links engine_net directly rather

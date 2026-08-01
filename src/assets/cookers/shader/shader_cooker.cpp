@@ -5,6 +5,8 @@
 #include "assets/cookers/shader/shaderc_invoke.h"
 #include "core/logger.h"
 
+#include <assetlib/ddc.h>
+
 #include <cstdlib>
 #include <mutex>
 #include <fstream>
@@ -87,9 +89,29 @@ std::vector<uint32_t> ShaderCooker::resolveProfiles(std::string* whyEmpty) {
     return out;
 }
 
-std::string ShaderCooker::settingsFingerprint(const assetlib::CookContext&) const {
+std::string ShaderCooker::settingsFingerprint(const assetlib::CookContext& ctx) const {
     std::string fp = "profiles=";
     for (uint32_t p : resolveProfiles()) { fp += assetlib::profileName(p); fp += ','; }
+
+    // The .sc STAGE SOURCES are real inputs, but they are not registry assets,
+    // so they cannot be declared through addDependency() — that takes a UUID.
+    // Hashing their bytes into the settings key is what makes editing a shader
+    // re-cook it. Without this the pipeline compares only the .shader manifest
+    // and happily serves yesterday's bytecode for today's shading code, which
+    // during shader iteration looks like "my edit did nothing".
+    ShaderManifest man;
+    if (parseShaderManifest(slurp(ctx.sourcePath), ctx.sourcePath.parent_path(),
+                            man).ok) {
+        fp += ";stages=";
+        for (const auto* p : { &man.vertexPath, &man.fragmentPath,
+                               &man.varyingPath }) {
+            const std::string h = assetlib::blake3File(*p);
+            // "" means unreadable. Substituting a constant would make two
+            // different broken states share a key; the path keeps them apart.
+            fp += h.empty() ? ("missing:" + p->filename().string()) : h.substr(0, 16);
+            fp += ',';
+        }
+    }
 
     // The compiler is part of the recipe. Two shaderc builds can emit different
     // bytecode from identical source, so keying on source alone would let a

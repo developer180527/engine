@@ -73,6 +73,11 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         assets/cookers/shader/shader_verify.cpp
         assets/cookers/shader/shaderc_invoke.cpp
         assets/cookers/shader/shader_cooker.cpp
+        # Material cooking — resolves authored values against a shader's
+        # declared interface (src/assets/cookers/material/info.md).
+        assets/cookers/material/material_manifest.cpp
+        assets/cookers/material/material_resolve.cpp
+        assets/cookers/material/material_cooker.cpp
         # Fast CPU block compression (rgbcx BC1/3/5 + bc7enc BC7) — offline only
         ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
         ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp)

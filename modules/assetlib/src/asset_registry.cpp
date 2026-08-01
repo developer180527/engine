@@ -74,7 +74,8 @@ AssetType assetTypeFromExtension(const std::string& ext) {
         ext==".dae"||ext==".ply"||ext==".stl") return AssetType::Mesh;
     if (ext==".png"||ext==".jpg"||ext==".jpeg"||ext==".tga"||
         ext==".bmp"||ext==".hdr"||ext==".exr") return AssetType::Texture;
-    if (ext==".mat")                            return AssetType::Material;
+    // `.material` is the cookable unit; `.mat` predates it and has no cooker.
+    if (ext==".material"||ext==".mat")           return AssetType::Material;
     if (ext==".scene")                          return AssetType::Scene;
     if (ext==".prefab")                         return AssetType::Prefab;
     // `.shader` is the COOKABLE unit — a manifest naming its .sc sources plus
