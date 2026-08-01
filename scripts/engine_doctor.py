@@ -74,8 +74,15 @@ REQUIRED = ["status"]                     # every doc
 REQUIRED_INFO = ["status", "tier"]        # info.md additionally declares tier
 
 # Docs that are exempt: generated files and third-party trees.
-EXCLUDE_DIRS = {"build", "build-asan", "build-ship", "third_party", ".git",
-                "node_modules", "dist", ".cache", ".kitbuild"}
+# Build outputs, matched at the REPO ROOT only. Matching them as any path
+# component swallowed src/tools/build/info.md — a doc silently invisible to the
+# checker, which is the exact failure this tool exists to prevent. Nested
+# directories legitimately carry these names (src/tools/build is source).
+EXCLUDE_ROOTS = {"build", "build-asan", "build-ship", "dist"}
+# These nest by nature: a project's .cache, a kit's build dir, submodule .git
+# dirs. Matched at any depth.
+# vendored code nests too — modules/assetlib/third_party/ is not ours.
+EXCLUDE_DIRS  = {".git", "node_modules", ".cache", ".kitbuild", "third_party"}
 
 
 # ── Front-matter parsing ─────────────────────────────────────────────────────
@@ -167,7 +174,10 @@ def find_docs() -> list[Doc]:
     out = []
     for p in sorted(REPO.rglob("*.md")):
         rel = p.relative_to(REPO).as_posix()
-        if any(part in EXCLUDE_DIRS for part in p.relative_to(REPO).parts):
+        parts = p.relative_to(REPO).parts
+        if parts and parts[0] in EXCLUDE_ROOTS:
+            continue
+        if any(part in EXCLUDE_DIRS for part in parts):
             continue
         if any(rel == s or rel.startswith(s + "/") for s in subs):
             continue                      # another repo's contract

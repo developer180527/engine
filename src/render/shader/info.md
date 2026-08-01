@@ -1,6 +1,6 @@
 ---
 status: as-built
-tier: prototype
+tier: working
 verified: 2026-08-01
 covers:
   - src/render/shader/
@@ -57,23 +57,39 @@ but hands back a *new* handle per `createUniform` call, so destroying one would
 destroy a uniform another material still uses.
 
 ## Known limitations
-- **Nothing calls this yet.** `ForwardPipeline` still uses the compiled-in
-  shaders. Switching it over is gated on a packaging decision — see below.
-- **Engine-owned default assets have no home.** The engine's own shaders live in
-  `/shaders` (build-time compiled into headers), while cooked assets live in a
-  *project's* `.cache`. For the pipeline to load `standard.cshader` there must be
-  an answer to "where do the engine's default cooked assets live, and how does
-  `engine_build` package them?" That is a real decision, not an implementation
-  detail, and it gates finishing Phase 5.
+- **Only the standard forward program is cooked.** Shadow, line and skinned
+  programs are still compiled in.
 - **No hot reload.** A re-cooked shader is not picked up without a restart, even
   though the cook pipeline already watches files.
-- **Shadow / line / skinned programs are still compiled in** — only the standard
-  forward program is expressible as a cooked asset today.
 
-## Tier evidence (`prototype`)
-`tests/shader_select_test.cpp` covers renderer→profile mapping, exact variant
-matching, both miss diagnoses, and program-key identity. That is real coverage
-of the decision logic, but the tier stays `prototype` because **no code path in
-a running engine executes this yet** — the bgfx half has never created a program
-outside a test's imagination. It moves to `working` when `ForwardPipeline`
-consumes it and `fps_shooter` renders from cooked shaders.
+## How a shader is found — no registry
+A shipped dist has **no `registry.db`** (`engine_player` sets
+`openAssetDatabase = false`) and resolves everything by paths baked into cooked
+content. So the library indexes `<cache>/shaders/*.cooked` by the name each
+`.cshader` carries *inside itself*. Identical in dev and dist, no manifest to
+keep in sync, and cheap precisely because the closed-feature rule keeps shader
+counts small.
+
+The engine's own `standard.shader` reaches a project's `.cache` because
+`CookService` scans the engine's shader directory as a **second asset root**
+(`ENGINE_DEFAULT_ASSETS_DIR`, `$ENGINE_ASSETS` overrides). Engine defaults are
+always in scope, even under `SceneClosure` — no scene references a `.shader`, so
+a scoped cook would otherwise produce no programs at all.
+
+## Ordering: the re-attach matters
+`openProject()` runs *after* `Renderer::init()`, so the pipeline attaches against
+an empty cache and builds the compiled-in fallback. `setShaderCacheRoot()`
+re-attaches, mirroring `setShadowResolution()`. Without it the whole path
+silently no-ops and every shader edit appears to do nothing.
+
+## Tier evidence (`working`)
+- `tests/shader_select_test.cpp` — renderer→profile mapping, exact variant
+  matching, both miss diagnoses, program-key identity.
+- **Verified in a shipped dist**, not just in the editor: `fps_shooter/dist`
+  logs `standard program: cooked .cshader`, with 5 textures resident, physics
+  running and gameplay raycasts landing.
+- `tests/package_closure_test.cpp` covers the packaging side — a dist that
+  contains shader files but not the *name* the pipeline asks for is detectable.
+
+Reaching `hardened` needs an adversarial lane over `.cshader` loading (the blob
+is external input, arriving from a shared DDC) and a program-lifetime soak.

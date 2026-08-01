@@ -135,9 +135,11 @@ Unknown name ⇒ failed cook. Unset parameter ⇒ the shader's default, never a 
 
 See `src/assets/cookers/shader/info.md` and `src/assets/cookers/material/info.md`.
 
-> **Not yet wired:** `ForwardPipeline` still `#include`s compile-time shader
-> blobs and reads the fixed `Material` struct. `.cshader` and `.cmat` are cooked,
-> tested, and currently inert. See `docs/process/roadmap.md` §3.
+> **State:** `.cshader` is live — a shipped `fps_shooter` dist renders its
+> standard forward program from cooked bytes, resolved by the name inside the
+> file (a dist has no registry). `.cmat` is cooked and tested but still inert:
+> `ForwardPipeline` reads the fixed `Material` struct. See
+> `docs/process/roadmap.md`.
 
 ## 1. The reframe: cooking is a caching problem
 

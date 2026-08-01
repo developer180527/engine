@@ -79,9 +79,11 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         assets/cookers/material/material_resolve.cpp
         assets/cookers/material/material_cooker.cpp
         # Packaging closure — what a dist must contain. In engine_core (not the
-        # engine_build TU) so it can be tested; see its header for the shipped
-        # -untextured bug that motivated extracting it.
-        tools/build/package_closure.cpp
+        # engine_build TU) so it can be tested; see its header for the
+        # shipped-untextured bug that motivated extracting it. NOT named
+        # "build/": .gitignore's unanchored `build/` matches at any depth and
+        # silently excluded the whole directory from the repo.
+        tools/packaging/package_closure.cpp
         # Fast CPU block compression (rgbcx BC1/3/5 + bc7enc BC7) — offline only
         ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
         ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp)

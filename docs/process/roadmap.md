@@ -59,7 +59,7 @@ out-of-process crash isolation, GC. It is genuinely studio-shaped.
 |---|---|---|
 | R1 | GPU resources had no identity/refcount/dedup | **done** — `GpuResourceCache`, wired for textures through `AssetService` |
 | R2 | Extraction/submission split never happened | **done** — `src/render/world/` |
-| R3 | Shaders are compile-time blobs | **half** — cooking + material assets done; nothing loads them at runtime |
+| R3 | Shaders are compile-time blobs | **half** — shaders are live in a shipped dist; materials are cooked but not loaded |
 | R4 | Bone palette uploaded per submesh | **open** — still inside `bindMaterial` (`forward_pipeline.h:272`) |
 | R5 | No instancing | **open** — `batchRunLength()` exists and is tested; nothing consumes it |
 | R6 | Render targets ~5× the naive figure (71 MB) | **mostly explained** — shadow map was the bulk; now a project setting, rt down to 23 MB |
@@ -72,54 +72,44 @@ peak 71.1 → 63.7 MB with textures actually loading.
 
 ---
 
-## 3. The gate: engine-owned default assets
+## 3. The gate that was blocking Phase 5 — resolved
 
-**This is the single decision blocking Phase 5, and it is a design question, not
-an implementation detail.**
+The question was where the engine's own cooked default assets live, since
+`/shaders` is engine-owned but `.cache` is project-owned. **Answer: the engine's
+shader directory is a second asset root.** `CookService` scans it alongside the
+project's assets, so `standard.shader` cooks into each project's `.cache` like
+anything else.
 
-Three layers are now built and *none of them runs in the engine*:
-`.cshader` cooking, `.material` cooking, and `ShaderLibrary`. That is three
-consecutive unverified layers, which is exactly the situation to stop and close
-before adding a fourth.
+- No new packaging concept — `engine_build` already ships `.cache`.
+- The duplication is free: every project cooks byte-identical sources to the same
+  DDC key, so it is cooked once per **machine**, not once per project.
+- A project overrides an engine default by shipping its own.
 
-To close it, `ForwardPipeline` must load `standard.cshader` instead of
-`#include`ing byte arrays. But the engine's shaders live in `/shaders` and are
-compiled into the binary at build time, while cooked assets live in a
-**project's** `.cache`. So:
+Two things the implementation had to get right, both found by running it rather
+than by reasoning:
 
-> Where do the engine's own cooked default assets live, and how does
-> `engine_build` package them into a dist?
+**Resolution cannot go through the registry.** `engine_player` sets
+`openAssetDatabase = false` — a shipped dist has no `registry.db` at all.
+`ShaderLibrary` indexes `<cache>/shaders/*.cooked` by the name each `.cshader`
+carries inside itself.
 
-Options, with the trade:
+**Ordering.** `openProject()` runs after `Renderer::init()`, so the pipeline had
+already attached against an empty cache. `setShaderCacheRoot()` re-attaches, or
+the whole path silently no-ops.
 
-1. **Engine default-asset directory** — cook `/shaders` into
-   `<build>/engine_assets/` at build time; `engine_build` copies it into the
-   dist; `ShaderLibrary` resolves engine shaders there and project shaders in the
-   project cache. Clean separation, one extra packaging step, and it gives
-   projects a way to *override* an engine default by shipping their own.
-2. **Copy engine shaders into every project's assets on scaffold** — simplest
-   packaging (no new concept), but every project carries a copy that silently
-   goes stale when the engine's shaders change.
-3. **Keep compiled-in shaders as the fallback, cooked as the override** — safest
-   migration, no packaging work needed to start, but the engine binary keeps
-   carrying shaders it may never use.
-
-**Recommendation: 1, with 3 as the transitional state.** Ship the fallback so
-the runtime always boots, add the engine-asset directory, then delete the
-compiled-in blobs once `fps_shooter` is confirmed rendering from cooked shaders.
-
----
+Verified in a shipped `fps_shooter` dist: `standard program: cooked .cshader`,
+5 textures resident, gameplay intact.
 
 ## 4. What has to be made
 
 ### Next — finish Phase 5 (R3)
-1. Resolve the packaging decision above.
-2. `ForwardPipeline` consumes `ShaderLibrary` for the standard forward program.
+1. ~~Resolve the packaging decision.~~ **done** — §3
+2. ~~`ForwardPipeline` consumes `ShaderLibrary`.~~ **done** — verified in a dist
 3. `AssetService` loads `.cmat`; `Material` gains the data-driven fields;
    the pipeline uploads prebuilt blocks instead of reading `Material::roughness`.
-4. Delete the hardcoded fields from `material.h` and the `#include`d shader
-   headers. **Not done until this deletion happens** — until then both paths
-   exist and the old one is what actually runs.
+4. Delete the hardcoded fields from `material.h`, and the compiled-in fallback
+   for the standard program. **Not done until this deletion happens** — until
+   then both paths exist and either could be the one that runs.
 5. Live-verify `fps_shooter` renders identically.
 
 *Unlocks:* the stated goal — a game defines its look without rebuilding the

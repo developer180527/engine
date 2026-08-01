@@ -26,7 +26,7 @@
 #include <assetlib/scene_asset.h>
 #include <assetlib/shader_asset.h>
 
-#include "tools/build/package_closure.h"
+#include "tools/packaging/package_closure.h"
 
 static int g_failures = 0;
 #define CHECK(cond, ...) do {                                          \

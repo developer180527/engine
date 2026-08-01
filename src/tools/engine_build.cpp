@@ -17,7 +17,7 @@
 //                 assets/ MINUS source-mesh formats (cooked already) + run.sh
 //
 // Dev-posture tool: lives in the dev tree, shells out to cmake.
-#include "tools/build/package_closure.h"
+#include "tools/packaging/package_closure.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -262,7 +262,7 @@ int main(int argc, char** argv) {
             continue;
         }
         // Ship what the mesh REFERENCES, never what its filename suggests —
-        // src/tools/build/package_closure.h records the bug that rule encodes,
+        // src/tools/packaging/package_closure.h records the bug that rule encodes,
         // and tests/package_closure_test.cpp keeps it from coming back.
         const auto closure = pkg::meshClosure(cooked);
         if (closure.unreadable) {

@@ -86,8 +86,9 @@ the error when it isn't found.
 
 ## Known limitations
 - **Nothing loads `.cmat` yet.** `MaterialRegistry` still holds the fixed
-  `Material` struct and `ForwardPipeline` still binds from it. Wiring the
-  runtime is the next step, and it is what finally deletes the hardcoded fields.
+  `Material` struct and `ForwardPipeline` still binds from it. The shader half
+  of Phase 5 is live (`src/render/shader/info.md`); this is the remaining half,
+  and it is what finally deletes the hardcoded fields.
 - **Texture paths are not resolved to UUIDs.** `CookContext` exposes
   `addDependency(UUID)` but no registry lookup, so the cooked material carries
   the authored path and the runtime resolves it through `AssetService`. This

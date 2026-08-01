@@ -106,9 +106,9 @@ set and the shaderc binary's mtime both feed `settingsFingerprint`, so retargeti
 or bumping bgfx re-cooks instead of serving a blob that lacks the profile.
 
 ## Known limitations
-- **Not consumed by the renderer yet.** `ForwardPipeline` still `#include`s the
-  compile-time shader headers. Wiring it to load `.cshader` through
-  `AssetService`/`GpuResourceCache` comes with material assets — the next step.
+- **Consumed for the standard forward program only.** `ForwardPipeline` loads it
+  through `ShaderLibrary` (verified in a shipped dist); the shadow, line and
+  skinned programs are still compiled in.
 - **`standard.shader` declares zero features.** Skinning is currently a separate
   vertex source (`vs_skinned.sc`) rather than a define; folding it in is the
   natural first real use of the variant matrix.

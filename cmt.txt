@@ -1,36 +1,46 @@
-build: test the shader copy path, by NAME, not by file count
+docs+fix: HEAD did not build, .gitignore silently ate src/tools/build/
 
-The last untested piece of packaging, and the one whose failure is quietest: a
-package can contain cooked shader files and still leave the game on compiled-in
-fallbacks, because the runtime resolves shaders by the NAME each .cshader
-declares inside itself. The game renders correctly. Nothing looks wrong. The
-project's custom shading simply never runs.
+Updating the docs turned up something worse than stale prose: the last three
+commits are INCOMPLETE. src/tools/build/package_closure.{h,cpp} were never
+committed, because .gitignore's `build/` is unanchored and matches at any depth.
+`git add -A` skipped them without a word.
 
-So pkg::shaderFiles() reports names, not counts, and engine_build now checks the
-name the pipeline actually asks for:
+HEAD therefore does not build from a fresh clone. src/CMakeLists.txt lists
+tools/build/package_closure.cpp and engine_build.cpp includes its header; both
+are committed, the implementation is not. It compiles here only because the
+files exist locally.
 
-  WARNING: no cooked shader declares "standard", the player will fall back to
-  compiled-in shaders and custom shading will not run
+Anchoring the pattern is not an option, Kits/*/build and
+fps_shooter/scripts/build genuinely rely on matching at depth. Naming source
+`build/` fights too strong a convention anyway (IDE indexers, CI caches, docker
+ignores all assume it is output), so the directory is now src/tools/packaging/,
+which is also just a better name for what it holds.
 
-Also surfaced: an unreadable .cshader is NAMED rather than shipped as dead
-weight providing nothing, and two files declaring one name are flagged (normally
-a stale cook from an older cooker version, one silently shadows the other).
-Both copies still ship in that case: dropping one would make the package depend
-on which file the packager saw first, and ShaderLibrary already resolves the
-ambiguity deterministically.
+THE SAME OVER-BROAD MATCH WAS IN engine_doctor. EXCLUDE_DIRS tested every path
+component, so src/tools/build/info.md was invisible to the checker, a doc that
+silently does not exist, which is the exact failure the tool exists to prevent.
+Split into EXCLUDE_ROOTS (build outputs, matched at the repo root only) and
+EXCLUDE_DIRS (things that nest by nature: .git, .cache, .kitbuild, node_modules,
+third_party, vendored code lives under modules/ too). Doc count 59 -> 60.
 
-MUTATION-PROVED three ways: counting files instead of reading declared names
-fails 2 assertions, ignoring duplicate names fails 1, removing the sort fails 1.
+Docs then updated for what actually shipped. Five claims had gone false, and the
+doctor could not catch any of them: it compares `verified:` against the git
+history of covered code, which says nothing about whether the PROSE is still
+true. Worth knowing about the contract's reach.
 
-That last one took two attempts and is worth recording. The first ordering
-assertion named an expected element, and passed with the sort removed, because
-this filesystem returned those entries sorted anyway. It was a test that could
-not fail. Replaced with std::is_sorted (the exact contract a caller depends on)
-plus a fresh directory written in reverse alphabetical order, which is what
-actually gives it teeth: a filesystem returning creation order now exposes a
-missing sort. Still vacuous on one that returns sorted entries, and the test
-says so.
+  src/render/shader/info.md          prototype -> working; "nothing calls this
+                                     yet" was wrong, it runs in a shipped dist
+  cookers/shader/info.md             "not consumed by the renderer yet"
+  cookers/material/info.md           sharpened: shaders landed, materials didn't
+  asset-cook-architecture.md §0      "not yet wired" -> what is and isn't
+  process/roadmap.md                 the packaging gate is resolved; R3 is half
 
-Verified: full build clean, ctest unit 30/30 (45 assertions in this test),
-engine_doctor 59 docs / 0 errors, and a real engine_build of fps_shooter reports
-"1 file(s) providing 1 name(s)" and produces an identical 53.7 MB dist.
+New src/tools/packaging/info.md records the three packaging bugs and the rule
+they produced, ship what the cooked asset REFERENCES, never what its filename
+suggests, plus the honest note that the ordering assertions are vacuous on a
+filesystem that returns sorted entries.
+
+ENGINE_STATUS: 21 subsystems, 4 hardened / 14 working / 3 prototype.
+
+Verified: full build clean, ctest unit 30/30, docs 2/2, engine_doctor 60 docs /
+0 errors, and `git add -n` now lists all three previously-invisible files.
