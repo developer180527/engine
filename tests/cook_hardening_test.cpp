@@ -280,6 +280,69 @@ static void testMoveDetection() {
     fs::remove_all(root, ec);
 }
 
+// ── 5. Multi-root scans share one registry ──────────────────────────────────
+// CookService scans the PROJECT's assets and the ENGINE's own defaults against
+// the same projectRoot, so both sets of records live in one registry. The
+// "mark absent files Missing" sweep used to iterate every record regardless of
+// which root was just walked, so each scan declared the other root's assets
+// deleted: the project scan marked every engine shader Missing, the engine scan
+// marked every project asset Missing, and a plain editor boot (which scans only
+// the project) marked all the engine defaults Missing. Measured on fps_shooter
+// before the fix: 653 of 653 records were Missing — the whole registry.
+static void testMultiRootScan() {
+    std::printf("\n-- two asset roots, one registry --\n");
+
+    const fs::path root = fs::temp_directory_path() / "engine_multiroot_test";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    const fs::path projAssets = root / "assets";
+    const fs::path engAssets  = root / "engine_defaults";
+    fs::create_directories(projAssets, ec);
+    fs::create_directories(engAssets, ec);
+    { std::ofstream f(projAssets / "game.png", std::ios::binary); f << "project asset"; }
+    { std::ofstream f(engAssets  / "stock.png", std::ios::binary); f << "engine asset"; }
+
+    AssetRegistry reg;
+    CHECK(reg.open(root / ".cache" / "registry.db"), "registry opens");
+
+    reg.scan(projAssets, root);   // project root
+    reg.scan(engAssets,  root);   // engine defaults, SAME registry
+
+    auto game  = reg.findBySourcePath("assets/game.png");
+    auto stock = reg.findBySourcePath("engine_defaults/stock.png");
+    CHECK(game && stock, "both roots registered their asset");
+    if (!game || !stock) return;
+    CHECK(game->state != AssetState::Missing,
+          "the project asset is not Missing after the ENGINE root was scanned");
+    CHECK(stock->state != AssetState::Missing,
+          "the engine asset is not Missing after the PROJECT root was scanned");
+
+    // Scanning only one root, repeatedly, must never touch the other's records.
+    reg.scan(projAssets, root);
+    CHECK(reg.findBySourcePath("engine_defaults/stock.png")->state
+              != AssetState::Missing,
+          "...and a project-only re-scan still leaves the engine asset alone");
+
+    // But a real deletion under the scanned root MUST still be caught, or the
+    // scoping has simply disabled the sweep.
+    fs::remove(projAssets / "game.png", ec);
+    reg.scan(projAssets, root);
+    CHECK(reg.findBySourcePath("assets/game.png")->state == AssetState::Missing,
+          "a genuinely deleted file under the scanned root IS marked Missing");
+    CHECK(reg.findBySourcePath("engine_defaults/stock.png")->state
+              != AssetState::Missing,
+          "...and the other root is still untouched");
+
+    // Healing: a record wrongly left Missing by an older build must recover the
+    // moment a scan sees the file present again.
+    { std::ofstream f(projAssets / "game.png", std::ios::binary); f << "project asset"; }
+    reg.scan(projAssets, root);
+    CHECK(reg.findBySourcePath("assets/game.png")->state != AssetState::Missing,
+          "a Missing record heals when the file is present again");
+
+    fs::remove_all(root, ec);
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("cook_hardening_test: DDC/cook audit reliability fixes\n");
@@ -287,6 +350,7 @@ int main() {
     testDdcEviction();
     testSchemaVersion();
     testMoveDetection();
+    testMultiRootScan();
 
     if (g_failures) {
         std::printf("\ncook_hardening_test: %d FAILURE(S)\n", g_failures);

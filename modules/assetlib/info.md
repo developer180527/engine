@@ -64,7 +64,7 @@ the seams they already had internally — mechanically, with cook keys unchanged
 | `registry/schema.cpp` | tables, additive migrations, `PRAGMA user_version`, `open`/`close`. Edited rarely, reviewed carefully — a schema mistake is the one registry error that re-running cannot fix. |
 | `registry/records.cpp` | `AssetRecord` ⇄ rows, CRUD, single-record queries. `kCols` and `rowToRecord` sit side by side because they must agree positionally. |
 | `registry/dependencies.cpp` | asset→asset edges, cycle rejection, and the dependency SOURCE HASHES that feed cook keys. Explicitly *not* staleness. |
-| `registry/scanner.cpp` | the filesystem walk, stat/hash change detection, move detection by content hash. The only registry code that touches the filesystem, and the hot path of a warm editor start. |
+| `registry/scanner.cpp` | the filesystem walk, stat/hash change detection, move detection by content hash. The only registry code that touches the filesystem, and the hot path of a warm editor start. **One registry holds records from several roots** (project assets + engine defaults), so the deleted-file sweep is scoped to the root just walked — an unscoped one had every scan declaring the other root's assets Missing. |
 | `registry/asset_names.cpp` | `AssetType` ⇄ name/extension. Pure, no SQLite — what you edit to add a format. |
 | `formats/*.cpp` | the on-disk asset containers (mesh, texture, scene, material, shader): read/write, versioned headers, bounds-checked parse. |
 | `ddc/hash.cpp` | BLAKE3 over bytes/files, and the ONE function composing a cook key. Pure — what a key covers fits on a screen. |

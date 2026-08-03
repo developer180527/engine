@@ -120,6 +120,32 @@ exec the worker" instead of it looking like a crashed cook.
 Confirmed — loud `fprintf`, no assert. Added one: the clamp keeps a release
 build scheduling, it does not make the imbalance correct.
 
+### F9. Every record in the registry was marked Missing
+Found while verifying the scanner decomposition, not by either review. One
+registry holds records from more than one asset root — `CookService` scans the
+project's assets AND the engine's own defaults against the same `projectRoot`,
+and the runtime scans only the project's. The "mark absent files Missing" sweep
+iterated EVERY record regardless of which root had just been walked, so each scan
+declared the other root's assets deleted: the project scan marked every engine
+shader Missing, the engine scan marked every project asset Missing, and a plain
+editor boot marked all the engine defaults Missing.
+
+Measured on `fps_shooter` before the fix: **653 of 653 records Missing** — the
+entire registry. Nearly harmless in practice only because `cookIsStale` ignores
+`state` except to keep a Failed record failed, so nothing recooked and nothing
+broke. But `findByState(Missing)` was pure fiction, and any editor UI or tooling
+that trusted it would show a project whose every asset had vanished.
+
+Fixed by scoping the sweep to the root actually scanned: a scan of root X can only
+make claims about assets under X. Records already mis-marked heal on the next scan
+that sees the file present — verified: 653 → 0, with `0 cooked`, since state is
+not what decides staleness.
+
+Test: `cook_hardening_test` (both roots survive each other's scans, a genuine
+deletion under the scanned root IS still caught so the scoping cannot be a
+disabled sweep, and a Missing record heals). Mutation-proved: restoring the
+unscoped sweep fails 3 assertions.
+
 ### F8. Dependency invalidation: wired, and not the way this file first said
 Was O1. Both mechanisms were unwired — `DdcKeyInputs::depHashes` populated by
 nobody, `dependents()`/`transitiveDependents()` never called from the cook path.

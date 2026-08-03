@@ -65,6 +65,17 @@ fileStamp(const std::filesystem::directory_entry& e) {
     if (ec) return std::nullopt;
     return std::make_pair((int64_t)t.time_since_epoch().count(), (int64_t)sz);
 }
+// Is this record's project-relative sourcePath under the root being scanned?
+// Accepts either separator at the boundary: the stored path uses the platform's
+// native one, and a hand-edited or migrated registry may hold the other.
+bool underScannedRoot(const std::string& sourcePath, const std::string& prefix) {
+    if (prefix.empty()) return true;
+    if (sourcePath.size() <= prefix.size()) return false;
+    if (sourcePath.compare(0, prefix.size(), prefix) != 0) return false;
+    const char sep = sourcePath[prefix.size()];
+    return sep == '/' || sep == '\\';
+}
+
 } // namespace
 
 bool AssetRegistry::statChanged(const AssetRecord& rec,
@@ -155,6 +166,14 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
     // fs::relative did — which the registry would read as every asset moving.
     const std::filesystem::path rootNorm = projectRoot.lexically_normal();
 
+    // Project-relative prefix of the root being scanned, in exactly the form
+    // sourcePath is stored in (same lexically_relative + .string()), so the
+    // comparison below cannot disagree with what the walk wrote. Empty or "."
+    // means the scanned root IS the project root, so every record is in scope.
+    std::string scanPrefix =
+        assetsRoot.lexically_normal().lexically_relative(rootNorm).string();
+    if (scanPrefix == ".") scanPrefix.clear();
+
     std::error_code walkEc;
     for (auto& entry : std::filesystem::recursive_directory_iterator(
              assetsRoot, std::filesystem::directory_options::skip_permission_denied,
@@ -179,6 +198,18 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
             existing = it->second;
 
         if (existing) {
+            // The file is here, so a Missing state is wrong — either it came
+            // back, or an older build's unscoped sweep mis-marked it (see the
+            // sweep below). Clear it and let cookAll promote to Ready once it
+            // confirms the output is current; state is not what decides
+            // staleness, so this cannot trigger a spurious recook.
+            if (existing->state == AssetState::Missing) {
+                existing->state = AssetState::Registered;
+                fillStat(*existing, entry);
+                update(*existing);
+                ++changed;
+                continue;
+            }
             // Fast skip only when the stat is unchanged AND the stored hash is
             // already BLAKE3 — legacy FNV hashes are upgraded in place once.
             if (!statChanged(*existing, entry)
@@ -244,8 +275,19 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
     // the snapshot here would find the old path absent from `seen` and mark the
     // asset Missing — immediately after correctly re-pointing it. The extra query
     // buys freshness, which this loop cannot do without.
+    //
+    // SCOPED TO THE ROOT JUST SCANNED. One registry holds records from more than
+    // one root: CookService scans the project's assets AND the engine's own
+    // defaults against the same projectRoot, and the runtime scans only the
+    // project's. An unscoped sweep therefore had every scan declaring the OTHER
+    // root's assets deleted — the project scan marked every engine shader
+    // Missing, the engine scan marked every project asset Missing, and a plain
+    // editor boot marked all the engine defaults Missing every time. A scan of
+    // root X can only make claims about assets under X.
     for (auto& rec:all()) {
-        if (rec.state==AssetState::Missing||seen.count(rec.sourcePath)) continue;
+        if (rec.state==AssetState::Missing) continue;
+        if (!underScannedRoot(rec.sourcePath, scanPrefix)) continue;
+        if (seen.count(rec.sourcePath)) continue;
         setState(rec.uuid,AssetState::Missing);
         std::printf("[AssetLib] Missing: %s\n",rec.sourcePath.c_str());
         ++changed;
