@@ -175,6 +175,40 @@ and is already tested.
 - Then a game can define its own look **without rebuilding the engine**, which
   is the stated goal and is impossible today.
 
+### Decision not taken — the bgfx render thread (measured 2026-08-03)
+
+`renderer.cpp` calls `bgfx::renderFrame()` before `bgfx::init` to force
+single-threaded mode. The note there used to say a render thread "races with
+platform data / a null window". **That does not reproduce**: `platformData.nwh`
+goes through the `Init` struct before `bgfx::init`, which is the documented-safe
+order, and removing the call runs 600 frames without a crash.
+
+What it does instead is worse and harder to spot. Three runs each of
+`engine_host fps_shooter --frames 600`:
+
+| | mean cadence | fps | worst frame |
+|---|---|---|---|
+| single-threaded | 8.36 / 8.33 / 8.33 ms | 119.6 / 120.0 / 120.0 | 30.3 / 16.0 / 20.2 ms |
+| render thread | 10.17 / 8.39 / 10.18 ms | 98.3 / 119.1 / 98.3 | **1008.0 / 41.0 / 1008.4 ms** |
+
+Two of three runs stall for **~1 second**. Not bgfx's API semaphore giving up —
+that timeout is 5000 ms. The round ~1 s, plus the "blocked waiting for next
+drawable" stack from an earlier Instruments capture, points at Metal drawable
+acquisition starving once submit and render are pipelined.
+
+Even the clean run buys nothing. Per-frame CPU `work` is 0.38 ms against an
+8.33 ms display period, so there is no submit cost to overlap with rendering —
+`present` is 95% of the frame. Pipelining also adds a frame of latency by
+construction (`bgfx::frame` waits on the render thread, which is rendering the
+PREVIOUS frame), which is against the motion-to-photon budget this engine exists
+to serve.
+
+**Revisit when, and not before:** `FrameStatsChannel`'s `work` approaches the
+frame period — when the main thread's own CPU work caps the frame rate instead of
+the display. The instruments to watch are `waitSubmit`/`waitRender`, which read 0
+in single-threaded mode and were 3.07 / 7.66 ms in the experiment: both threads
+mostly waiting, because neither was the bottleneck.
+
 ### Phase 6 — Scale (deferred, with triggers)
 
 LOD (trigger: draw counts or vertex load actually hurt), cascaded shadows
