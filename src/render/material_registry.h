@@ -50,6 +50,15 @@ public:
         m_materials.clear();
         m_occupied.clear();
         m_freeSlots.clear();
+        // Re-reserve slot 0. Every constructor seeds it because handle id 0 is
+        // the INVALID sentinel (core/handle.h: valid() is id != 0), and clearing
+        // it left the registry unusable in two ways: count() computes
+        // size()-1-free and underflowed to SIZE_MAX, and the next add() handed
+        // back id 0 — an invalid handle for a resource that really exists, making
+        // it permanently unreachable. Only latent because clear() is called once,
+        // at shutdown.
+        m_materials.emplace_back();
+        m_occupied.push_back(false);
     }
 
 private:

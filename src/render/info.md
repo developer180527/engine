@@ -1,15 +1,22 @@
 ---
 status: as-built
 tier: prototype
-verified: 2026-08-03
+verified: 2026-08-04
 covers:
   - src/render/
 tests:
   - tests/gpu_cache_test.cpp
-# STILL `prototype`, deliberately, even though a test now exists. gpu_cache_test
-# covers GpuResourceCache — a new component that is not yet wired into any
-# render path. The PIPELINE (extraction, culling, sorting, submission, material
-# binding) remains untested, and that is what this subsystem mostly is.
+  - tests/render_registry_test.cpp
+# STILL `prototype`, deliberately, and the reason is narrower than it was.
+# Covered now: GpuResourceCache (gpu_cache_test — and it IS wired into a render
+# path, the cooked-texture route through AssetService that the shipped game uses),
+# and the three registries every drawn thing lives in (render_registry_test).
+# What remains untested is SUBMISSION — the pipeline's binding of programs,
+# uniforms and textures — and that is still the bulk of what this subsystem does.
+# It is not testable headlessly: bgfx's Noop backend never sets numDraw (its
+# submit() sets timing and zeroes numPrims, nothing else), so draw counts cannot
+# be asserted without a real GPU harness or a counting seam in the pipeline.
+# Prototype until one of those exists; adding either is what raises this tier.
 # Promoting on the strength of a test for an unwired component would be gaming
 # the ladder. See docs/plans/renderer-audit-and-plan.md: 9 ranked findings, 3
 # critical. Phase 2 (VRAM census, duplicate report, leak detector over a real

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-02
+verified: 2026-08-04
 parses-external-input: true
 covers:
   - src/runtime/
@@ -65,7 +65,12 @@ required.
   the same handle), and `unloadMaterial` must evict that name — `MaterialHandle`
   is a bare slot index over a free list with no generation counter, so a stale
   cache entry does not go invalid, it starts naming whatever material next took
-  the slot. Pinned by `tests/material_name_test.cpp`.
+  the slot. Pinned by `tests/material_name_test.cpp`. `textureCache()` exposes the
+  cooked-texture dedup cache read-only, for the VRAM census — which existed since
+  Phase 2 and could never be called, because the cache was private. The census
+  only sees the COOKED path: a scene referencing source `.fbx`/`.gltf` loads via
+  `AsyncLoader` + the importers, which create textures directly and bypass the
+  cache (see `docs/plans/renderer-audit-and-plan.md`).
 - **`AsyncLoader`** (`async_loader.h/.cpp`) — legacy import path used by the
   editor for source-format assets (FBX via Assimp etc.).
 - **Input** (`input_system.h`, `input_map.h`) — polled GLFW state with

@@ -92,6 +92,11 @@ engine_test(render_diag_test)
 # renderer — geometry popping at the frustum edge, batching quietly collapsing
 # — finally have assertions. Links without bgfx or Mesh.
 engine_test(render_world_test)
+# The three registries every drawn thing lives in. Their handles are bare slot
+# indices over a free list with no generation counter, which has already produced
+# one real bug (the material name cache in fd08408) — so the aliasing contract is
+# asserted rather than assumed. bgfx Noop: Texture/Mesh own real bgfx handles.
+engine_test(render_registry_test)
 # Shader cooking: manifest validation, bgfx uniform-table reflection, interface
 # verification and the .cshader container — all pure functions over bytes, so
 # none of it needs shaderc or a GPU. The subprocess path is covered by actually
