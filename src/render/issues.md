@@ -72,11 +72,38 @@ it. Keeping it costs nothing to the compiler and a great deal to the next reader
 work of the last week and a pass list designed before any of it was measured is
 unlikely to be the right shape.
 
-## R12. `renderer.cpp` (437) mixes device lifecycle with ECS extraction
-It owns bgfx init, framebuffers, view ids AND the flecs queries that build
+## R12. `renderer.cpp` (437) mixes device lifecycle with ECS extraction ✅ FIXED
+It owned bgfx init, framebuffers, view ids AND the flecs queries that build
 `RenderItem`s. Extraction is the hot path (38 ms at 20 k objects, one draw call) and
-the next optimisation target, so it wants to be its own unit — `render/extract.cpp`
-— testable against a fake world rather than only through a live device.
+the next optimisation target, so it wanted to be its own unit — testable against a
+fake world rather than only through a live device.
+
+Split four ways, the same shape as `pipeline/`:
+
+| file | lines | concern |
+|---|---|---|
+| `renderer.cpp` | 83 | pipeline ownership: attach/detach, `makeContext` |
+| `renderer/device.cpp` | 171 | bgfx up/down + the Rendering-heap allocator |
+| `renderer/targets.cpp` | 125 | framebuffers + the three `render*` entry points |
+| `renderer/extract.cpp` | 124 | ECS → `RenderView` — the hot path, alone |
+
+Landed at `renderer/extract.cpp`, not the `render/extract.cpp` this issue named:
+all four are `Renderer` methods, so they belong under a directory named for the
+class, exactly as `forward_pipeline.h`'s TUs sit in `pipeline/`.
+
+Two things changed beyond moving text, both to make `targets.cpp` about targets
+rather than about framebuffer bookkeeping: `destroyTargets()` now holds the
+six-handle teardown that `createSceneFB` and `shutdown` had each spelled out (the
+resize leak this guards against is a real past crash — handle 65535 after a Scene
+View drag), and `ensureGameFB()` pulls 20 lines of lazy creation out of
+`renderGameView`. Verified by identical submit counters at 2 000 and 20 000
+objects, and 48/48 ctest including the stress and soak lanes.
+
+What this does NOT do is make extraction testable without a device: `buildView`
+is still a private method reading five borrowed registries. It is now the only
+thing in its file, which is what the optimisation work needs; a seam for a fake
+world is a separate change, and R13's headless pipeline test is the better place
+to force it.
 
 ## R13. `tier: prototype` is still correct, and now for a narrower reason
 Covered: `GpuResourceCache`, the three registries, `world/`, `diag/`, shader

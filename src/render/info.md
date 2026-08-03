@@ -46,10 +46,23 @@ Backend is bgfx (Metal on macOS, D3D/Vulkan elsewhere).
 ## Architecture
 Two layers:
 
-1. **Extraction** (driven by `Renderer` in `src/runtime/renderer.cpp`) —
-   queries `Transform + MeshRenderer` and `Transform + Light`, builds a
-   `RenderView` (flat `RenderItem`/`LightItem` vectors + camera matrices +
-   target). The pipeline never touches the ECS.
+1. **`Renderer`** (`renderer.h`) — owns the device and produces the
+   `RenderView`. Four concerns, one TU each, because it was one 437-line file
+   mixing bgfx init with the hot loop:
+   - `renderer.cpp` — pipeline ownership: attach/detach and `makeContext()`.
+     Both `setShadowResolution` and `setShaderCacheRoot` live here for one
+     reason: the pipeline builds programs and targets in `onAttach`, ONCE, so a
+     change after init must re-attach or it silently keeps the old programs.
+   - `renderer/device.cpp` — `init`/`shutdown`/`resize`/`frame`, and the bgfx
+     allocator that tags every bgfx byte to the Rendering heap. Records the
+     measurements behind single-threaded bgfx.
+   - `renderer/targets.cpp` — the scene/game framebuffers and the three
+     `render*` entry points, which differ only in which target they pick.
+   - `renderer/extract.cpp` — queries `Transform + MeshRenderer` and
+     `Transform + Light` into flat `RenderItem`/`LightItem` arrays. The pipeline
+     never touches the ECS. **This is the hot path**: a 20 000-object scene
+     submits one draw call and still spends ~38 ms per frame here, per item, so
+     it is where the next optimisation goes.
 2. **Pipeline** — `IRenderPipeline` (`render_pipeline.h`) is the swap point
    (`Renderer::setPipeline`). There is exactly ONE implementation,
    `ForwardPipeline`, split one concern per TU:

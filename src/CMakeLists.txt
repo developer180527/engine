@@ -246,7 +246,11 @@ add_library(engine_runtime STATIC
     runtime/frame_stats_channel.cpp
     ${ENGINE_PLATFORM_SOURCES}
     runtime/platform/platform_factory.cpp
-    render/renderer.cpp
+    render/renderer.cpp               # pipeline ownership + RenderContext
+    # Renderer, one concern per TU (see src/render/info.md).
+    render/renderer/device.cpp        # bgfx init/shutdown + Rendering-heap allocator
+    render/renderer/targets.cpp       # framebuffers + the render* entry points
+    render/renderer/extract.cpp       # ECS world -> RenderView (the hot path)
     # ForwardPipeline, one concern per TU — it was 812 lines in a header.
     render/pipeline/programs.cpp      # programs, uniforms, shadow RT (onAttach)
     render/pipeline/opaque_pass.cpp   # render(): visible set -> submits

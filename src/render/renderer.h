@@ -20,6 +20,13 @@ class ShaderLibrary;   // render/shader/shader_library.h
 // fallback textures, reserved view ids, the swappable pipeline, and per-frame
 // extraction (RenderView). EngineRuntime holds one and forwards its frame calls
 // here. Borrows the ECS world + registries (owned by EngineRuntime).
+//
+// Four jobs, one translation unit each — start in the one that matches the
+// question rather than reading the class top to bottom:
+//   renderer.cpp          pipeline ownership: attach/detach, RenderContext
+//   renderer/device.cpp   bgfx up and down (+ the Rendering-heap allocator)
+//   renderer/targets.cpp  framebuffers and the three render* entry points
+//   renderer/extract.cpp  ECS world → RenderView — the per-item hot path
 class Renderer {
 public:
     // Fixed-timestep render interpolation: extraction lerps
@@ -97,6 +104,12 @@ private:
                             const float proj[16], const RenderTarget& target,
                             bgfx::ViewId baseViewId);
     RenderContext makeContext();
+    // Destroys the scene AND game FBs with their attachments, leaving every
+    // handle invalid. Shared by createSceneFB and shutdown, because a resize
+    // that forgets the game FB instead of destroying it leaks one per drag
+    // until the bgfx texture pool runs out.
+    void destroyTargets();
+    bool ensureGameFB();     // lazily create at scene FB size; false = skip view
 
     // Borrowed (owned by EngineRuntime)
     flecs::world*      m_editorWorld = nullptr;
