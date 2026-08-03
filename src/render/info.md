@@ -51,13 +51,22 @@ Two layers:
    `RenderView` (flat `RenderItem`/`LightItem` vectors + camera matrices +
    target). The pipeline never touches the ECS.
 2. **Pipeline** — `IRenderPipeline` (`render_pipeline.h`) is the swap point
-   (`Renderer::setPipeline`). Default is the pass-list pipeline:
-   - **`passes/i_render_pass.h`** — pass interface; passes receive a
-     `PassContext` (view ids, target, view data, registries).
-   - **`passes/pass_list_pipeline.h`** — runs an ordered pass list:
-     shadow → sky → opaque → transparency → resolve → post.
-   - `forward_pipeline.h` — the original monolithic forward renderer
-     (shadow + lit opaque + skinning), still the reference implementation.
+   (`Renderer::setPipeline`). There is exactly ONE implementation,
+   `ForwardPipeline`, split one concern per TU:
+   - `forward_pipeline.h` — the class declaration, and nothing else.
+   - `pipeline/programs.cpp` — programs, uniforms, shadow map (onAttach/onDetach).
+     The only includer of `pipeline/shader_blobs.h`, whose arrays are `static`.
+   - `pipeline/opaque_pass.cpp` — `render()`: visible set → material binds →
+     instanced runs → submits, plus the debug-line pass.
+   - `pipeline/shadow_pass.cpp` — `renderShadow()`: light matrices, light-space
+     visible set, instanced casters.
+
+   A `passes/` directory used to sit here describing a second, pass-list
+   architecture — nine headers, in no CMake target, included by nothing, never
+   compiled. It was deleted (see `issues.md` R11): two renderer designs in one tree
+   with only one live is the thing that stops the subsystem being readable, and the
+   real structure of `render()` is now known from measurement rather than guessed at
+   before any existed.
 
 ## Key Data
 - **Registries** — `AssetRegistry` (meshes), `TextureRegistry`,

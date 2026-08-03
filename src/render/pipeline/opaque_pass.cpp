@@ -1,0 +1,296 @@
+// ── ForwardPipeline: the colour pass ─────────────────────────────────────────
+// View uniforms, the visible set, batch runs, per-item state, material binding
+// (fixed-struct and data-driven), instanced runs, submeshes, debug lines.
+//
+// This was 274 lines inside an 812-line header, and it is where every change of
+// the last month landed — instancing, the draw ceiling, the submit counters. It is
+// its own unit now so that reading "how does a frame get submitted" does not mean
+// reading program creation and shadow matrices first.
+#include "render/forward_pipeline.h"
+
+void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
+        // Lights are packed FIRST, because the shadow pass and the lighting
+        // shader must agree on which slot is shadowed, and only packing knows
+        // the packed slot numbering (rworld::PackedLights::shadowLightIndex).
+        m_submitStats.reset();   // per view; the shadow pass counts into it too
+        const rworld::PackedLights lights = rworld::packLights(v.lights, v.ambient);
+        renderShadow(v, ctx, lights);
+
+        const bgfx::ViewId id = v.baseViewId;
+
+        const uint32_t cc =
+              (uint32_t)(uint8_t)(v.target.clearColor.x * 255.0f) << 24
+            | (uint32_t)(uint8_t)(v.target.clearColor.y * 255.0f) << 16
+            | (uint32_t)(uint8_t)(v.target.clearColor.z * 255.0f) << 8
+            | (uint32_t)(uint8_t)(v.target.clearColor.w * 255.0f);
+        bgfx::setViewFrameBuffer(id, v.target.fb);
+        bgfx::setViewRect(id, 0, 0, v.target.w, v.target.h);
+        bgfx::setViewClear(id, v.target.clearFlags, cc, v.target.clearDepth, 0);
+        bgfx::setViewTransform(id, v.view.ptr(), v.proj.ptr());
+        bgfx::touch(id);
+
+        // Light packing lives in rworld::packLights now. It used to be ~30
+        // lines here, which meant a project swapping the pipeline to change how
+        // surfaces LOOK also had to reimplement the uniform layout — and the
+        // layout was invisible to any test.
+        bgfx::setUniform(m_uLights, lights.data, (uint16_t)lights.vec4Count());
+        const float lp[4] = { lights.ambient, (float)lights.count, 0.0f, 0.0f };
+        bgfx::setUniform(m_uLightParams, lp);
+        bgfx::setUniform(m_uCamPos, v.camPos.ptr());
+        bgfx::setUniform(m_uShadowMtx, m_shadowMtx);
+        const float sp[4] = { m_hasShadowCaster ? 1.0f : 0.0f, SHADOW_BIAS,
+                              1.0f / (float)SHADOW_SIZE, (float)m_shadowLightIndex };
+        bgfx::setUniform(m_uShadowParams, sp);
+
+        // Cull + key + sort. This is rworld::buildVisibleSet now: a pipeline is
+        // a statement about how surfaces LOOK, and it should not have to own
+        // visibility to make one. m_visible is reused across frames for its
+        // capacity (buildVisibleSet clears it).
+            rworld::buildVisibleSet(v.world(), v.camera(), m_visible);
+        m_submitStats.itemsConsidered = m_visible.consideredCount;
+        m_submitStats.itemsCulled     = m_visible.culledCount;
+
+        // Runs of consecutive draws sharing mesh AND material. Counted from the
+        // sorted set BEFORE submitting, because that is what instancing would
+        // collapse: draws - batchRuns is the saving, stated as a number rather
+        // than assumed (audit R5).
+        for (std::size_t i = 0; i < m_visible.draws.size(); ) {
+            i += rworld::batchRunLength(m_visible, i);
+            ++m_submitStats.batchRuns;
+        }
+
+        // Walk RUNS, not individual draws. rworld::batchRunLength returns how
+        // many consecutive sorted draws share mesh AND material — the sort key
+        // was built so that adjacency means batchability (see world/sort_key.h),
+        // and a run longer than 1 collapses into a single instanced submit.
+        const bool caps = 0 != (bgfx::getCaps()->supported & BGFX_CAPS_INSTANCING);
+        for (std::size_t di = 0; di < m_visible.draws.size(); ) {
+            const rworld::VisibleDraw& d = m_visible.draws[di];
+            const std::size_t runLen = rworld::batchRunLength(m_visible, di);
+            const RenderItem& it = v.items[d.index];
+            const uint64_t state = it.mesh->doubleSided
+                ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
+                   BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA)
+                : (BGFX_STATE_DEFAULT | BGFX_STATE_CULL_CCW);
+
+            // Select skinned or static program
+            const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
+            // The default. A data-driven material overrides it with its own
+            // shader's program — which is what "a project defines its own look"
+            // actually means at the draw call.
+            const bgfx::ProgramHandle defaultProg = skinned ? m_skinnedProgram : m_program;
+            bgfx::ProgramHandle drawProgram = defaultProg;
+
+            // ONCE PER ITEM, not per submesh (audit R4). A bone palette belongs
+            // to the skinned MESH, so every submesh of it wants the same values;
+            // uploading inside bindMaterial re-sent the whole thing for each
+            // range, every frame — 73 bones is 4.7 KB memcpy'd into the frame's
+            // uniform buffer per submesh, for identical data.
+            //
+            // Safe to hoist because bgfx uniform VALUES persist across submits:
+            // setUniform records an update, submit applies it, and it stays in
+            // effect until something overwrites it. BGFX_DISCARD_STATE discards
+            // the pending update RANGE, not the applied values — which is why the
+            // view-level uniforms above (lights, camPos, shadow) can also be set
+            // once before this loop and still reach every draw.
+            if (skinned) {
+                bgfx::setUniform(m_uBoneMatrices, it.boneMatrices,
+                                 (uint16_t)(it.boneCount * 4));
+                ++m_submitStats.skinnedItems;
+                ++m_submitStats.bonePaletteUploads;   // ONCE per item — R4
+            }
+
+            // Resolve ONE material handle to its uniforms/textures + bind. Runs
+            // per submesh, so a merged multi-material mesh draws each range with
+            // its OWN material (falling back to the item's material when unset)
+            // instead of the whole mesh sharing a single material.
+            auto bindMaterial = [&](MaterialHandle mh) {
+                ++m_submitStats.materialBinds;   // R7: one per DRAW today
+                const Material* mat = mh.valid() ? ctx.materials.getMaterial(mh) : nullptr;
+
+                // ── Data-driven: a cooked .material ─────────────────────────
+                // Upload what the cook produced. No name lookup, no defaulting,
+                // no validation — all of that happened offline against the
+                // shader's declared interface, and repeating it here would be a
+                // second source of truth that can drift from the first.
+                if (mat && mat->dataDriven && ctx.shaders) {
+                    const bgfx::ProgramHandle mp = programFor(*mat, ctx);
+                    if (bgfx::isValid(mp)) {
+                        for (const auto& b : mat->blocks) {
+                            if (b.values.empty()) continue;
+                            const bgfx::UniformHandle u = ctx.shaders->uniform(
+                                b.name, bgfx::UniformType::Vec4,
+                                (uint16_t)(b.values.size() / 4));
+                            bgfx::setUniform(u, b.values.data(),
+                                             (uint16_t)(b.values.size() / 4));
+                        }
+                        // Every DECLARED sampler binds, set or not: an unbound
+                        // stage keeps whatever the previous draw left there.
+                        float texFlags[4] = { 0, 0, 0, 0 };
+                        for (const auto& tb : mat->textureBinds) {
+                            const Texture* t = tb.texture.valid()
+                                             ? ctx.textures.getTexture(tb.texture) : nullptr;
+                            const bgfx::TextureHandle h = t ? t->handle
+                                : (tb.fallback == "flatNormal" ? ctx.flatNormalTex
+                                                               : ctx.whiteTex);
+                            bgfx::setTexture((uint8_t)tb.stage,
+                                ctx.shaders->uniform(tb.uniform,
+                                                     bgfx::UniformType::Sampler),
+                                h);
+                            // Engine-driven, never authored: which optional
+                            // maps are actually resident. Kept out of the
+                            // material's own vec4 (see fs_triangle.sc) because a
+                            // material block owns its whole register.
+                            if (t && tb.stage == 0) texFlags[0] = 1.0f;
+                            if (t && tb.stage == 1) texFlags[1] = 1.0f;
+                        }
+                        bgfx::setUniform(m_uTexFlags, texFlags);
+                        bgfx::setTexture(2, m_sShadowMap, m_shadowMap);
+                        bgfx::setState(mat->doubleSided
+                            ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
+                               | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS
+                               | BGFX_STATE_MSAA)
+                            : state);
+                        bgfx::setTransform(it.model.ptr());
+                        bgfx::setVertexBuffer(0, it.mesh->vbh);
+                        // Once per material. The difference between "the
+                        // .cmat loaded" and "the .cmat is what you are looking
+                        // at" is exactly this branch being taken.
+                        if (m_boundDataDriven.insert(mat->shaderName + "/"
+                                + std::to_string(mh.id)).second)
+                            std::printf("[ForwardPipeline] data-driven bind: "
+                                        "material %u on shader \"%s\" "
+                                        "(%zu block(s), %zu texture(s))\n",
+                                        mh.id, mat->shaderName.c_str(),
+                                        mat->blocks.size(),
+                                        mat->textureBinds.size());
+                        drawProgram = mp;
+                        return;
+                    }
+                    // Program missing (wrong backend, uncooked variant) —
+                    // ShaderLibrary already said which, once. Fall through to
+                    // the fixed path rather than dropping the draw entirely.
+                }
+
+                // ── Fixed path: materials embedded in cooked geometry ───────
+                const Texture*  tex = (mat && mat->hasTexture())
+                                    ? ctx.textures.getTexture(mat->baseColorTexture) : nullptr;
+                const Texture*  nm  = (mat && mat->normalMapTexture.valid())
+                                    ? ctx.textures.getTexture(mat->normalMapTexture) : nullptr;
+                const float rough = mat ? mat->roughness : 0.7f;
+                const float metal = mat ? mat->metallic  : 0.0f;
+                float params[4] = { 0.0f, rough, metal, 0.0f };
+                float texFlags[4] = { tex ? 1.0f : 0.0f, nm ? 1.0f : 0.0f, 0, 0 };
+                float factor[4] = { 1, 1, 1, 1 };
+                if (mat) { factor[0]=mat->baseColorFactor[0]; factor[1]=mat->baseColorFactor[1];
+                           factor[2]=mat->baseColorFactor[2]; factor[3]=mat->baseColorFactor[3]; }
+                const bgfx::TextureHandle base = tex ? tex->handle : ctx.whiteTex;
+                const bgfx::TextureHandle norm = nm  ? nm->handle  : ctx.flatNormalTex;
+                bgfx::setUniform(m_uTexFlags, texFlags);
+                bind(params, factor, base, norm, state, it);
+            };
+
+            if (drawBudgetExhausted()) { ++di; continue; }
+
+            // ── Instanced run ───────────────────────────────────────────────
+            // Restricted on purpose. Skinned items carry a per-item bone palette
+            // in uniforms, so they cannot share a submit. Submeshes need per-range
+            // index draws. A data-driven material supplies its OWN program, which
+            // is not the instanced variant — instancing it would silently render
+            // with the wrong shader, so those fall through to per-draw.
+            const Material* runMat = it.material.valid()
+                ? ctx.materials.getMaterial(it.material) : nullptr;
+            const bool instanceable =
+                   caps && runLen > 1 && !skinned
+                && it.mesh->submeshes.empty()
+                && !(runMat && runMat->dataDriven)
+                && bgfx::isValid(m_instancedProgram);
+
+            if (instanceable) {
+                const uint16_t stride = 64;               // one mat4 per instance
+                const uint32_t want   = (uint32_t)runLen;
+                const uint32_t avail  =
+                    bgfx::getAvailInstanceDataBuffer(want, stride);
+                if (avail > 1) {
+                    bgfx::InstanceDataBuffer idb;
+                    bgfx::allocInstanceDataBuffer(&idb, avail, stride);
+                    uint8_t* dst = idb.data;
+                    for (uint32_t k = 0; k < avail; ++k) {
+                        const RenderItem& ri =
+                            v.items[m_visible.draws[di + k].index];
+                        std::memcpy(dst, ri.model.ptr(), stride);
+                        dst += stride;
+                    }
+                    m_instancing = true;
+                    drawProgram = m_instancedProgram;
+                    bindMaterial(it.material);           // shared by the whole run
+                    bgfx::setInstanceDataBuffer(&idb);
+                    bgfx::setIndexBuffer(it.mesh->ibh);
+                    bgfx::submit(id, drawProgram);
+                    m_instancing = false;
+                    ++m_submitStats.draws;
+                    ++m_submitStats.instancedDraws;
+                    m_submitStats.instancedItems += avail;
+                    di += avail;
+                    continue;
+                }
+                // Instance buffer exhausted this frame — fall through to
+                // per-draw rather than dropping the objects.
+            }
+
+            if (it.mesh->submeshes.empty()) {
+                drawProgram = defaultProg;
+                bindMaterial(it.material);
+                bgfx::setIndexBuffer(it.mesh->ibh);
+                bgfx::submit(id, drawProgram);
+                ++m_submitStats.draws;
+                if (skinned) ++m_submitStats.skinnedDraws;
+            } else {
+                for (const auto& sub : it.mesh->submeshes) {
+                    if (drawBudgetExhausted()) break;
+                    // Reset per submesh: each range picks its own material, so
+                    // a data-driven one must not leak its program to the next.
+                    drawProgram = defaultProg;
+                    bindMaterial(sub.material.valid() ? sub.material : it.material);
+                    bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
+                    bgfx::submit(id, drawProgram);
+                    ++m_submitStats.draws;
+                    ++m_submitStats.submeshDraws;
+                    if (skinned) ++m_submitStats.skinnedDraws;
+                }
+            }
+            ++di;
+        }
+
+        submitDebugLines(id, ctx);   // debug lines last, drawn over the meshes
+    }
+
+void ForwardPipeline::bind(const float params[4], const float factor[4],
+              bgfx::TextureHandle base, bgfx::TextureHandle norm,
+              uint64_t state, const RenderItem& it) {
+        bgfx::setUniform(m_uParams, params);
+        bgfx::setUniform(m_uColorFactor, factor);
+        bgfx::setTexture(0, m_sBaseColor, base);
+        bgfx::setTexture(1, m_sNormalMap, norm);
+        bgfx::setTexture(2, m_sShadowMap, m_shadowMap);
+        bgfx::setState(state);
+        // INSTANCED draws must not set a transform: the model matrix arrives as
+        // instance data (vs_instanced.sc), and a setTransform here would be
+        // ignored by that shader while still costing a matrix-cache slot.
+        if (!m_instancing) bgfx::setTransform(it.model.ptr());
+        bgfx::setVertexBuffer(0, it.mesh->vbh);
+    }
+
+void ForwardPipeline::submitDebugLines(bgfx::ViewId id, RenderContext& ctx) {
+        if (!ctx.debugDraw || ctx.debugDraw->empty() || !bgfx::isValid(m_lineProgram)) return;
+        const auto& verts = ctx.debugDraw->vertices();
+        const uint32_t count = (uint32_t)verts.size();
+        if (bgfx::getAvailTransientVertexBuffer(count, m_lineLayout) < count) return;
+        bgfx::TransientVertexBuffer tvb;
+        bgfx::allocTransientVertexBuffer(&tvb, count, m_lineLayout);
+        std::memcpy(tvb.data, verts.data(), count * sizeof(dbg::DebugVertex));
+        bgfx::setVertexBuffer(0, &tvb);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
+                       | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_PT_LINES);
+        bgfx::submit(id, m_lineProgram);
+    }

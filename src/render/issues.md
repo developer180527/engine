@@ -19,7 +19,7 @@ asserted. **Verdict: the decision layer yes, the submission layer no.**
 - **Nothing outside `src/render` includes renderer internals.** The only external
   entry points are `renderer.h` and `render_pipeline.h`. That boundary holds.
 
-## R10. `forward_pipeline.h` is 812 lines, and it is a HEADER
+## R10. ✅ FIXED — `forward_pipeline.h` was 812 lines, and a HEADER
 The single worst maintainability problem in the subsystem, and it is one file:
 
 | region | lines | concern |
@@ -40,14 +40,20 @@ luck rather than by design.
 The decomposition that follows the assetlib precedent (directory = layer, file =
 concern):
 
-    render/pipeline/shader_blobs.h     the per-backend #include/#define block
-    render/pipeline/programs.cpp       onAttach/onDetach: programs, uniforms, RTs
-    render/pipeline/material_bind.cpp  the two material branches
-    render/pipeline/opaque_pass.cpp    render(): visible set -> submits
-    render/pipeline/shadow_pass.cpp    renderShadow()
-    render/pipeline/draw_budget.h      the uniform-buffer ceiling guard
+    forward_pipeline.h              181  class declaration only
+    pipeline/shader_blobs.h         113  per-backend #include/#define, ONE includer
+    pipeline/programs.cpp           124  onAttach/onDetach: programs, uniforms, RTs
+    pipeline/opaque_pass.cpp        296  render() + bind() + debug lines
+    pipeline/shadow_pass.cpp        151  renderShadow()
 
-## R11. `src/render/passes/` is a second, dead renderer architecture
+DONE 2026-08-04, mechanically: every submit counter is byte-identical afterwards
+(fps_shooter 10 items / 1 culled / 6 draws / 1 instanced covering 7; 2 000 cubes 283
+culled / 1 draw / shadow 1 draw covering 244; 20 k exits 0; 34/34 unit).
+`material_bind.cpp` and `draw_budget.h` from the original sketch were NOT created:
+bind() is 17 lines used only by render(), and the ceiling guard is ~20 used by both
+passes — splitting either would add a file without removing a concern.
+
+## R11. ✅ FIXED (deleted) — `src/render/passes/` was a second, dead architecture
 Nine headers — `i_render_pass.h`, `opaque_pass.h`, `shadow_pass.h`, `sky_pass.h`,
 `transparency_pass.h`, `post_pass.h`, `resolve_pass.h`, `pass_context.h`,
 `pass_list_pipeline.h` — plus `passes/docs/renderer-architecture.html`.

@@ -247,6 +247,10 @@ add_library(engine_runtime STATIC
     ${ENGINE_PLATFORM_SOURCES}
     runtime/platform/platform_factory.cpp
     render/renderer.cpp
+    # ForwardPipeline, one concern per TU — it was 812 lines in a header.
+    render/pipeline/programs.cpp      # programs, uniforms, shadow RT (onAttach)
+    render/pipeline/opaque_pass.cpp   # render(): visible set -> submits
+    render/pipeline/shadow_pass.cpp   # renderShadow(): light-space pass
     # Render diagnostics — one concern per TU (see src/render/diag/info.md).
     render/diag/frame_gpu_stats.cpp
     render/diag/gpu_budget.cpp
