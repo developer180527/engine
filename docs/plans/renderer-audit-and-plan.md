@@ -193,6 +193,59 @@ Consequence for every future measurement: **VRAM and residency claims must come
 from `engine_player --gpu-stats` against a built `dist/`.** `engine_host` is the
 right tool for frame pacing and CPU work, and the wrong one for memory.
 
+### The stress scene, and a hard wall at ~10 000 objects (2026-08-04)
+
+`scripts/gen_stress_scene.py <dir> --objects N [--shadows]` generates a project of
+N primitive cubes — no assets, no cook, no DDC, so it loads instantly at any N and
+is deterministic. Every object shares one mesh and one material, which makes
+`draws` vs `batchRuns` report the instancing CEILING rather than a sample of it.
+
+    ./build/engine_host <dir> --frames 320
+
+| objects | main draws | batch runs | GPU ms | CPU frame ms | outcome |
+|---|---|---|---|---|---|
+| 12 (fps_shooter) | 12 | 3 | 2.55 | ~11.5 | 120 fps |
+| 2 001 | 2 001 | 1 | 0.82 | 9.33 | fine |
+| 8 001 | 8 001 | 1 | 1.44 | **33.24** | ~30 fps, CPU-bound |
+| 2 001 + shadows | 2 001 + **2 001 shadow** | 1 | 0.99 | 9.83 | shadow doubles draws |
+| ≥ 10 000 | — | — | — | — | **SIGSEGV / SIGBUS** |
+
+**Submission, not the GPU, is the wall.** GPU time stays between 0.8 and 2.6 ms
+across the whole range — 2 000 untextured cubes are CHEAPER on the GPU than
+fps_shooter's 12 textured meshes. CPU frame time goes 9.3 ms at 2 k to 33.2 ms at
+8 k, i.e. roughly linear at ~4 µs per draw. That is the number that justifies
+instancing and the flat-packet redesign, and it did not exist before this scene.
+
+**The shadow pass has no cull, confirmed.** With `--shadows` at 2 000 objects it
+submits 2 001 shadow draws for 2 001 items — every item, regardless of the light
+frustum — roughly doubling total bgfx draws. `shadowDraws == itemsConsidered` is
+the signature.
+
+**And there is a hard crash between 8 000 and 10 000 objects.** Characterised:
+
+- 8 000 runs 320 frames clean; 10 000 dies by frame 5, though 1 frame is fine.
+- **Independent of draw count**: turning the camera away so the frustum rejects
+  everything still crashes, so it scales with ITEMS, not submits.
+- `EXC_BAD_ACCESS (code=2)` — a WRITE fault — inside `_platform_memmove`, with no
+  recoverable caller frames (itself a hint: a corrupted stack).
+- Ruled out: bgfx's draw-call limit and matrix cache (both 65 535), the 4 MB frame
+  arena (the render path does not use it), and any 8192-sized constant in our code.
+
+Not root-caused. The next step is an ASan build (`cmake -B build-asan
+-DENGINE_SANITIZE=address,undefined`, currently not configured — it is a full
+sanitized rebuild of Assimp/bgfx/Jolt) to name the overflow. **Until that is
+understood, no scalability work should start**: a flat-packet redesign that makes
+the submit loop 3× faster is worth nothing if the engine cannot hold 10 000
+objects, and the crash may well be in whatever a redesign would touch.
+
+Order this implies, evidence-first:
+1. **The crash.** A hard wall at 10 k objects outranks every optimisation.
+2. **The shadow pass cull.** O(N) with scene size, doubles draws, no packet layout
+   fixes it.
+3. **Instancing.** 4 µs/draw × (draws − batchRuns) is now a computable saving.
+4. **The flat packet.** Worth it when the submit loop's cache misses are visible
+   above the per-draw cost the first three leave behind.
+
 ### The submission seam, and what it says about R5/R7 (2026-08-04)
 
 Submission was the one part of the renderer with no numbers: bgfx's Noop backend

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-03
+verified: 2026-08-04
 covers:
   - src/render/diag/
 tests:
@@ -9,6 +9,16 @@ tests:
 ---
 # Render diagnostics
 
+
+## Submission counters
+`printSubmitStats` reports `rdiag::SubmitStats` (render/submit_stats.h), filled by
+ForwardPipeline. It exists because bgfx's Noop backend never sets `numDraw`, so
+draw counts could not be asserted headlessly — counting on our side works on every
+backend. Each counter states an audit finding directly: bone uploads vs skinned
+ITEMS (R4, and the printer WARNS when they diverge), material binds vs draws (R7),
+batch runs vs draws (R5). Shadow draws are counted separately because that pass
+walks every item rather than a culled set, so `shadowDraws == itemsConsidered` is
+the signature of that bug.
 
 ## Frame timing (GPU, CPU, waits)
 `FrameGpuStats` also carries what `bgfx::getStats()` measures and nothing read
