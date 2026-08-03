@@ -59,6 +59,8 @@ struct SubmitStats {
     // Counted separately because it has its own visibility story: it currently
     // walks EVERY item rather than a culled set, so `shadowDraws` growing with
     // scene size while `draws` stays flat is the shape of that bug.
+    uint32_t shadowItemsConsidered  = 0;
+    uint32_t shadowItemsCulled      = 0;
     uint32_t shadowDraws            = 0;
     uint32_t shadowBonePaletteUploads = 0;
 

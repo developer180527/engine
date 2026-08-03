@@ -33,4 +33,16 @@ BoundingSphere worldSphere(const float model[16],
 // skipped. Planes are (a,b,c,d) with a normalized normal, pointing inward.
 bool outsideFrustum(const BoundingSphere& s, const float planes[6][4]);
 
+// Six inward-pointing, normalized planes from a combined view*proj matrix.
+//
+// Shared because there is more than one frustum in a frame. The camera's was
+// computed inline in Renderer::buildView, so the SHADOW pass had no planes of its
+// own and culled nothing — it submitted every item in the scene regardless of the
+// light's frustum. A directional light's frustum is not the camera's (an object
+// behind the camera can still cast a shadow INTO view), so the shadow pass needs
+// its own planes from the LIGHT matrices, not a copy of the camera's.
+//
+// Row-major `viewProj`, i.e. bx::mtxMul(vp, view, proj).
+void extractFrustumPlanes(const float viewProj[16], float planes[6][4]);
+
 } // namespace rworld

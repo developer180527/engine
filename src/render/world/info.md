@@ -1,13 +1,31 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-01
+verified: 2026-08-04
 covers:
   - src/render/world/
 tests:
   - tests/render_world_test.cpp
 ---
 # Render world — the machinery half of the renderer
+
+
+## Two frusta, one extractor
+`extractFrustumPlanes` turns a view*proj into six inward normalized planes. It is
+shared because a frame has more than one frustum: the camera's (built in
+`Renderer::buildView`) and the directional light's (built in
+`ForwardPipeline::renderShadow`). The shadow pass needs its OWN planes — an object
+behind the camera can still cast a shadow into view, so culling shadow casters
+against the camera would delete real shadows. Before this existed the shadow pass
+had no planes and culled nothing.
+
+**Culling depends on meshes having bounds, and a whole class of them did not.**
+`hasBounds()` is false when `boundsMin/Max` are still ±infinity, and the frustum
+test reads that as "never cull" — the safe direction, since a mesh that could be
+anywhere must not vanish. But `PrimitiveLibrary` never set them, so every cube,
+sphere and plane was silently exempt from culling in both passes. Fixed at the
+source (bounds computed from the vertices at upload). If a new mesh source ever
+appears, this is the thing to remember to set.
 
 ## Purpose
 Separate **what the frame looks like** from **how the frame gets drawn**.

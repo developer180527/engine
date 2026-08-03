@@ -572,6 +572,21 @@ private:
         bx::mtxMul(tmp, m_lightProj, crop);
         bx::mtxMul(m_shadowMtx, m_lightView, tmp);
 
+        // ── Cull against the LIGHT's frustum ────────────────────────────────
+        // This pass used to walk EVERY item in the scene: `shadowDraws ==
+        // itemsConsidered`, measured at 2 001 shadow draws for 2 001 items, which
+        // roughly doubled total submits and doubled uniform-buffer pressure.
+        //
+        // The light's frustum, NOT the camera's. An object behind the camera can
+        // still cast a shadow into view, so reusing the camera planes here would
+        // delete real shadows — the classic shadow-popping bug. These planes come
+        // from m_lightView * m_lightProj, and the ortho box is bounded by
+        // SHADOW_ORTHO_RADIUS, so anything outside it genuinely cannot contribute.
+        float lightVp[16];
+        bx::mtxMul(lightVp, m_lightView, m_lightProj);
+        float lightPlanes[6][4];
+        rworld::extractFrustumPlanes(lightVp, lightPlanes);
+
         const bgfx::ViewId sv = ctx.shadowViewId;
         bgfx::setViewFrameBuffer(sv, m_shadowFB);
         bgfx::setViewRect(sv, 0, 0, SHADOW_SIZE, SHADOW_SIZE);
@@ -583,6 +598,19 @@ private:
         for (uint32_t i = 0; i < (uint32_t)v.items.size(); ++i) {
             const RenderItem& it = v.items[i];
             if (!it.mesh) continue;
+            ++m_submitStats.shadowItemsConsidered;
+            // Same conservative sphere test the main pass uses. hasBounds==false
+            // means "never cull" (a mesh with no bounds could be anywhere), which
+            // is the safe direction: a missing shadow is far more visible than a
+            // wasted draw.
+            if (it.hasBounds) {
+                const rworld::BoundingSphere sph =
+                    rworld::worldSphere(it.model.ptr(), it.boundsCenter, it.boundsSize);
+                if (rworld::outsideFrustum(sph, lightPlanes)) {
+                    ++m_submitStats.shadowItemsCulled;
+                    continue;
+                }
+            }
             const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
             const bgfx::ProgramHandle shadowProg = skinned ? m_skinnedShadowProgram : m_shadowProgram;
             // Once per item here too (R4) — the shadow pass draws every submesh

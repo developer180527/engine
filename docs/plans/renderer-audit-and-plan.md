@@ -193,6 +193,46 @@ Consequence for every future measurement: **VRAM and residency claims must come
 from `engine_player --gpu-stats` against a built `dist/`.** `engine_host` is the
 right tool for frame pacing and CPU work, and the wrong one for memory.
 
+### Shadow-pass cull — and primitives were never culled at all (2026-08-04)
+
+The shadow pass walked every item. Fixed by culling against the **light's**
+frustum, which had to be its own planes: an object behind the camera can still
+cast a shadow into view, so reusing the camera's planes here would delete real
+shadows. `rworld::extractFrustumPlanes` was lifted out of `Renderer::buildView`
+so both frusta come from one implementation.
+
+**The bigger find, hit while verifying it:** `PrimitiveLibrary::upload` never set
+`Mesh::boundsMin/Max`. They stayed at ±infinity, `hasBounds()` returned false, and
+the frustum test treats that as "never cull" — so **every primitive mesh was exempt
+from culling, in the main pass as well as the shadow pass**, for as long as
+primitives have existed. A 2 000-cube scene reported `0 culled` against a light box
+44 units wide, which is what exposed it. Bounds now come from the vertices, which
+`upload()` already had in hand.
+
+Measured, 2 000 cubes with `--shadows`:
+
+| | before | after |
+|---|---|---|
+| main pass | 2 001 items, **0 culled**, 2 001 draws | 2 001 items, **283 culled**, **1 draw** (1 718 instanced) |
+| shadow pass | 2 001 draws from 2 001 items, no cull | **244 draws**, 1 757 culled by the light frustum |
+| total bgfx draws | ~3 990 | **246** |
+
+fps_shooter is unchanged — 10 items, 1 culled, 6 draws — so real content saw no
+regression from either change.
+
+**A note on reading cull numbers.** The first run after adding bounds reported 2 000
+of 2 001 culled, which looks exactly like an over-culling bug — the dangerous
+direction, where geometry silently vanishes. It was not: the stress generator's
+camera used a pitched quaternion and ended up facing away from the grid. Verified
+by pointing a known-good camera at the scene (283 culled, 1 718 visible) and by
+fps_shooter being untouched. The generator now uses an identity rotation for exactly
+this reason — a stress scene whose camera orientation you have to reason about is
+one that will mislead you.
+
+Still not instanced: the shadow pass. Its 244 draws share mesh and material and
+could collapse the same way the main pass did, which needs a `vs_shadow_instanced`
+variant. Worth doing, and smaller than what it follows.
+
 ### Instancing landed, and it moved the bottleneck (2026-08-04)
 
 `vs_instanced.sc` reads the model matrix from instance data; the submit loop walks

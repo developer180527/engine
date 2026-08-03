@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <vector>
 #include <cmath>
 #include <bgfx/bgfx.h>
@@ -53,6 +54,28 @@ private:
         Mesh mesh(vbh, ibh, (uint32_t)idx.size());
         mesh.sourcePath  = std::string("engine://primitive/") + name;
         mesh.doubleSided = false;
+
+        // BOUNDS, from the vertices we already have in hand. Without them
+        // Mesh::boundsMin/Max stay at +/-infinity, hasBounds() is false, and the
+        // frustum test treats the mesh as "never cull" — so EVERY primitive was
+        // exempt from culling, in the main pass and the shadow pass alike. A
+        // 2 000-cube scene reported "0 culled" against a light box only 44 units
+        // wide, which is what exposed this. Imported meshes get bounds from their
+        // importer; procedural ones had nobody to set them.
+        if (!verts.empty()) {
+            bx::Vec3 lo{ verts[0].position[0], verts[0].position[1], verts[0].position[2] };
+            bx::Vec3 hi = lo;
+            for (const Vertex& vtx : verts) {
+                lo.x = std::min(lo.x, vtx.position[0]);
+                lo.y = std::min(lo.y, vtx.position[1]);
+                lo.z = std::min(lo.z, vtx.position[2]);
+                hi.x = std::max(hi.x, vtx.position[0]);
+                hi.y = std::max(hi.y, vtx.position[1]);
+                hi.z = std::max(hi.z, vtx.position[2]);
+            }
+            mesh.boundsMin = lo;
+            mesh.boundsMax = hi;
+        }
         return assets.addMesh(std::move(mesh));
     }
 

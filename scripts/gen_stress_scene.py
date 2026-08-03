@@ -16,9 +16,10 @@ Deliberately uses `engine://primitive/cube` for every object, so:
     instancing CEILING: with one batch run for N draws, instancing would remove
     N-1 submits. Real content sits below that ceiling; this measures the top.
 
-The camera is placed so a known fraction of the grid is off-screen, so the cull
-ratio is non-trivial (a stress scene where everything is visible cannot show
-culling working, and one where nothing is cannot show submission).
+The camera looks level down -Z from the grid's near edge, so part of the grid is
+always outside the frustum and the cull ratio is non-trivial — a stress scene where
+everything is visible cannot show culling working, and one where nothing is cannot
+show submission.
 
 Usage:
     scripts/gen_stress_scene.py <out-dir> --objects 4000 [--shadows]
@@ -57,8 +58,15 @@ def main():
          "camera": {"clearColor": [0.1, 0.1, 0.12, 1.0], "farPlane": 1000.0,
                     "fov": 60.0, "isPrimary": True, "nearPlane": 0.1,
                     "orthoSize": 10.0, "projection": 0},
-         "transform": {"position": [0.0, 40.0, 90.0],
-                       "rotation": [-0.2164, 0.0, 0.0, 0.9763],
+         # IDENTITY rotation, deliberately: looking straight down -Z, level, from
+         # the grid's near edge. An earlier version used a pitched-down quaternion
+         # and the camera ended up facing away from the scene — the cull then
+         # reported 2000 of 2001 items rejected, which reads exactly like an
+         # over-culling bug in the renderer and is not one. A stress scene whose
+         # camera orientation you have to reason about is a stress scene that will
+         # mislead you.
+         "transform": {"position": [0.0, 8.0, 100.0],
+                       "rotation": [0.0, 0.0, 0.0, 1.0],
                        "scale": [1.0, 1.0, 1.0]}},
         {"id": 2, "name": "Sun",
          "light": {"castShadows": bool(a.shadows), "color": [1.0, 1.0, 1.0],
@@ -71,9 +79,10 @@ def main():
         cube(100, "Ground", (0.0, -0.5, 0.0), (400.0, 1.0, 400.0)),
     ]
 
-    # Square grid, 4 units apart, centred on the origin. Height varies so the
-    # scene is not a flat plane of coincident depths (the sort key quantises
-    # depth to 24 bits and identical depths would make the ordering degenerate).
+    # Square grid, 4 units apart, centred on the origin, so larger N extends PAST
+    # the frustum and the cull has real work at every size. Height varies so the
+    # scene is not a flat plane of coincident depths (the sort key quantises depth
+    # to 24 bits, and identical depths would make the ordering degenerate).
     side = max(1, int(math.ceil(math.sqrt(a.objects))))
     spacing, eid, made = 4.0, 1000, 0
     for gz in range(side):
