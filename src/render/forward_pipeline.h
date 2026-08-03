@@ -411,6 +411,7 @@ public:
                 bind(params, factor, base, norm, state, it);
             };
 
+            if (drawBudgetExhausted()) continue;
             if (it.mesh->submeshes.empty()) {
                 drawProgram = defaultProg;
                 bindMaterial(it.material);
@@ -420,6 +421,7 @@ public:
                 if (skinned) ++m_submitStats.skinnedDraws;
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
+                    if (drawBudgetExhausted()) break;
                     // Reset per submesh: each range picks its own material, so
                     // a data-driven one must not leak its program to the next.
                     drawProgram = defaultProg;
@@ -516,6 +518,7 @@ private:
                                  (uint16_t)(it.boneCount * 4));
                 ++m_submitStats.shadowBonePaletteUploads;   // once per item — R4
             }
+            if (drawBudgetExhausted()) continue;
             if (it.mesh->submeshes.empty()) {
                 bgfx::setState(st); bgfx::setTransform(it.model.ptr());
                 bgfx::setVertexBuffer(0, it.mesh->vbh);
@@ -524,6 +527,7 @@ private:
                 ++m_submitStats.shadowDraws;
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
+                    if (drawBudgetExhausted()) break;
                     bgfx::setState(st); bgfx::setTransform(it.model.ptr());
                     bgfx::setVertexBuffer(0, it.mesh->vbh);
                     bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
@@ -562,6 +566,51 @@ private:
     bgfx::VertexLayout  m_lineLayout;
     bgfx::UniformHandle m_uBoneMatrices        = BGFX_INVALID_HANDLE;
     rdiag::SubmitStats  m_submitStats{};
+
+    // ── Hard ceiling on submits per frame ───────────────────────────────────
+    // bgfx's Metal backend commits per-draw uniform data into a FIXED 8 MB
+    // scratch buffer (renderer_mtl.cpp:23, UNIFORM_BUFFER_SIZE) at an advancing
+    // offset, with NO bounds check. This pipeline writes ~1 KB of uniform traffic
+    // per draw (vertex + fragment blocks, each alignment-padded), so the buffer
+    // is exhausted at ~8192 draws and bgfx then writes past the end of the Metal
+    // allocation: SIGSEGV inside _platform_memmove, stack in
+    // RendererContextMtl::commit. Found with ASan against a generated stress
+    // scene (scripts/gen_stress_scene.py); measured 8 000 objects renders 320
+    // frames clean and 8 100 crashes.
+    //
+    // Handing bgfx a frame it cannot survive is not an option, so stop and SAY
+    // SO. Dropping draws makes a frame visibly incomplete, which is bad — but a
+    // loud incomplete frame beats a segfault, and `drawsDropped` makes it
+    // impossible to miss. The real fix is fewer uniform bytes per draw
+    // (instancing R5, material-bind dedup R7), not a bigger buffer.
+    // 4096, not "just under 8192". Two reasons. The per-draw uniform cost is
+    // MEASURED at ~1035 B (8 MB / the ~8100-draw empirical threshold), not the
+    // round 1 KB it looks like, so a cap near the limit still overflows — 7800
+    // draws was tried and still crashed. And this engine's own budget target is
+    // 500 draw calls (docs/plans/renderer-audit-and-plan.md), so 4096 is already
+    // 8x the envelope: any frame reaching it is far outside what the renderer is
+    // designed for, and clamping there costs nothing real while leaving ~4 MB of
+    // headroom against a limit we do not control.
+    static constexpr uint32_t kMaxDrawsPerFrame = 4096;
+
+    // Loud ONCE per run: a per-frame message would bury the log it belongs in.
+    bool m_warnedDrawCeiling = false;
+    bool drawBudgetExhausted() {
+        const uint32_t total = m_submitStats.draws + m_submitStats.shadowDraws;
+        if (total < kMaxDrawsPerFrame) return false;
+        ++m_submitStats.drawsDropped;
+        if (!m_warnedDrawCeiling) {
+            m_warnedDrawCeiling = true;
+            std::fprintf(stderr,
+                "[ForwardPipeline] DRAW CEILING HIT: %u draws this frame. The "
+                "Metal backend's uniform scratch buffer is a fixed 8 MB and this "
+                "pipeline uses ~1 KB per draw, so bgfx writes past the end at "
+                "~8192 draws (SIGSEGV in RendererContextMtl::commit). Refusing to "
+                "submit more — THIS FRAME IS INCOMPLETE. Reduce draws (instancing) "
+                "or per-draw uniforms (material-bind dedup).\n", total);
+        }
+        return true;
+    }
     bgfx::UniformHandle m_sBaseColor   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uParams      = BGFX_INVALID_HANDLE;
     // Engine-driven texture presence, kept OUT of u_params so a material's

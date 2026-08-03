@@ -20,6 +20,12 @@ batch runs vs draws (R5). Shadow draws are counted separately because that pass
 walks every item rather than a culled set, so `shadowDraws == itemsConsidered` is
 the signature of that bug.
 
+`drawsDropped` is non-zero only when a frame hit
+`ForwardPipeline::kMaxDrawsPerFrame` — the guard against bgfx's fixed 8 MB Metal
+uniform scratch buffer, which has no bounds check and segfaults past ~8192 draws.
+A non-zero value means the frame is visibly INCOMPLETE, which is why it is
+reported separately and loudly rather than folded into the draw count.
+
 ## Frame timing (GPU, CPU, waits)
 `FrameGpuStats` also carries what `bgfx::getStats()` measures and nothing read
 until now: GPU ms per frame, CPU frame ms, and `waitSubmit`/`waitRender`. Draw

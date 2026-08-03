@@ -221,30 +221,57 @@ submits 2 001 shadow draws for 2 001 items — every item, regardless of the lig
 frustum — roughly doubling total bgfx draws. `shadowDraws == itemsConsidered` is
 the signature.
 
-**And there is a hard crash between 8 000 and 10 000 objects.** Characterised:
+**ROOT-CAUSED (2026-08-04): bgfx's Metal uniform scratch buffer, 8 MB, no bounds
+check.** ASan named it in one run:
 
-- 8 000 runs 320 frames clean; 10 000 dies by frame 5, though 1 frame is fine.
-- **Independent of draw count**: turning the camera away so the frustum rejects
-  everything still crashes, so it scales with ITEMS, not submits.
-- `EXC_BAD_ACCESS (code=2)` — a WRITE fault — inside `_platform_memmove`, with no
-  recoverable caller frames (itself a hint: a corrupted stack).
-- Ruled out: bgfx's draw-call limit and matrix cache (both 65 535), the 4 MB frame
-  arena (the render path does not use it), and any 8192-sized constant in our code.
+    #2 bgfx::mtl::RendererContextMtl::commit(bgfx::UniformBuffer&) renderer_mtl.cpp:1986
+    #3 bgfx::mtl::RendererContextMtl::submit(...)                  renderer_mtl.cpp:5335
+    #7 EngineRuntime::frameEnd()                                   runtime_frame.cpp:80
+    The signal is caused by a WRITE memory access.
 
-Not root-caused. The next step is an ASan build (`cmake -B build-asan
--DENGINE_SANITIZE=address,undefined`, currently not configured — it is a full
-sanitized rebuild of Assimp/bgfx/Jolt) to name the overflow. **Until that is
-understood, no scalability work should start**: a flat-packet redesign that makes
-the submit loop 3× faster is worth nothing if the engine cannot hold 10 000
-objects, and the crash may well be in whatever a redesign would touch.
+`renderer_mtl.cpp:23` is `#define UNIFORM_BUFFER_SIZE (8*1024*1024)`. Per-draw
+uniform data is written into that fixed allocation at an advancing offset with NO
+bounds check, so once a frame's uniform traffic exceeds 8 MB bgfx writes past the
+end of the Metal buffer. This pipeline costs a MEASURED ~1035 B/draw (8 MB ÷ the
+~8100-draw empirical threshold), giving a hard ceiling near 8 192 draws — which is
+why 8 000 objects renders 320 frames clean and 8 100 does not, and why the boundary
+is flaky rather than sharp: it is a byte limit, not a count.
+
+**A claim in the previous revision of this section was wrong.** It said the crash
+was "independent of draw count" because turning the camera away still crashed. ASan
+disproves that — the overflow is in per-DRAW uniform commit, so it is entirely
+draw-dependent, and that experiment simply failed to cull what it intended to.
+Recorded because the inference was confident and wrong, and the sanitizer settled
+it in one run where three rounds of reasoning had not.
+
+**Guarded, not merely diagnosed.** `ForwardPipeline::kMaxDrawsPerFrame = 4096`
+stops submitting and says so, once, loudly, with `SubmitStats::drawsDropped`
+reporting how many draws were refused so an incomplete frame can never be silent.
+4096 rather than "just under 8192" for two reasons: a cap near the limit still
+overflows (7 800 was tried and still crashed), and this engine's own budget target
+is **500** draw calls, so 4096 is already 8× the envelope and clamping there costs
+nothing real. Verified: 20 000 objects now exits 0 where it previously took SIGSEGV,
+8 000 is unaffected, and 2 000 never trips the warning.
+
+Trading a crash for a visibly incomplete frame is a band-aid, and it is labelled as
+one in the code. The real fix is fewer uniform bytes per draw — material-bind dedup
+(R7) and instancing (R5) — not a bigger buffer, and certainly not a vendored bgfx
+patch that would only move the wall.
 
 Order this implies, evidence-first:
-1. **The crash.** A hard wall at 10 k objects outranks every optimisation.
-2. **The shadow pass cull.** O(N) with scene size, doubles draws, no packet layout
-   fixes it.
-3. **Instancing.** 4 µs/draw × (draws − batchRuns) is now a computable saving.
-4. **The flat packet.** Worth it when the submit loop's cache misses are visible
-   above the per-draw cost the first three leave behind.
+1. ~~**The crash.**~~ Root-caused and guarded.
+2. **The shadow pass cull.** O(N) with scene size, doubles draws — and it now also
+   consumes half the uniform budget, so it brings the ceiling twice as close.
+3. **Material-bind dedup (R7).** 12 binds for 12 draws today. This is the item that
+   directly buys back uniform-buffer headroom, which makes it worth more than its
+   CPU saving alone suggests.
+4. **Instancing (R5).** 4 µs/draw × (draws − batchRuns), now computable.
+5. **The flat packet.** Worth it when the submit loop's cache misses are visible
+   above what the first four leave behind.
+
+Still open: the ASan build was rebuilt with the guard but the verification run was
+not completed (an 8-minute incremental link). The non-sanitized evidence — SIGSEGV
+to clean exit at both 8 k and 20 k — is what the fix rests on.
 
 ### The submission seam, and what it says about R5/R7 (2026-08-04)
 

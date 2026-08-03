@@ -73,6 +73,9 @@ inline void printSubmitStats(const rdiag::SubmitStats& s, const char* tag) {
         s.materialBinds, s.draws,
         s.bonePaletteUploads, s.skinnedItems,
         s.shadowDraws, s.shadowBonePaletteUploads);
+    if (s.drawsDropped)
+        std::printf("      DROPPED      %u draw(s) refused — frame INCOMPLETE "
+                    "(backend uniform-buffer ceiling)\n", s.drawsDropped);
     // The R4 invariant, checked rather than described: one palette per ITEM.
     if (s.bonePaletteUploads != s.skinnedItems)
         std::printf("      WARNING: bone uploads (%u) != skinned items (%u) — "
