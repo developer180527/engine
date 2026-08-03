@@ -82,7 +82,11 @@ public:
 private:
     void* m_db = nullptr;
     bool  execSQL(const std::string& sql);
-    void  migrate();
+    // False when the database cannot be brought to the current schema — a real
+    // SQLite error, or a file written by a NEWER build (see the impl). open()
+    // fails in that case rather than handing back a registry that silently
+    // drops writes.
+    bool  migrate();
     static bool statChanged(const AssetRecord& rec,
                             const std::filesystem::path& p);
 };

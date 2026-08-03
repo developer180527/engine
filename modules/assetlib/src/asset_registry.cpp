@@ -10,7 +10,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <cstdio>
-#include <sys/stat.h>
+#include <filesystem>
+#include <utility>
 
 namespace assetlib {
 
@@ -27,20 +28,47 @@ static std::string hashFile(const std::filesystem::path& p) {
 }
 static bool isLegacyHash(const std::string& h) { return h.size() != 64; }
 
-// ── Stat helpers (Fix 1) ──────────────────────────────────────────────────────
+// ── Stat helpers ─────────────────────────────────────────────────────────────
+// std::filesystem, NOT ::stat(p.string().c_str()). `path::string()` renders the
+// NATIVE NARROW encoding, which on Windows is the active ANSI code page — so a
+// source file whose name contains any non-ASCII character does not round-trip,
+// ::stat fails, and statChanged reports "changed" forever. That fails safe (the
+// asset recooks) but it recooks on EVERY scan, permanently, for any project with
+// an accented or CJK filename. std::filesystem carries the wide path through on
+// Windows and needs no encoding conversion at all.
+//
+// One representation note: file_time_type's epoch is unspecified before C++20's
+// clock_cast, so the stored int64 is its raw tick count. That is fine here
+// because the value is only ever compared against another value produced by
+// this same function — it is a change detector, not a timestamp anyone reads.
+// Consequence of the representation change: every record written by an older
+// build has an incomparable mtime, so the first scan after this lands reports
+// every asset as stat-changed and rehashes it once. That is safe — the hash
+// then matches, so it takes the touch-only branch and nothing recooks — but it
+// is one slow scan, once.
+namespace {
+// {mtime ticks, size}, or nullopt if the file cannot be examined at all.
+std::optional<std::pair<int64_t,int64_t>> fileStamp(const std::filesystem::path& p) {
+    std::error_code ec;
+    const auto t = std::filesystem::last_write_time(p, ec);
+    if (ec) return std::nullopt;
+    const auto sz = std::filesystem::file_size(p, ec);
+    if (ec) return std::nullopt;
+    return std::make_pair((int64_t)t.time_since_epoch().count(), (int64_t)sz);
+}
+} // namespace
+
 bool AssetRegistry::statChanged(const AssetRecord& rec,
                                 const std::filesystem::path& p) {
-    struct ::stat st{};
-    if (::stat(p.string().c_str(), &st) != 0) return true;
-    return rec.sourceMtime != static_cast<int64_t>(st.st_mtime)
-        || rec.sourceSize  != static_cast<int64_t>(st.st_size);
+    const auto s = fileStamp(p);
+    if (!s) return true;                    // unreadable — assume changed
+    return rec.sourceMtime != s->first || rec.sourceSize != s->second;
 }
 
 static void fillStat(AssetRecord& rec, const std::filesystem::path& p) {
-    struct ::stat st{};
-    if (::stat(p.string().c_str(), &st) == 0) {
-        rec.sourceMtime = static_cast<int64_t>(st.st_mtime);
-        rec.sourceSize  = static_cast<int64_t>(st.st_size);
+    if (const auto s = fileStamp(p)) {
+        rec.sourceMtime = s->first;
+        rec.sourceSize  = s->second;
     }
 }
 
@@ -118,6 +146,10 @@ CREATE INDEX IF NOT EXISTS idx_state       ON assets(state);
 CREATE INDEX IF NOT EXISTS idx_dep_on      ON dependencies(depends_on_uuid);
 )SQL";
 
+// Bump when kMigrations grows. Stored in PRAGMA user_version so a database
+// written by a NEWER build can be refused instead of silently downgraded.
+static constexpr int kSchemaVersion = 2;
+
 static const char* kMigrations[] = {
     "ALTER TABLE assets ADD COLUMN state            INTEGER NOT NULL DEFAULT 0;",
     "ALTER TABLE assets ADD COLUMN source_mtime     INTEGER NOT NULL DEFAULT 0;",
@@ -144,7 +176,10 @@ bool AssetRegistry::open(const std::filesystem::path& dbPath) {
     // drain lane writes — retry briefly on lock contention instead of
     // failing a read that would have succeeded 5ms later.
     sqlite3_busy_timeout(db(m_db), 5000);
-    migrate();
+    // A registry that could not be brought to the current schema is not usable.
+    // Reporting success here is what let a corrupt or newer-versioned database
+    // look fine and then silently record nothing.
+    if (!migrate()) { close(); return false; }
     return true;
 }
 void AssetRegistry::close() {
@@ -156,10 +191,69 @@ bool AssetRegistry::execSQL(const std::string& sql) {
     if (err) sqlite3_free(err);
     return ok;
 }
-void AssetRegistry::migrate() {
-    sqlite3_exec(db(m_db), kSchema, nullptr, nullptr, nullptr);
-    for (const char* m : kMigrations)
-        sqlite3_exec(db(m_db), m, nullptr, nullptr, nullptr);
+// The additive-ALTER list is idempotent by construction: each statement is its
+// own exec, so one failing cannot skip the next. What it could not do before was
+// tell "this column already exists" apart from "this database is corrupt, or
+// read-only, or the disk is full" — every error was discarded, migrate() returned
+// void, and open() returned true regardless. An unusable registry reported
+// success, and the cook then silently recorded nothing.
+//
+// So: match the already-applied case EXACTLY (SQLite says "duplicate column
+// name: <col>") and treat anything else as a real failure. PRAGMA user_version
+// additionally lets us refuse a database written by a NEWER engine — which only
+// matters, and matters a lot, once a DDC is shared across machines running
+// different builds.
+bool AssetRegistry::migrate() {
+    char* err = nullptr;
+    if (sqlite3_exec(db(m_db), kSchema, nullptr, nullptr, &err) != SQLITE_OK) {
+        std::fprintf(stderr, "[AssetLib] schema creation failed: %s\n",
+                     err ? err : "(no message)");
+        if (err) sqlite3_free(err);
+        return false;
+    }
+
+    // Forward-incompatibility check BEFORE any write. A newer build may have
+    // added columns this one does not know about; opening is fine (SQLite
+    // ignores unknown columns on named SELECTs, and kCols is explicit), but
+    // WRITING would drop whatever those columns hold on every update().
+    int64_t onDisk = 0;
+    sqlite3_stmt* st = nullptr;
+    if (sqlite3_prepare_v2(db(m_db), "PRAGMA user_version;", -1, &st, nullptr)
+            == SQLITE_OK) {
+        if (sqlite3_step(st) == SQLITE_ROW) onDisk = sqlite3_column_int64(st, 0);
+        sqlite3_finalize(st);
+    }
+    if (onDisk > kSchemaVersion) {
+        std::fprintf(stderr,
+            "[AssetLib] registry schema v%lld is NEWER than this build's v%d — "
+            "refusing to open. A newer engine wrote this cache; writing to it "
+            "would discard columns this build cannot see. Use a matching build, "
+            "or delete .cache/registry.db to re-scan from scratch.\n",
+            (long long)onDisk, kSchemaVersion);
+        return false;
+    }
+
+    for (const char* m : kMigrations) {
+        err = nullptr;
+        if (sqlite3_exec(db(m_db), m, nullptr, nullptr, &err) == SQLITE_OK) {
+            if (err) sqlite3_free(err);
+            continue;
+        }
+        const std::string msg = err ? err : "";
+        if (err) sqlite3_free(err);
+        // The one benign failure: this column landed on an earlier open.
+        if (msg.rfind("duplicate column name", 0) == 0) continue;
+        std::fprintf(stderr, "[AssetLib] migration failed (%s): %s\n", m,
+                     msg.empty() ? "(no message)" : msg.c_str());
+        return false;
+    }
+
+    if (onDisk < kSchemaVersion) {
+        const std::string bump =
+            "PRAGMA user_version = " + std::to_string(kSchemaVersion) + ";";
+        sqlite3_exec(db(m_db), bump.c_str(), nullptr, nullptr, nullptr);
+    }
+    return true;
 }
 
 // ── Row helper ────────────────────────────────────────────────────────────────
@@ -414,16 +508,29 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
     // it. `claimed` keeps one record from being re-pointed by two different
     // files: the old per-file all() re-read picked that up via the `seen`
     // check, a snapshot cannot.
+    // The same snapshot also serves the existence check for EVERY walked file.
+    // That used to be findBySourcePath(rel) per file, which is not merely N
+    // queries — it builds the SQL with string concatenation and calls
+    // sqlite3_prepare_v2 every time, so it is N statement COMPILATIONS, and
+    // compilation is the expensive half. One all() replaces all of them.
+    //
+    // Safe as a snapshot because each `rel` is visited at most once by the
+    // directory walk, so nothing looks up a record this scan already wrote.
+    // Duplicate source_path rows (the index is not UNIQUE) keep the first, which
+    // is what the old SELECT ... LIMIT-one behaviour did too.
     std::unordered_map<std::string, std::vector<AssetRecord>> byHash;
+    std::unordered_map<std::string, AssetRecord>              bySourcePath;
     std::unordered_set<std::string> claimed;
     bool haveIndex = false;
-    auto hashIndex = [&]() -> decltype(byHash)& {
-        if (!haveIndex) {
-            for (auto& rec : all()) byHash[rec.sourceHash].push_back(rec);
-            haveIndex = true;
+    auto buildIndex = [&] {
+        if (haveIndex) return;
+        for (auto& rec : all()) {
+            byHash[rec.sourceHash].push_back(rec);
+            bySourcePath.emplace(rec.sourcePath, rec);
         }
-        return byHash;
+        haveIndex = true;
     };
+    auto hashIndex = [&]() -> decltype(byHash)& { buildIndex(); return byHash; };
 
     // error_code overload: an unreadable directory mid-walk must not throw
     // past the transaction guard (it would still roll back, but a scan that
@@ -439,7 +546,10 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
 
         auto rel=std::filesystem::relative(entry.path(),projectRoot).string();
         seen.insert(rel);
-        auto existing=findBySourcePath(rel);
+        buildIndex();
+        std::optional<AssetRecord> existing;
+        if (auto it = bySourcePath.find(rel); it != bySourcePath.end())
+            existing = it->second;
 
         if (existing) {
             // Fast skip only when the stat is unchanged AND the stored hash is

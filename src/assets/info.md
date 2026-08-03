@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-01
+verified: 2026-08-03
 parses-external-input: true
 covers:
   - src/assets/
@@ -12,6 +12,7 @@ tests:
   - tests/residency_test.cpp
   - tests/fuzz_mesh_loader_test.cpp   # cooked-binary parse the loaders depend on
   - tests/stress_assets.cpp           # garbage-in importer fuzz
+  - tests/cook_hardening_test.cpp     # worker IPC framing + DDC GC
 ---
 # Assets
 
@@ -85,9 +86,20 @@ process, `src/tools/engine_cook_worker.cpp`): a corrupt FBX that SIGSEGVs
 Assimp kills one worker and fails one asset — the try/catch-can't-trap-signals
 problem is closed for real. Each child also runs under a HARD memory cap
 (`setrlimit`, 2× the cooker's estimate, floor 1 GB, `COOK_TASK_MEM_CAP_MB`
-pins it) and a kill deadline (`COOK_TASK_TIMEOUT_SEC`, default 3600s).
+pins it) and a kill deadline (`COOK_TASK_TIMEOUT_SEC`, default 3600s). The cap
+is applied by the PARENT between `fork` and `execv` — rlimits are inherited
+across `exec`, so it predates the child's first instruction including its static
+initializers. (`posix_spawn` cannot express this: POSIX has no rlimit spawn
+attribute. Windows already had the property, assigning its job object while the
+process is still suspended.)
 Outcome comes back via a sidecar result file (`RESULT/ERROR/OUTPUT/DEP`
-lines), never stdout — cookers print freely. The worker binary must sit next
+lines), never stdout — cookers print freely. That file is FRAMED with a magic
+header and an `END <lines> <digest>` trailer
+(`assetlib/cook_result_file.h`), and the frame is validated before any field is
+read: `RESULT ok` is the first body line, so a worker killed mid-write used to
+leave a file that parsed as a clean success with its `OUTPUT` lines missing —
+committing a mesh without its sibling textures, i.e. the silently-untextured
+build arriving through the IPC channel instead of the packager. The worker binary must sit next
 to the spawning executable; if missing (or `COOK_INPROC=1`), cooking falls
 back in-process behind the exception net, with a loud warning. Crash/timeout
 failures record the DDC key like any failure: not retried until inputs change
@@ -96,6 +108,23 @@ failures record the DDC key like any failure: not retried until inputs change
 paths testable — a crash path you can't trigger is a crash path you never
 verified. The parent's MemGovernor + worker-thread pool still schedule
 admission; the child limits are the enforcement.
+
+### Garbage collection: two stores, two policies
+`engine_cook --gc` (dry run) / `--gc-prune` (delete) collects BOTH, in this order
+and for a reason:
+
+1. **The project `.cache/`, by REFERENCE** — reconcile files against the
+   registry, allowlisting only extensions this GC understands, and fail closed if
+   the registry is missing or empty (an absent DB means "I don't know what is
+   referenced", not "nothing is"). Deleting here drops HARDLINKS, so it reclaims
+   a coherent working directory rather than disk.
+2. **The DDC, by BUDGET + LRU** (`DdcStore::collectGarbage`) — content-addressed
+   blobs have no referrer to ask, and keys derive from inputs, so every edit or
+   cooker bump orphans a blob permanently. This is where real disk comes back.
+
+The order matters: step 1's deletions drop hardlinks, un-pinning blobs that step
+2 would otherwise have to report as unreclaimable. Running the DDC first frees
+nothing on the first invocation.
 
 Rules: cookers may use Assimp/stb/assetlib but must never reference bgfx,
 GLFW, or plugin symbols — `engine_cook` links engine_core alone. Failed cooks

@@ -1,5 +1,6 @@
 #include "cook_dispatch.h"
 #include "cook_env.h"
+#include "assetlib/cook_result_file.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -7,6 +8,8 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iterator>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -15,15 +18,22 @@
     #define NOMINMAX
     #include <windows.h>
 #else
-    #include <spawn.h>
+    #include <sys/resource.h>
     #include <sys/wait.h>
     #include <signal.h>
-    extern char** environ;
+    #include <unistd.h>
 #endif
 
 namespace assetlib {
 
 namespace {
+
+#if !defined(_WIN32)
+// Distinct from the worker's own codes (64 = bad usage, 65 = could not write a
+// result) so "the binary is missing or not executable" is diagnosable rather
+// than looking like a cook that crashed.
+constexpr int kExecFailedExit = 66;
+#endif
 
 // The worker's sidecar RESULT FILE protocol (never parsed from stdout —
 // cookers print freely):
@@ -31,6 +41,10 @@ namespace {
 //     ERROR  <single-line message>       (optional)
 //     OUTPUT <extra output path>         (0..n, mesh's sibling .ctex)
 //     DEP    <uuid>                      (0..n)
+//
+// Framed with a magic header and an END trailer — see assetlib/cook_result_file.h
+// for why (a truncated file used to read as a clean success with its OUTPUT lines
+// missing). The frame is validated before any field is read.
 //
 // Platform-independent: both the POSIX and Windows spawn paths converge here
 // once the child has been reaped. `exitDesc` describes how the child ended,
@@ -41,13 +55,31 @@ CookResult finishFromResultFile(const std::filesystem::path& resultPath,
     namespace fs = std::filesystem;
     auto cleanup = [&] { std::error_code e; fs::remove(resultPath, e); };
 
-    std::ifstream f(resultPath);
+    std::ifstream f(resultPath, std::ios::binary);
     if (!f)
         return { .success=false,
                  .error="cook worker " + exitDesc + " without writing a result" };
 
+    const std::string raw((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    f.close();
+
+    // Validate the frame BEFORE reading a single field. `RESULT ok` is the first
+    // body line, so a worker killed mid-write leaves a file that parses as a
+    // clean success with its OUTPUT lines missing — and the asset commits
+    // without its siblings. Refuse anything whose trailer does not agree with
+    // its body; an incomplete result is a failed cook, not a successful one.
+    std::string body, frameErr;
+    if (!cookresult::unframe(raw, body, frameErr)) {
+        cleanup();
+        return { .success=false,
+                 .error="cook worker " + exitDesc + ", but its result file is "
+                        "unusable: " + frameErr };
+    }
+
     std::string verdict, error, line;
-    while (std::getline(f, line)) {
+    std::istringstream in(body);
+    while (std::getline(in, line)) {
         if      (line.rfind("RESULT ", 0) == 0) verdict = line.substr(7);
         else if (line.rfind("ERROR ", 0)  == 0) error   = line.substr(6);
         else if (line.rfind("OUTPUT ", 0) == 0) {
@@ -58,7 +90,6 @@ CookResult finishFromResultFile(const std::filesystem::path& resultPath,
                 ctx.addDependency(UUID::fromString(line.substr(4)));
         }
     }
-    f.close();
     cleanup();
 
     if (verdict == "ok")   return { .success=true };
@@ -119,12 +150,35 @@ CookResult cookInWorkerProcess(const std::filesystem::path& workerExe,
     char* argv[] = { exeArg.data(), srcArg.data(), outArg.data(),
                      resArg.data(), capArg.data(), nullptr };
 
-    pid_t pid = -1;
-    const int rc = posix_spawn(&pid, exeArg.c_str(), nullptr, nullptr,
-                               argv, environ);
-    if (rc != 0)
+    // fork + setrlimit + exec, NOT posix_spawn. rlimits are inherited across
+    // exec, so applying the cap in the child between fork and exec makes it
+    // predate the worker's first instruction — including its static
+    // initializers. Applying it inside the worker's own main() (from argv, which
+    // is what this used to do, and still does as a belt-and-braces second
+    // application) leaves everything before main uncapped. posix_spawn has no
+    // rlimit attribute in POSIX, so there is no way to express this through it.
+    // This gives POSIX the property the Windows path already had: it assigns the
+    // job object while the process is still suspended.
+    //
+    // Between fork and exec, only async-signal-safe calls are legal. This parent
+    // is multithreaded (the cook graph's worker pool), so a malloc here could
+    // deadlock on a lock some other thread held at fork time. setrlimit and
+    // execv are syscalls, and every string above was built before the fork.
+    pid_t pid = ::fork();
+    if (pid < 0)
         return { .success=false,
-                 .error=std::string("cannot spawn cook worker: ") + std::strerror(rc) };
+                 .error=std::string("cannot fork cook worker: ")
+                        + std::strerror(errno) };
+    if (pid == 0) {
+        if (capMb > 0) {
+            rlimit rl{ (rlim_t)capMb << 20, (rlim_t)capMb << 20 };
+            ::setrlimit(RLIMIT_DATA, &rl);   // heap; the one that bites on macOS
+            ::setrlimit(RLIMIT_AS,   &rl);   // address space; no-op on macOS
+        }
+        ::execv(exeArg.c_str(), argv);       // inherits environ, so the
+                                             // fault-injection vars still reach it
+        ::_exit(kExecFailedExit);            // exec returns only on failure
+    }
 
     // Reap with a deadline. Default is generous — an HQ BC7 8K encode is
     // legitimately minutes — but bounded, so one wedged parse can't hold a
@@ -185,6 +239,17 @@ CookResult cookInWorkerProcess(const std::filesystem::path& workerExe,
         return { .success=false,
                  .error=std::string("cook worker crashed: signal ")
                       + std::to_string(sig) + " (" + strsignal(sig) + ")" };
+    }
+
+    // exec never ran: a missing, non-executable, or wrong-architecture worker
+    // binary. Distinguish it, because "cook worker exited (code 66) without
+    // writing a result" sends you looking for a cooker bug instead of a build
+    // or install problem.
+    if (WIFEXITED(status) && WEXITSTATUS(status) == kExecFailedExit) {
+        cleanupResult();
+        return { .success=false,
+                 .error="cannot exec cook worker at " + exeArg
+                      + " (missing, not executable, or wrong architecture)" };
     }
 
     return finishFromResultFile(

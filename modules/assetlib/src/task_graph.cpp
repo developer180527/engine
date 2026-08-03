@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
@@ -93,6 +94,13 @@ struct MemGovernor {
             if (need > used) {
                 std::fprintf(stderr, "[TaskGraph] BUG: memory release of %zu "
                              "with only %zu reserved — clamping\n", need, used);
+                // The clamp keeps a RELEASE build scheduling; it does not make
+                // the imbalance correct. Anything reaching here is an
+                // acquire/release bug in the graph, so fail loudly where a
+                // developer will see it rather than shipping a papered-over
+                // scheduler.
+                assert(!"MemGovernor: unbalanced release — acquire/release "
+                        "pairing bug in the task graph");
                 used = 0;
             } else {
                 used -= need;

@@ -7,6 +7,7 @@
 #include "assets/asset_path.h"
 #include "core/logger.h"
 #include <assetlib/scene_asset.h>   // header peek: version-aware staleness
+#include <assetlib/ddc.h>           // DDC budget/LRU pass in collectGarbage
 #include <fstream>
 #include <mutex>
 #include <unordered_map>
@@ -457,15 +458,63 @@ CookService::GcStats CookService::collectGarbage(bool prune) {
     if (prune)
         // "Logical" is not pedantry. Materialized outputs are HARDLINKS to DDC
         // blobs, so removing a .cache entry drops one link, not the inode —
-        // real disk is only reclaimed once the DDC's copy goes too (that store
-        // has its own size/age policy). Measured on fps_shooter: 72.7 MB of
+        // real disk is only reclaimed once the DDC's copy goes too, which is
+        // what the pass below now does. Measured on fps_shooter: 72.7 MB of
         // orphans removed, total disk unchanged at 55 MB. What this reclaims
         // for certain is a coherent working directory; claiming freed disk
         // would be a lie a user could check.
         LOG_INFO("CookService", "GC: deleted %d file(s), %.1f MB logical "
-                 "(hardlinks to DDC blobs — real disk frees when the DDC "
-                 "evicts them). Re-cook or a DDC hit restores anything wanted.",
+                 "(hardlinks to DDC blobs — real disk frees in the DDC pass "
+                 "below). Re-cook or a DDC hit restores anything wanted.",
                  st.deleted, (double)st.freedBytes * mb);
+
+    // ── 4. The DDC, budget + LRU ────────────────────────────────────────────
+    // DELIBERATELY AFTER the sweep above. Those deletions drop hardlinks, so
+    // blobs that were pinned (link count > 1, unreclaimable) a moment ago
+    // become evictable now — running the DDC first would report them as pinned
+    // and reclaim nothing. This ordering is why `--gc-prune` frees real disk in
+    // one invocation instead of needing two.
+    //
+    // Keys are derived from inputs, so every source edit, cooker bump or
+    // settings change mints a new key and orphans the old blob with no referrer
+    // to notice. Reference counting cannot collect that; a budget can.
+    const uint64_t budget = assetlib::DdcStore::budgetBytesFromEnv();
+    assetlib::DdcStore ddc;
+    const auto d = ddc.collectGarbage(budget, prune);
+    st.ddcBlobs       = d.blobs;
+    st.ddcTotalBytes  = d.totalBytes;
+    st.ddcPinnedBytes = d.pinnedBytes;
+    st.ddcDeleted     = d.deleted;
+    st.ddcFreedBytes  = d.freedBytes;
+
+    if (budget == 0) {
+        LOG_INFO("CookService", "DDC GC: %llu blob(s), %.1f MB — no budget set "
+                 "(ENGINE_DDC_MAX_MB=0), nothing evicted",
+                 (unsigned long long)d.blobs, (double)d.totalBytes * mb);
+    } else if (d.overBudgetBytes == 0) {
+        LOG_INFO("CookService", "DDC GC: %llu blob(s), %.1f MB of %.1f MB "
+                 "budget (%.1f MB pinned by live .cache links) — under budget",
+                 (unsigned long long)d.blobs, (double)d.totalBytes * mb,
+                 (double)budget * mb, (double)d.pinnedBytes * mb);
+    } else if (!prune) {
+        LOG_INFO("CookService", "DDC GC: %.1f MB over a %.1f MB budget "
+                 "(%.1f MB pinned)  [dry run — pass --gc-prune to evict]",
+                 (double)d.overBudgetBytes * mb, (double)budget * mb,
+                 (double)d.pinnedBytes * mb);
+    } else {
+        LOG_INFO("CookService", "DDC GC: evicted %llu blob(s), %.1f MB freed "
+                 "(LRU, oldest use first)",
+                 (unsigned long long)d.deleted, (double)d.freedBytes * mb);
+        // Pinned bytes alone can exceed the budget. Say so rather than leaving
+        // a "GC ran" line implying the budget is now met.
+        if (d.freedBytes < d.overBudgetBytes)
+            LOG_WARN("CookService", "DDC GC: still %.1f MB over budget — "
+                     "%.1f MB is pinned by hardlinks from live .cache "
+                     "directories and cannot be reclaimed until those projects "
+                     "are cleaned too",
+                     (double)(d.overBudgetBytes - d.freedBytes) * mb,
+                     (double)d.pinnedBytes * mb);
+    }
     return st;
 }
 

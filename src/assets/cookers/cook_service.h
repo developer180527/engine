@@ -90,6 +90,12 @@ public:
         uint64_t keptBytes = 0,  orphanBytes = 0;
         int      deleted   = 0;
         uint64_t freedBytes = 0;
+        // The DDC pass — a different store with a different policy. The cache
+        // sweep above is by REFERENCE (is this file still in the registry);
+        // the DDC is by BUDGET + LRU, because content-addressed blobs have no
+        // referrer to ask.
+        uint64_t ddcBlobs = 0, ddcTotalBytes = 0, ddcPinnedBytes = 0;
+        uint64_t ddcDeleted = 0, ddcFreedBytes = 0;
     };
     GcStats collectGarbage(bool prune);
 

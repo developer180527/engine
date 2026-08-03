@@ -39,6 +39,16 @@ void removeBlob(const fs::path& p, std::error_code& ec) {
     fs::remove(p, ec);
 }
 
+// Record "this blob was used just now" as its mtime, so GC's LRU order reflects
+// USE and not ingest time. Best-effort and deliberately silent: the store stays
+// correct if the touch fails (a read-only mount, a foreign owner), it just
+// evicts in ingest order for that blob. Blobs are 0444, which is fine — setting
+// mtime needs ownership, not write permission, and we own what we ingested.
+void touchForLru(const fs::path& p) {
+    std::error_code ec;
+    fs::last_write_time(p, fs::file_time_type::clock::now(), ec);
+}
+
 // Mark a finished blob immutable.
 void makeReadOnly(const fs::path& p) {
 #if defined(_WIN32)
@@ -219,7 +229,7 @@ bool DdcStore::fetch(const std::string& key, const fs::path& dst) {
 
     const fs::path local = blobPath(m_local, key);
     if (fs::exists(local, ec)) {
-        if (materialize(local, dst)) { ++m_localHits; return true; }
+        if (materialize(local, dst)) { touchForLru(local); ++m_localHits; return true; }
         return false;
     }
 
@@ -286,7 +296,9 @@ bool DdcStore::fetchBytes(const std::string& key, std::string& out) {
     };
     std::error_code ec;
     const fs::path local = blobPath(m_local, key);
-    if (fs::exists(local, ec) && read(local)) { ++m_localHits; return true; }
+    if (fs::exists(local, ec) && read(local)) {
+        touchForLru(local); ++m_localHits; return true;
+    }
     if (!m_shared.empty()) {
         const fs::path shared = blobPath(m_shared, key);
         if (fs::exists(shared, ec) && read(shared)) {
@@ -308,6 +320,80 @@ void DdcStore::evictLocal(const std::string& key) {
 DdcStore::Stats DdcStore::stats() const {
     return { m_localHits.load(), m_sharedHits.load(),
              m_misses.load(),    m_stores.load() };
+}
+
+// ── Garbage collection ───────────────────────────────────────────────────────
+
+uint64_t DdcStore::budgetBytesFromEnv() {
+    if (const char* v = std::getenv("ENGINE_DDC_MAX_MB"); v && *v) {
+        char* end = nullptr;
+        const unsigned long long mb = std::strtoull(v, &end, 10);
+        if (end != v) return (uint64_t)mb << 20;      // 0 is legal: unbounded
+    }
+    return kDefaultBudgetMb << 20;
+}
+
+DdcStore::GcStats DdcStore::collectGarbage(uint64_t maxBytes, bool prune) {
+    GcStats st;
+    if (m_local.empty()) return st;
+
+    struct Entry {
+        fs::path            path;
+        uint64_t            bytes = 0;
+        fs::file_time_type  used{};
+    };
+    std::vector<Entry> evictable;
+
+    std::error_code ec;
+    // Two levels: <root>/<2 hex>/<key>.blob. A non-recursive walk of the fan-out
+    // dirs keeps this from wandering into anything else that shares the root.
+    for (const auto& bucket : fs::directory_iterator(m_local, ec)) {
+        if (!bucket.is_directory(ec)) continue;
+        for (const auto& e : fs::directory_iterator(bucket.path(), ec)) {
+            if (!e.is_regular_file(ec)) continue;
+            if (e.path().extension() != ".blob") continue;   // skip *.ingest temps
+
+            std::error_code sizeEc, linkEc, timeEc;
+            const uint64_t bytes = (uint64_t)fs::file_size(e.path(), sizeEc);
+            if (sizeEc) continue;
+            ++st.blobs;
+            st.totalBytes += bytes;
+
+            // Hardlinked into a project's .cache: unlinking here reclaims
+            // nothing, because the project's link keeps the inode alive.
+            const uintmax_t links = fs::hard_link_count(e.path(), linkEc);
+            if (!linkEc && links > 1) { st.pinnedBytes += bytes; continue; }
+
+            const auto used = fs::last_write_time(e.path(), timeEc);
+            evictable.push_back({ e.path(), bytes,
+                                  timeEc ? fs::file_time_type{} : used });
+        }
+    }
+
+    if (maxBytes == 0 || st.totalBytes <= maxBytes) return st;   // unbounded / fits
+    st.overBudgetBytes = st.totalBytes - maxBytes;
+
+    // Oldest use first.
+    std::sort(evictable.begin(), evictable.end(),
+              [](const Entry& a, const Entry& b) { return a.used < b.used; });
+
+    // Evict until the TOTAL (pinned included — those bytes are really on the
+    // disk) is under budget. If pinned data alone exceeds the budget we cannot
+    // reach it; report honestly rather than deleting everything unpinned in a
+    // futile attempt.
+    uint64_t live = st.totalBytes;
+    for (const Entry& e : evictable) {
+        if (live <= maxBytes) break;
+        if (prune) {
+            std::error_code delEc;
+            removeBlob(e.path, delEc);          // 0444: needs the helper
+            if (delEc) continue;                // someone else got it, or in use
+            ++st.deleted;
+            st.freedBytes += e.bytes;
+        }
+        live -= e.bytes;
+    }
+    return st;
 }
 
 } // namespace assetlib

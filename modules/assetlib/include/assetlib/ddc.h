@@ -74,6 +74,45 @@ public:
     struct Stats { uint64_t localHits=0, sharedHits=0, misses=0, stores=0; };
     Stats stats() const;
 
+    // ── Garbage collection (LOCAL TIER ONLY) ────────────────────────────────
+    // Without this the store grows forever: keys are derived from inputs, so
+    // every source edit, every cooker version bump and every settings change
+    // mints a NEW key and the old blob is never referenced again. Nothing else
+    // collects them — CookService::collectGarbage reconciles a project's
+    // .cache/ against its registry, which is a different store entirely.
+    //
+    // Eviction is LRU by mtime, which `fetch` touches on a local hit so the
+    // order reflects USE rather than ingest time.
+    //
+    // A blob that is hardlinked into some project's .cache (link count > 1) is
+    // skipped and counted as PINNED: deleting the store's link frees no bytes
+    // at all (the inode survives via the project's link) and would only force a
+    // re-ingest of something demonstrably in active use. Reporting those as
+    // reclaimable would make `freedBytes` a lie.
+    //
+    // The SHARED tier is never collected here, for the same reason
+    // `evictLocal` never touches it: a client cannot know what another machine
+    // still needs, and one over-eager GC would silently cost every other
+    // machine in the studio a full recook. Shared-tier retention is an
+    // administrative decision on the box that hosts the mount.
+    struct GcStats {
+        uint64_t blobs           = 0;   // blobs examined
+        uint64_t totalBytes      = 0;   // bytes resident in the local tier
+        uint64_t pinnedBytes     = 0;   // hardlinked into a project (unreclaimable)
+        uint64_t overBudgetBytes = 0;   // how far past maxBytes we started
+        uint64_t deleted         = 0;   // blobs evicted (0 unless prune)
+        uint64_t freedBytes      = 0;   // bytes actually reclaimed
+    };
+    // Evict least-recently-used blobs until the local tier fits `maxBytes`.
+    // `prune == false` reports what WOULD be evicted and changes nothing —
+    // matching `engine_cook --gc` vs `--gc-prune`.
+    GcStats collectGarbage(uint64_t maxBytes, bool prune);
+
+    // $ENGINE_DDC_MAX_MB (in MB), else kDefaultBudgetMb. 0 means unbounded, in
+    // which case collectGarbage reports and evicts nothing.
+    static constexpr uint64_t kDefaultBudgetMb = 20 * 1024;   // 20 GB
+    static uint64_t budgetBytesFromEnv();
+
     // $ENGINE_DDC, else <home>/.engine/ddc — per-machine, cross-project.
     static std::filesystem::path defaultLocalRoot();
     // $ENGINE_DDC_SHARED, else empty (no shared tier).

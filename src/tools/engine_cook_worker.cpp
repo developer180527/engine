@@ -16,11 +16,16 @@
 //     ERROR  <single-line message>
 //     OUTPUT <extra output path>     (mesh's sibling .ctex files)
 //     DEP    <uuid>
+// wrapped in the magic/END frame defined by assetlib/cook_result_file.h, so a
+// write this process does not finish is detectably incomplete rather than
+// reading as a success that lost its OUTPUT lines.
 // Exit code 0 means "result file written"; anything else means crash.
 #include "assets/cookers/mesh/mesh_cooker.h"
 #include "assets/cookers/texture/texture_cooker.h"
 #include "assets/cookers/shader/shader_cooker.h"
 #include "assets/cookers/material/material_cooker.h"
+
+#include <assetlib/cook_result_file.h>   // the framing, shared with the parent
 
 #include <algorithm>
 #include <cctype>
@@ -157,12 +162,30 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Build the body in memory, then frame it. A worker killed mid-write (the
+    // deadline SIGKILL, an OOM, a signal from a corrupt parse) used to leave a
+    // file whose FIRST line was already "RESULT ok" and whose OUTPUT lines were
+    // gone — the parent read success and shipped an asset missing its siblings.
+    // That is the silently-untextured-build failure mode, arriving through the
+    // IPC channel. The trailer makes truncation detectable: no END line, or a
+    // line count or digest that disagrees, means incomplete.
+    std::string body;
+    size_t lines = 0;
+    auto put = [&](const std::string& s) { body += s; body += '\n'; ++lines; };
+
+    put(std::string("RESULT ") + (res.success ? "ok" : res.skipped ? "skip" : "fail"));
+    if (!res.error.empty()) put("ERROR " + oneLine(res.error));
+    for (const auto& p : extras) put("OUTPUT " + p.string());
+    for (const auto& d : deps)   put("DEP "    + d);
+
+    const std::string framed = assetlib::cookresult::frame(body, lines);
+
     std::ofstream f(resultPath, std::ios::binary | std::ios::trunc);
     if (!f) return 65;                               // parent reports "no result"
-    f << "RESULT " << (res.success ? "ok" : res.skipped ? "skip" : "fail") << '\n';
-    if (!res.error.empty()) f << "ERROR "  << oneLine(res.error) << '\n';
-    for (const auto& p : extras) f << "OUTPUT " << p.string() << '\n';
-    for (const auto& d : deps)   f << "DEP "    << d << '\n';
+    f.write(framed.data(), (std::streamsize)framed.size());
     f.flush();
+    // Close before reporting success: a buffered write that only fails at close
+    // would otherwise be reported as a complete result.
+    f.close();
     return f.good() ? 0 : 65;
 }

@@ -1,0 +1,267 @@
+---
+status: unreviewed
+---
+# Issues — DDC / cook pipeline, triaged (Mon Aug 3)
+
+Two independent external reviews of the content-addressing, memory-budget
+scheduling, out-of-process and shared-DDC cook system. Every claim below was
+checked against the code before being accepted; several did not survive that,
+and saying so is the point of this file. Sections:
+
+- **[FIXED]** — real, and fixed in this pass (with the test that holds it fixed)
+- **[REAL, OPEN]** — real, deliberately not done yet, with why
+- **[MISDIAGNOSED]** — the symptom described does not exist; several of these
+  pointed at a *different* real problem, recorded here
+- **[REJECTED]** — not a problem, or the proposed remedy is worse
+
+---
+
+## [FIXED]
+
+### F1. The DDC store grew without bound — nothing ever collected it
+`--gc` (`d121a93`) does **not** cover this. `CookService::collectGarbage`
+reconciles a project's `.cache/` against its registry; the DDC is a different
+store with no referrer to ask, because keys are derived from *inputs*: every
+source edit, cooker version bump and settings change mints a new key and orphans
+the old blob permanently. Worst on the shared tier, which accumulates every blob
+every machine ever produced.
+
+Fixed: `DdcStore::collectGarbage(maxBytes, prune)` — budget + LRU, wired into
+`engine_cook --gc` / `--gc-prune` (dry-run by default, matching the existing UX).
+Four decisions worth keeping:
+
+- **LRU by mtime, which `fetch` touches on a local hit** — the order reflects
+  *use*, not ingest, so an old-but-hot blob is not evicted before a new cold one.
+- **Hardlinked blobs (link count > 1) are PINNED, not reclaimable.** Unlinking
+  the store's copy frees zero bytes — the project's `.cache` link keeps the inode
+  alive — and would force a re-ingest of something demonstrably in use.
+  Reporting them as reclaimable would make `freedBytes` a lie.
+- **The DDC pass runs AFTER the cache sweep**, because those deletions drop
+  hardlinks and un-pin blobs. The other order reclaims nothing on the first run.
+- **The shared tier is never collected from a client**, for the same reason
+  `evictLocal` never touches it: a client cannot know what another machine still
+  needs, and one over-eager GC costs the whole studio a recook. That is an
+  administrative decision on the host.
+
+Budget is `ENGINE_DDC_MAX_MB`, default 20 GB; `0` means unbounded (and evicts
+nothing — an opt-out, not a cache that deletes itself by default).
+Test: `cook_hardening_test`.
+
+### F2. A truncated worker result file read as a successful cook
+The severe one. `RESULT ok` is the **first** body line, so a worker killed
+part-way through writing — deadline `SIGKILL`, rlimit OOM, signal out of a
+corrupt parse — left a file that parsed as a clean success with its `OUTPUT`
+lines simply absent. The parent believed it and committed the asset without its
+sibling textures: the *silently-untextured build* (cf. `ab77845`), arriving
+through the IPC channel instead of the packager.
+
+Fixed: magic + version header and an `END <lines> <digest>` trailer, in
+`assetlib/cook_result_file.h` — **one** implementation shared by the writer
+(`engine_cook_worker`) and the reader (`cook_dispatch`), which were previously
+two hand-rolled halves of an undocumented protocol. The frame is validated
+before any field is read; anything incomplete is a failed cook.
+
+FNV-1a, not BLAKE3, deliberately: this detects truncation, and the file sits in
+our own temp directory beside the artifact it describes. Anyone who can rewrite
+it can rewrite the artifact, and the DDC's content hash is what guards *that*.
+Test: `cook_hardening_test` (truncation after the verdict, mid-trailer, digest
+mismatch, dropped line, unframed legacy file, empty file).
+
+### F3. `::stat(p.string().c_str())` broke on Windows non-ASCII paths
+`path::string()` renders the *native narrow* encoding — the active ANSI code
+page on Windows — so a source file with an accented or CJK name did not
+round-trip, `::stat` failed, and `statChanged` returned "changed" forever. Fails
+safe (it recooks) but recooks on **every** scan, permanently.
+
+Fixed: `std::filesystem::last_write_time` + `file_size` with `error_code`, no
+path-to-string conversion. Note the stored mtime is now `file_time_type`'s raw
+tick count (its epoch is unspecified) — fine, because the value is only ever
+compared against another produced by the same function. **One-time cost:** the
+first scan after this lands sees every record as stat-changed and rehashes once;
+the hash then matches, so nothing recooks.
+
+### F4. Migration errors were unconditionally discarded, and `open()` lied
+See M1 for what the reviewers got wrong here. The real defect: *every* SQLite
+error was swallowed, so a genuine failure (corrupt DB, read-only file, full
+disk) was indistinguishable from the benign "column already exists", `migrate()`
+returned `void`, and `open()` returned `true` regardless. An unusable registry
+reported success and the cook then silently recorded nothing.
+
+Fixed: match the benign case exactly (`duplicate column name`), treat anything
+else as a failure, and `open()` now fails when the schema cannot be reached.
+Added `PRAGMA user_version` (`kSchemaVersion`), which also lets us **refuse a
+database written by a newer build** rather than write to it and drop the columns
+this build cannot see — a real hazard once a cache is shared across machines on
+different builds. Test: `cook_hardening_test`.
+
+### F5. `findBySourcePath` per scanned file — O(N) statement *compilations*
+Worse than the "O(N) SQL queries" reported: it builds the SQL by string
+concatenation and calls `sqlite3_prepare_v2` on every call, and compilation is
+the expensive half. Fixed by extending the snapshot that `hashIndex()` already
+builds in the same function — one `all()` now serves both move detection and the
+existence check. Safe as a snapshot because the directory walk visits each
+`rel` at most once.
+
+**Not** claimed as a speedup: unmeasured at scale. Warm no-op scan is ~37 ms on
+`fps_shooter` (2026-08-03), which is the number to beat if anyone optimises here
+on purpose.
+
+### F6. POSIX memory cap did not cover the child's static initializers
+`setrlimit` was applied inside the worker's `main()` from `argv`, so everything
+before `main` ran uncapped. Fixed with `fork` + `setrlimit` + `execv`: rlimits
+are inherited across `exec`, so the cap predates the worker's first instruction
+— the property the Windows path already had (it assigns the job object while the
+process is still suspended). Only async-signal-safe calls sit between fork and
+exec; this parent is multithreaded, so a `malloc` there could deadlock on a lock
+another thread held at fork time. A distinct exit code (66) now reports "cannot
+exec the worker" instead of it looking like a crashed cook.
+
+### F7. `MemGovernor` clamped an unbalanced release without asserting
+Confirmed — loud `fprintf`, no assert. Added one: the clamp keeps a release
+build scheduling, it does not make the imbalance correct.
+
+---
+
+## [REAL, OPEN]
+
+### O1. Two dependency-invalidation mechanisms exist; neither is wired
+Not raised by either review, and the most important thing on this page.
+
+- `DdcKeyInputs::depHashes` is hashed by `computeDdcKey` and **populated by
+  nobody** ("reserved for multi-file sources").
+- The `dependencies` table *is* written (`ctx.addDependency` → `commitResult`),
+  and `dependents()` / `transitiveDependents()` are correct — and **never called
+  from the cook path**.
+
+Harmless today only because `settingsFingerprint` covers the one real case:
+`MaterialCooker` folds the `.shader` manifest's BLAKE3 into its key (and hashes
+only the manifest, not the `.sc` stage sources, on purpose — hashing those would
+recook every material in the project on every shader edit). The hazard is that a
+future contributor will reasonably assume dependency invalidation works, because
+finished-looking plumbing is sitting right there.
+
+**Either wire one or delete both.** Until then the real risk is a *convention*
+gap, not an architecture gap: correctness depends on every cooker author
+remembering to fold their second inputs into `settingsFingerprint`, and nothing
+enforces it. The fix is a test asserting that for each registered cooker,
+perturbing each declared input changes the key — mechanically checkable, and it
+fits the tier ladder.
+
+### O2. Bit-for-bit determinism is load-bearing for the shared tier
+A shared DDC keyed on inputs silently asserts that identical inputs produce
+identical outputs on every machine. If macOS-arm64 and Linux-x86-64 differ by one
+padding byte, the store serves one machine's output to the other under a key
+claiming equivalence — undetectably. No test covers this. Cheap first step: hash
+every cooked output on both platforms over the same corpus and diff. Connects
+directly to the cross-ISA determinism lane in
+`docs/plans/automated-testing-soak-fuzz-plan.md`.
+
+### O3. `settingsFingerprint` cannot signal failure distinctly
+`MaterialCooker` does the right thing by encoding failures into the fingerprint
+(`"unparsed"`, `"shader-missing:<ref>"`, `"…@unreadable"`), so each failure mode
+gets its own key and self-heals. But the interface returns a bare `std::string`,
+so a cooker that returns `""` on a transient read error would hash identically to
+"no settings" and cache a wrongly-cooked artifact under a key that looks correct.
+Worth tightening to `std::optional<std::string>` when O1's enforcement test lands.
+
+### O4. Unreadable sources are skipped silently
+`computeCookKey` returns `{}` for an unreadable source and `cookIsStale` then
+returns `false` ("cooking would fail identically"). The behaviour is defensible
+and self-heals when the file becomes readable — but nothing *reports* that an
+asset was skipped, so it looks like an asset that was never authored. Reporting,
+not re-designing, is the fix.
+
+### O5. Windows reserved device names in DDC manifest members
+`ddcFetchRecord` already rejects `/`, `\`, `:` and `.`/`..` (so drive letters and
+ADS are covered), but not `CON`/`AUX`/`NUL`/`COM1`… or >255-char names. Only
+reachable from a hostile *shared* store, which is a real threat model for a
+studio mount, but Windows-only and low. Do it with the Windows port.
+
+### O6. Result-file protocol is not fuzzed
+`cook_hardening_test` covers the truncation shapes that motivated F2, but the
+parser is untrusted-input surface and belongs in `tests/fuzz`. Cheap to add
+against the existing harness.
+
+### O7. `estimatePeakBytes` has no feedback loop
+Fair: a grossly wrong estimate can still OOM the scheduler. Measuring actual
+peak RSS per cooker and adjusting is a genuine improvement — but it needs the
+measurement infrastructure first, and the enforcement rlimit (F6) already bounds
+the damage to one asset. Not urgent.
+
+### O8. `std::printf` throughout instead of a levelled logger
+Confirmed and accepted for now: `assetlib` is deliberately engine-dependency-free
+(it cannot reach `core/logger.h`), so this needs an injectable sink on the
+module boundary rather than a find-and-replace.
+
+---
+
+## [MISDIAGNOSED]
+
+### M1. "Migrations are unconditional — a failure skips the rest silently"
+The skip-cascade **does not happen**. `migrate()` is a `for` loop of independent
+`sqlite3_exec` calls; a failure at N cannot prevent N+1. The loop was already
+idempotent, just noisily so (7 failing ALTERs per open). The real defect
+underneath it is F4, and the proposed remedy (conditional ALTER via
+`table_info`) was not the fix — checking *which* error occurred was.
+
+### M2. "`settingsFingerprint` fails → the key becomes empty → staleness is wrong"
+Not what happens. `computeDdcKey` hashes an empty settings string happily; the
+key stays valid. `computeCookKey` *does* already guard the source-hash case
+explicitly, and `cookIsStale` handles an empty key with a documented rationale.
+The real, narrower version of this concern is O3.
+
+### M3. "Manual `depHashes` arrays risk poisoning if nested deps mutate"
+Assumes `depHashes` is in use. It is populated by nobody — see O1, which is both
+more serious and differently shaped.
+
+---
+
+## [REJECTED]
+
+### R1. Merkle-DAG cache keys (recursively folding dependency content hashes)
+The wrong shape here, not just unnecessary. `MaterialCooker` deliberately hashes
+**only the `.shader` manifest** — the declared interface — and not the `.sc`
+stage sources, because shading-code edits change no byte of a cooked material. A
+naive recursive fold of content hashes reintroduces exactly the over-invalidation
+that comment exists to prevent: every material in the project recooking on every
+shader edit. The existing per-cooker `settingsFingerprint` is *more precise* than
+the proposed replacement. What is genuinely missing is enforcement (O1).
+
+### R2. Hardlink locking: `ReplaceFileW` / `renameat2(RENAME_EXCHANGE)` for commits
+Premise does not fit a CAS. DDC blobs are content-addressed and `chmod 0444`: a
+blob's content never changes for a given key, so there is nothing to update
+in place — you write a *new* key. Ingest is already temp-file + atomic rename.
+`ETXTBSY` is also wrong: it applies to executables being executed, not data
+files, and writing to a file another process holds open for read is fine on
+Linux. The Windows sharing-violation concern is real but belongs to the `.cache`
+materialization path, not here.
+
+### R3. cgroups v2 / systemd scopes, and `posix_spawnattr_setflags`, for the rlimit
+Direction was right (POSIX lagged Windows) but both remedies are wrong.
+`posix_spawn` has **no** rlimit attribute in POSIX — the mechanism does not
+exist. And cgroups is heavy infrastructure, Linux-only, for something
+`fork`+`setrlimit`+`exec` solves in three lines and portably, because rlimits
+are inherited across `exec`. See F6.
+
+### R4. Replace the sidecar result file with pipes or a shared-memory ring (FlatBuffers)
+Large build, justified by throughput numbers nobody has. Cold cook is already
+1.8 s for `fps_shooter`; the sidecar is one small file write per asset, and it is
+deliberately human-readable for debugging a failing cook. F2 fixed the actual
+defect (undetectable truncation) at a fraction of the cost. Revisit if profiling
+ever shows result I/O mattering.
+
+### R5. Persistent worker pool / batching several assets per process
+Same objection, plus it trades away the property the child process exists for:
+one asset per process means one corrupt file kills one cook. Batching widens the
+blast radius to every asset sharing the process. Would need a throughput problem
+to justify, and there isn't one.
+
+### R6. SQLite access timestamps in the DDC for LRU
+Would put a SQLite database on a shared network mount, where its locking is
+famously unsafe (NFS/SMB). Filesystem mtime needs no database, no locking, and
+works per-tier. See F1.
+
+### R7. Move `backfillDdc` off the startup path onto a thread pool
+Measured before accepting: warm no-op is ~37 ms end to end on `fps_shooter`
+(2026-08-03). There is no startup stall to move. Revisit if a project appears
+where there is one.

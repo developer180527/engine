@@ -137,6 +137,8 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # Cook infrastructure (scheduler / DDC / manifest / scanner) — needs only
     # the GPU-free core, no game assets.
     engine_test(cook_infra_test LIB engine_core)
+    # Result-file framing, DDC budget/LRU eviction, registry schema versioning
+    engine_test(cook_hardening_test LIB engine_core)
 
     # ── Fuzz targets — two ctest lanes from one binary ───────────────────────
     # engine_fuzz_target(<name>) registers:
