@@ -10,6 +10,7 @@ tests:
   - tests/fuzz_ddc_manifest_test.cpp
   - tests/fuzz_mesh_loader_test.cpp
   - tests/cook_hardening_test.cpp   # result framing, DDC GC, schema versioning
+  - tests/cook_deps_test.cpp        # declared inputs must move the cook key
 ---
 # assetlib
 
@@ -54,7 +55,7 @@ policy. Public headers are `cooker.h` (the cooker contract), `cook_pipeline.h`,
 |---|---|
 | `cooker.h` | **the cooker contract** — `CookContext`/`CookResult`/`ICooker` alone, no pipeline dependency. Cooker implementations and the out-of-process worker include only this. |
 | `cook_pipeline.cpp` | **orchestration** — what needs cooking, in what order, what the registry records after. `resolve()` turns a record into (cooker, key, paths) once for all three entry points; `placeOutput()` is the single temp→DDC→cache placement; `commitResult()` is the single registry writer (drain lane only). |
-| `src/cook_key.*` | **identity + staleness** — DDC key = source hash ⊕ cooker id ⊕ version ⊕ settings ⊕ import settings; `cookIsStale()` is the whole "is the cooked output already correct?" policy, testable on its own. |
+| `src/cook_key.*` | **identity + staleness** — DDC key = source hash ⊕ cooker id ⊕ version ⊕ settings ⊕ import settings ⊕ **declared input files** ⊕ **dependency source hashes**; `cookIsStale()` is the whole "is the cooked output already correct?" policy, testable on its own. |
 | `src/cook_dispatch.*` | **execution mode** — isolated `engine_cook_worker` child (crash/timeout containment, hard child `setrlimit` cap) vs in-process behind the exception net. `dispatchCook()` is the seam every cook passes through — and the natural hook for remote/farm execution. |
 | `ddc.h` / `ddc.cpp` | **the store** — two-tier content-addressed blobs, atomic ingest, hardlink materialization, shared→local promotion, and budget+LRU garbage collection of the LOCAL tier. |
 | `cook_result_file.h` | **the worker IPC frame** — magic/version header and an `END <lines> <digest>` trailer around the sidecar result. ONE implementation, shared by writer (`engine_cook_worker`) and reader (`cook_dispatch`). |
@@ -103,12 +104,35 @@ specifically when a cache is shared between machines on different builds.
 - `CookService` (`src/io`): write connection on the cook thread.
 - `engine_cook` CLI: synchronous one-shot cook.
 
-## Future Work
-- Asset dependency-driven recooks wired end to end. Two mechanisms exist and
-  NEITHER is wired: `DdcKeyInputs::depHashes` is hashed by `computeDdcKey` but
-  populated by nobody, and `dependents()`/`transitiveDependents()` are correct
-  but never called from the cook path. Harmless today only because
-  `settingsFingerprint` covers the one real multi-input cooker (`MaterialCooker`
-  folds the shader manifest's hash). Either wire one or delete both — see
-  `src/issues.md` O1 for why the risk is an unenforced convention rather than a
-  missing architecture.
+## Dependency invalidation
+**The key is the only mechanism.** `cookIsStale` decides staleness from the DDC
+key alone and never reads `rec.state` (except to keep a Failed record failed), so
+a registry-side "mark dependents stale" cascade would be a no-op — which is why
+`transitiveDependents()` is documented as a QUERY, not an invalidation path. A key
+is also the only thing that is correct across a SHARED DDC: a cascade is local to
+one machine's registry, while a content-derived key means the same thing on every
+machine.
+
+Two sources feed `DdcKeyInputs::depHashes`, and both are now populated:
+
+- **`ICooker::declaredInputs()`** — extra FILES a cook reads, hashed by the
+  pipeline before the cook. This is the seam that was missing:
+  `CookContext::addDependency` takes a UUID and cookers have no registry lookup,
+  so a cooker whose extra input was a plain file (a shader's `.sc` sources, the
+  `.shader` manifest a material resolves against) had to hand-roll
+  `blake3File()` into `settingsFingerprint` — and a cooker that simply forgot was
+  indistinguishable from one with no extra inputs. `cook_deps_test` now perturbs
+  every declared input of every registered cooker and requires the key to move.
+- **Recorded UUID dependencies** (`ctx.addDependency` → the `dependencies` table),
+  folded in as the dependency's SOURCE hash. Effective from the SECOND cook, since
+  they are discovered during cooking; `declaredInputs` is the pre-first-cook path.
+  Snapshotted in ONE query per batch (`allDependencySourceHashes`), never a query
+  per asset.
+
+Source hashes rather than the dependency's cooked key, deliberately: folding
+cooked identity in would make the fold transitive and drag in things the dependent
+provably does not read — a material depends on a shader's declared INTERFACE, not
+on its stage sources, and keying materials on those would recook every material in
+the project on every shading-code edit. The cost is that a change does not
+propagate through two hops on its own; a cooker needing that must declare the far
+input too.

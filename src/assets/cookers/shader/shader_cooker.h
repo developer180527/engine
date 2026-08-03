@@ -38,6 +38,9 @@ public:
     // does the shaderc binary itself — a bgfx bump changes the bytecode
     // format. Both must key the cache.
     std::string settingsFingerprint(const assetlib::CookContext& ctx) const override;
+    // The .sc stage sources and everything they #include, transitively.
+    std::vector<std::filesystem::path>
+    declaredInputs(const assetlib::CookContext& ctx) const override;
 
     // Shader compiles are small next to a mesh import or an 8K BC7 encode, but
     // they are not free: a full variant matrix spawns one shaderc per

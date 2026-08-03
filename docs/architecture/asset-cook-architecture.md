@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-08-01
+verified: 2026-08-03
 covers:
   - modules/assetlib/src/cook_*.cpp
   - modules/assetlib/src/ddc*.cpp
@@ -186,11 +186,23 @@ cook key = blake3( "engine-ddc-v1"          // recipe version — see §5.2
                  ⊕ cooker->version()        // per-cooker, NOT global
                  ⊕ cooker->settingsFingerprint(ctx)
                  ⊕ record.importSettings
-                 ⊕ blake3(source bytes) )
+                 ⊕ blake3(source bytes)
+                 ⊕ Σ declaredInputs         // extra FILES the cook reads
+                 ⊕ Σ dependency source hashes )
 ```
 
 Fields are length-prefixed so no two different input sets can concatenate to
-the same byte stream.
+the same byte stream. The two Σ sets are sorted, so neither the order a cooker
+declares its inputs in nor the row order of the dependency table can change the
+key.
+
+**The key is the ONLY invalidation mechanism.** §3.2's staleness test reads the
+key and nothing else — it never consults `record.state` (bar keeping a Failed
+record failed). So a registry-side "mark dependents stale" cascade would be a
+no-op, and `transitiveDependents()` is a query for tooling, not an invalidation
+path. A key is also the only thing that is correct across a SHARED store: a
+cascade is local to one machine's registry, while another machine fetches by
+content key and would be served the stale blob regardless.
 
 **Per-cooker versions are the point.** A single global `kCurrentCookVersion`
 (what this replaced) meant a texture-encoder change re-cooked every mesh in the
@@ -201,6 +213,23 @@ else. Current versions: `MeshCooker` 12, `TextureCooker` 3.
 source bytes.** Today that is `COOK_TEX_HQ` (BC7 final-bake vs fast BC1/BC3)
 and the filename normal-map heuristic (BC5 + linear mips). Miss one and the
 cache serves the wrong quality tier — silently, and across the whole studio.
+
+**Extra FILES go through `declaredInputs()`, not `settingsFingerprint`.**
+`CookContext::addDependency` takes a UUID and cookers have no registry lookup, so
+a cooker whose second input is a plain file (a shader's `.sc` stage sources, the
+`.shader` manifest a material resolves against) once had no way to declare it and
+hand-rolled `blake3File()` into its fingerprint instead. That worked and could not
+be checked: a cooker that forgot looked identical to one with no extra inputs.
+Declaring the paths lets the pipeline do the hashing, and makes the omission a
+test failure — `cook_deps_test` perturbs every declared input of every registered
+cooker and requires the key to move.
+
+Deliberately **source** hashes, never the dependency's cooked key: folding cooked
+identity in would make the fold transitive and pull in inputs the dependent
+provably does not read. A material depends on a shader's declared INTERFACE, not
+on its shading code, so keying materials on the `.sc` bytes would recook every
+material in the project on every shader edit. See §8 for why the Merkle-DAG
+variant of this was rejected.
 
 ### 3.2 Staleness
 

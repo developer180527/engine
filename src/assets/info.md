@@ -13,6 +13,7 @@ tests:
   - tests/fuzz_mesh_loader_test.cpp   # cooked-binary parse the loaders depend on
   - tests/stress_assets.cpp           # garbage-in importer fuzz
   - tests/cook_hardening_test.cpp     # worker IPC framing + DDC GC
+  - tests/cook_deps_test.cpp          # declared inputs must move the cook key
 ---
 # Assets
 

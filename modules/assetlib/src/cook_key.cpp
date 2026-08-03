@@ -18,7 +18,8 @@ std::string cookSourceHash(const AssetRecord& rec,
 }
 
 std::string computeCookKey(const AssetRecord& rec, ICooker& cooker,
-                           const std::filesystem::path& projectRoot) {
+                           const std::filesystem::path& projectRoot,
+                           const std::vector<std::string>& depHashes) {
     const std::string srcHash = cookSourceHash(rec, projectRoot);
     if (srcHash.empty()) return {};        // unreadable source — no identity
 
@@ -35,6 +36,26 @@ std::string computeCookKey(const AssetRecord& rec, ICooker& cooker,
         in.settings += rec.importSettings.json;
     }
     in.sourceHash = srcHash;
+    // computeDdcKey sorts these, so neither the order a cooker declares its
+    // inputs in nor the row order of the dependency table can change the key.
+    in.depHashes = depHashes;
+
+    // Extra FILES the cooker says it reads. Hashed here rather than by each
+    // cooker, so declaring an input is all a cooker has to do — and so a cooker
+    // that declares nothing is visibly declaring nothing, instead of being
+    // indistinguishable from one that hashed its inputs by hand.
+    //
+    // The path is folded in alongside the content hash: two different declared
+    // files with identical bytes are the same input for keying purposes, but a
+    // cook that starts reading a DIFFERENT file with the same content is a real
+    // change of inputs. A path that does not exist contributes a distinct
+    // "missing" marker rather than being skipped, so an input appearing later
+    // moves the key.
+    for (const auto& p : cooker.declaredInputs(ctx)) {
+        const std::string h = blake3File(p);
+        in.depHashes.push_back(p.generic_string() + "@"
+                               + (h.empty() ? "missing" : h));
+    }
     return computeDdcKey(in);
 }
 

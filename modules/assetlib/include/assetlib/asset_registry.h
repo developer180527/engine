@@ -74,7 +74,24 @@ public:
     bool              wouldCreateCycle(const UUID& from, const UUID& to) const;
     std::vector<UUID> dependents(const UUID& uuid)           const;
     std::vector<UUID> dependencies(const UUID& uuid)         const;
+    // QUERY ONLY — this is NOT how a dependency change invalidates a cook.
+    // Staleness is decided by the DDC key (see cook_key.h), so marking a
+    // dependent `Stale` would not cause it to recook: cookIsStale never reads
+    // `state` except to keep a Failed record failed. Invalidation happens
+    // because a dependency's hash is folded INTO the dependent's key. Kept for
+    // tooling that wants to show "what does this asset affect".
     std::vector<UUID> transitiveDependents(const UUID& uuid) const;
+
+    // ── Dependency hashes, for cook-key derivation ───────────────────────────
+    // asset uuid -> source hashes of everything it depends on. ONE query for
+    // the whole table: the per-record alternative is a prepare-per-asset inside
+    // a staleness loop, which is exactly the O(N)-compiles mistake removed from
+    // scan(). Callers hash the vector into the key; ordering is normalised
+    // there, not here.
+    std::unordered_map<std::string, std::vector<std::string>>
+        allDependencySourceHashes() const;
+    // Single-record variant for the one-off paths (editor queries, cookOne).
+    std::vector<std::string> dependencySourceHashes(const UUID& uuid) const;
 
     int scan(const std::filesystem::path& assetsRoot,
              const std::filesystem::path& projectRoot);

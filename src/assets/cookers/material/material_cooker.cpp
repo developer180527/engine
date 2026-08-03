@@ -64,20 +64,31 @@ fs::path resolveShader(const std::string& ref, const fs::path& materialPath) {
 
 } // namespace
 
+// WHICH shader, by name. The shader's CONTENT arrives through declaredInputs
+// below, so this carries identity only: re-pointing a material at a different
+// shader that happens to have identical bytes is still a change of inputs.
 std::string MaterialCooker::settingsFingerprint(const assetlib::CookContext& ctx) const {
     MaterialManifest man;
     if (!parseMaterialManifest(slurp(ctx.sourcePath), man).ok) return "unparsed";
+    return "shader=" + man.shaderRef;
+}
 
+// The .shader MANIFEST, and deliberately not the .sc stage sources: a material's
+// output depends on the shader's DECLARED INTERFACE (names, types, offsets,
+// defaults), which lives entirely in the manifest. Shading-code edits do not
+// alter a single byte of a cooked material, and keying on them would re-cook
+// every material in the project on every shader edit.
+//
+// This used to be a blake3File() call inlined into settingsFingerprint. It is
+// declared instead so the pipeline hashes it — which is what makes the omission
+// of an input a testable condition rather than a convention (cook_deps_test).
+std::vector<fs::path>
+MaterialCooker::declaredInputs(const assetlib::CookContext& ctx) const {
+    MaterialManifest man;
+    if (!parseMaterialManifest(slurp(ctx.sourcePath), man).ok) return {};
     const fs::path shader = resolveShader(man.shaderRef, ctx.sourcePath);
-    if (shader.empty()) return "shader-missing:" + man.shaderRef;
-
-    // Only the .shader manifest is hashed, not the .sc stage sources. This
-    // material's output depends on the DECLARED INTERFACE (names, types,
-    // offsets, defaults) — which lives entirely in the manifest. Shading code
-    // changes don't alter a single byte here, and hashing them would re-cook
-    // every material in the project on every shader edit.
-    const std::string h = assetlib::blake3File(shader);
-    return "shader=" + man.shaderRef + "@" + (h.empty() ? "unreadable" : h.substr(0, 16));
+    if (shader.empty()) return {};      // reported by the cook, not by keying
+    return { shader };
 }
 
 assetlib::CookResult MaterialCooker::cook(const assetlib::CookContext& ctx) {

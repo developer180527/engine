@@ -71,6 +71,28 @@ public:
         (void)ctx; return {};
     }
 
+    // Extra FILES this cook reads besides ctx.sourcePath, whose CONTENT changes
+    // the output. The pipeline hashes each one into the DDC key, so editing any
+    // of them re-cooks this asset and nothing else.
+    //
+    // This exists because `CookContext::addDependency` takes a UUID and cookers
+    // have no registry lookup — so a cooker whose extra input is a plain FILE
+    // (a shader's .sc stage sources, the .shader manifest a material resolves
+    // against) had no way to declare it, and every such cooker hand-rolled
+    // blake3File() into settingsFingerprint instead. That worked, and it was an
+    // unenforceable convention: nothing could tell a cooker that forgot from one
+    // that had no extra inputs. Declaring paths here makes the pipeline do the
+    // hashing, uniformly, and makes the omission testable — see
+    // cook_deps_test.cpp, which perturbs every declared input of every
+    // registered cooker and requires the key to move.
+    //
+    // Called BEFORE the cook (it participates in the key), so it must derive its
+    // answer from the source file alone. Paths that do not exist are ignored —
+    // a missing include is the cook's error to report, not a keying failure.
+    // MUST be deterministic for a given (environment, source path).
+    virtual std::vector<std::filesystem::path>
+    declaredInputs(const CookContext& ctx) const { (void)ctx; return {}; }
+
     // Estimated peak heap footprint, in bytes, of cooking this one asset.
     // The scheduler admits work against a memory budget (not a fixed thread
     // count) so a burst of 8K textures or high-poly meshes serializes instead

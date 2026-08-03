@@ -31,6 +31,9 @@ public:
     // instances it — hashing it in is what makes that happen, since the shader
     // is a separate registry asset that this cooker only reads.
     std::string settingsFingerprint(const assetlib::CookContext& ctx) const override;
+    // The .shader manifest this material resolves its parameters against.
+    std::vector<std::filesystem::path>
+    declaredInputs(const assetlib::CookContext& ctx) const override;
 
     // Pure JSON in, a few hundred bytes out. The default estimate (source x 10)
     // would reserve megabytes of budget for a 1 KB file and needlessly

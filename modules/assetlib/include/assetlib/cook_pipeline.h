@@ -1,6 +1,7 @@
 #pragma once
 #include "uuid.h"
 #include "asset_registry.h"
+#include <unordered_map>
 #include "cooker.h"        // CookContext / CookResult / ICooker
 #include "ddc.h"
 #include <filesystem>
@@ -70,15 +71,25 @@ public:
     CookResult forceRecook(const UUID& uuid);
 
     // Content-addressed staleness: an asset is stale iff the DDC key computed
-    // from its CURRENT inputs (source hash ⊕ cooker id/version ⊕ settings)
-    // differs from the key of the last attempt, or its materialized output
-    // vanished. No mtime comparison, no global cook version — a cooker bump
-    // re-keys (and thus re-cooks) only that cooker's assets.
+    // from its CURRENT inputs (source hash ⊕ cooker id/version ⊕ settings ⊕ the
+    // source hashes of its DEPENDENCIES) differs from the key of the last
+    // attempt, or its materialized output vanished. No mtime comparison, no
+    // global cook version — a cooker bump re-keys (and thus re-cooks) only that
+    // cooker's assets, and a dependency edit re-keys only its dependents.
     bool         isStale(const AssetRecord& rec) const;
     bool         hasCookerFor(const std::string& ext) const;
 
     // The DDC key for this record's current inputs ("" when no cooker/hash).
     std::string  currentKey(const AssetRecord& rec, ICooker* cooker) const;
+
+    // Snapshot every asset's dependency source hashes in ONE query. Callers
+    // looping over many records should build this and pass it to isStaleWith,
+    // rather than paying a query per asset.
+    using DepHashIndexPublic =
+        std::unordered_map<std::string, std::vector<std::string>>;
+    DepHashIndexPublic dependencyHashIndex() const;
+    bool  isStaleWith(const AssetRecord& rec,
+                      const DepHashIndexPublic& idx) const;
 
     // Ingest an already-materialized, up-to-date output into the DDC when the
     // store has no record for its key. Closes the gap where a warm .cache sits
@@ -121,7 +132,17 @@ private:
         std::filesystem::path outPath;     // .cache/<type>s/<uuid>.cooked
         std::filesystem::path tmpPath;     // cookers write HERE, never outPath
     };
-    std::optional<Resolved> resolve(const AssetRecord& rec) const;
+    // asset uuid -> source hashes of its dependencies, snapshotted once per
+    // batch. Threaded through resolve/isStale/currentKey as an optional pointer:
+    // nullptr means "query this one record", which is right for the one-off
+    // paths and wrong inside a loop over every asset.
+    using DepHashIndex =
+        std::unordered_map<std::string, std::vector<std::string>>;
+    std::vector<std::string> depHashesFor(const AssetRecord& rec,
+                                          const DepHashIndex* idx) const;
+
+    std::optional<Resolved> resolve(const AssetRecord& rec,
+                                    const DepHashIndex* idx = nullptr) const;
 
     // Move a finished cook's temp output into the DDC and materialize it at
     // outPath (falling back to a plain rename if the store is unusable), or

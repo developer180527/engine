@@ -49,27 +49,59 @@ bool CookPipeline::hasCookerFor(const std::string& ext) const {
 
 // ── Identity + staleness (policy in cook_key.h) ──────────────────────────────
 
+// Dependency source hashes for one record: from the batch snapshot when the
+// caller built one, else a single query. A loop over every asset must pass the
+// index — a query per asset is the O(N)-prepares mistake removed from scan().
+std::vector<std::string>
+CookPipeline::depHashesFor(const AssetRecord& rec,
+                           const DepHashIndex* idx) const {
+    if (!idx) return m_registry.dependencySourceHashes(rec.uuid);
+    const auto it = idx->find(rec.uuid.toString());
+    return it == idx->end() ? std::vector<std::string>{} : it->second;
+}
+
+CookPipeline::DepHashIndexPublic CookPipeline::dependencyHashIndex() const {
+    return m_registry.allDependencySourceHashes();
+}
+
 std::string CookPipeline::currentKey(const AssetRecord& rec,
                                      ICooker* cooker) const {
     if (!cooker) return {};
-    return computeCookKey(rec, *cooker, m_projectRoot);
+    return computeCookKey(rec, *cooker, m_projectRoot,
+                          depHashesFor(rec, nullptr));
+}
+
+static bool isStaleImpl(const AssetRecord& rec, ICooker* cooker,
+                        const std::filesystem::path& projectRoot,
+                        const std::filesystem::path& cacheRoot,
+                        const std::vector<std::string>& depHashes) {
+    if (!cooker) return false;              // nothing can cook it
+    return cookIsStale(rec, computeCookKey(rec, *cooker, projectRoot, depHashes),
+                       cacheRoot);
 }
 
 bool CookPipeline::isStale(const AssetRecord& rec) const {
     ICooker* cooker = findCooker(lowerExtOf(rec.sourcePath));
-    if (!cooker) return false;              // nothing can cook it
-    return cookIsStale(rec, computeCookKey(rec, *cooker, m_projectRoot),
-                       m_cacheRoot);
+    return isStaleImpl(rec, cooker, m_projectRoot, m_cacheRoot,
+                       depHashesFor(rec, nullptr));
+}
+
+bool CookPipeline::isStaleWith(const AssetRecord& rec,
+                               const DepHashIndexPublic& idx) const {
+    ICooker* cooker = findCooker(lowerExtOf(rec.sourcePath));
+    return isStaleImpl(rec, cooker, m_projectRoot, m_cacheRoot,
+                       depHashesFor(rec, &idx));
 }
 
 // ── Per-record resolution + output placement ─────────────────────────────────
 
 std::optional<CookPipeline::Resolved>
-CookPipeline::resolve(const AssetRecord& rec) const {
+CookPipeline::resolve(const AssetRecord& rec, const DepHashIndex* idx) const {
     Resolved r;
     r.cooker = findCooker(lowerExtOf(rec.sourcePath));
     if (!r.cooker) return std::nullopt;
-    r.key = computeCookKey(rec, *r.cooker, m_projectRoot);
+    r.key = computeCookKey(rec, *r.cooker, m_projectRoot,
+                           depHashesFor(rec, idx));
     if (r.key.empty()) return std::nullopt;     // unreadable source
 
     const auto outDir = m_cacheRoot / (assetTypeName(rec.type) + "s");
@@ -245,7 +277,8 @@ CookResult CookPipeline::forceRecook(const UUID& uuid) {
     // it; ingest there is first-writer-wins, so a poisoned shared blob needs
     // an admin wipe — same as every production DDC.)
     if (ICooker* cooker = findCooker(lowerExtOf(rec->sourcePath)))
-        m_ddc.evictLocal(computeCookKey(*rec, *cooker, m_projectRoot));
+        m_ddc.evictLocal(computeCookKey(*rec, *cooker, m_projectRoot,
+                                        depHashesFor(*rec, nullptr)));
     rec->ddcKey.clear();                    // force staleness
     m_registry.update(*rec);
     return cookInternal(uuid, /*useFetch=*/false);
@@ -257,10 +290,13 @@ int CookPipeline::cookAll(std::function<void(int,int)> progress) {
     auto all   = m_registry.all();
     int  total = static_cast<int>(all.size());
 
+    // One query for every asset's dependency hashes, not one per asset.
+    const DepHashIndex depIdx = m_registry.allDependencySourceHashes();
+
     std::vector<UUID> stale;
     int backfilled = 0;
     for (auto& rec : all) {
-        if (isStale(rec)) { stale.push_back(rec.uuid); continue; }
+        if (isStaleWith(rec, depIdx)) { stale.push_back(rec.uuid); continue; }
         if (backfillDdc(rec)) ++backfilled;         // warm .cache, cold DDC
         if (rec.state != AssetState::Ready
                 && rec.state != AssetState::Failed) {   // fresh but unmarked
@@ -297,18 +333,19 @@ int CookPipeline::cookGraph(const std::vector<UUID>& uuids,
     // is nothing to parallelize.
     std::vector<Work> work;
     work.reserve(uuids.size());
+    const DepHashIndex depIdx = m_registry.allDependencySourceHashes();
     int hits = 0, backfilled = 0;
     for (const auto& uuid : uuids) {
         auto rec = m_registry.findByUUID(uuid);
         if (!rec) continue;
-        if (!isStale(*rec)) {
+        if (!isStaleWith(*rec, depIdx)) {
             // Up to date. If the store somehow lacks it (wiped ~/.engine, a
             // tree copied from another machine), ingest it now rather than
             // paying a full cook at the next .cache wipe.
             if (backfillDdc(*rec)) ++backfilled;
             continue;
         }
-        auto r = resolve(*rec);
+        auto r = resolve(*rec, &depIdx);
         if (!r) continue;                   // no cooker / unreadable source
 
         if (ddcFetchRecord(m_ddc, r->key, r->outPath)) {

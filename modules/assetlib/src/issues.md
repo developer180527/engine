@@ -120,32 +120,47 @@ exec the worker" instead of it looking like a crashed cook.
 Confirmed — loud `fprintf`, no assert. Added one: the clamp keeps a release
 build scheduling, it does not make the imbalance correct.
 
+### F8. Dependency invalidation: wired, and not the way this file first said
+Was O1. Both mechanisms were unwired — `DdcKeyInputs::depHashes` populated by
+nobody, `dependents()`/`transitiveDependents()` never called from the cook path.
+The advice here was "wire one or delete both". Checking the code settled *which*,
+and ruled the other out entirely:
+
+**The registry cascade cannot work.** `cookIsStale` decides staleness from the DDC
+key alone and never reads `rec.state` (bar keeping a Failed record failed), so
+marking dependents `Stale` is a no-op — they still match their key and are still
+skipped. A cascade is also wrong for a SHARED DDC even in principle: it is local to
+one machine's registry, while another machine fetches by content key and would be
+served the stale blob regardless. `transitiveDependents()` is therefore now
+documented as a QUERY (for "what does this affect" tooling), not an invalidation
+path.
+
+**The missing piece was in the interface, not the plumbing.** `ctx.addDependency`
+takes a UUID and cookers have no registry lookup, so a cooker whose extra input was
+a plain FILE could not declare it at all. Both cookers that have one hand-rolled
+`blake3File()` into `settingsFingerprint` — correct, and unenforceable: a cooker
+that forgot looked exactly like one with no extra inputs. Added
+`ICooker::declaredInputs()`; the pipeline hashes what it returns into the key.
+`ShaderCooker` (its `.sc` stage sources, transitively through `#include`) and
+`MaterialCooker` (the `.shader` manifest) migrated onto it.
+
+`depHashes` is also fed from the recorded UUID dependency set now, as the
+dependency's SOURCE hash, snapshotted in one query per batch. That covers what only
+a cook can discover, from the second cook onward.
+
+**Enforcement is the real deliverable:** `cook_deps_test` perturbs every declared
+input of every registered cooker and requires the key to move. Mutation-proved — an
+undeclared input fails 3 assertions. A cooker added later with a second input it
+does not declare now fails a test instead of serving stale output for the life of
+the project.
+
+Deliberately NOT transitive (see R1): source hashes, not the dependency's cooked
+key. A material depends on the shader's declared interface, not its shading code,
+and the test pins both directions — the manifest re-keys it, the `.sc` does not.
+
 ---
 
 ## [REAL, OPEN]
-
-### O1. Two dependency-invalidation mechanisms exist; neither is wired
-Not raised by either review, and the most important thing on this page.
-
-- `DdcKeyInputs::depHashes` is hashed by `computeDdcKey` and **populated by
-  nobody** ("reserved for multi-file sources").
-- The `dependencies` table *is* written (`ctx.addDependency` → `commitResult`),
-  and `dependents()` / `transitiveDependents()` are correct — and **never called
-  from the cook path**.
-
-Harmless today only because `settingsFingerprint` covers the one real case:
-`MaterialCooker` folds the `.shader` manifest's BLAKE3 into its key (and hashes
-only the manifest, not the `.sc` stage sources, on purpose — hashing those would
-recook every material in the project on every shader edit). The hazard is that a
-future contributor will reasonably assume dependency invalidation works, because
-finished-looking plumbing is sitting right there.
-
-**Either wire one or delete both.** Until then the real risk is a *convention*
-gap, not an architecture gap: correctness depends on every cooker author
-remembering to fold their second inputs into `settingsFingerprint`, and nothing
-enforces it. The fix is a test asserting that for each registered cooker,
-perturbing each declared input changes the key — mechanically checkable, and it
-fits the tier ladder.
 
 ### O2. Bit-for-bit determinism is load-bearing for the shared tier
 A shared DDC keyed on inputs silently asserts that identical inputs produce
@@ -156,13 +171,14 @@ every cooked output on both platforms over the same corpus and diff. Connects
 directly to the cross-ISA determinism lane in
 `docs/plans/automated-testing-soak-fuzz-plan.md`.
 
-### O3. `settingsFingerprint` cannot signal failure distinctly
+### O2b. `settingsFingerprint` cannot signal failure distinctly
 `MaterialCooker` does the right thing by encoding failures into the fingerprint
 (`"unparsed"`, `"shader-missing:<ref>"`, `"…@unreadable"`), so each failure mode
 gets its own key and self-heals. But the interface returns a bare `std::string`,
 so a cooker that returns `""` on a transient read error would hash identically to
 "no settings" and cache a wrongly-cooked artifact under a key that looks correct.
-Worth tightening to `std::optional<std::string>` when O1's enforcement test lands.
+Worth tightening to `std::optional<std::string>` now that F8's enforcement test
+exists to catch the fallout.
 
 ### O4. Unreadable sources are skipped silently
 `computeCookKey` returns `{}` for an unreadable source and `cookIsStale` then
@@ -211,8 +227,8 @@ explicitly, and `cookIsStale` handles an empty key with a documented rationale.
 The real, narrower version of this concern is O3.
 
 ### M3. "Manual `depHashes` arrays risk poisoning if nested deps mutate"
-Assumes `depHashes` is in use. It is populated by nobody — see O1, which is both
-more serious and differently shaped.
+Assumed `depHashes` was in use. It was populated by nobody — the real shape of the
+problem, and its fix, is F8.
 
 ---
 
@@ -225,7 +241,8 @@ stage sources, because shading-code edits change no byte of a cooked material. A
 naive recursive fold of content hashes reintroduces exactly the over-invalidation
 that comment exists to prevent: every material in the project recooking on every
 shader edit. The existing per-cooker `settingsFingerprint` is *more precise* than
-the proposed replacement. What is genuinely missing is enforcement (O1).
+the proposed replacement. What was genuinely missing was enforcement — see F8,
+which adds it without making the fold transitive.
 
 ### R2. Hardlink locking: `ReplaceFileW` / `renameat2(RENAME_EXCHANGE)` for commits
 Premise does not fit a CAS. DDC blobs are content-addressed and `chmod 0444`: a

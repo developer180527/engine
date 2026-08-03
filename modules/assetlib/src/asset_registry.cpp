@@ -450,6 +450,53 @@ static std::vector<UUID> queryUUIDs(sqlite3* d,const char* sql,const std::string
             reinterpret_cast<const char*>(sqlite3_column_text(stmt,0))));
     sqlite3_finalize(stmt); return out;
 }
+// A dependency's SOURCE hash, not its cooked key. Deliberate: folding a
+// dependency's cooked identity in would make the fold transitive, and it would
+// also drag in things the dependent provably does not care about — a material's
+// output depends on the shader's declared INTERFACE (the .shader manifest),
+// while the shader's cooked key also covers its .sc stage sources. Keying
+// materials on that would recook every material in the project on every
+// shading-code edit. Source hashes keep the invalidation as narrow as what the
+// cooker actually reads. The cost is that a change does not propagate through
+// two hops on its own; a cooker that needs that must declare the far dependency
+// too.
+std::unordered_map<std::string, std::vector<std::string>>
+AssetRegistry::allDependencySourceHashes() const {
+    std::unordered_map<std::string, std::vector<std::string>> out;
+    static const char* kSql =
+        "SELECT d.asset_uuid, a.source_hash FROM dependencies d "
+        "JOIN assets a ON a.uuid = d.depends_on_uuid;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db(m_db), kSql, -1, &stmt, nullptr) != SQLITE_OK)
+        return out;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* asset = reinterpret_cast<const char*>(sqlite3_column_text(stmt,0));
+        const char* hash  = reinterpret_cast<const char*>(sqlite3_column_text(stmt,1));
+        if (asset && hash && *hash) out[asset].push_back(hash);
+    }
+    sqlite3_finalize(stmt);
+    return out;
+}
+
+std::vector<std::string>
+AssetRegistry::dependencySourceHashes(const UUID& uuid) const {
+    std::vector<std::string> out;
+    static const char* kSql =
+        "SELECT a.source_hash FROM dependencies d "
+        "JOIN assets a ON a.uuid = d.depends_on_uuid WHERE d.asset_uuid=?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db(m_db), kSql, -1, &stmt, nullptr) != SQLITE_OK)
+        return out;
+    const auto s = uuid.toString();
+    sqlite3_bind_text(stmt, 1, s.c_str(), -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+        if (const char* h = reinterpret_cast<const char*>(sqlite3_column_text(stmt,0));
+            h && *h)
+            out.push_back(h);
+    sqlite3_finalize(stmt);
+    return out;
+}
+
 std::vector<UUID> AssetRegistry::dependents(const UUID& uuid) const {
     return queryUUIDs(db(m_db),
         "SELECT asset_uuid FROM dependencies WHERE depends_on_uuid=?;",

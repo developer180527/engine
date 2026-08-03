@@ -43,8 +43,15 @@ std::string hex(uint32_t v) {
 // being hashed twice; `depth` bounds a pathological chain. Order is stable
 // because it follows the file's own include order — the hash must be
 // deterministic across machines or the DDC key differs for identical input.
-void hashSourceTree(const fs::path& file, const std::vector<fs::path>& includeDirs,
-                    std::set<fs::path>& visited, std::string& fp, int depth = 0) {
+// Collects PATHS; the pipeline hashes them (ICooker::declaredInputs). This used
+// to hash inline, which meant the shader cooker was hand-rolling the same job
+// every cooker with extra file inputs had to hand-roll — and a cooker that
+// simply forgot was indistinguishable from one with no extra inputs. Ordering no
+// longer matters here either: computeDdcKey sorts declared inputs, so
+// determinism across machines no longer rests on the include walk being stable.
+void collectSourceTree(const fs::path& file, const std::vector<fs::path>& includeDirs,
+                       std::set<fs::path>& visited,
+                       std::vector<fs::path>& out, int depth = 0) {
     if (depth > 16) return;
     std::error_code ec;
     const fs::path canon = fs::weakly_canonical(file, ec);
@@ -52,11 +59,11 @@ void hashSourceTree(const fs::path& file, const std::vector<fs::path>& includeDi
     if (!visited.insert(key).second) return;
 
     const std::string text = slurp(file);
-    if (text.empty()) {
-        fp += "missing:" + file.filename().string() + ",";
-        return;
-    }
-    fp += assetlib::blake3Bytes(text.data(), text.size()).substr(0, 16) + ",";
+    // A file that cannot be read is still DECLARED: the pipeline keys it as
+    // "missing", so the key moves when it appears. Returning early just means
+    // we cannot scan it for further includes.
+    out.push_back(file);
+    if (text.empty()) return;
 
     // Deliberately a plain scan for `#include "..."`, not a preprocessor: an
     // include inside an #if that is currently false still gets hashed. That
@@ -77,7 +84,7 @@ void hashSourceTree(const fs::path& file, const std::vector<fs::path>& includeDi
         for (const auto& d : includeDirs) candidates.push_back(d / name);
         for (const auto& c : candidates) {
             if (fs::exists(c, ec) && fs::is_regular_file(c, ec)) {
-                hashSourceTree(c, includeDirs, visited, fp, depth + 1);
+                collectSourceTree(c, includeDirs, visited, out, depth + 1);
                 break;
             }
         }
@@ -152,23 +159,9 @@ std::string ShaderCooker::settingsFingerprint(const assetlib::CookContext& ctx) 
     std::string fp = "profiles=";
     for (uint32_t p : resolveProfiles()) { fp += assetlib::profileName(p); fp += ','; }
 
-    // The .sc STAGE SOURCES are real inputs, but they are not registry assets,
-    // so they cannot be declared through addDependency() — that takes a UUID.
-    // Hashing their bytes into the settings key is what makes editing a shader
-    // re-cook it. Without this the pipeline compares only the .shader manifest
-    // and happily serves yesterday's bytecode for today's shading code, which
-    // during shader iteration looks like "my edit did nothing".
-    ShaderManifest man;
-    if (parseShaderManifest(slurp(ctx.sourcePath), ctx.sourcePath.parent_path(),
-                            man).ok) {
-        // Transitively, so an edit to a shared .sh header re-cooks too.
-        const std::vector<fs::path> incs = defaultIncludeDirs();
-        std::set<fs::path> visited;
-        fp += ";stages=";
-        for (const auto* p : { &man.vertexPath, &man.fragmentPath,
-                               &man.varyingPath })
-            hashSourceTree(*p, incs, visited, fp);
-    }
+    // The .sc STAGE SOURCES moved to declaredInputs() below — they are files,
+    // and the pipeline hashes declared files into the key. What stays here is
+    // everything that is NOT a file's content.
 
     // The compiler is part of the recipe. Two shaderc builds can emit different
     // bytecode from identical source, so keying on source alone would let a
@@ -183,6 +176,26 @@ std::string ShaderCooker::settingsFingerprint(const assetlib::CookContext& ctx) 
         if (!ec) fp += "@" + std::to_string((long long)t.time_since_epoch().count());
     }
     return fp;
+}
+
+// Every .sc stage source, TRANSITIVELY through #include, so editing a shared .sh
+// header re-cooks the shaders that include it. The include scan is a plain text
+// scan rather than a preprocessor: an include inside a currently-false #if is
+// still declared. That over-approximates — an edit to it re-cooks when it need
+// not have — which is the safe direction, because under-approximating serves
+// stale bytecode and looks like "my edit did nothing".
+std::vector<fs::path>
+ShaderCooker::declaredInputs(const assetlib::CookContext& ctx) const {
+    ShaderManifest man;
+    if (!parseShaderManifest(slurp(ctx.sourcePath), ctx.sourcePath.parent_path(),
+                             man).ok)
+        return {};
+    const std::vector<fs::path> incs = defaultIncludeDirs();
+    std::set<fs::path>    visited;
+    std::vector<fs::path> out;
+    for (const auto* p : { &man.vertexPath, &man.fragmentPath, &man.varyingPath })
+        collectSourceTree(*p, incs, visited, out);
+    return out;
 }
 
 size_t ShaderCooker::estimatePeakBytes(const assetlib::CookContext&) const {

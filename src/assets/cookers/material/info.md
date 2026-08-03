@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-01
+verified: 2026-08-03
 covers:
   - src/assets/cookers/material/
   - modules/assetlib/src/material_asset.cpp
@@ -93,7 +93,10 @@ the error when it isn't found.
   `addDependency(UUID)` but no registry lookup, so the cooked material carries
   the authored path and the runtime resolves it through `AssetService`. This
   also means a material does not currently declare a dependency edge on its
-  textures.
+  textures. (The `.shader` manifest IS declared — through
+  `declaredInputs()`, which takes paths rather than UUIDs. Textures could be
+  declared the same way; they are not yet, because a material's cooked bytes do
+  not depend on a texture's CONTENT, only on the path it names.)
 - **No material instancing.** Every `.material` is standalone. Unreal's
   Material/Material-Instance split exists to avoid recompiling shaders per
   material — here materials never trigger compilation at all, so the split buys

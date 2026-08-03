@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-01
+verified: 2026-08-03
 covers:
   - src/assets/cookers/shader/
   - modules/assetlib/src/shader_asset.cpp
@@ -72,12 +72,22 @@ caught a real bug in our own reflector (see `issues.md`).
 
 ## Source invalidation
 `.sc` stage sources and the `.sh` headers they include are real inputs but not
-registry assets, so they cannot be declared through `addDependency(UUID)`.
-`hashSourceTree()` walks `#include "..."` transitively and hashes the whole tree
-into `settingsFingerprint`. Without it, editing shading code looked like "my edit
-did nothing". It scans rather than preprocesses, so an include under a false
-`#if` is still hashed — over-approximating re-cooks unnecessarily, which is the
-safe direction.
+registry assets, so `addDependency(UUID)` cannot express them. They are returned
+from **`declaredInputs()`** instead, and the PIPELINE hashes each one into the
+cook key (`collectSourceTree()` walks `#include "..."` transitively to find
+them). Without this, editing shading code looked like "my edit did nothing".
+
+It scans rather than preprocesses, so an include under a false `#if` is still
+declared — over-approximating re-cooks unnecessarily, which is the safe
+direction.
+
+This used to hash the tree inline into `settingsFingerprint`. Declaring the paths
+instead is what makes the omission of an input TESTABLE: `cook_deps_test` perturbs
+every declared input of every registered cooker and requires the key to move, so
+a cooker added later with an undeclared second input fails a test instead of
+silently serving stale output. Ordering no longer matters either — the key sorts
+declared inputs, so cross-machine determinism does not rest on the include walk
+being stable.
 
 ## Parameter packing
 Parameters do not each get their own GPU uniform. They pack into a shared `vec4`

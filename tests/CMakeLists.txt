@@ -139,6 +139,8 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     engine_test(cook_infra_test LIB engine_core)
     # Result-file framing, DDC budget/LRU eviction, registry schema versioning
     engine_test(cook_hardening_test LIB engine_core)
+    # Enforces that every cooker's DECLARED inputs move its cook key
+    engine_test(cook_deps_test LIB engine_core)
 
     # ── Fuzz targets — two ctest lanes from one binary ───────────────────────
     # engine_fuzz_target(<name>) registers:
