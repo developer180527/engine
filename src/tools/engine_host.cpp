@@ -216,6 +216,8 @@ int main(int argc, char** argv) {
             const auto cen = rdiag::census(engine.assetService().textureCache());
             rdiag::printCensus(cen, "engine_host textures");
             rdiag::printOwnerCosts(rdiag::byOwner(cen));
+            if (const auto* pipe = engine.renderer().pipeline())
+                rdiag::printSubmitStats(pipe->submitStats(), "engine_host");
             renderStats.report("engine_host");
         }
         engine.frameEnd();

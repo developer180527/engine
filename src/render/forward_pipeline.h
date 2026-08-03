@@ -240,6 +240,7 @@ public:
         // Lights are packed FIRST, because the shadow pass and the lighting
         // shader must agree on which slot is shadowed, and only packing knows
         // the packed slot numbering (rworld::PackedLights::shadowLightIndex).
+        m_submitStats.reset();   // per view; the shadow pass counts into it too
         const rworld::PackedLights lights = rworld::packLights(v.lights, v.ambient);
         renderShadow(v, ctx, lights);
 
@@ -273,7 +274,18 @@ public:
         // a statement about how surfaces LOOK, and it should not have to own
         // visibility to make one. m_visible is reused across frames for its
         // capacity (buildVisibleSet clears it).
-        rworld::buildVisibleSet(v.world(), v.camera(), m_visible);
+            rworld::buildVisibleSet(v.world(), v.camera(), m_visible);
+        m_submitStats.itemsConsidered = m_visible.consideredCount;
+        m_submitStats.itemsCulled     = m_visible.culledCount;
+
+        // Runs of consecutive draws sharing mesh AND material. Counted from the
+        // sorted set BEFORE submitting, because that is what instancing would
+        // collapse: draws - batchRuns is the saving, stated as a number rather
+        // than assumed (audit R5).
+        for (std::size_t i = 0; i < m_visible.draws.size(); ) {
+            i += rworld::batchRunLength(m_visible, i);
+            ++m_submitStats.batchRuns;
+        }
 
         for (const rworld::VisibleDraw& d : m_visible.draws) {
             const RenderItem& it = v.items[d.index];
@@ -302,15 +314,19 @@ public:
             // the pending update RANGE, not the applied values — which is why the
             // view-level uniforms above (lights, camPos, shadow) can also be set
             // once before this loop and still reach every draw.
-            if (skinned)
+            if (skinned) {
                 bgfx::setUniform(m_uBoneMatrices, it.boneMatrices,
                                  (uint16_t)(it.boneCount * 4));
+                ++m_submitStats.skinnedItems;
+                ++m_submitStats.bonePaletteUploads;   // ONCE per item — R4
+            }
 
             // Resolve ONE material handle to its uniforms/textures + bind. Runs
             // per submesh, so a merged multi-material mesh draws each range with
             // its OWN material (falling back to the item's material when unset)
             // instead of the whole mesh sharing a single material.
             auto bindMaterial = [&](MaterialHandle mh) {
+                ++m_submitStats.materialBinds;   // R7: one per DRAW today
                 const Material* mat = mh.valid() ? ctx.materials.getMaterial(mh) : nullptr;
 
                 // ── Data-driven: a cooked .material ─────────────────────────
@@ -400,6 +416,8 @@ public:
                 bindMaterial(it.material);
                 bgfx::setIndexBuffer(it.mesh->ibh);
                 bgfx::submit(id, drawProgram);
+                ++m_submitStats.draws;
+                if (skinned) ++m_submitStats.skinnedDraws;
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
                     // Reset per submesh: each range picks its own material, so
@@ -408,6 +426,9 @@ public:
                     bindMaterial(sub.material.valid() ? sub.material : it.material);
                     bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
                     bgfx::submit(id, drawProgram);
+                    ++m_submitStats.draws;
+                    ++m_submitStats.submeshDraws;
+                    if (skinned) ++m_submitStats.skinnedDraws;
                 }
             }
         }
@@ -490,24 +511,30 @@ private:
             const bgfx::ProgramHandle shadowProg = skinned ? m_skinnedShadowProgram : m_shadowProgram;
             // Once per item here too (R4) — the shadow pass draws every submesh
             // of every caster, so it paid the same redundant upload.
-            if (skinned)
+            if (skinned) {
                 bgfx::setUniform(m_uBoneMatrices, it.boneMatrices,
                                  (uint16_t)(it.boneCount * 4));
+                ++m_submitStats.shadowBonePaletteUploads;   // once per item — R4
+            }
             if (it.mesh->submeshes.empty()) {
                 bgfx::setState(st); bgfx::setTransform(it.model.ptr());
                 bgfx::setVertexBuffer(0, it.mesh->vbh);
                 bgfx::setIndexBuffer(it.mesh->ibh);
                 bgfx::submit(sv, shadowProg);
+                ++m_submitStats.shadowDraws;
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
                     bgfx::setState(st); bgfx::setTransform(it.model.ptr());
                     bgfx::setVertexBuffer(0, it.mesh->vbh);
                     bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
                     bgfx::submit(sv, shadowProg);
+                    ++m_submitStats.shadowDraws;
                 }
             }
         }
     }
+
+    const rdiag::SubmitStats& submitStats() const override { return m_submitStats; }
 
     void bind(const float params[4], const float factor[4],
               bgfx::TextureHandle base, bgfx::TextureHandle norm,
@@ -534,6 +561,7 @@ private:
     bgfx::ProgramHandle m_lineProgram          = BGFX_INVALID_HANDLE;   // debug lines
     bgfx::VertexLayout  m_lineLayout;
     bgfx::UniformHandle m_uBoneMatrices        = BGFX_INVALID_HANDLE;
+    rdiag::SubmitStats  m_submitStats{};
     bgfx::UniformHandle m_sBaseColor   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uParams      = BGFX_INVALID_HANDLE;
     // Engine-driven texture presence, kept OUT of u_params so a material's

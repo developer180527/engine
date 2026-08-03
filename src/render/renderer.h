@@ -79,6 +79,10 @@ public:
     // Safe before or after init(); attaches once the device is ready.
     void setPipeline(std::unique_ptr<IRenderPipeline> pipeline);
 
+    // Read-only, for diagnostics: what the active pipeline last submitted.
+    // Null before init() or if a pipeline was never attached.
+    const IRenderPipeline* pipeline() const { return m_pipeline.get(); }
+
     // Debug-line collector (owned by EngineRuntime) drawn into each world view.
     void setDebugDraw(const dbg::DebugDraw* dd) { m_debugDraw = dd; }
 

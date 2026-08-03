@@ -16,7 +16,16 @@ tests:
 # It is not testable headlessly: bgfx's Noop backend never sets numDraw (its
 # submit() sets timing and zeroes numPrims, nothing else), so draw counts cannot
 # be asserted without a real GPU harness or a counting seam in the pipeline.
-# Prototype until one of those exists; adding either is what raises this tier.
+# The counting seam now EXISTS (render/submit_stats.h, filled by ForwardPipeline,
+# exposed via IRenderPipeline::submitStats). Counting on our side works on any
+# backend including Noop, so a headless pipeline test is now possible — it needs
+# the program/shader setup ForwardPipeline::onAttach wants, which is the remaining
+# work. Prototype until that test exists.
+#
+# What the seam already measures on fps_shooter (2026-08-04): 12 draws from 10
+# items (1 culled), 3 batch runs — so instancing would remove 9 of 12 submits
+# (R5); 12 material binds for 12 draws, i.e. no dedup at all (R7); and 1 bone
+# palette upload for 1 skinned item, which is R4's invariant machine-checked.
 # Promoting on the strength of a test for an unwired component would be gaming
 # the ladder. See docs/plans/renderer-audit-and-plan.md: 9 ranked findings, 3
 # critical. Phase 2 (VRAM census, duplicate report, leak detector over a real

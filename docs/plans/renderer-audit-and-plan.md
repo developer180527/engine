@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-08-03
+verified: 2026-08-04
 covers:
   - src/render/
 ---
@@ -192,6 +192,37 @@ it reports on was private with no accessor) and seeing it print `0 resources,
 Consequence for every future measurement: **VRAM and residency claims must come
 from `engine_player --gpu-stats` against a built `dist/`.** `engine_host` is the
 right tool for frame pacing and CPU work, and the wrong one for memory.
+
+### The submission seam, and what it says about R5/R7 (2026-08-04)
+
+Submission was the one part of the renderer with no numbers: bgfx's Noop backend
+never sets `numDraw`, so draw counts could not be asserted headlessly, and R4/R5/R7
+were argued from reading. `render/submit_stats.h` counts on OUR side — works on any
+backend — and each counter states a finding directly:
+
+    [Submit] engine_host
+          items        10 considered, 1 culled
+          draws        12  (5 from submeshes, 1 skinned)
+          batch runs   3  -> instancing would remove 9 submit(s)   [R5]
+          material     12 bind(s) for 12 draw(s)                   [R7]
+          bones        1 upload(s) for 1 skinned item(s)           [R4]
+          shadow       0 draw(s), 0 bone upload(s)
+
+- **R4 is now machine-checked**, not just fixed: `bonePaletteUploads` must equal
+  `skinnedItems`, and the report warns if it ever equals `skinnedDraws` instead.
+- **R5 has a number for the first time**: 3 batch runs for 12 draws, so instancing
+  would collapse 12 submits to 3. A 75% reduction — of twelve. Still not worth
+  building without a scene where 12 is 12,000.
+- **R7 is confirmed exactly as written**: 12 binds for 12 draws, no dedup at all.
+- **The shadow pass submits 0 draws in this scene** — no caster — while still
+  holding a 2048² D32F shadow map, which is 16 MB of the 23 MB render-target
+  total. Worth knowing before trimming RT: most of it is reserved for a pass that
+  does nothing here.
+
+Also note what the seam does NOT fix: the shadow pass walks EVERY item rather than
+a culled set (`for i < v.items.size()`), so `shadowDraws` will grow with scene size
+while `draws` stays flat. Dormant at 10 items; an O(N) problem at scale, and one no
+amount of packet compaction addresses.
 
 ### Decision not taken — the bgfx render thread (measured 2026-08-03)
 

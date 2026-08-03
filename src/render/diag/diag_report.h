@@ -58,6 +58,28 @@ inline void printFrameStats(const FrameGpuStats& s, const char* tag) {
                     ? "  (single-threaded bgfx — expected)" : "");
 }
 
+inline void printSubmitStats(const rdiag::SubmitStats& s, const char* tag) {
+    std::printf(
+        "[Submit] %s\n"
+        "      items        %u considered, %u culled\n"
+        "      draws        %u  (%u from submeshes, %u skinned)\n"
+        "      batch runs   %u  -> instancing would remove %u submit(s)   [R5]\n"
+        "      material     %u bind(s) for %u draw(s)                     [R7]\n"
+        "      bones        %u upload(s) for %u skinned item(s)           [R4]\n"
+        "      shadow       %u draw(s), %u bone upload(s)\n",
+        tag, s.itemsConsidered, s.itemsCulled,
+        s.draws, s.submeshDraws, s.skinnedDraws,
+        s.batchRuns, s.instancingSavings(),
+        s.materialBinds, s.draws,
+        s.bonePaletteUploads, s.skinnedItems,
+        s.shadowDraws, s.shadowBonePaletteUploads);
+    // The R4 invariant, checked rather than described: one palette per ITEM.
+    if (s.bonePaletteUploads != s.skinnedItems)
+        std::printf("      WARNING: bone uploads (%u) != skinned items (%u) — "
+                    "the palette is being re-uploaded per draw\n",
+                    s.bonePaletteUploads, s.skinnedItems);
+}
+
 inline void printBudget(const BudgetReport& r) {
     std::printf("[Budget] target '%s' — %s\n", toString(r.tier),
                 r.pass ? "PASS" : "OVER BUDGET");
