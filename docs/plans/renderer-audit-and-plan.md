@@ -64,14 +64,14 @@ Worth stating plainly, because the gaps below are not a verdict on the whole:
 
 | # | Finding | Evidence | Severity |
 |---|---|---|---|
-| **R1** | **GPU resources have no identity, no refcount, no dedup.** `TextureRegistry::addTexture` is a slot allocator: every call makes a new GPU texture. Two materials referencing the same image file get two copies of it in VRAM. Nothing tracks who references a resource, so nothing can know when it is free. | `src/render/texture_registry.h` — `addTexture` appends; `removeTexture` is manual and unreferenced by any owner | **Critical** |
+| **R1** ✅ (shipped path) | **GPU resources have no identity, no refcount, no dedup.** `TextureRegistry::addTexture` is a slot allocator: every call makes a new GPU texture. Two materials referencing the same image file get two copies of it in VRAM. Nothing tracks who references a resource, so nothing can know when it is free. | `src/render/texture_registry.h` — `addTexture` appends; `removeTexture` is manual and unreferenced by any owner | **Critical** |
 | **R2** ✅ | **Extraction/submission split never happened.** Culling, sorting, light packing and material binding all lived inside `ForwardPipeline`. A dev who swapped the pipeline inherited *none* of it and had to rewrite culling and sorting to draw a single triangle differently. **FIXED in Phase 3** — all four moved to `src/render/world/`; the pipeline now owns only shaders, uniforms and binds. Material *assets* remain fixed-struct (R3). | `src/render/world/`, `forward_pipeline.h` | **Critical** |
-| **R3** | **Shaders are compile-time blobs.** `.sc` sources are compiled to per-platform C arrays (`vs_triangle_mtl`, `_dxbc`, `_spv`) and `#include`d. There is no shader asset, no variant system, no runtime load. A game cannot add a material type without rebuilding the engine. | `forward_pipeline.h:34–104`, `shaders/*.sc` | **Critical** (for the customization goal) |
+| **R3** ✅ | **Shaders are compile-time blobs.** `.sc` sources are compiled to per-platform C arrays (`vs_triangle_mtl`, `_dxbc`, `_spv`) and `#include`d. There is no shader asset, no variant system, no runtime load. A game cannot add a material type without rebuilding the engine. | `forward_pipeline.h:34–104`, `shaders/*.sc` | **Critical** (for the customization goal) |
 | **R4** ✅ | **Bone palette uploaded per submesh.** `setUniform(m_uBoneMatrices, …, boneCount*4)` sits inside `bindMaterial`, which runs once per submesh. The 73-bone zombie re-uploads its whole palette for every submesh, every frame. | `forward_pipeline.h` | **High as written, nil as measured** — **FIXED in Phase 4**: hoisted to once per item in both the main and shadow passes. Safe because bgfx uniform VALUES persist across submits (`BGFX_DISCARD_STATE` drops the pending update range, not the applied value) — the same property that lets the view-level light/camera uniforms be set once per view. But the severity was assessed by READING: `fps_shooter`'s only skinned mesh (Zombie, 73 bones) has exactly ONE submesh, so the redundancy in this scene was zero and the fix changed no measured number. It is correct for any multi-submesh skinned mesh, and GPU time is now instrumented so the cost would be visible if such content appears. |
 | **R5** | **No instancing.** The sort already groups identical meshes adjacently — the setup for batching is done, the batch is not. | no `setInstanceDataBuffer` anywhere in the tree | High (at scale) |
-| **R6** | **Render-target memory is ~5× the naive figure.** 1280×720 colour+depth for the scene and game framebuffers should be ≈14 MB; bgfx reports **71 MB**. Unexplained — candidates are Retina drawable scaling, D24S8 storage on Metal, and the 2-deep swap chain. | `RenderStatsChannel`, `[Renderer] Scene FB: 1280x720` | High |
+| **R6** ✅ | **Render-target memory is ~5× the naive figure.** 1280×720 colour+depth for the scene and game framebuffers should be ≈14 MB; bgfx reports **71 MB**. Unexplained — candidates are Retina drawable scaling, D24S8 storage on Metal, and the 2-deep swap chain. | `RenderStatsChannel`, `[Renderer] Scene FB: 1280x720` | High |
 | **R7** | **Redundant material binds.** `bindMaterial` re-sets every uniform and texture per submesh with no comparison against current state, even though the sort makes consecutive draws frequently share a material. | `forward_pipeline.h:277–294` | Medium |
-| **R8** | **Textures are outside the residency system.** `AssetService` gained a mesh residency budget with LRU eviction; textures — the 76 MB — have none. | `asset_service.cpp` residency covers meshes only | High |
+| **R8** ⚠️ dev path only | **Textures are outside the residency system.** `AssetService` gained a mesh residency budget with LRU eviction; textures — the 76 MB — have none. | `asset_service.cpp` residency covers meshes only | **Reassessed 2026-08-04: not a shipping problem.** The shipped path is 40.7 MB against a 60 MB budget, and its textures DO go through `GpuResourceCache` (identity + refcount), so a budget could be applied when one is needed. The 76/100 MB figures were the DEV path, where the importers call `addTexture` directly and nothing dedups or evicts. Worth fixing for editor sessions on large projects; NOT worth fixing to hit a budget the shipped game already passes with 19 MB spare. |
 | **R9** | No LOD, no cascaded shadows (one map, one caster), no occlusion culling, no texture streaming. | absent | Medium (deferred) |
 
 ### 1.5 The root cause
@@ -175,6 +175,24 @@ and is already tested.
 - Then a game can define its own look **without rebuilding the engine**, which
   is the stated goal and is impossible today.
 
+### Two asset paths, and only one of them ships
+
+`engine_host` and `engine_player` do not load the same way, and conflating them
+produced every wrong number in this document:
+
+| | scene references | texture ingestion | dedup / refcount / census |
+|---|---|---|---|
+| `engine_host` (dev) | SOURCE `.fbx`/`.gltf` | `AsyncLoader` + Assimp/cgltf -> `TextureRegistry::addTexture` | **none** |
+| `engine_player` (ships) | COOKED `.ctex` | `AssetService` -> `GpuResourceCache` | yes |
+
+Found by wiring the Phase 2 census (which existed and was never called — the cache
+it reports on was private with no accessor) and seeing it print `0 resources,
+0.0 MB` while bgfx reported 100 MB of textures under `engine_host`.
+
+Consequence for every future measurement: **VRAM and residency claims must come
+from `engine_player --gpu-stats` against a built `dist/`.** `engine_host` is the
+right tool for frame pacing and CPU work, and the wrong one for memory.
+
 ### Decision not taken — the bgfx render thread (measured 2026-08-03)
 
 `renderer.cpp` calls `bgfx::renderFrame()` before `bgfx::init` to force
@@ -221,13 +239,39 @@ demonstrates the need — measured, as with everything above.
 Every phase is checked against the target machine, because "runs on the potato
 PC" is the only success criterion that cannot be argued with:
 
-| | budget | today |
-|---|---|---|
-| total VRAM | **≤ 128 MB** (shared) | 147 MB ❌ |
-| textures | ≤ 60 MB | 76 MB ❌ |
-| render targets | ≤ 20 MB | 71 MB ❌ |
-| draw calls | ≤ 500 | 15 ✅ |
-| system RAM | ≤ 1.5 GB | unmeasured |
+**MEASURE THE SHIPPED PATH. The original figures did not** (corrected
+2026-08-04). `engine_host` is the dev runner: `fps_shooter/assets/scenes/main.scene`
+references SOURCE assets (`.fbx`, `.gltf`), so it loads through `AsyncLoader` +
+Assimp/cgltf, which call `TextureRegistry::addTexture` directly — no dedup, no
+refcount, no census. The shipped game loads COOKED assets through `AssetService`,
+which does go through `GpuResourceCache`. Those are different numbers for
+different code, and the acceptance test only means anything for the one that ships:
 
-These numbers are the acceptance test for Phases 1–4, and they are why the
-work starts with memory rather than with pixels.
+    ./build/engine_build fps_shooter
+    ./build/engine_player fps_shooter/dist --gpu-stats --budget <tier> --frames 300
+
+| | budget | dev path (`engine_host`) | **SHIPPED (`engine_player`)** |
+|---|---|---|---|
+| total VRAM | **≤ 128 MB** (shared) | 123.1 MB | **63.7 MB ✅** |
+| textures | ≤ 60 MB | 100.0 MB | **40.7 MB ✅** |
+| render targets | ≤ 20 MB | 23.0 MB | **23.0 MB ⚠️** |
+| draw calls | ≤ 500 | 13 ✅ | **12.9 ✅** |
+| GPU time | (added) | 2.55 ms | **2.49 ms** |
+| system RAM | ≤ 1.5 GB | unmeasured | unmeasured |
+
+The audit's original 147 MB / 76 MB, and the 123 / 100 measured while adding GPU
+timing, were all the DEV path. **The shipped game is at half its VRAM budget**, and
+textures pass with 19 MB to spare. This is why the census got wired first: it read
+`0 resources, 0.0 MB` under `engine_host` while bgfx reported 100 MB, which is what
+exposed the two-path split.
+
+The one remaining miss is render targets, 23.0 vs ≤20 MB, and it is not a mystery
+any more (that was R6): **16 MB of it is the 2048² D32F shadow map**, and the scene
+framebuffer is Retina-scaled — the window is 1280×720 but bgfx reports a
+2560×1440 drawable, 4× the naive area. Both are settings, and shadow resolution is
+already a project quality option (`08d28c9`).
+
+Biggest single texture cost on the shipped path, if it ever needs to come down:
+one asset carries two 4096² maps (10.7 MB + 21.3 MB = 32 MB of the 40.7). A
+cook-time resolution cap would take that to 8 MB. Not needed today — recorded so
+the lever is known rather than rediscovered.

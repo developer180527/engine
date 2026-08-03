@@ -152,6 +152,14 @@ public:
                                      : root / ".cache";
     }
 
+    // Read-only view of the texture dedup cache, for the VRAM census
+    // (render/diag/resource_census.h). The census tooling was built in Phase 2
+    // and could not be USED, because the cache it reports on was private with no
+    // accessor — a diagnostic nothing can reach is not a diagnostic.
+    const gpucache::GpuResourceCache<TextureHandle>& textureCache() const {
+        return m_texCache;
+    }
+
     // ----- Residency (audit Q6: the loaded-mesh cache grew without bound) --
     // Byte budget for async-loaded cooked meshes. 0 = unbounded (default —
     // the editor keeps everything). Streaming eviction only makes sense

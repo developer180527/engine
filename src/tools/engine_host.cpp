@@ -22,6 +22,8 @@
 #include "runtime/frame_stats_channel.h"  // frame-time distribution + CSV
 #include "render/render_stats_channel.h"  // GPU handle churn + VRAM budget
 #include "core/memory/mem.h"         // periodic tagged-heap dump
+#include "render/diag/resource_census.h"   // WHERE the VRAM went
+#include "render/diag/diag_report.h"
 
 #include <cstdio>
 #include <cstdlib>   // strtol — --frames
@@ -208,6 +210,12 @@ int main(int argc, char** argv) {
                 engine.inputLatency()->logLastFrame("engine_host");
             if (engine.frameStats())
                 engine.frameStats()->logSummary("engine_host");
+            // WHERE the VRAM went, not just how much. bgfx reports a texture
+            // TOTAL; this attributes it per resource and per owning asset, which
+            // is the difference between "100 MB of textures" and a decision.
+            const auto cen = rdiag::census(engine.assetService().textureCache());
+            rdiag::printCensus(cen, "engine_host textures");
+            rdiag::printOwnerCosts(rdiag::byOwner(cen));
             renderStats.report("engine_host");
         }
         engine.frameEnd();
