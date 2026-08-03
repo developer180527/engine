@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-08-01
+verified: 2026-08-03
 covers:
   - src/render/
 ---
@@ -67,7 +67,7 @@ Worth stating plainly, because the gaps below are not a verdict on the whole:
 | **R1** | **GPU resources have no identity, no refcount, no dedup.** `TextureRegistry::addTexture` is a slot allocator: every call makes a new GPU texture. Two materials referencing the same image file get two copies of it in VRAM. Nothing tracks who references a resource, so nothing can know when it is free. | `src/render/texture_registry.h` — `addTexture` appends; `removeTexture` is manual and unreferenced by any owner | **Critical** |
 | **R2** ✅ | **Extraction/submission split never happened.** Culling, sorting, light packing and material binding all lived inside `ForwardPipeline`. A dev who swapped the pipeline inherited *none* of it and had to rewrite culling and sorting to draw a single triangle differently. **FIXED in Phase 3** — all four moved to `src/render/world/`; the pipeline now owns only shaders, uniforms and binds. Material *assets* remain fixed-struct (R3). | `src/render/world/`, `forward_pipeline.h` | **Critical** |
 | **R3** | **Shaders are compile-time blobs.** `.sc` sources are compiled to per-platform C arrays (`vs_triangle_mtl`, `_dxbc`, `_spv`) and `#include`d. There is no shader asset, no variant system, no runtime load. A game cannot add a material type without rebuilding the engine. | `forward_pipeline.h:34–104`, `shaders/*.sc` | **Critical** (for the customization goal) |
-| **R4** | **Bone palette uploaded per submesh.** `setUniform(m_uBoneMatrices, …, boneCount*4)` sits inside `bindMaterial`, which runs once per submesh. The 73-bone zombie re-uploads its whole palette for every submesh, every frame. | `forward_pipeline.h:291–293` | High |
+| **R4** ✅ | **Bone palette uploaded per submesh.** `setUniform(m_uBoneMatrices, …, boneCount*4)` sits inside `bindMaterial`, which runs once per submesh. The 73-bone zombie re-uploads its whole palette for every submesh, every frame. | `forward_pipeline.h` | **High as written, nil as measured** — **FIXED in Phase 4**: hoisted to once per item in both the main and shadow passes. Safe because bgfx uniform VALUES persist across submits (`BGFX_DISCARD_STATE` drops the pending update range, not the applied value) — the same property that lets the view-level light/camera uniforms be set once per view. But the severity was assessed by READING: `fps_shooter`'s only skinned mesh (Zombie, 73 bones) has exactly ONE submesh, so the redundancy in this scene was zero and the fix changed no measured number. It is correct for any multi-submesh skinned mesh, and GPU time is now instrumented so the cost would be visible if such content appears. |
 | **R5** | **No instancing.** The sort already groups identical meshes adjacently — the setup for batching is done, the batch is not. | no `setInstanceDataBuffer` anywhere in the tree | High (at scale) |
 | **R6** | **Render-target memory is ~5× the naive figure.** 1280×720 colour+depth for the scene and game framebuffers should be ≈14 MB; bgfx reports **71 MB**. Unexplained — candidates are Retina drawable scaling, D24S8 storage on Metal, and the 2-deep swap chain. | `RenderStatsChannel`, `[Renderer] Scene FB: 1280x720` | High |
 | **R7** | **Redundant material binds.** `bindMaterial` re-sets every uniform and texture per submesh with no comparison against current state, even though the sort makes consecutive draws frequently share a material. | `forward_pipeline.h:277–294` | Medium |
@@ -152,8 +152,15 @@ and is already tested.
 
 - **Instancing** on the existing mesh-grouped sort (R5).
 - **State dedup**: skip material binds identical to the previous draw (R7).
-- **Bone palette per item, not per submesh** (R4) — the one immediate,
-  isolated fix; it needs no architecture and can land first if wanted.
+- ~~**Bone palette per item, not per submesh** (R4)~~ — **DONE**, and worth
+  recording what it taught: the fix is correct but measured nothing, because the
+  scene's only skinned mesh has one submesh. Read-derived severity ratings in
+  this table should be re-checked against real content before they justify work.
+- **GPU time is now instrumented** (`FrameGpuStats`, from `bgfx::getStats()`):
+  fps_shooter over 600 frames is **GPU avg 2.66 ms, max 5.70 ms** against a CPU
+  frame of 11.16 ms, at 13 draws with zero handle churn. Instancing and state
+  dedup below should be justified against these numbers rather than assumed —
+  13 draws is not a submission problem.
 - Resolve the **71 MB render-target mystery** (R6) with a per-target
   breakdown; on a 128 MB budget a 57 MB unknown decides whether we ship.
 

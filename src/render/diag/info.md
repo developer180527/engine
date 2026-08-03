@@ -1,13 +1,34 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-01
+verified: 2026-08-03
 covers:
   - src/render/diag/
 tests:
   - tests/render_diag_test.cpp
 ---
 # Render diagnostics
+
+
+## Frame timing (GPU, CPU, waits)
+`FrameGpuStats` also carries what `bgfx::getStats()` measures and nothing read
+until now: GPU ms per frame, CPU frame ms, and `waitSubmit`/`waitRender`. Draw
+counts say how much the GPU was ASKED for; GPU time says what it cost, which is
+what decides whether a submission change is worth making.
+
+Three properties are encoded rather than hidden:
+- **An unsupported GPU timer reports UNAVAILABLE, never 0.00 ms.** A fabricated
+  free GPU is worse than no number, so `gpuTimedFrames()` gates the average and
+  only measured frames feed it.
+- **GPU times LAG the CPU frame** (bgfx reports `gpuFrameNum` for the frame they
+  belong to). Fine for averages, wrong for correlating one specific frame.
+- **`waitSubmit`/`waitRender` read ~0 today** because `renderer.cpp` calls
+  `bgfx::renderFrame()` before `bgfx::init` to force single-threaded mode. They
+  are collected anyway: they are exactly what would price re-enabling the render
+  thread.
+
+Measured on fps_shooter, 600 frames (2026-08-03): GPU avg 2.66 ms / max 5.70,
+CPU frame 11.16 ms, 13 draws, 0 handle churn.
 
 ## Purpose
 Answer three questions about the renderer with numbers instead of opinion:

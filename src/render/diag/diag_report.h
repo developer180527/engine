@@ -37,6 +37,25 @@ inline void printFrameStats(const FrameGpuStats& s, const char* tag) {
         s.lastCounts().uniforms,
         (unsigned long long)s.churnFrames(), (unsigned long long)s.frames(),
         toString(s.churn()));
+
+    // Timing last, because it is the number that decides whether any of the
+    // counts above are worth acting on: draws say how much we ASKED the GPU for,
+    // GPU time says what it cost.
+    if (s.gpuTimedFrames() > 0)
+        std::printf("      GPU          avg %.2f ms   max %.2f ms  (%llu timed frame(s))\n",
+                    s.avgGpuMs(), s.maxGpuMs(),
+                    (unsigned long long)s.gpuTimedFrames());
+    else
+        std::printf("      GPU          unavailable — this backend has no GPU "
+                    "timer (reporting 0 would be a fabricated number)\n");
+    std::printf("      CPU frame    avg %.2f ms\n", s.avgCpuMs());
+    // Both are ~0 while bgfx runs single-threaded (renderer.cpp calls
+    // bgfx::renderFrame() before init on purpose). Printed regardless: they are
+    // precisely what would price re-enabling the render thread.
+    std::printf("      waits        submit %.2f ms   render %.2f ms%s\n",
+                s.avgWaitSubmitMs(), s.avgWaitRenderMs(),
+                (s.avgWaitSubmitMs() < 0.01 && s.avgWaitRenderMs() < 0.01)
+                    ? "  (single-threaded bgfx — expected)" : "");
 }
 
 inline void printBudget(const BudgetReport& r) {

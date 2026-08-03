@@ -290,6 +290,22 @@ public:
             const bgfx::ProgramHandle defaultProg = skinned ? m_skinnedProgram : m_program;
             bgfx::ProgramHandle drawProgram = defaultProg;
 
+            // ONCE PER ITEM, not per submesh (audit R4). A bone palette belongs
+            // to the skinned MESH, so every submesh of it wants the same values;
+            // uploading inside bindMaterial re-sent the whole thing for each
+            // range, every frame — 73 bones is 4.7 KB memcpy'd into the frame's
+            // uniform buffer per submesh, for identical data.
+            //
+            // Safe to hoist because bgfx uniform VALUES persist across submits:
+            // setUniform records an update, submit applies it, and it stays in
+            // effect until something overwrites it. BGFX_DISCARD_STATE discards
+            // the pending update RANGE, not the applied values — which is why the
+            // view-level uniforms above (lights, camPos, shadow) can also be set
+            // once before this loop and still reach every draw.
+            if (skinned)
+                bgfx::setUniform(m_uBoneMatrices, it.boneMatrices,
+                                 (uint16_t)(it.boneCount * 4));
+
             // Resolve ONE material handle to its uniforms/textures + bind. Runs
             // per submesh, so a merged multi-material mesh draws each range with
             // its OWN material (falling back to the item's material when unset)
@@ -335,9 +351,6 @@ public:
                         }
                         bgfx::setUniform(m_uTexFlags, texFlags);
                         bgfx::setTexture(2, m_sShadowMap, m_shadowMap);
-                        if (skinned)
-                            bgfx::setUniform(m_uBoneMatrices, it.boneMatrices,
-                                             (uint16_t)(it.boneCount * 4));
                         bgfx::setState(mat->doubleSided
                             ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
                                | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS
@@ -379,8 +392,6 @@ public:
                 const bgfx::TextureHandle base = tex ? tex->handle : ctx.whiteTex;
                 const bgfx::TextureHandle norm = nm  ? nm->handle  : ctx.flatNormalTex;
                 bgfx::setUniform(m_uTexFlags, texFlags);
-                if (skinned)
-                    bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
                 bind(params, factor, base, norm, state, it);
             };
 
@@ -477,17 +488,18 @@ private:
             if (!it.mesh) continue;
             const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
             const bgfx::ProgramHandle shadowProg = skinned ? m_skinnedShadowProgram : m_shadowProgram;
+            // Once per item here too (R4) — the shadow pass draws every submesh
+            // of every caster, so it paid the same redundant upload.
+            if (skinned)
+                bgfx::setUniform(m_uBoneMatrices, it.boneMatrices,
+                                 (uint16_t)(it.boneCount * 4));
             if (it.mesh->submeshes.empty()) {
-                if (skinned)
-                    bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
                 bgfx::setState(st); bgfx::setTransform(it.model.ptr());
                 bgfx::setVertexBuffer(0, it.mesh->vbh);
                 bgfx::setIndexBuffer(it.mesh->ibh);
                 bgfx::submit(sv, shadowProg);
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
-                    if (skinned)
-                        bgfx::setUniform(m_uBoneMatrices, it.boneMatrices, (uint16_t)(it.boneCount * 4));
                     bgfx::setState(st); bgfx::setTransform(it.model.ptr());
                     bgfx::setVertexBuffer(0, it.mesh->vbh);
                     bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);

@@ -43,6 +43,28 @@ enum class ChurnVerdict {
 };
 const char* toString(ChurnVerdict v);
 
+// ── Timing ───────────────────────────────────────────────────────────────────
+// GPU time per frame, plus the two waits, all of which bgfx already measures and
+// nothing here read until now. This is the instrument that decides whether a
+// submission change is worth making: draw counts say how much we ASKED for, GPU
+// time says what it cost.
+//
+// Three caveats the accessors below encode rather than hide:
+//   • GPU timing is backend-dependent. Where it is unsupported the timer reads
+//     zero, which must report as UNAVAILABLE, not as 0.00 ms — a fabricated
+//     "free" GPU is worse than no number.
+//   • The GPU times LAG the CPU frame (bgfx reports gpuFrameNum for the frame
+//     they belong to), so they pair with a frame a few back. Fine for averages,
+//     wrong for correlating one specific frame.
+//   • waitSubmit/waitRender are only meaningful with the render thread ENABLED.
+//     This engine calls bgfx::renderFrame() before init to force single-threaded
+//     mode (src/render/renderer.cpp), so both read ~0 today. They are collected
+//     anyway: they are exactly the numbers that would price re-enabling it.
+struct FrameTiming {
+    double gpuMs = 0.0, cpuMs = 0.0, waitSubmitMs = 0.0, waitRenderMs = 0.0;
+    bool   gpuTimerValid = false;
+};
+
 // Accumulated over a run. Deliberately free of bgfx types in its interface so
 // callers (and tests) need no graphics headers.
 class FrameGpuStats {
@@ -55,7 +77,8 @@ public:
     // Test seam: feed counters directly, no GPU required.
     void sampleExplicit(const HandleCounts& counts, uint32_t draws,
                         int64_t texBytes, int64_t rtBytes,
-                        int32_t transientVb, int32_t transientIb);
+                        int32_t transientVb, int32_t transientIb,
+                        const FrameTiming& timing = {});
 
     ChurnVerdict churn() const;
 
@@ -71,9 +94,24 @@ public:
     double   avgTransientIbKb() const;
     const HandleCounts& lastCounts() const { return m_last; }
 
+    // Timing. `gpuTimedFrames() == 0` means the backend does not support the
+    // GPU timer — callers must say "unavailable" rather than print a zero.
+    uint64_t gpuTimedFrames() const { return m_gpuTimedFrames; }
+    double   avgGpuMs()       const;
+    double   maxGpuMs()       const { return m_maxGpuMs; }
+    double   avgCpuMs()       const;
+    double   avgWaitSubmitMs() const;
+    double   avgWaitRenderMs() const;
+
 private:
     void ingest(const HandleCounts& c, uint32_t draws, int64_t tex, int64_t rt,
-                int32_t tvb, int32_t tib);
+                int32_t tvb, int32_t tib, const FrameTiming& t);
+
+    // Summed only over frames where the timer actually reported, so the average
+    // is over MEASURED frames and not diluted by unsupported ones.
+    uint64_t m_gpuTimedFrames = 0;
+    double   m_gpuMsSum = 0.0, m_maxGpuMs = 0.0;
+    double   m_cpuMsSum = 0.0, m_waitSubmitSum = 0.0, m_waitRenderSum = 0.0;
 
     HandleCounts m_last{};
     uint64_t m_frames = 0, m_churnFrames = 0;
