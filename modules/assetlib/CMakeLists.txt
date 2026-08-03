@@ -5,23 +5,44 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ── Sources ───────────────────────────────────────────────────────────────────
+# One concern per TU, grouped by layer. Directory = layer, file = concern; a
+# reader asking "how does staleness work" or "where is the Windows spawn" should
+# not have to grep a 700-line file to find out.
 add_library(assetlib STATIC
     src/uuid.cpp
-    src/asset_registry.cpp
-    src/mesh_asset.cpp
-    src/texture_asset.cpp
-    src/shader_asset.cpp
-    src/material_asset.cpp
-    src/scene_asset.cpp
     src/dependency_graph.cpp
     src/file_watcher.cpp
-    # ── Cook pipeline, one concern per TU ────────────────────────────────────
-    src/cook_pipeline.cpp    # orchestration: what to cook, in what order
-    src/cook_key.cpp         # identity + staleness (DDC keys)
-    src/cook_dispatch.cpp    # execution mode (child process / in-process)
-    src/ddc.cpp              # content-addressed two-tier blob store
-    src/ddc_manifest.cpp     # cached-output record format
-    src/task_graph.cpp       # cost-weighted DAG scheduler
+    src/task_graph.cpp              # cost-weighted DAG scheduler
+
+    # ── Asset database (SQLite) ─────────────────────────────────────────────
+    src/registry/asset_names.cpp    # AssetType <-> name / extension
+    src/registry/schema.cpp         # tables, migrations, user_version, open
+    src/registry/records.cpp        # row mapping, CRUD, single-record queries
+    src/registry/dependencies.cpp   # asset->asset edges + dep source hashes
+    src/registry/scanner.cpp        # filesystem walk, move detection
+
+    # ── On-disk asset formats ───────────────────────────────────────────────
+    src/formats/mesh_asset.cpp
+    src/formats/texture_asset.cpp
+    src/formats/scene_asset.cpp
+    src/formats/material_asset.cpp
+    src/formats/shader_asset.cpp
+
+    # ── Derived Data Cache ──────────────────────────────────────────────────
+    src/ddc/hash.cpp                # BLAKE3 wrappers + cook-key composition
+    src/ddc/fs_util.cpp             # read-only blob file ops, temp naming
+    src/ddc/store.cpp               # two-tier content-addressed blob store
+    src/ddc/gc.cpp                  # budget + LRU eviction of the local tier
+    src/ddc/manifest.cpp            # cached-output record format
+
+    # ── Cook pipeline ───────────────────────────────────────────────────────
+    src/cook/pipeline.cpp           # per-record: resolve, place, commit
+    src/cook/pipeline_batch.cpp     # cookAll / cookGraph: the task graph
+    src/cook/key.cpp                # identity + staleness (DDC keys)
+    src/cook/dispatch.cpp           # execution mode selection + in-process
+    src/cook/result_file.cpp        # the worker's sidecar result protocol
+    src/cook/worker_posix.cpp       # fork + setrlimit + exec, reap w/ deadline
+    src/cook/worker_win32.cpp       # CreateProcess + job object memory cap
 )
 
 # ── BLAKE3 (vendored, C) ─────────────────────────────────────────────────────

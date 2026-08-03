@@ -1,6 +1,6 @@
 // ── cook_hardening_test — the reliability fixes from the DDC/cook audit ──────
 //
-// Three independent failure modes, each of which was silent before:
+// Four independent failure modes, each of which was silent before:
 //
 //   1. RESULT-FILE FRAMING. `RESULT ok` is the first body line a cook worker
 //      writes, so a worker killed part-way through (deadline SIGKILL, rlimit
@@ -18,6 +18,11 @@
 //      open() returned true regardless, so a database written by a NEWER build
 //      opened "successfully" and then silently dropped columns it could not see
 //      on every write.
+//
+//   4. MOVE DETECTION. A renamed source must keep its UUID or every scene
+//      reference to it silently unlinks. Nothing tested it, and a scan change
+//      that re-pointed the record and then marked it Missing in the same pass
+//      passed the entire suite.
 //
 // Hermetic: no GPU, no project, no cooker. Temp dirs only.
 #include <cstdio>
@@ -228,12 +233,60 @@ static void testSchemaVersion() {
     fs::remove_all(dir, ec);
 }
 
+// ── 4. Move detection ───────────────────────────────────────────────────────
+// A renamed source file must keep its UUID, because scenes reference assets BY
+// UUID — losing it silently unlinks every reference to that asset. This is the
+// scan's most easily-broken invariant: it needs the record's re-pointed
+// sourcePath to be visible to the "mark absent files Missing" sweep that runs
+// immediately after, so any change that makes that sweep read a STALE snapshot
+// re-points the asset correctly and then marks it Missing in the same pass.
+// (That is not hypothetical — it was written, and no existing test caught it.)
+static void testMoveDetection() {
+    std::printf("\n-- move detection: a rename keeps the UUID --\n");
+
+    const fs::path root = fs::temp_directory_path() / "engine_scan_move_test";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    const fs::path assets = root / "assets";
+    fs::create_directories(assets, ec);
+
+    const fs::path before = assets / "before.png";
+    { std::ofstream f(before, std::ios::binary);
+      f << "not really a png, but it hashes just fine"; }
+
+    AssetRegistry reg;
+    CHECK(reg.open(root / ".cache" / "registry.db"), "registry opens");
+    reg.scan(assets, root);
+
+    auto rec = reg.findBySourcePath("assets/before.png");
+    CHECK(rec.has_value(), "the file registered");
+    if (!rec) return;
+    const std::string uuid = rec->uuid.toString();
+
+    fs::rename(before, assets / "after.png", ec);
+    CHECK(!ec, "renamed on disk");
+    reg.scan(assets, root);
+
+    const auto moved = reg.findBySourcePath("assets/after.png");
+    CHECK(moved.has_value(), "the new path resolves");
+    CHECK(moved && moved->uuid.toString() == uuid,
+          "...to the SAME uuid (scene references survive a rename)");
+    CHECK(moved && moved->state != AssetState::Missing,
+          "...and it is NOT marked Missing by the sweep that follows the move");
+    CHECK(!reg.findBySourcePath("assets/before.png").has_value()
+          || reg.findBySourcePath("assets/before.png")->uuid.toString() == uuid,
+          "the old path does not survive as a second record");
+
+    fs::remove_all(root, ec);
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("cook_hardening_test: DDC/cook audit reliability fixes\n");
     testResultFraming();
     testDdcEviction();
     testSchemaVersion();
+    testMoveDetection();
 
     if (g_failures) {
         std::printf("\ncook_hardening_test: %d FAILURE(S)\n", g_failures);

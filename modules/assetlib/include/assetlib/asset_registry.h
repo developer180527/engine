@@ -75,7 +75,7 @@ public:
     std::vector<UUID> dependents(const UUID& uuid)           const;
     std::vector<UUID> dependencies(const UUID& uuid)         const;
     // QUERY ONLY — this is NOT how a dependency change invalidates a cook.
-    // Staleness is decided by the DDC key (see cook_key.h), so marking a
+    // Staleness is decided by the DDC key (see src/cook/key.h), so marking a
     // dependent `Stale` would not cause it to recook: cookIsStale never reads
     // `state` except to keep a Failed record failed. Invalidation happens
     // because a dependency's hash is folded INTO the dependent's key. Kept for
@@ -104,8 +104,11 @@ private:
     // fails in that case rather than handing back a registry that silently
     // drops writes.
     bool  migrate();
+    // Takes the WALKED ENTRY, not a path: directory_entry caches the attributes
+    // the walk already read, so this costs no syscall. Given a bare path it
+    // would be two fresh stat() calls per file, on every scan, forever.
     static bool statChanged(const AssetRecord& rec,
-                            const std::filesystem::path& p);
+                            const std::filesystem::directory_entry& e);
 };
 
 } // namespace assetlib

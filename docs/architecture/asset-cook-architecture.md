@@ -2,8 +2,8 @@
 status: as-built
 verified: 2026-08-03
 covers:
-  - modules/assetlib/src/cook_*.cpp
-  - modules/assetlib/src/ddc*.cpp
+  - modules/assetlib/src/cook/*.cpp
+  - modules/assetlib/src/ddc/*.cpp
   - modules/assetlib/src/task_graph.cpp
   - src/assets/cookers/
   - src/tools/engine_cook.cpp
@@ -167,8 +167,8 @@ and owns no mechanism.
 | unit | concern |
 |---|---|
 | `assetlib/cooker.h` | The **cooker contract**: `CookContext` / `CookResult` / `ICooker`. No pipeline dependency — cooker implementations and `engine_cook_worker` include only this. |
-| `src/cook_key.{h,cpp}` | **Identity + staleness.** Builds the DDC key; `cookIsStale()` is the entire "is the cooked output already correct?" policy. |
-| `src/cook_dispatch.{h,cpp}` | **Execution mode.** Isolated child process vs in-process behind an exception net. `dispatchCook()` is the seam every cook passes through — and the hook for remote/farm execution. |
+| `src/cook/key.{h,cpp}` | **Identity + staleness.** Builds the DDC key; `cookIsStale()` is the entire "is the cooked output already correct?" policy. |
+| `src/cook/dispatch.{h,cpp}`, `src/cook/worker_posix.cpp`, `src/cook/worker_win32.cpp`, `src/cook/result_file.cpp` | **Execution mode.** Isolated child process vs in-process behind an exception net. `dispatchCook()` is the seam every cook passes through — and the hook for remote/farm execution. |
 | `assetlib/ddc.h`, `src/ddc.cpp` | **The store.** Two-tier content-addressed blobs. |
 | `assetlib/ddc_manifest.h`, `src/ddc_manifest.cpp` | **Cached-output record format.** A cook's output set as a manifest of per-member content-hashed blobs. |
 | `assetlib/task_graph.{h,cpp}` | **Scheduling.** Cost-weighted DAG, memory-budget admission, thermal governance. |
@@ -448,7 +448,7 @@ admission stops guessing.
 
 ### 6.4 Interface sketch
 
-Deliberately mirrors `ICooker`'s four DDC-identity members so `cook_key.h`
+Deliberately mirrors `ICooker`'s four DDC-identity members so `src/cook/key.h`
 generalizes rather than forks:
 
 ```cpp

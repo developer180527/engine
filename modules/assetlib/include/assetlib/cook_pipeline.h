@@ -15,8 +15,8 @@ namespace assetlib {
 // ── Cook pipeline ─────────────────────────────────────────────────────────────
 // ORCHESTRATION: which assets need cooking, in what order, and what the
 // registry records afterwards. The pieces it drives live behind their own
-// seams — cook identity/staleness (`src/cook_key.h`), execution mode
-// (`src/cook_dispatch.h`), the cached-output record format
+// seams — cook identity/staleness (`src/cook/key.h`), execution mode
+// (`src/cook/dispatch.h`), the cached-output record format
 // (`ddc_manifest.h`), the content-addressed store (`ddc.h`), and the
 // cost-weighted scheduler (`task_graph.h`).
 class CookPipeline {

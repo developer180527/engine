@@ -4,7 +4,7 @@ tier: working
 verified: 2026-08-03
 covers:
   - src/assets/cookers/shader/
-  - modules/assetlib/src/shader_asset.cpp
+  - modules/assetlib/src/formats/shader_asset.cpp
 tests:
   - tests/shader_cooker_test.cpp
 parses-external-input: true

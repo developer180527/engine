@@ -49,19 +49,41 @@ transformation-graph target, and the decisions deliberately not taken. Read §5
 `CookPipeline` orchestrates; each mechanism sits behind its own seam, so a
 change to (say) the cache record format can't disturb scheduling or registry
 policy. Public headers are `cooker.h` (the cooker contract), `cook_pipeline.h`,
-`ddc.h`, `ddc_manifest.h`, `task_graph.h`; `src/cook_*.h` are internal.
+`ddc.h`, `ddc_manifest.h`, `cook_result_file.h`, `task_graph.h`; anything under
+`src/` is internal.
+
+## Source layout
+**Directory = layer, file = concern.** A reader asking "how does staleness work"
+or "where is the Windows spawn" should not have to grep a 700-line file. The four
+files that used to answer several questions each (`asset_registry.cpp` 675 lines,
+`cook_pipeline.cpp` 469, `cook_dispatch.cpp` 457, `ddc.cpp` 399) are split along
+the seams they already had internally — mechanically, with cook keys unchanged.
 
 | unit | concern |
 |---|---|
-| `cooker.h` | **the cooker contract** — `CookContext`/`CookResult`/`ICooker` alone, no pipeline dependency. Cooker implementations and the out-of-process worker include only this. |
-| `cook_pipeline.cpp` | **orchestration** — what needs cooking, in what order, what the registry records after. `resolve()` turns a record into (cooker, key, paths) once for all three entry points; `placeOutput()` is the single temp→DDC→cache placement; `commitResult()` is the single registry writer (drain lane only). |
-| `src/cook_key.*` | **identity + staleness** — DDC key = source hash ⊕ cooker id ⊕ version ⊕ settings ⊕ import settings ⊕ **declared input files** ⊕ **dependency source hashes**; `cookIsStale()` is the whole "is the cooked output already correct?" policy, testable on its own. |
-| `src/cook_dispatch.*` | **execution mode** — isolated `engine_cook_worker` child (crash/timeout containment, hard child `setrlimit` cap) vs in-process behind the exception net. `dispatchCook()` is the seam every cook passes through — and the natural hook for remote/farm execution. |
-| `ddc.h` / `ddc.cpp` | **the store** — two-tier content-addressed blobs, atomic ingest, hardlink materialization, shared→local promotion, and budget+LRU garbage collection of the LOCAL tier. |
-| `cook_result_file.h` | **the worker IPC frame** — magic/version header and an `END <lines> <digest>` trailer around the sidecar result. ONE implementation, shared by writer (`engine_cook_worker`) and reader (`cook_dispatch`). |
-| `ddc_manifest.*` | **cached-output record format** — a cook's output set (primary + sibling `.ctex`) as a manifest of per-member content-hashed blobs; all-or-nothing fetch, so a hit never yields a mesh missing its textures. |
+| `registry/schema.cpp` | tables, additive migrations, `PRAGMA user_version`, `open`/`close`. Edited rarely, reviewed carefully — a schema mistake is the one registry error that re-running cannot fix. |
+| `registry/records.cpp` | `AssetRecord` ⇄ rows, CRUD, single-record queries. `kCols` and `rowToRecord` sit side by side because they must agree positionally. |
+| `registry/dependencies.cpp` | asset→asset edges, cycle rejection, and the dependency SOURCE HASHES that feed cook keys. Explicitly *not* staleness. |
+| `registry/scanner.cpp` | the filesystem walk, stat/hash change detection, move detection by content hash. The only registry code that touches the filesystem, and the hot path of a warm editor start. |
+| `registry/asset_names.cpp` | `AssetType` ⇄ name/extension. Pure, no SQLite — what you edit to add a format. |
+| `formats/*.cpp` | the on-disk asset containers (mesh, texture, scene, material, shader): read/write, versioned headers, bounds-checked parse. |
+| `ddc/hash.cpp` | BLAKE3 over bytes/files, and the ONE function composing a cook key. Pure — what a key covers fits on a screen. |
+| `ddc/store.cpp` | the two-tier store: roots, atomic ingest, hardlink materialization, shared→local promotion. Only ever about moving bytes safely. |
+| `ddc/gc.cpp` | budget + LRU eviction of the LOCAL tier. Content-addressed blobs have no referrer, so they cannot be reference counted. |
+| `ddc/fs_util.cpp` | read-only blob file ops and collision-proof temp naming, shared by store and gc (a second, subtly different `uniqueTempPath` is how two writers land on one file). |
+| `ddc/manifest.cpp` | **cached-output record format** — a cook's output set (primary + sibling `.ctex`) as a manifest of per-member content-hashed blobs; all-or-nothing fetch, so a hit never yields a mesh missing its textures. |
+| `cook/pipeline.cpp` | per-record machinery: `resolve()` → (cooker, key, paths), `placeOutput()` the single temp→DDC→cache placement, `commitResult()` the single registry writer, plus `cookOne`/`forceRecook`. All caller-thread. |
+| `cook/pipeline_batch.cpp` | `cookAll`/`cookGraph` — where stale assets become a cost-weighted task graph, and where the one-query dependency-hash snapshot is taken. |
+| `cook/key.{h,cpp}` | **identity + staleness** — DDC key = source hash ⊕ cooker id ⊕ version ⊕ settings ⊕ import settings ⊕ **declared input files** ⊕ **dependency source hashes**; `cookIsStale()` is the whole "is the cooked output already correct?" policy, testable on its own. |
+| `cook/dispatch.{h,cpp}` | **execution mode** — isolated child vs in-process behind the exception net. `dispatchCook()` is the seam every cook passes through, and the natural hook for remote/farm execution. |
+| `cook/worker_posix.cpp` | the POSIX child: `fork` + `setrlimit` + `execv`, reap with a deadline. Compiles to nothing on Windows. |
+| `cook/worker_win32.cpp` | the Windows child: `CreateProcessW` with CommandLineToArgvW-correct quoting, memory cap via a job object applied while suspended. |
+| `cook/result_file.cpp` | the sidecar protocol's parse side; framing is shared with the writer in `cook_result_file.h`. |
 | `task_graph.*` | **scheduling** — cost-weighted DAG: max-heap ready queue on estimated bytes (longest-first dispatch), dependency edges, memory-budget admission + QoS-demoted workers (the thermal levers live here), a serialized drain lane on the caller thread for `done()` callbacks, cancellation, cycle detection. Dependents release when a task DRAINS (success or failure) — a failed asset never wedges the scenes referencing it. |
-| `src/cook_env.h` | the `COOK_*` env-knob reader shared by the above. |
+| `cook/env.h` | the `COOK_*` env-knob reader shared by the above. |
+
+Both `worker_*.cpp` are listed unconditionally in CMake and guard their own
+contents, so neither can rot unnoticed behind a platform nobody builds locally.
 - **`DdcStore`** (`ddc.h`) — two-tier content-addressed Derived Data Cache:
   local `~/.engine/ddc` (`ENGINE_DDC`) + optional shared mount
   (`ENGINE_DDC_SHARED`), BLAKE3-256 keys (vendored `third_party/blake3`,

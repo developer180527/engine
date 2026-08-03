@@ -4,7 +4,7 @@ tier: working
 verified: 2026-08-03
 covers:
   - src/assets/cookers/material/
-  - modules/assetlib/src/material_asset.cpp
+  - modules/assetlib/src/formats/material_asset.cpp
 tests:
   - tests/material_cooker_test.cpp
 parses-external-input: true
