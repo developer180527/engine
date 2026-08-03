@@ -33,6 +33,7 @@
     #include "metal/fs_shadow.sc.bin.h"
     #include "metal/vs_instanced.sc.bin.h"
     #include "metal/vs_skinned.sc.bin.h"
+    #include "metal/vs_shadow_instanced.sc.bin.h"
     #include "metal/vs_shadow_skinned.sc.bin.h"
     #include "metal/vs_line.sc.bin.h"
     #include "metal/fs_line.sc.bin.h"
@@ -52,6 +53,8 @@
     #define VS_INSTANCED_SIZE      sizeof(vs_instanced_mtl)
     #define VS_SKINNED_DATA        vs_skinned_mtl
     #define VS_SKINNED_SIZE        sizeof(vs_skinned_mtl)
+    #define VS_SHADOW_INST_DATA    vs_shadow_instanced_mtl
+    #define VS_SHADOW_INST_SIZE    sizeof(vs_shadow_instanced_mtl)
     #define VS_SHADOW_SKINNED_DATA vs_shadow_skinned_mtl
     #define VS_SHADOW_SKINNED_SIZE sizeof(vs_shadow_skinned_mtl)
 #elif defined(_WIN32)
@@ -61,6 +64,7 @@
     #include "dxbc/fs_shadow.sc.bin.h"
     #include "dxbc/vs_instanced.sc.bin.h"
     #include "dxbc/vs_skinned.sc.bin.h"
+    #include "dxbc/vs_shadow_instanced.sc.bin.h"
     #include "dxbc/vs_shadow_skinned.sc.bin.h"
     #include "dxbc/vs_line.sc.bin.h"
     #include "dxbc/fs_line.sc.bin.h"
@@ -80,6 +84,8 @@
     #define VS_INSTANCED_SIZE      sizeof(vs_instanced_dxbc)
     #define VS_SKINNED_DATA        vs_skinned_dxbc
     #define VS_SKINNED_SIZE        sizeof(vs_skinned_dxbc)
+    #define VS_SHADOW_INST_DATA    vs_shadow_instanced_dxbc
+    #define VS_SHADOW_INST_SIZE    sizeof(vs_shadow_instanced_dxbc)
     #define VS_SHADOW_SKINNED_DATA vs_shadow_skinned_dxbc
     #define VS_SHADOW_SKINNED_SIZE sizeof(vs_shadow_skinned_dxbc)
 #else // Linux — Vulkan (SPIR-V)
@@ -89,6 +95,7 @@
     #include "spirv/fs_shadow.sc.bin.h"
     #include "spirv/vs_instanced.sc.bin.h"
     #include "spirv/vs_skinned.sc.bin.h"
+    #include "spirv/vs_shadow_instanced.sc.bin.h"
     #include "spirv/vs_shadow_skinned.sc.bin.h"
     #include "spirv/vs_line.sc.bin.h"
     #include "spirv/fs_line.sc.bin.h"
@@ -108,6 +115,8 @@
     #define VS_INSTANCED_SIZE      sizeof(vs_instanced_spv)
     #define VS_SKINNED_DATA        vs_skinned_spv
     #define VS_SKINNED_SIZE        sizeof(vs_skinned_spv)
+    #define VS_SHADOW_INST_DATA    vs_shadow_instanced_spv
+    #define VS_SHADOW_INST_SIZE    sizeof(vs_shadow_instanced_spv)
     #define VS_SHADOW_SKINNED_DATA vs_shadow_skinned_spv
     #define VS_SHADOW_SKINNED_SIZE sizeof(vs_shadow_skinned_spv)
 #endif
@@ -190,6 +199,10 @@ public:
             bgfx::createShader(bgfx::makeRef(VS_INSTANCED_DATA, VS_INSTANCED_SIZE)),
             bgfx::createShader(bgfx::makeRef(FS_TRIANGLE_DATA, FS_TRIANGLE_SIZE)),
             true);
+        m_instancedShadowProgram = bgfx::createProgram(
+            bgfx::createShader(bgfx::makeRef(VS_SHADOW_INST_DATA, VS_SHADOW_INST_SIZE)),
+            bgfx::createShader(bgfx::makeRef(FS_SHADOW_DATA, FS_SHADOW_SIZE)),
+            true);
         m_uBoneMatrices = bgfx::createUniform("u_boneMatrices", bgfx::UniformType::Vec4, 512);
         const uint64_t smFlags = BGFX_TEXTURE_RT
             | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT
@@ -231,6 +244,7 @@ public:
         m_programFromAsset = false;
         if (bgfx::isValid(m_skinnedProgram))       { bgfx::destroy(m_skinnedProgram);       m_skinnedProgram       = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_instancedProgram))     { bgfx::destroy(m_instancedProgram);     m_instancedProgram     = BGFX_INVALID_HANDLE; }
+        if (bgfx::isValid(m_instancedShadowProgram)) { bgfx::destroy(m_instancedShadowProgram); m_instancedShadowProgram = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_skinnedShadowProgram)) { bgfx::destroy(m_skinnedShadowProgram); m_skinnedShadowProgram = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowFB))      { bgfx::destroy(m_shadowFB);      m_shadowFB      = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowMap))     { bgfx::destroy(m_shadowMap);     m_shadowMap     = BGFX_INVALID_HANDLE; }
@@ -584,8 +598,20 @@ private:
         // SHADOW_ORTHO_RADIUS, so anything outside it genuinely cannot contribute.
         float lightVp[16];
         bx::mtxMul(lightVp, m_lightView, m_lightProj);
-        float lightPlanes[6][4];
-        rworld::extractFrustumPlanes(lightVp, lightPlanes);
+        ViewCamera lightCam;   // global scope, not rworld:: (render_world.h)
+        lightCam.view   = Mat4::from(m_lightView);
+        lightCam.proj   = Mat4::from(m_lightProj);
+        lightCam.camPos = { eye.x, eye.y, eye.z, 1.0f };
+        rworld::extractFrustumPlanes(lightVp, lightCam.frustum);
+
+        // The SAME buildVisibleSet the main pass uses, against the light. It
+        // culls and SORTS, and sorting is what makes instancing possible here:
+        // the sort key groups by mesh+material, so consecutive casters collapse
+        // into one submit exactly as they do in the colour pass. A hand-rolled
+        // cull loop culled but could not batch.
+        rworld::buildVisibleSet(v.world(), lightCam, m_shadowVisible);
+        m_submitStats.shadowItemsConsidered = m_shadowVisible.consideredCount;
+        m_submitStats.shadowItemsCulled     = m_shadowVisible.culledCount;
 
         const bgfx::ViewId sv = ctx.shadowViewId;
         bgfx::setViewFrameBuffer(sv, m_shadowFB);
@@ -595,23 +621,44 @@ private:
         bgfx::touch(sv);
 
         const uint64_t st = BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW;
-        for (uint32_t i = 0; i < (uint32_t)v.items.size(); ++i) {
-            const RenderItem& it = v.items[i];
-            if (!it.mesh) continue;
-            ++m_submitStats.shadowItemsConsidered;
-            // Same conservative sphere test the main pass uses. hasBounds==false
-            // means "never cull" (a mesh with no bounds could be anywhere), which
-            // is the safe direction: a missing shadow is far more visible than a
-            // wasted draw.
-            if (it.hasBounds) {
-                const rworld::BoundingSphere sph =
-                    rworld::worldSphere(it.model.ptr(), it.boundsCenter, it.boundsSize);
-                if (rworld::outsideFrustum(sph, lightPlanes)) {
-                    ++m_submitStats.shadowItemsCulled;
+        const bool shCaps = 0 != (bgfx::getCaps()->supported & BGFX_CAPS_INSTANCING);
+        for (std::size_t sdi = 0; sdi < m_shadowVisible.draws.size(); ) {
+            const std::size_t runLen = rworld::batchRunLength(m_shadowVisible, sdi);
+            const RenderItem& it = v.items[m_shadowVisible.draws[sdi].index];
+            if (!it.mesh) { ++sdi; continue; }
+            const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
+
+            // Instanced run. Simpler than the colour pass: the shadow program is
+            // fixed, so there is no data-driven material to conflict with. Skinned
+            // casters still carry a per-item bone palette in uniforms and submeshes
+            // still need per-range index draws, so both fall through.
+            if (shCaps && runLen > 1 && !skinned && it.mesh->submeshes.empty()
+                && bgfx::isValid(m_instancedShadowProgram)) {
+                const uint16_t stride = 64;
+                const uint32_t avail =
+                    bgfx::getAvailInstanceDataBuffer((uint32_t)runLen, stride);
+                if (avail > 1) {
+                    bgfx::InstanceDataBuffer idb;
+                    bgfx::allocInstanceDataBuffer(&idb, avail, stride);
+                    uint8_t* dst = idb.data;
+                    for (uint32_t k = 0; k < avail; ++k) {
+                        const RenderItem& ri =
+                            v.items[m_shadowVisible.draws[sdi + k].index];
+                        std::memcpy(dst, ri.model.ptr(), stride);
+                        dst += stride;
+                    }
+                    bgfx::setState(st);
+                    bgfx::setVertexBuffer(0, it.mesh->vbh);
+                    bgfx::setIndexBuffer(it.mesh->ibh);
+                    bgfx::setInstanceDataBuffer(&idb);
+                    bgfx::submit(sv, m_instancedShadowProgram);
+                    ++m_submitStats.shadowDraws;
+                    ++m_submitStats.shadowInstancedDraws;
+                    m_submitStats.shadowInstancedItems += avail;
+                    sdi += avail;
                     continue;
                 }
             }
-            const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
             const bgfx::ProgramHandle shadowProg = skinned ? m_skinnedShadowProgram : m_shadowProgram;
             // Once per item here too (R4) — the shadow pass draws every submesh
             // of every caster, so it paid the same redundant upload.
@@ -637,6 +684,7 @@ private:
                     ++m_submitStats.shadowDraws;
                 }
             }
+            ++sdi;
         }
     }
 
@@ -667,6 +715,7 @@ private:
     // cap are still dropped today.
     bgfx::ProgramHandle m_program              = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_instancedProgram     = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_instancedShadowProgram = BGFX_INVALID_HANDLE;
     // True when m_program came from a .cshader — i.e. ShaderLibrary owns it.
     bool                m_programFromAsset     = false;
     bgfx::ProgramHandle m_skinnedProgram       = BGFX_INVALID_HANDLE;
@@ -674,6 +723,7 @@ private:
     bgfx::ProgramHandle m_lineProgram          = BGFX_INVALID_HANDLE;   // debug lines
     bgfx::VertexLayout  m_lineLayout;
     bgfx::UniformHandle m_uBoneMatrices        = BGFX_INVALID_HANDLE;
+    rworld::VisibleSet  m_shadowVisible;   // light-space, culled + sorted
     rdiag::SubmitStats  m_submitStats{};
 
     // ── Hard ceiling on submits per frame ───────────────────────────────────

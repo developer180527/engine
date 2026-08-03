@@ -63,6 +63,8 @@ struct SubmitStats {
     uint32_t shadowItemsCulled      = 0;
     uint32_t shadowDraws            = 0;
     uint32_t shadowBonePaletteUploads = 0;
+    uint32_t shadowInstancedDraws   = 0;
+    uint32_t shadowInstancedItems   = 0;
 
     // Draws the pipeline REFUSED to submit because the frame hit the backend's
     // uniform-buffer ceiling (see ForwardPipeline::kMaxDrawsPerFrame). Non-zero

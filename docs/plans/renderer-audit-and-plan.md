@@ -193,6 +193,41 @@ Consequence for every future measurement: **VRAM and residency claims must come
 from `engine_player --gpu-stats` against a built `dist/`.** `engine_host` is the
 right tool for frame pacing and CPU work, and the wrong one for memory.
 
+### Shadow pass instanced, and a maintainability audit (2026-08-04)
+
+`vs_shadow_instanced.sc` plus the run loop. The hand-rolled cull from the previous
+change was replaced by the SAME `rworld::buildVisibleSet` the colour pass uses, run
+against a light-space `ViewCamera` — culling and *sorting*, and the sort is what
+makes batching possible at all. A cull loop can cull; only a sorted set can batch.
+
+2 000 cubes with `--shadows`, cumulative across the last three changes:
+
+| | originally | after cull | after instancing |
+|---|---|---|---|
+| main pass draws | 2 001 | 1 | 1 |
+| shadow pass draws | 2 001 | 244 | **1** |
+| total bgfx draws | ~3 990 | 246 | **4** |
+
+fps_shooter unchanged throughout (10 items, 1 culled, 6 draws). 20 k objects still
+exits 0.
+
+**Audit: can `src/render` be reasoned about in isolation?** Written up in
+`src/render/issues.md`. Verdict: the decision layer yes, the submission layer no.
+`world/` is genuinely bgfx-free (it mentions bgfx only in comments explaining its
+absence), `diag/` is payload-agnostic, and nothing outside `src/render` includes
+renderer internals. But `forward_pipeline.h` is **812 lines in a header**, of which
+`render()` is 274 and `renderShadow()` 147 — and every change this month landed in
+those two functions.
+
+The audit also found **`src/render/passes/`: nine headers describing a second,
+never-compiled renderer architecture**, referenced by nothing and in no CMake
+target, with names (`opaque_pass`, `shadow_pass`) that collide with the
+decomposition the real pipeline now needs. That is the concrete answer to the
+isolation question: not while the tree holds two renderer designs and only one runs.
+Recommendation is to delete it — `render()`'s real structure is now known from
+measurement, and a pass list drawn up before any of it was measured is unlikely to
+be the right shape.
+
 ### Shadow-pass cull — and primitives were never culled at all (2026-08-04)
 
 The shadow pass walked every item. Fixed by culling against the **light's**

@@ -68,7 +68,8 @@ inline void printSubmitStats(const rdiag::SubmitStats& s, const char* tag) {
         "      material     %u bind(s) for %u draw(s)                     [R7]\n"
         "      bones        %u upload(s) for %u skinned item(s)           [R4]\n"
         "      shadow       %u draw(s) from %u item(s) (%u culled by the LIGHT frustum),\n"
-        "                   %u bone upload(s)\n",
+        "                   %u bone upload(s)\n"
+        "                   %u instanced submit(s) covering %u item(s)\n",
         tag, s.itemsConsidered, s.itemsCulled,
         s.draws, s.submeshDraws, s.skinnedDraws,
         s.batchRuns, s.instancingSavings(),
@@ -77,7 +78,8 @@ inline void printSubmitStats(const rdiag::SubmitStats& s, const char* tag) {
         s.materialBinds, s.draws,
         s.bonePaletteUploads, s.skinnedItems,
         s.shadowDraws, s.shadowItemsConsidered, s.shadowItemsCulled,
-        s.shadowBonePaletteUploads);
+        s.shadowBonePaletteUploads,
+        s.shadowInstancedDraws, s.shadowInstancedItems);
     if (s.drawsDropped)
         std::printf("      DROPPED      %u draw(s) refused — frame INCOMPLETE "
                     "(backend uniform-buffer ceiling)\n", s.drawsDropped);

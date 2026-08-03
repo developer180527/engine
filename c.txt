@@ -1,0 +1,49 @@
+render: instance the shadow pass, and audit the subsystem's isolation
+
+SHADOW INSTANCING. vs_shadow_instanced.sc plus a run loop. The hand-rolled cull
+added in the previous commit is replaced by the SAME rworld::buildVisibleSet the
+colour pass uses, run against a light-space ViewCamera: it culls AND sorts, and the
+sort is what makes batching possible. A cull loop can cull; only a sorted set can
+batch.
+
+  2 000 cubes, --shadows      originally   after cull   after instancing
+  main pass draws             2 001        1            1
+  shadow pass draws           2 001        244          1
+  total bgfx draws            ~3 990       246          4
+
+fps_shooter unchanged throughout (10 items, 1 culled, 6 draws). 20 k exits 0.
+Skinned casters and submeshes still fall through to per-draw, as in the colour pass.
+
+MAINTAINABILITY AUDIT -> src/render/issues.md. Verdict: the decision layer can be
+reasoned about in isolation, the submission layer cannot.
+
+Genuinely isolated: world/ is bgfx-free (it mentions bgfx only in comments
+explaining its absence) and tests without a graphics API; diag/ is payload-agnostic;
+submit_stats.h is a POD with an all-zero default on the interface; and nothing
+outside src/render includes renderer internals, renderer.h and render_pipeline.h
+are the only entry points.
+
+R10: forward_pipeline.h is 812 lines IN A HEADER. render() is 274 of them and
+renderShadow() 147, and every change this month landed in those two functions. As a
+header, all of it plus 130 lines of platform #if recompiles into every includer;
+only renderer.cpp does today, so that cost is contained by luck, not design. A
+decomposition following the assetlib precedent is written out in issues.md.
+
+R11, and the real answer to the isolation question: src/render/passes/ is a SECOND,
+DEAD renderer architecture, nine headers (i_render_pass, opaque_pass, shadow_pass,
+sky_pass, transparency_pass, post_pass, resolve_pass, pass_context,
+pass_list_pipeline) plus a renderer-architecture.html. Referenced by nothing, in no
+CMake target, never compiled. A reader who opens passes/opaque_pass.h finds a
+plausible interface that has never run, with names that collide with the
+decomposition the live pipeline now needs. Recommend deleting: render()'s real
+structure is known from measurement now, and a pass list drawn up before any of it
+was measured is unlikely to be the right shape. Flagged rather than deleted, it is
+an architecture call.
+
+R12: renderer.cpp mixes device lifecycle with ECS extraction, and extraction is the
+next hot path (38 ms at 20 k objects with ONE draw call), so it wants to be its own
+unit testable against a fake world. R13: tier stays prototype, now solely because
+submission is untested, which the counting seam finally makes possible.
+
+34/34 unit, 2/2 fuzz-regress, docs clean.
+

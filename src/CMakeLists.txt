@@ -17,6 +17,7 @@ set(ENGINE_VERTEX_SHADERS
     ${CMAKE_SOURCE_DIR}/shaders/vs_shadow.sc
     ${CMAKE_SOURCE_DIR}/shaders/vs_instanced.sc
     ${CMAKE_SOURCE_DIR}/shaders/vs_skinned.sc
+    ${CMAKE_SOURCE_DIR}/shaders/vs_shadow_instanced.sc
     ${CMAKE_SOURCE_DIR}/shaders/vs_shadow_skinned.sc
     ${CMAKE_SOURCE_DIR}/shaders/vs_line.sc
 )
