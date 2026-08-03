@@ -45,6 +45,12 @@ struct SubmitStats {
     // R7: one bind per draw today. Equal to `draws` means no dedup is happening.
     uint32_t materialBinds = 0;
 
+    // Instanced submits, and how many objects they covered. `instancedItems -
+    // instancedDraws` is the number of submits instancing actually removed —
+    // the realised half of what `batchRuns` predicts.
+    uint32_t instancedDraws = 0;
+    uint32_t instancedItems = 0;
+
     // R5: runs of consecutive draws sharing mesh AND material (rworld::sameBatch).
     // `draws - batchRuns` is exactly the number of submits instancing removes.
     uint32_t batchRuns = 0;

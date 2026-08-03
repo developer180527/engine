@@ -22,6 +22,11 @@ tests:
 # the program/shader setup ForwardPipeline::onAttach wants, which is the remaining
 # work. Prototype until that test exists.
 #
+# INSTANCING (R5) is live: the submit loop walks rworld::batchRunLength and
+# collapses runs sharing mesh+material into one instanced submit (vs_instanced.sc,
+# model matrix from instance data). 20 001 objects -> 1 draw call. Skinned items,
+# submeshes and data-driven materials fall through to per-draw on purpose.
+#
 # What the seam already measures on fps_shooter (2026-08-04): 12 draws from 10
 # items (1 culled), 3 batch runs — so instancing would remove 9 of 12 submits
 # (R5); 12 material binds for 12 draws, i.e. no dedup at all (R7); and 1 bone

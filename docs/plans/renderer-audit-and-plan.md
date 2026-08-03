@@ -68,7 +68,7 @@ Worth stating plainly, because the gaps below are not a verdict on the whole:
 | **R2** ✅ | **Extraction/submission split never happened.** Culling, sorting, light packing and material binding all lived inside `ForwardPipeline`. A dev who swapped the pipeline inherited *none* of it and had to rewrite culling and sorting to draw a single triangle differently. **FIXED in Phase 3** — all four moved to `src/render/world/`; the pipeline now owns only shaders, uniforms and binds. Material *assets* remain fixed-struct (R3). | `src/render/world/`, `forward_pipeline.h` | **Critical** |
 | **R3** ✅ | **Shaders are compile-time blobs.** `.sc` sources are compiled to per-platform C arrays (`vs_triangle_mtl`, `_dxbc`, `_spv`) and `#include`d. There is no shader asset, no variant system, no runtime load. A game cannot add a material type without rebuilding the engine. | `forward_pipeline.h:34–104`, `shaders/*.sc` | **Critical** (for the customization goal) |
 | **R4** ✅ | **Bone palette uploaded per submesh.** `setUniform(m_uBoneMatrices, …, boneCount*4)` sits inside `bindMaterial`, which runs once per submesh. The 73-bone zombie re-uploads its whole palette for every submesh, every frame. | `forward_pipeline.h` | **High as written, nil as measured** — **FIXED in Phase 4**: hoisted to once per item in both the main and shadow passes. Safe because bgfx uniform VALUES persist across submits (`BGFX_DISCARD_STATE` drops the pending update range, not the applied value) — the same property that lets the view-level light/camera uniforms be set once per view. But the severity was assessed by READING: `fps_shooter`'s only skinned mesh (Zombie, 73 bones) has exactly ONE submesh, so the redundancy in this scene was zero and the fix changed no measured number. It is correct for any multi-submesh skinned mesh, and GPU time is now instrumented so the cost would be visible if such content appears. |
-| **R5** | **No instancing.** The sort already groups identical meshes adjacently — the setup for batching is done, the batch is not. | no `setInstanceDataBuffer` anywhere in the tree | High (at scale) |
+| **R5** ✅ | **No instancing.** The sort already groups identical meshes adjacently — the setup for batching is done, the batch is not. | `vs_instanced.sc`, `ForwardPipeline` run loop | **DONE 2026-08-04.** The sort key already made adjacency mean batchability, so the run loop walks `rworld::batchRunLength` and collapses each run into one instanced submit. Measured: 20 001 objects go from 20 001 draws to **1**, and fps_shooter from 12 to 6. Restricted deliberately — skinned items carry a per-item bone palette in uniforms, submeshes need per-range index draws, and a data-driven material supplies its OWN program (instancing it would silently render with the wrong shader), so all three fall through to per-draw. |
 | **R6** ✅ | **Render-target memory is ~5× the naive figure.** 1280×720 colour+depth for the scene and game framebuffers should be ≈14 MB; bgfx reports **71 MB**. Unexplained — candidates are Retina drawable scaling, D24S8 storage on Metal, and the 2-deep swap chain. | `RenderStatsChannel`, `[Renderer] Scene FB: 1280x720` | High |
 | **R7** | **Redundant material binds.** `bindMaterial` re-sets every uniform and texture per submesh with no comparison against current state, even though the sort makes consecutive draws frequently share a material. | `forward_pipeline.h:277–294` | Medium |
 | **R8** ⚠️ dev path only | **Textures are outside the residency system.** `AssetService` gained a mesh residency budget with LRU eviction; textures — the 76 MB — have none. | `asset_service.cpp` residency covers meshes only | **Reassessed 2026-08-04: not a shipping problem.** The shipped path is 40.7 MB against a 60 MB budget, and its textures DO go through `GpuResourceCache` (identity + refcount), so a budget could be applied when one is needed. The 76/100 MB figures were the DEV path, where the importers call `addTexture` directly and nothing dedups or evicts. Worth fixing for editor sessions on large projects; NOT worth fixing to hit a budget the shipped game already passes with 19 MB spare. |
@@ -192,6 +192,45 @@ it reports on was private with no accessor) and seeing it print `0 resources,
 Consequence for every future measurement: **VRAM and residency claims must come
 from `engine_player --gpu-stats` against a built `dist/`.** `engine_host` is the
 right tool for frame pacing and CPU work, and the wrong one for memory.
+
+### Instancing landed, and it moved the bottleneck (2026-08-04)
+
+`vs_instanced.sc` reads the model matrix from instance data; the submit loop walks
+runs instead of draws and collapses each into one submit.
+
+| scene | draws before | draws after | GPU before | GPU after | CPU frame before | after |
+|---|---|---|---|---|---|---|
+| 2 001 objects | 2 001 | **1** | 0.82 ms | 0.44 ms | 9.33 ms | 9.76 ms |
+| 20 001 objects | 4 096 + **15 905 dropped** | **1** | — | 0.96 ms | 55.82 ms | 38.76 ms |
+| fps_shooter | 12 | 6 | 2.55 ms | 2.53 ms | ~13 ms | ~16 ms |
+
+**The 8 MB uniform-buffer wall is gone as a practical concern.** At 20 000 objects
+the draw ceiling is never reached — one instanced submit costs one draw's worth of
+uniform bytes instead of 20 000, so instancing bought the crash headroom rather
+than a bigger buffer. The guard stays as a backstop.
+
+**And the bottleneck moved, which is the important part.** 20 001 objects now
+submit ONE draw call and still cost 38.76 ms of CPU per frame. That cost is no
+longer submission — it is extraction and culling and sorting 20 001 items: a
+~152-byte `RenderItem` built per item per frame (≈3 MB touched), a sorted array
+rebuilt every frame, and `VisibleDraw` holding only `{key, index}` so the submit
+side random-accesses that AoS.
+
+**So the flat-render-packet redesign now has its evidence.** It was fourth in line
+because there was no measurement to justify it; there is one now, and it is the
+next item rather than the last. What it should target is the per-ITEM path, not the
+per-draw path — extraction and the sort, where the remaining 38 ms lives.
+
+Revised order:
+1. ~~The crash~~ — root-caused and guarded.
+2. ~~Instancing (R5)~~ — done.
+3. **The shadow pass cull.** Still submits every item; with instancing in the main
+   pass it is now the larger of the two passes by far.
+4. **Extraction / flat packets.** The 38 ms at 20 k with one draw call. Cull already
+   copies bounds to avoid pointer-chasing; the remaining costs are building 152-byte
+   items and the per-frame sort.
+5. **R7 material-bind dedup.** 6 binds for 6 draws in fps_shooter — worth less now
+   that instancing removed the bulk of the binds, but still free headroom.
 
 ### The stress scene, and a hard wall at ~10 000 objects (2026-08-04)
 

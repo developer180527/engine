@@ -64,12 +64,15 @@ inline void printSubmitStats(const rdiag::SubmitStats& s, const char* tag) {
         "      items        %u considered, %u culled\n"
         "      draws        %u  (%u from submeshes, %u skinned)\n"
         "      batch runs   %u  -> instancing would remove %u submit(s)   [R5]\n"
+        "      instanced    %u submit(s) covering %u item(s) -> %u submit(s) SAVED\n"
         "      material     %u bind(s) for %u draw(s)                     [R7]\n"
         "      bones        %u upload(s) for %u skinned item(s)           [R4]\n"
         "      shadow       %u draw(s), %u bone upload(s)\n",
         tag, s.itemsConsidered, s.itemsCulled,
         s.draws, s.submeshDraws, s.skinnedDraws,
         s.batchRuns, s.instancingSavings(),
+        s.instancedDraws, s.instancedItems,
+        s.instancedItems > s.instancedDraws ? s.instancedItems - s.instancedDraws : 0,
         s.materialBinds, s.draws,
         s.bonePaletteUploads, s.skinnedItems,
         s.shadowDraws, s.shadowBonePaletteUploads);

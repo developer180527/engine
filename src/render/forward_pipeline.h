@@ -31,6 +31,7 @@
     #include "metal/fs_triangle.sc.bin.h"
     #include "metal/vs_shadow.sc.bin.h"
     #include "metal/fs_shadow.sc.bin.h"
+    #include "metal/vs_instanced.sc.bin.h"
     #include "metal/vs_skinned.sc.bin.h"
     #include "metal/vs_shadow_skinned.sc.bin.h"
     #include "metal/vs_line.sc.bin.h"
@@ -47,6 +48,8 @@
     #define VS_SHADOW_SIZE         sizeof(vs_shadow_mtl)
     #define FS_SHADOW_DATA         fs_shadow_mtl
     #define FS_SHADOW_SIZE         sizeof(fs_shadow_mtl)
+    #define VS_INSTANCED_DATA      vs_instanced_mtl
+    #define VS_INSTANCED_SIZE      sizeof(vs_instanced_mtl)
     #define VS_SKINNED_DATA        vs_skinned_mtl
     #define VS_SKINNED_SIZE        sizeof(vs_skinned_mtl)
     #define VS_SHADOW_SKINNED_DATA vs_shadow_skinned_mtl
@@ -56,6 +59,7 @@
     #include "dxbc/fs_triangle.sc.bin.h"
     #include "dxbc/vs_shadow.sc.bin.h"
     #include "dxbc/fs_shadow.sc.bin.h"
+    #include "dxbc/vs_instanced.sc.bin.h"
     #include "dxbc/vs_skinned.sc.bin.h"
     #include "dxbc/vs_shadow_skinned.sc.bin.h"
     #include "dxbc/vs_line.sc.bin.h"
@@ -72,6 +76,8 @@
     #define VS_SHADOW_SIZE         sizeof(vs_shadow_dxbc)
     #define FS_SHADOW_DATA         fs_shadow_dxbc
     #define FS_SHADOW_SIZE         sizeof(fs_shadow_dxbc)
+    #define VS_INSTANCED_DATA      vs_instanced_dxbc
+    #define VS_INSTANCED_SIZE      sizeof(vs_instanced_dxbc)
     #define VS_SKINNED_DATA        vs_skinned_dxbc
     #define VS_SKINNED_SIZE        sizeof(vs_skinned_dxbc)
     #define VS_SHADOW_SKINNED_DATA vs_shadow_skinned_dxbc
@@ -81,6 +87,7 @@
     #include "spirv/fs_triangle.sc.bin.h"
     #include "spirv/vs_shadow.sc.bin.h"
     #include "spirv/fs_shadow.sc.bin.h"
+    #include "spirv/vs_instanced.sc.bin.h"
     #include "spirv/vs_skinned.sc.bin.h"
     #include "spirv/vs_shadow_skinned.sc.bin.h"
     #include "spirv/vs_line.sc.bin.h"
@@ -97,6 +104,8 @@
     #define VS_SHADOW_SIZE         sizeof(vs_shadow_spv)
     #define FS_SHADOW_DATA         fs_shadow_spv
     #define FS_SHADOW_SIZE         sizeof(fs_shadow_spv)
+    #define VS_INSTANCED_DATA      vs_instanced_spv
+    #define VS_INSTANCED_SIZE      sizeof(vs_instanced_spv)
     #define VS_SKINNED_DATA        vs_skinned_spv
     #define VS_SKINNED_SIZE        sizeof(vs_skinned_spv)
     #define VS_SHADOW_SKINNED_DATA vs_shadow_skinned_spv
@@ -172,6 +181,15 @@ public:
             bgfx::createShader(bgfx::makeRef(VS_SHADOW_SKINNED_DATA, VS_SHADOW_SKINNED_SIZE)),
             bgfx::createShader(bgfx::makeRef(FS_SHADOW_DATA, FS_SHADOW_SIZE)),
             true);
+
+        // Instanced variant of the standard program: same fragment shader, a
+        // vertex shader that reads the model matrix from instance data instead of
+        // u_model. Used for runs of consecutive draws sharing mesh AND material
+        // (rworld::sameBatch) — N objects become one submit.
+        m_instancedProgram = bgfx::createProgram(
+            bgfx::createShader(bgfx::makeRef(VS_INSTANCED_DATA, VS_INSTANCED_SIZE)),
+            bgfx::createShader(bgfx::makeRef(FS_TRIANGLE_DATA, FS_TRIANGLE_SIZE)),
+            true);
         m_uBoneMatrices = bgfx::createUniform("u_boneMatrices", bgfx::UniformType::Vec4, 512);
         const uint64_t smFlags = BGFX_TEXTURE_RT
             | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT
@@ -212,6 +230,7 @@ public:
         m_program = BGFX_INVALID_HANDLE;
         m_programFromAsset = false;
         if (bgfx::isValid(m_skinnedProgram))       { bgfx::destroy(m_skinnedProgram);       m_skinnedProgram       = BGFX_INVALID_HANDLE; }
+        if (bgfx::isValid(m_instancedProgram))     { bgfx::destroy(m_instancedProgram);     m_instancedProgram     = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_skinnedShadowProgram)) { bgfx::destroy(m_skinnedShadowProgram); m_skinnedShadowProgram = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowFB))      { bgfx::destroy(m_shadowFB);      m_shadowFB      = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowMap))     { bgfx::destroy(m_shadowMap);     m_shadowMap     = BGFX_INVALID_HANDLE; }
@@ -287,7 +306,14 @@ public:
             ++m_submitStats.batchRuns;
         }
 
-        for (const rworld::VisibleDraw& d : m_visible.draws) {
+        // Walk RUNS, not individual draws. rworld::batchRunLength returns how
+        // many consecutive sorted draws share mesh AND material — the sort key
+        // was built so that adjacency means batchability (see world/sort_key.h),
+        // and a run longer than 1 collapses into a single instanced submit.
+        const bool caps = 0 != (bgfx::getCaps()->supported & BGFX_CAPS_INSTANCING);
+        for (std::size_t di = 0; di < m_visible.draws.size(); ) {
+            const rworld::VisibleDraw& d = m_visible.draws[di];
+            const std::size_t runLen = rworld::batchRunLength(m_visible, di);
             const RenderItem& it = v.items[d.index];
             const uint64_t state = it.mesh->doubleSided
                 ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
@@ -411,7 +437,54 @@ public:
                 bind(params, factor, base, norm, state, it);
             };
 
-            if (drawBudgetExhausted()) continue;
+            if (drawBudgetExhausted()) { ++di; continue; }
+
+            // ── Instanced run ───────────────────────────────────────────────
+            // Restricted on purpose. Skinned items carry a per-item bone palette
+            // in uniforms, so they cannot share a submit. Submeshes need per-range
+            // index draws. A data-driven material supplies its OWN program, which
+            // is not the instanced variant — instancing it would silently render
+            // with the wrong shader, so those fall through to per-draw.
+            const Material* runMat = it.material.valid()
+                ? ctx.materials.getMaterial(it.material) : nullptr;
+            const bool instanceable =
+                   caps && runLen > 1 && !skinned
+                && it.mesh->submeshes.empty()
+                && !(runMat && runMat->dataDriven)
+                && bgfx::isValid(m_instancedProgram);
+
+            if (instanceable) {
+                const uint16_t stride = 64;               // one mat4 per instance
+                const uint32_t want   = (uint32_t)runLen;
+                const uint32_t avail  =
+                    bgfx::getAvailInstanceDataBuffer(want, stride);
+                if (avail > 1) {
+                    bgfx::InstanceDataBuffer idb;
+                    bgfx::allocInstanceDataBuffer(&idb, avail, stride);
+                    uint8_t* dst = idb.data;
+                    for (uint32_t k = 0; k < avail; ++k) {
+                        const RenderItem& ri =
+                            v.items[m_visible.draws[di + k].index];
+                        std::memcpy(dst, ri.model.ptr(), stride);
+                        dst += stride;
+                    }
+                    m_instancing = true;
+                    drawProgram = m_instancedProgram;
+                    bindMaterial(it.material);           // shared by the whole run
+                    bgfx::setInstanceDataBuffer(&idb);
+                    bgfx::setIndexBuffer(it.mesh->ibh);
+                    bgfx::submit(id, drawProgram);
+                    m_instancing = false;
+                    ++m_submitStats.draws;
+                    ++m_submitStats.instancedDraws;
+                    m_submitStats.instancedItems += avail;
+                    di += avail;
+                    continue;
+                }
+                // Instance buffer exhausted this frame — fall through to
+                // per-draw rather than dropping the objects.
+            }
+
             if (it.mesh->submeshes.empty()) {
                 drawProgram = defaultProg;
                 bindMaterial(it.material);
@@ -433,6 +506,7 @@ public:
                     if (skinned) ++m_submitStats.skinnedDraws;
                 }
             }
+            ++di;
         }
 
         submitDebugLines(id, ctx);   // debug lines last, drawn over the meshes
@@ -549,15 +623,22 @@ private:
         bgfx::setTexture(1, m_sNormalMap, norm);
         bgfx::setTexture(2, m_sShadowMap, m_shadowMap);
         bgfx::setState(state);
-        bgfx::setTransform(it.model.ptr());
+        // INSTANCED draws must not set a transform: the model matrix arrives as
+        // instance data (vs_instanced.sc), and a setTransform here would be
+        // ignored by that shader while still costing a matrix-cache slot.
+        if (!m_instancing) bgfx::setTransform(it.model.ptr());
         bgfx::setVertexBuffer(0, it.mesh->vbh);
     }
+
+    // True only while submitting an instanced run — see bind() and the run loop.
+    bool m_instancing = false;
 
     // NOTE: culling moved to render/world/frustum.{h,cpp} and lighting's fixed
     // cap to rworld::kMaxLights. Replacing the fixed-cap forward path with
     // clustered forward is docs/architecture/renderer-architecture.md §2 — lights beyond the
     // cap are still dropped today.
     bgfx::ProgramHandle m_program              = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_instancedProgram     = BGFX_INVALID_HANDLE;
     // True when m_program came from a .cshader — i.e. ShaderLibrary owns it.
     bool                m_programFromAsset     = false;
     bgfx::ProgramHandle m_skinnedProgram       = BGFX_INVALID_HANDLE;
