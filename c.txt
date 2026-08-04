@@ -1,59 +1,53 @@
-runtime: real cooked assets never used the cooked path, and never deduped
+fuzz: the 20k-50k cliff does not exist, retracting it, with the numbers
 
-A layered fuzz generator over real cooked assets (scripts/gen_fuzz_scene.py, seeded,
-drawing from the Medieval Village MegaKit's 176 cooked models) found two bugs in its
-first 200 objects. Both were invisible to every stress scene to date, for the same
-reason: those scenes use engine://primitive/cube, which is ONE shared mesh loaded
-through the primitive path.
+Bisected with a bounded driver (per-run timeout recorded as data, so a pathological
+size cannot eat the sweep), separating boot+load from per-frame cost by timing
+--frames 1 against --frames 11:
 
-BUG 1: THE COOKED FAST PATH NEVER WORKED. entity_serializer joined cookedPath to
-ctx.projectRoot, producing '<project>/meshs/<uuid>.cooked'. The cache is at
-'<project>/.cache/', and AssetService::loadMesh already resolves RELATIVE paths
-against it, exactly as its doc says, so the pre-join defeated the resolution and
-every cooked mesh load failed, silently falling through to the Assimp source
-importer. Nothing looked broken: scenes still rendered, just via the slow path. A
-shipped dist with no source assets would have failed outright. Fixed by passing the
-path through relative.
+  objects   load     ms/entity  frame
+   10 000   2.4 s    0.24      
+   20 000   4.8 s    0.24       (noise)
+   25 000   7.0 s    0.28      
+   40 000   14.8 s   0.37       67 ms
+   50 000   22.0 s   0.44       93 ms
 
-BUG 2: NO MESH DEDUP, SO bgfx's BUFFER POOL RAN OUT. Sync loadMesh created a new
-vertex+index buffer pair per CALL. With 50 000 entities referencing 176 distinct
-cooked meshes:
+BOTH CURVES ARE SMOOTH. There is no discontinuity. 25 000 objects, the exact size
+that previously timed out past 150 s, load in 7 s, and 50 000 run at 93 ms per frame,
+not the >18 s per frame the previous commit message claimed.
 
-  bgfx buffer creation failed   45 911  ->  0
-  meshes loaded                  4 089  ->  176
+RETRACTION. That figure came from runs killed by a tool timeout; contention from those
+killed processes is the likely cause, but a check for orphaned processes afterwards
+found none, so it cannot be confirmed. The honest statement is that the measurement was
+unreliable and the conclusion drawn from it was wrong. Recorded as such in
+src/runtime/docs/issues.md rather than dropped, because the wrong number was quoted in
+a commit.
 
-4 089 is BGFX_CONFIG_MAX_INDEX_BUFFERS (4096) minus the primitives, the count was
-the giveaway that it was the handle pool and not the files. 92% of the scene silently
-did not render.
+A CONFOUND THAT NEARLY BECAME THE ANSWER. The generator was edited mid-sweep to fix
+"parent" -> "parentId" (SceneSerializer::restoreParents reads parentId, and an unknown
+key is silently ignored, so 15% of every scene generated before that were "children"
+that loaded as roots, and the hierarchy layer was inert with nothing saying so). That
+made 25 000 the first size with real parenting, which alone could explain a jump, and
+ChildOf being an archetype pair made "table explosion" a plausible story. Measured
+instead of believed: 25 000 objects load in 6.94 s with no children and 7.04 s with
+15% children. Hierarchy is not a factor.
 
-The cause was structural, not a missing memo: the path->handle map lived inside
-AsyncState, which ensureWorker() creates LAZILY, so a purely synchronous scene load
-never had a cache at all. Moved onto AssetService, next to m_texCache, which sits at
-exactly that level because textures had this identical bug ('every load of the same
-cooked texture uploaded ANOTHER copy to the GPU', renderer audit R1). Meshes simply
-never got the same treatment. One cache per resource kind, shared by both paths, so a
-sync and an async load of the same path cannot each create buffers.
+THE REAL FINDING: scene LOAD dominates and is mildly superlinear (~N^1.35). Per-entity
+cost nearly doubles from 10 k to 50 k, so opening a 50 000-object scene takes 22
+seconds, while the whole renderer, extraction through submit, is single-digit
+milliseconds at the same sizes. 0.24 ms to create ONE entity with four components is
+already two orders of magnitude off what flecs can do, and the superlinearity sits on
+top of that.
 
-WHAT THIS REFRAMES. With real content, INSTANCING DOES NOTHING, 0 instanced submits
-at 200 objects and at 50 000. Meshes with submeshes are excluded by construction and
-this kit averages ~1.7 material groups per mesh (80 have 1, 71 have 2, 23 have 3, 2
-have 4). At only 4 089 items the pipeline submitted 3 067 draws and DROPPED 534 at the
-uniform-buffer ceiling, with 3 067 material binds for 3 067 draws. So '20 001 objects
--> 1 draw call' was a best case real content cannot reach, and R7 (material-bind
-dedup) stops being cosmetic.
+Deliberately NOT diagnosed further. Candidates, none confirmed: nlohmann's DOM for a
+27 MB scene (materialised whole before the first entity is created, string-compare key
+lookups), per-entity archetype moves from setting components one at a time, and
+per-entity asset resolution. A sampling profiler on a --frames 1 run of the 50 k scene
+settles it in one shot; that is the next step rather than more speculation.
 
-Measured with real assets: 5 000 objects 11 ms/frame, 10 000 objects 14 ms/frame,
-both hitting the draw ceiling.
-
-NOT ESTABLISHED, and stated rather than guessed: 50 000 objects runs at >18 s/frame,
-wildly superlinear against 10 000's 14 ms. Undiagnosed. A 20k/30k bisect separating
-boot+load from per-frame is what would localise it; that run is what had to be
-abandoned, which is weak evidence the cliff sits at or below 20k. No claim is made
-about whether it is GPU, VRAM or scene-load.
-
-ALSO MISSING: no regression test pins the dedup. 'N entities sharing one cooked mesh
-create exactly one buffer pair' is cheap to assert on bgfx Noop via getStats(), and
-without it this can silently come back.
+Also re-verifies the two docs the previous commit made stale, which is the doc gate
+doing its job: runtime/docs/info.md now records the mesh dedup and WHY it failed (the
+cache lived inside AsyncState, created lazily, so synchronous scene loads had none),
+and scene/info.md records that cookedPath must stay RELATIVE, with a note not to
+absolutise it again.
 
 51/51 ctest.
-

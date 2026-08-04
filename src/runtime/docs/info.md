@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-04
+verified: 2026-08-05
 parses-external-input: true
 covers:
   - src/runtime/
@@ -72,6 +72,18 @@ required.
   only sees the COOKED path: a scene referencing source `.fbx`/`.gltf` loads via
   `AsyncLoader` + the importers, which create textures directly and bypass the
   cache (see `docs/plans/renderer-audit-and-plan.md`).
+  MESHES are deduped by cooked path too, as of 2026-08-05, through the same map the
+  async path uses — and the fix is worth knowing because of how it failed. That map
+  lived inside `AsyncState`, which `ensureWorker()` creates LAZILY, so a scene that
+  loaded every mesh synchronously (the cooked fast path) had no cache at all: each
+  entity created its own vertex+index buffers, and bgfx's pool is
+  `BGFX_CONFIG_MAX_INDEX_BUFFERS` = 4096. A 50 000-entity scene drawing 176 distinct
+  cooked meshes loaded 4 089 and then failed 45 911 times, rendering 8% of itself. The
+  map now lives on `AssetService` beside `m_texCache`, which is the level it should
+  always have been at — textures avoided the bug only because their cache already sat
+  there. Found by `scripts/gen_fuzz_scene.py`; every prior stress scene used
+  `engine://primitive/cube`, one shared mesh, so nothing ever allocated a second
+  buffer pair.
 - **`AsyncLoader`** (`async_loader.h/.cpp`) — legacy import path used by the
   editor for source-format assets (FBX via Assimp etc.).
 - **Input** (`input_system.h`, `input_map.h`) — polled GLFW state with

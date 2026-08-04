@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-01
+verified: 2026-08-05
 parses-external-input: true
 covers:
   - src/scene/
@@ -16,7 +16,15 @@ load, the play-mode snapshot, and the undo stack all share. Future home of
 prefabs.
 
 ## Contents
-- **`entity_serializer.h`** — the one component serde table. Two modes:
+- **`entity_serializer.h`** — the one component serde table. COOKED PATHS ARE
+  PASSED RELATIVE: `cookedPath` comes out of the registry as `meshs/<uuid>.cooked`,
+  relative to the project's `.cache`, and `AssetService::loadMesh` resolves relative
+  paths against exactly that. Until 2026-08-05 this pre-joined the project ROOT,
+  producing `<project>/meshs/<uuid>.cooked` — a path that has never existed — so
+  every cooked mesh load failed and fell through to the Assimp source importer. It
+  looked fine because scenes still rendered, just via the slow path; a shipped dist
+  with no source assets would have failed outright. Do not "helpfully" absolutise it
+  again. Two modes:
   `Disk` (cross-session: AssetRef uuid+relative refs, semantic clipIndex —
   session handles NEVER hit disk) and `Memory` (same-session snapshot: live
   handle reuse). Add a component once here and every path picks it up.

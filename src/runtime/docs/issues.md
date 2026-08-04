@@ -273,6 +273,45 @@ If a caller holds a `JobHandle` across a `pumpMain()` call that happens to run a
 
 ## High
 
+### H.0b — scene LOAD, not the frame, is what limits scene size (MEASURED 2026-08-05)
+Bisected with real cooked assets (`scripts/gen_fuzz_scene.py`, Medieval Village
+MegaKit, 176 cooked meshes), separating boot+load from per-frame cost by timing
+`--frames 1` against `--frames 11`:
+
+| objects | load | ms/entity | frame |
+|---|---|---|---|
+| 10 000 | 2.4 s | 0.24 | — |
+| 20 000 | 4.8 s | 0.24 | (noise) |
+| 25 000 | 7.0 s | 0.28 | — |
+| 40 000 | 14.8 s | 0.37 | 67 ms |
+| 50 000 | **22.0 s** | 0.44 | 93 ms |
+
+**Loading is the dominant cost and it is mildly superlinear** — per-entity cost nearly
+doubles from 10 k to 50 k (~N^1.35), so 50 000 objects take 22 seconds to open. For
+comparison the whole renderer, extraction through submit, is single-digit
+milliseconds per frame at these sizes. 0.24 ms to create ONE entity with four
+components is already two orders of magnitude off what flecs can do; the superlinear
+part is a second problem on top.
+
+Not yet diagnosed. Candidates in rough order of suspicion, none confirmed: nlohmann's
+DOM for a 27 MB scene (the whole document is materialised before the first entity is
+created, and its per-key lookups are string comparisons), per-entity archetype moves
+from setting components one at a time, and asset resolution per entity. A sampling
+profiler on a `--frames 1` run of the 50 k scene would settle it in one shot — that is
+the next step, not more speculation.
+
+**A RETRACTION, recorded because the wrong number was quoted in a commit message.**
+An earlier session reported this scene at ">18 s per frame" with a "cliff between
+20 k and 50 k". Neither reproduces. Re-measured with a bounded harness, 25 000 objects
+load in 7 s (a run that had previously timed out past 150 s) and 50 000 run at 93 ms
+per frame. Both curves are smooth; there is no discontinuity. The original figure came
+from runs that hit a tool timeout and were killed, and the most likely explanation is
+contention from those killed processes — but that cannot be confirmed after the fact,
+so the honest statement is that the measurement was unreliable and the conclusion drawn
+from it was wrong. The lesson is the harness, not the hypothesis: every number in the
+table above comes from a driver with a per-run timeout that records TIMED OUT as data
+instead of losing the run.
+
 ### H.0 — ✅ FIXED — `Sim.prevSnapshot` was the largest cost in the frame at scene scale
 The interpolation snapshot in `runtime_sim.cpp` runs once per FIXED STEP over every
 entity with a Transform:

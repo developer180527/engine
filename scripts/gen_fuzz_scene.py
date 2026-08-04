@@ -179,7 +179,12 @@ def main():
         # non-uniform scale this is exactly the composed transform whose bounding
         # sphere used to be under-estimated.
         if spawned and rng.random() < a.children:
-            e["parent"] = rng.choice(spawned[-64:])   # recent, to keep chains short
+            # "parentId", NOT "parent" — SceneSerializer::restoreParents reads
+            # parentId, and an unknown key is silently ignored, so the first
+            # version of this generator emitted 7 550 "children" at 50 000 objects
+            # that all loaded as roots. The hierarchy layer was inert and nothing
+            # said so. Verified against src/scene/scene_serializer.h.
+            e["parentId"] = rng.choice(spawned[-64:])   # recent: short chains
             # A child's position is parent-relative, so keep it small.
             e["transform"]["position"] = [rng.uniform(-3, 3), rng.uniform(0, 3),
                                           rng.uniform(-3, 3)]
