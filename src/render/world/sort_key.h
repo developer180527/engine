@@ -28,6 +28,7 @@
 // to preserve existing behaviour and revisit when the profile says overdraw
 // costs more than state changes. Depth still rides along as the tiebreaker, so
 // coincident draws in one material go front-to-back for free.
+#include <cassert>
 #include <cstdint>
 
 namespace rworld {
@@ -40,8 +41,28 @@ enum class BlendClass : uint8_t {
 
 // `depth01` is normalized [0,1] view depth (0 = nearest). Quantized to 24
 // bits, so draws only tie when genuinely coincident.
+// FIELD WIDTHS ARE A HARD LIMIT, and overflowing one is silent (issues.md A1.6).
+// Material ids get 16 bits and mesh ids 21; both are registry SLOT INDICES, so a
+// project with more than 65 535 live materials wraps. What makes that worse than a
+// wrong sort is `sameBatch`: it compares these very bits, so two DIFFERENT
+// materials that alias in 16 bits are judged the same batch and get collapsed into
+// one instanced submit with one material bound — the wrong one. Nothing would
+// report it; it renders confidently wrong.
+//
+// Asserted in debug rather than masked. A release build still truncates, which is
+// recorded as the open half of A1.6: catching it properly belongs at registry-add
+// time, where a limit can be refused loudly instead of discovered here.
+constexpr uint32_t kMaxMaterialKey = 0xFFFFu;      // 16 bits
+constexpr uint32_t kMaxMeshKey     = 0x1FFFFFu;    // 21 bits
+
 inline uint64_t makeSortKey(BlendClass blend, float depth01,
                             uint32_t materialKey, uint32_t meshKey) {
+    assert(materialKey <= kMaxMaterialKey
+           && "material id exceeds the sort key's 16 bits — ids would alias and "
+              "sameBatch() would instance two different materials as one");
+    assert(meshKey <= kMaxMeshKey
+           && "mesh id exceeds the sort key's 21 bits — ids would alias and "
+              "sameBatch() would instance two different meshes as one");
     if (depth01 < 0.0f) depth01 = 0.0f;
     if (depth01 > 1.0f) depth01 = 1.0f;
 

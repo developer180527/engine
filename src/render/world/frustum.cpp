@@ -13,28 +13,33 @@ BoundingSphere worldSphere(const float m[16],
     s.y = m[1]*localCenter.x + m[5]*localCenter.y + m[9]*localCenter.z  + m[13];
     s.z = m[2]*localCenter.x + m[6]*localCenter.y + m[10]*localCenter.z + m[14];
 
-    // ONE sqrt, deliberately. The obvious form takes four — three basis-row
-    // lengths for the scale, plus the local diagonal — and this function runs
-    // per item per frustum, so twice per item per frame with a shadow caster.
-    // At 50 000 objects those four sqrts were the largest single cost in the
-    // whole cull (2.4 ms of 3.8 for the camera pass, plus 1.8 in the shadow one).
+    // The EXACT conservative radius for a transformed AABB, in one sqrt.
     //
-    // Both reductions are exact, not approximations:
-    //   * max(sqrt(a), sqrt(b), sqrt(c)) == sqrt(max(a, b, c)) — sqrt is
-    //     monotonic, so compare the SQUARED row lengths and take one root;
-    //   * diag * maxScale == sqrt(diagSq * maxScaleSq), folding the two roots
-    //     into one multiply under a single sqrt.
-    // Floating-point reassociation means the last bits can differ from the
-    // four-sqrt form; the result is a conservative radius either way, and
-    // equivalence is asserted within tolerance in render_world_test.
-    auto rowLenSq = [&](int i) {
-        return m[i]*m[i] + m[i+1]*m[i+1] + m[i+2]*m[i+2];
-    };
-    const float maxScaleSq = std::max({ rowLenSq(0), rowLenSq(4), rowLenSq(8) });
-    const float diagSq = localSize.x * localSize.x +
-                         localSize.y * localSize.y +
-                         localSize.z * localSize.z;
-    s.radius = 0.5f * std::sqrt(diagSq * maxScaleSq);
+    // What this replaced, and why it was wrong (issues.md A1.1): the radius used
+    // the largest basis-row length as "the scale". For a matrix straight out of
+    // Transform::getMatrix that is exactly right — its linear part is
+    // diag(scale) * orthonormal, so the row lengths ARE the singular values, and
+    // a probe over all 8 corners of a rotated non-uniform SRT shows zero overrun.
+    // But a matrix composed through a HIERARCHY is not of that form. A 45-degree
+    // child under a parent scaled 4x on one axis gave a sphere that missed its own
+    // corners by 0.35 units — and an under-estimated sphere means the cull drops
+    // geometry that is genuinely visible, which shows up as objects popping out of
+    // existence near the screen edge and never as a crash.
+    //
+    // Instead of bounding the matrix, bound the BOX. Under p' = p * M the world
+    // half-extent along axis j is sum_i h_i * |M[i][j]| — the standard absolute-
+    // value transform of an AABB — and the sphere that contains that box has
+    // radius |extent|. It is conservative by construction (it is the box's own
+    // corner bound), and it is TIGHTER than the old form for the common case of
+    // non-uniform scale, which multiplied the whole diagonal by the largest axis.
+    // Same cost: nine multiply-adds and one square root.
+    const float hx = 0.5f * localSize.x;
+    const float hy = 0.5f * localSize.y;
+    const float hz = 0.5f * localSize.z;
+    const float ex = hx * std::fabs(m[0]) + hy * std::fabs(m[4]) + hz * std::fabs(m[8]);
+    const float ey = hx * std::fabs(m[1]) + hy * std::fabs(m[5]) + hz * std::fabs(m[9]);
+    const float ez = hx * std::fabs(m[2]) + hy * std::fabs(m[6]) + hz * std::fabs(m[10]);
+    s.radius = std::sqrt(ex*ex + ey*ey + ez*ez);
     return s;
 }
 

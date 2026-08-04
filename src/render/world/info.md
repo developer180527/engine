@@ -116,5 +116,14 @@ changes.
 - Live-verified in `fps_shooter`: textures resident, shadows drawn, gameplay
   raycasts hitting.
 
+An external audit of this directory was triaged on 2026-08-04 — see `issues.md`.
+Four of ten claims were real (an under-estimating bounding sphere under nested
+scale+rotation, Euclidean distance where the key documents view depth, silently
+truncating key fields, a fixed parallel grain), four were wrong, and two restated
+known gaps. Two of the refutations were only *provable* after writing the tests that
+should have existed: `extractFrustumPlanes` had no end-to-end coverage (every frustum
+test built planes by hand), and the 12-byte-packing proposal needed measuring rather
+than arguing. Both are now in `render_world_test`.
+
 Reaching `hardened` needs a fuzz or stress lane — adversarial frustums
 (degenerate planes, NaN transforms) and a many-thousand-item visibility soak.

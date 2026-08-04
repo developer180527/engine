@@ -16,6 +16,7 @@
 #include <cstring>
 #include <vector>
 
+#include "core/transform.h"
 #include "render/world/frustum.h"
 #include "render/world/light_packing.h"
 #include "render/world/sort_key.h"
@@ -237,6 +238,106 @@ int main() {
         buildVisibleSet(empty, cam, set);
         CHECK(set.empty() && set.consideredCount == 0 && set.culledCount == 0,
               "an empty world clears the reused set");
+    }
+
+    // ── audit probes: worldSphere must never UNDER-estimate ─────────────────
+    // src/render/world/issues.md A1.1 claims the radius uses the max row length
+    // where it needs the max SINGULAR value, so a rotated non-uniform scale gets
+    // too small a sphere and visible geometry is culled. Decided by measurement
+    // rather than by argument: transform all 8 local AABB corners and demand the
+    // sphere actually contains them.
+    {
+        std::printf("\n-- worldSphere is conservative (issues A1.1) --\n");
+
+        auto worstOverrun = [](const Mat4& m, const Vec3& c, const Vec3& sz) {
+            const BoundingSphere s = worldSphere(m.m, c, sz);
+            float worst = 0.0f;
+            for (int k = 0; k < 8; ++k) {
+                const float lx = c.x + ((k & 1) ? 0.5f : -0.5f) * sz.x;
+                const float ly = c.y + ((k & 2) ? 0.5f : -0.5f) * sz.y;
+                const float lz = c.z + ((k & 4) ? 0.5f : -0.5f) * sz.z;
+                // Row-vector convention: p' = p * M.
+                const float wx = lx*m.m[0] + ly*m.m[4] + lz*m.m[8]  + m.m[12];
+                const float wy = lx*m.m[1] + ly*m.m[5] + lz*m.m[9]  + m.m[13];
+                const float wz = lx*m.m[2] + ly*m.m[6] + lz*m.m[10] + m.m[14];
+                const float d = std::sqrt((wx-s.x)*(wx-s.x) + (wy-s.y)*(wy-s.y)
+                                        + (wz-s.z)*(wz-s.z));
+                if (d - s.radius > worst) worst = d - s.radius;
+            }
+            return worst;   // > 0 means a corner escaped the sphere
+        };
+
+        const Vec3 unit{ 1.0f, 1.0f, 1.0f }, origin{ 0.0f, 0.0f, 0.0f };
+
+        // 1. A plain SRT from Transform::getMatrix. Its linear part is
+        //    diag(scale) * orthonormal, so the row lengths ARE the singular
+        //    values and no under-estimate is possible.
+        {
+            Transform t;
+            t.position = { 3.0f, -1.0f, 2.0f };
+            t.rotation = bx::fromEuler(bx::Vec3{ 0.4f, 0.9f, -0.3f });
+            t.scale    = { 3.0f, 0.5f, 1.7f };          // non-uniform, rotated
+            Mat4 m; t.getMatrix(m.m);
+            const float over = worstOverrun(m, origin, unit);
+            CHECK(over <= 1e-4f,
+                  "a rotated non-uniform SRT contains all 8 corners "
+                  "(worst overrun %.6f)", over);
+        }
+
+        // 2. NESTED: a rotated child under a non-uniformly scaled parent. The
+        //    composed linear part is scale*rot*scale*rot, which is NOT
+        //    diag*orthonormal — this is where max-row-length can fall short of
+        //    the spectral norm, and the case the audit is really about.
+        {
+            Transform parent;
+            parent.rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+            parent.scale    = { 4.0f, 1.0f, 1.0f };      // squash on X only
+            Transform child;
+            child.rotation  = bx::fromEuler(bx::Vec3{ 0.0f, 0.0f, 0.7853981f }); // 45 deg
+            child.scale     = { 1.0f, 1.0f, 1.0f };
+            float pm[16], cm[16];
+            parent.getMatrix(pm); child.getMatrix(cm);
+            Mat4 world;
+            bx::mtxMul(world.m, cm, pm);                 // child then parent
+            const float over = worstOverrun(world, origin, unit);
+            CHECK(over <= 1e-4f,
+                  "a 45-degree child under a 4x-on-X parent still contains its "
+                  "corners (worst overrun %.6f)", over);
+        }
+    }
+
+    // ── audit probe: extractFrustumPlanes against a REAL perspective matrix ──
+    // issues.md A2.2 claims the extraction indexes as column-major while the
+    // header documents row-major, so planes come out transposed. Every existing
+    // frustum test uses hand-built planes, so nothing covered the extraction
+    // end to end — which is why the claim could not be dismissed by reading.
+    {
+        std::printf("\n-- extractFrustumPlanes end-to-end (issues A2.2) --\n");
+        float view[16], proj[16], vp[16];
+        const bx::Vec3 eye{ 0.0f, 0.0f, 10.0f }, at{ 0.0f, 0.0f, 0.0f },
+                       up{ 0.0f, 1.0f, 0.0f };
+        bx::mtxLookAt(view, eye, at, up);
+        bx::mtxProj(proj, 60.0f, 1.0f, 0.1f, 100.0f, false);
+        bx::mtxMul(vp, view, proj);
+
+        float planes[6][4];
+        extractFrustumPlanes(vp, planes);
+
+        auto visible = [&](float x, float y, float z, float r = 0.5f) {
+            BoundingSphere s; s.x = x; s.y = y; s.z = z; s.radius = r;
+            return !outsideFrustum(s, planes);
+        };
+        CHECK(visible(0, 0, 0),        "the origin, 10 units ahead, is inside");
+        CHECK(visible(0, 0, -50),      "a point far down the view axis is inside");
+        CHECK(!visible(0, 0, 20),      "a point BEHIND the camera is outside");
+        CHECK(!visible(0, 0, -200),    "a point past the far plane is outside");
+        CHECK(!visible(100, 0, 0),     "a point far off-axis in X is outside");
+        CHECK(!visible(0, 100, 0),     "a point far off-axis in Y is outside");
+        // The frustum widens with distance: an offset that is outside near the
+        // camera is inside further away. A transposed extraction would not
+        // reproduce that.
+        CHECK(!visible(6.0f, 0.0f, 8.0f), "6 units off-axis near the camera is out");
+        CHECK(visible(6.0f, 0.0f, -20.0f), "...and inside at 30 units of depth");
     }
 
     // ── the cull is SCHEDULING-INDEPENDENT ──────────────────────────────────

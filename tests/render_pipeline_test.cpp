@@ -82,10 +82,18 @@ struct Fixture {
         if (bgfx::isValid(vbh)) bgfx::destroy(vbh);
     }
 
+    // Batching keys are registry SLOT INDICES in production — small integers.
+    // This started out using the Mesh POINTER as the key, which is distinct per
+    // mesh and therefore looked fine, but blows the sort key's 21-bit mesh field;
+    // the debug assert added for issues.md A1.6 caught it immediately. Keys here
+    // are now small and sequential, like the real ones.
+    uint32_t nextMeshKey = 1;
+
     // A mesh with unit bounds centred on the origin, so an item's model matrix
     // alone decides whether it is inside the frustum.
     Mesh* makeMesh(MaterialHandle mat, bool doubleSided = false) {
         meshes.push_back(std::make_unique<Mesh>());
+        ++nextMeshKey;
         Mesh& m = *meshes.back();
         m.vbh = vbh; m.ibh = ibh; m.indexCount = 3;
         m.material = mat; m.doubleSided = doubleSided;
@@ -124,12 +132,13 @@ static void buildCamera(RenderView& rv, float aspect = 1.0f) {
     rv.ambient = 0.25f;
 }
 
-static RenderItem itemAt(Mesh* mesh, MaterialHandle mat, float x, float y, float z) {
+static RenderItem itemAt(Mesh* mesh, uint32_t meshKey, MaterialHandle mat,
+                        float x, float y, float z) {
     RenderItem it;
     bx::mtxTranslate(it.model.m, x, y, z);
     it.mesh     = mesh;
     it.material = mat;
-    it.meshKey  = (uint32_t)(uintptr_t)mesh;   // batching keys off mesh+material
+    it.meshKey  = meshKey;                    // batching keys off mesh+material
     it.matKey   = mat.id;
     it.hasBounds    = mesh->hasBounds();
     it.boundsCenter = mesh->boundsCenter();
@@ -157,9 +166,9 @@ static void testCulling(Fixture& fx, ForwardPipeline& pipe) {
 
     std::vector<RenderItem> items;
     for (int i = 0; i < 10; ++i)                      // in front, visible
-        items.push_back(itemAt(mesh, mat, (float)(i - 5), 0.0f, 0.0f));
+        items.push_back(itemAt(mesh, fx.nextMeshKey, mat, (float)(i - 5), 0.0f, 0.0f));
     for (int i = 0; i < 7; ++i)                       // far BEHIND the camera
-        items.push_back(itemAt(mesh, mat, 0.0f, 0.0f, 400.0f));
+        items.push_back(itemAt(mesh, fx.nextMeshKey, mat, 0.0f, 0.0f, 400.0f));
 
     RenderView rv; buildCamera(rv);
     rv.items = { items.data(), items.size() };
@@ -183,7 +192,7 @@ static void testInstancedRun(Fixture& fx, ForwardPipeline& pipe) {
 
     std::vector<RenderItem> items;
     for (int i = 0; i < 64; ++i)
-        items.push_back(itemAt(mesh, mat, (float)(i % 8) - 4.0f,
+        items.push_back(itemAt(mesh, fx.nextMeshKey, mat, (float)(i % 8) - 4.0f,
                                (float)(i / 8) - 4.0f, 0.0f));
 
     RenderView rv; buildCamera(rv);
@@ -227,7 +236,7 @@ static void testDistinctMaterialsDoNotBatch(Fixture& fx, ForwardPipeline& pipe) 
     for (int i = 0; i < 8; ++i) {
         mats.push_back(fx.makeMaterial());
         Mesh* mesh = fx.makeMesh(mats.back());
-        items.push_back(itemAt(mesh, mats.back(), (float)(i - 4), 0.0f, 0.0f));
+        items.push_back(itemAt(mesh, fx.nextMeshKey, mats.back(), (float)(i - 4), 0.0f, 0.0f));
     }
     RenderView rv; buildCamera(rv);
     rv.items = { items.data(), items.size() };
@@ -259,7 +268,7 @@ static void testDrawCeiling(Fixture& fx, ForwardPipeline& pipe) {
         Mesh* mesh = fx.makeMesh(mats.back());
         // A tight grid well inside the frustum: all of them must survive the cull,
         // or the test would be measuring culling instead of the ceiling.
-        items.push_back(itemAt(mesh, mats.back(),
+        items.push_back(itemAt(mesh, fx.nextMeshKey, mats.back(),
                               (float)((i % 60) - 30) * 0.1f,
                               (float)((i / 60) % 60 - 30) * 0.1f, 0.0f));
     }
@@ -293,7 +302,7 @@ static void testBonePalettePerItem(Fixture& fx, ForwardPipeline& pipe) {
     static float bones[16 * 4] = {};
     for (int b = 0; b < 4; ++b) bx::mtxIdentity(bones + b * 16);
 
-    RenderItem it = itemAt(mesh, mat, 0.0f, 0.0f, 0.0f);
+    RenderItem it = itemAt(mesh, fx.nextMeshKey, mat, 0.0f, 0.0f, 0.0f);
     it.boneMatrices = bones;
     it.boneCount    = 4;
 
@@ -318,7 +327,7 @@ static void testShadowPassCulls(Fixture& fx, ForwardPipeline& pipe) {
 
     std::vector<RenderItem> items;
     for (int i = 0; i < 32; ++i)
-        items.push_back(itemAt(mesh, mat, (float)(i % 8) - 4.0f, 0.0f,
+        items.push_back(itemAt(mesh, fx.nextMeshKey, mat, (float)(i % 8) - 4.0f, 0.0f,
                                (float)(i / 8) - 2.0f));
 
     LightItem sun;
@@ -364,7 +373,7 @@ static void testStatsResetPerView(Fixture& fx, ForwardPipeline& pipe) {
     std::printf("\n-- submit stats reset per view --\n");
     MaterialHandle mat = fx.makeMaterial();
     Mesh* mesh = fx.makeMesh(mat);
-    RenderItem it = itemAt(mesh, mat, 0.0f, 0.0f, 0.0f);
+    RenderItem it = itemAt(mesh, fx.nextMeshKey, mat, 0.0f, 0.0f, 0.0f);
     RenderView rv; buildCamera(rv);
     rv.items = { &it, 1 };
     RenderContext rc = fx.context();

@@ -22,10 +22,13 @@ struct BoundingSphere {
 
 // Transform LOCAL bounds by a model matrix into a world sphere.
 //
-// The radius uses the LARGEST row length of the 3x3 as the scale. Using each
-// axis separately would be wrong for a rotated non-uniform scale (the local
-// axes no longer align with world axes after rotation), and using the average
-// would under-estimate — which is the direction that makes geometry vanish.
+// Bounds the BOX, not the matrix: the world half-extent along each axis is
+// sum_i h_i * |M[i][j]|, and the containing sphere's radius is that extent's
+// length. Conservative by construction. An earlier version scaled the local
+// diagonal by the largest basis-row length, which is exact for a plain SRT but
+// UNDER-estimates once transforms compose through a hierarchy (see the note in
+// worldSphere) — and under-estimating is the direction that makes visible
+// geometry vanish.
 BoundingSphere worldSphere(const float model[16],
                            const Vec3& localCenter, const Vec3& localSize);
 
