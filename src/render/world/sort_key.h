@@ -80,6 +80,19 @@ inline uint32_t materialOf(uint64_t key) {
          ? (uint32_t)((key >> 21) & 0xFFFFull)
          : (uint32_t)((key >> 45) & 0xFFFFull);
 }
+// The quantized depth code. Exposed for the same reason materialOf/meshOf are:
+// the ordering policy is data, so a test must be able to read it back. It also
+// makes ONE class of bug observable that nothing else does — the frame's depth
+// normalisation (maxDist) being under-estimated, which silently CLAMPS every
+// draw beyond it to the same saturated code and destroys depth ordering inside a
+// material group. A scale error that keeps every draw in range is invisible by
+// construction, because ordering is all the key is for.
+inline uint32_t depthOf(uint64_t key) {
+    return blendOf(key) == BlendClass::Transparent
+         ? (uint32_t)((key >> 37) & 0xFFFFFFull)
+         : (uint32_t)(key & 0xFFFFFFull);
+}
+
 inline uint32_t meshOf(uint64_t key) {
     return blendOf(key) == BlendClass::Transparent
          ? (uint32_t)(key & 0x1FFFFFull)

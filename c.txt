@@ -1,0 +1,76 @@
+render: cull 3.9 -> 0.88 ms, and std::sort was the bulk of it
+
+R15 named cull as the next target: 3.83 ms of an 8.4 ms render path at 50 000
+objects, plus 1.86 more in the shadow pass's own cull. Sub-zones (Cull.test /
+.compact / .key / .sort) attributed it before anything changed.
+
+  @50k camera pass   before    after
+  Cull.test          2.36 ms   0.37
+  Cull.key           0.46      0.21
+  Cull.sort          0.90      0.22
+  Render.cull        3.83      0.88
+  Render.shadow      1.86      0.25
+
+WORLDSPHERE DID FOUR SQUARE ROOTS PER ITEM: three basis-row lengths plus the local
+diagonal, once per item per frustum, so twice per item per frame with a shadow
+caster. Both reductions are exact, not approximations: max(sqrt a, sqrt b, sqrt c) ==
+sqrt(max(a,b,c)) since sqrt is monotonic, and diag*maxScale == sqrt(diagSq*maxScaleSq).
+Four roots became one.
+
+It was worth 4%. A single run first suggested it was SLOWER; three runs each gave
+medians 1.914 vs 1.985 ms. The useful conclusion is the negative one, that loop is
+not arithmetic-bound, and it is what redirected the work to parallelism instead of
+more math. Recorded, so nobody re-derives it.
+
+THE FRUSTUM TEST IS NOW PARALLEL, chunked like extraction. rworld is GPU-free AND
+runtime-free by construction, that is what makes all of it unit-testable, so it
+does not include the job facade. The caller injects a ParallelForFn; ForwardPipeline
+passes one backed by jobs::parallelFor, nullptr runs serially. Survivors are written
+at their OWN item index rather than appended, so no two ranges touch the same memory
+and surviving order is item order however the work was scheduled; gaps close with one
+memmove per range. Identical results, not merely equivalent.
+
+STD::SORT BECAME A STABLE RADIX SORT (world/draw_sort.h/.cpp): 1.15 -> 0.22 ms, 5.3x.
+The keys are unsigned integers, so counting beats comparing. Data-adaptive: one
+histogram pass finds which of the 8 bytes vary and constant bytes are skipped, which
+is the normal case rather than a benchmark trick, the high bytes are blend class,
+material and mesh, so a few-material scene sorts in three passes instead of eight.
+Also STABLE, which std::sort was not: equal keys keep item order, so a frame orders
+coincident draws the same way every run. That is what makes 'byte-identical submit
+counters' a meaningful claim.
+
+TESTED, and the injected dispatcher is what makes it possible: render_world_test runs
+one world four ways, serial, one range at a time, ranges in REVERSE, and one OS
+thread per range, demanding byte-identical draw lists; the thread version is the only
+check that can catch a real race. sortDraws gets its own cases: order, permutation
+(index-sum, because sortedness happily accepts duplicates), stability with all-equal
+and with grouped keys, the byte-skipping path, and 0/1/2-element sizes.
+
+A HOLE IN THAT TEST, found by mutation: comparing parallel against serial cannot catch
+a bug the two SHARE. Breaking the maxDist reduction to keep one range's value failed
+ZERO assertions. Fixed with an ABSOLUTE assertion, an under-estimated depth
+normaliser clamps everything past it to one saturated code, so at most one draw may
+sit at full scale; that mutation now fails with 4554 of 5999 saturated. The test DATA
+was wrong too: distances of i % 90 gave every range the same local maximum, making the
+bug undetectable by construction. depthOf() added to sort_key.h so a test can read the
+field back.
+
+Mutations now caught: lost maxDist reduction, culledCount assigned instead of
+accumulated, survivors appended instead of indexed, inverted byte-skip predicate, an
+unstable radix pass, a missing odd-pass swap-back.
+
+WHERE IT STANDS, shadows on:
+
+  objects   extract  cull   shadow  submit  render  frame
+   20 000   1.98     0.56   0.28    0.13    2.95    8.2 (vsync)
+   50 000   2.69     0.88   0.25    0.32    4.14    8.2 (vsync)
+  100 000   5.37     1.36   0.48    0.59    7.80    9.5 (~105 fps)
+
+100 000 objects render at over 100 fps in ONE draw call. Extraction is the largest
+phase again and is already parallel, so it is bound by streaming RenderItems rather
+than by work, the next lever there is data layout (SoA, or a narrower RenderItem),
+not SIMD and not more threads.
+
+51/51 ctest. Submit counters byte-identical at 20 k and 50 k. issues.md R16 recorded;
+world/info.md documents the injected-dispatcher decision.
+

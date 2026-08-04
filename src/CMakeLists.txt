@@ -260,6 +260,7 @@ add_library(engine_runtime STATIC
     render/diag/gpu_budget.cpp
     # Render machinery — GPU-free, one concern per TU (src/render/world/info.md).
     render/world/frustum.cpp
+    render/world/draw_sort.cpp
     render/world/visibility.cpp
     render/world/light_packing.cpp
     # Cooked-shader loading. shader_select is GPU-free (and tested); only

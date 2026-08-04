@@ -158,6 +158,12 @@ private:
     bgfx::UniformHandle m_uCamPos      = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_sNormalMap   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_uLights      = BGFX_INVALID_HANDLE;
+    // How the cull gets threads. rworld is deliberately runtime-free, so it takes
+    // a dispatcher rather than including the job facade — see visibility.h. Built
+    // once, in onAttach, because a std::function constructed per view per frame
+    // would allocate in the hot path.
+    rworld::ParallelForFn m_cullParallel;
+
     rworld::VisibleSet m_visible;   // reused across frames for its capacity
     // Shadow-map edge length. NOT a constant any more: it is the single
     // biggest VRAM lever in the engine (cost is size² × 4 bytes for D32F), and

@@ -38,10 +38,12 @@ tests:
 # extract 1.13 ms, cull 1.70, shadow 0.76, submit 0.09 — the whole render path is
 # ~3.7 ms and the frame is vsync-bound. Extraction went 15.2 -> 1.1 ms over five
 # changes (issues.md R14/R15); it is now parallel over archetype chunks on
-# engine::jobs. At 50 000 objects the frame is 9.3 ms and the renderer is 8.4 of it —
-# the ~25 ms Sim.prevSnapshot that used to dominate is fixed (runtime issues.md H.0),
-# so the renderer is the frame again. CULL (3.9 ms) is now the largest render phase
-# at scale, ahead of extract (2.6) — it is the next target, not extraction.
+# engine::jobs, and so is the frustum cull (R16: 3.9 ms -> 0.88, with std::sort
+# replaced by a stable radix sort, 1.15 -> 0.22). 100 000 objects now render at
+# ~105 fps in ONE draw call: extract 5.37, cull 1.36, shadow 0.48, submit 0.59.
+# 20 k and 50 k are vsync-bound. Extraction is the largest phase again and is already
+# parallel, so the next lever there is data layout (SoA / a narrower RenderItem),
+# not threads.
 # R7 (material-bind dedup) is still open: materialBinds == draws on every
 # non-instanced path.
 ---

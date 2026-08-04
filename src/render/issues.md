@@ -264,6 +264,91 @@ parallel path: byte-identical submit counters serial vs parallel at 1 k / 5 k / 
 assert on the slice arithmetic, and the render + sim tests passing under ASan. A TSan
 lane over a scene this size is still worth having and is not yet there.
 
+## R16. `Render.cull` was the largest render phase; three changes ✅ FIXED
+R15 ended by naming cull as the next target: 3.9 ms of an 8.4 ms render path at
+50 000 objects, plus another 1.8 in the shadow pass's own cull. Sub-zones
+(`Cull.test` / `.compact` / `.key` / `.sort`) attributed it before anything changed.
+
+| phase @50k (camera pass) | before | after |
+|---|---|---|
+| `Cull.test` (frustum + distance) | 2.36 ms | 0.37 |
+| `Cull.key` | 0.46 | 0.21 |
+| `Cull.sort` | 0.90 | **0.22** |
+| `Cull.compact` | — | 0.01 |
+| `Render.cull` | 3.83 | **0.88** |
+| `Render.shadow` (its own cull) | 1.86 | **0.25** |
+
+**`worldSphere` did four square roots per item** — three basis-row lengths plus the
+local diagonal — and it runs once per item per frustum, so twice per item per frame
+with a shadow caster. Both reductions are exact, not approximations:
+`max(√a,√b,√c) = √max(a,b,c)` since √ is monotonic, and `diag·maxScale =
+√(diagSq·maxScaleSq)`. Four roots became one.
+
+Worth **4%**, not the 40% it looks like it should be. Measured properly — three runs
+each, medians 1.914 vs 1.985 ms — after a single-run comparison first suggested it
+was *slower*, which was noise against a stale baseline. The useful conclusion is the
+negative one: **the test loop is not arithmetic-bound**, so no amount of cleverness
+inside it was going to matter, and that is what pointed at parallelism instead.
+
+**The frustum test is now parallel**, chunked exactly like extraction. The design
+point worth keeping: `rworld` is GPU-free AND runtime-free by construction — that is
+what makes all of it unit-testable — so it does not include the job facade. The
+caller injects a `ParallelForFn`. `ForwardPipeline` passes one backed by
+`jobs::parallelFor`; a test passes `nullptr`, or something deliberately hostile.
+
+Survivors are written at their OWN item index rather than appended, so no two ranges
+touch the same memory and surviving order is item order regardless of scheduling;
+gaps are closed by one memmove per range afterwards. That is what makes the parallel
+and serial results *identical* rather than merely equivalent.
+
+**`std::sort` became a stable radix sort** (`world/draw_sort.h/.cpp`, its own unit):
+1.15 ms → 0.22, 5.3x. The keys are unsigned integers, so counting beats comparing —
+270 000 comparisons replaced by a few linear passes. It is **data-adaptive**: one
+histogram pass finds which of the 8 key bytes actually vary, and bytes shared by
+every key are skipped. That is the normal case, not a benchmark trick — the high
+bytes are blend class, material and mesh, so a scene drawing few materials sorts in
+three passes instead of eight.
+
+It is also now **stable**, which `std::sort` was not. Draws with identical keys keep
+item order, so two runs of the same frame order coincident draws the same way. That
+is a prerequisite for "byte-identical submit counters" meaning anything.
+
+TESTED, and this is where the injectable dispatcher pays off — `render_world_test`
+runs one world four ways (serial, one range at a time, ranges in REVERSE, and one OS
+thread per range) and demands byte-identical draw lists; the thread version is the
+only check here that can catch a real race. `sortDraws` gets its own cases: order,
+permutation (an index-sum check, because a sortedness test happily accepts
+duplicates), stability with all-equal keys and with grouped ties, the byte-skipping
+path, and the degenerate 0/1/2-element sizes.
+
+A HOLE IN THAT TEST, found by mutation and worth remembering: comparing parallel
+against serial cannot catch a bug the two SHARE. Breaking the `maxDist` reduction so
+it kept only one range's value failed **zero** assertions — both paths used it, so
+both were wrong identically. The fix was an ABSOLUTE assertion: an under-estimated
+depth normaliser clamps every draw beyond it to the same saturated code, so at most
+one draw may sit at full-scale depth. That mutation now fails with 4 554 of 5 999
+saturated. The test data also had to change — distances were `i % 90`, which gave
+every range nearly the same local maximum and made the bug undetectable by
+construction. `depthOf()` was added to sort_key.h so a test can read the field back.
+
+Mutations now caught: lost `maxDist` reduction, `culledCount` assigned instead of
+accumulated, survivors appended instead of indexed (fails the REVERSE case),
+inverted byte-skip predicate, an unstable radix pass, and a missing odd-pass
+swap-back.
+
+WHERE THE RENDERER STANDS, with shadows on:
+
+| objects | extract | cull | shadow | submit | render | frame |
+|---|---|---|---|---|---|---|
+| 20 000 | 1.98 | 0.56 | 0.28 | 0.13 | 2.95 | 8.2 (vsync) |
+| 50 000 | 2.69 | 0.88 | 0.25 | 0.32 | 4.14 | 8.2 (vsync) |
+| 100 000 | 5.37 | 1.36 | 0.48 | 0.59 | 7.80 | 9.5 (~105 fps) |
+
+100 000 objects render at over 100 fps in one draw call. EXTRACTION is the largest
+phase again (5.4 ms at 100 k) and it is already parallel, so it is bound by streaming
+RenderItems rather than by work — the next lever there is the data layout (SoA, or a
+narrower RenderItem), not more threads.
+
 ## Not a defect, but the thing to know before touching the pipeline
 Per-draw uniform bytes are a hard budget, not a soft cost: bgfx's Metal backend
 commits them into a fixed 8 MB buffer with no bounds check, so ~8192 draws

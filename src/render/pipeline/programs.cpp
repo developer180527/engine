@@ -4,9 +4,22 @@
 // because the generated shader arrays are `static` and every extra includer would
 // duplicate all of them (see that header).
 #include "render/forward_pipeline.h"
+
+#include "runtime/jobs/jobs.h"
 #include "render/pipeline/shader_blobs.h"
 
 void ForwardPipeline::onAttach(RenderContext& attachCtx) {
+    // The cull's parallel dispatcher, built ONCE. jobs::parallelFor blocks, so
+    // the ranges are guaranteed finished before buildVisibleSet returns and no
+    // job outlives the frame. If the pool was never started (headless tools,
+    // tests) this still installs; buildVisibleSet checks jobs::initialized()
+    // through it and runs serially.
+    m_cullParallel = [](uint32_t count, uint32_t grain,
+                        const std::function<void(uint32_t, uint32_t)>& fn) {
+        if (!jobs::initialized()) { fn(0, count); return; }
+        jobs::parallelFor("Cull.range", count, grain, fn);
+    };
+
         // THE COOKED SHADER IS PREFERRED. This is the point of Phase 5: the
         // program a game runs is content it ships, not a byte array the engine
         // was compiled with. `standard.shader` cooks into the project's .cache

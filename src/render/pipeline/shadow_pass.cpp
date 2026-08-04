@@ -71,7 +71,8 @@ void ForwardPipeline::renderShadow(const RenderView& v, RenderContext& ctx,
         // the sort key groups by mesh+material, so consecutive casters collapse
         // into one submit exactly as they do in the colour pass. A hand-rolled
         // cull loop culled but could not batch.
-        rworld::buildVisibleSet(v.world(), lightCam, m_shadowVisible);
+        rworld::buildVisibleSet(v.world(), lightCam, m_shadowVisible,
+                                &m_cullParallel);
         m_submitStats.shadowItemsConsidered = m_shadowVisible.consideredCount;
         m_submitStats.shadowItemsCulled     = m_shadowVisible.culledCount;
 

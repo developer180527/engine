@@ -50,7 +50,8 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
         // visibility to make one. m_visible is reused across frames for its
         // capacity (buildVisibleSet clears it).
         { ENGINE_PROFILE_SCOPE("Render.cull");
-            rworld::buildVisibleSet(v.world(), v.camera(), m_visible);
+            rworld::buildVisibleSet(v.world(), v.camera(), m_visible,
+                                    &m_cullParallel);
         m_submitStats.itemsConsidered = m_visible.consideredCount;
         m_submitStats.itemsCulled     = m_visible.culledCount;
 

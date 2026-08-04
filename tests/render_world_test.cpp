@@ -11,6 +11,8 @@
 // The whole point of RenderItem carrying its own bounds is that this file
 // links without bgfx, without Mesh, and without a device.
 #include <cstdio>
+#include <thread>
+#include <vector>
 #include <cstring>
 #include <vector>
 
@@ -18,6 +20,7 @@
 #include "render/world/light_packing.h"
 #include "render/world/sort_key.h"
 #include "render/world/visibility.h"
+#include "render/world/draw_sort.h"
 
 static int g_failures = 0;
 #define CHECK(cond, ...) do {                                          \
@@ -234,6 +237,244 @@ int main() {
         buildVisibleSet(empty, cam, set);
         CHECK(set.empty() && set.consideredCount == 0 && set.culledCount == 0,
               "an empty world clears the reused set");
+    }
+
+    // ── the cull is SCHEDULING-INDEPENDENT ──────────────────────────────────
+    // buildVisibleSet takes an injected ParallelForFn so it can run its per-item
+    // test on the engine's job pool without this layer depending on the runtime.
+    // The risk that buys is a result that varies with how the work was split —
+    // ranges finishing out of order, an entity landing in the wrong output slot,
+    // a reduction (maxDist, culledCount) losing an update. maxDist is the nastiest
+    // of those: it normalises the whole frame's depth, so losing one range's
+    // contribution reorders EVERY draw, and nothing would crash.
+    //
+    // So: run the same world four ways and demand byte-identical draw lists. The
+    // dispatchers are deliberately hostile — reverse order, one range at a time,
+    // and real threads.
+    {
+        std::printf("\n-- cull: identical results however the work is scheduled --\n");
+
+        // A generous box frustum so the "visible" items below really are inside
+        // it; the culled ones sit far outside on purpose.
+        ViewCamera cam;
+        boxFrustum(cam.frustum, 100.0f);
+        cam.camPos = Vec4{ 0.0f, 0.0f, 0.0f, 1.0f };
+
+        // Enough items to exceed kCullParallelMin (4096) and span several
+        // ranges, with a mix that culls: half in front of the camera, half far
+        // behind it, and varied materials/meshes so the sort has real work.
+        std::vector<RenderItem> items;
+        items.reserve(9000);
+        // Distance INCREASES with index on purpose, so the ranges do not all see
+        // the same depth spread. With `i % 90` every range had nearly the same
+        // local maximum, which made a lost maxDist reduction undetectable no
+        // matter how the ranges were scheduled — the test passed a mutation.
+        for (int i = 0; i < 9000; ++i) {
+            const bool visible = (i % 3) != 0;
+            const float x = (float)((i % 40) - 20) * 0.5f;
+            const float z = visible ? -(1.0f + (float)i * 0.01f) : 900.0f;
+            items.push_back(itemAt(x, 0.0f, z, (uint32_t)(i % 7),
+                                   (uint32_t)(i % 11)));
+        }
+        // A meshless and an unbounded item, so the gap-closing path is exercised
+        // inside a range rather than only at range boundaries.
+        items[100].mesh = nullptr;
+        items[5000].hasBounds = false;
+
+        RenderWorld world;
+        world.items = Span<RenderItem>{ items.data(), items.size() };
+
+        VisibleSet ref;
+        buildVisibleSet(world, cam, ref, nullptr);          // serial baseline
+        CHECK(ref.size() > 1000 && ref.culledCount > 1000,
+              "the baseline both keeps and culls a lot (%zu draws, %u culled)",
+              ref.size(), ref.culledCount);
+
+        // AN ABSOLUTE CHECK, not a comparison. Everything below compares the
+        // threaded runs against this serial one, which cannot catch a bug the two
+        // share — and the per-range maxDist reduction IS shared. If it loses a
+        // range's contribution the normaliser is too small, and every draw past it
+        // clamps to the same saturated depth code: depth ordering inside a material
+        // group is gone, silently, in both paths. Only the FARTHEST draw may
+        // saturate.
+        {
+            uint32_t saturated = 0;
+            for (const auto& d : ref.draws)
+                if (depthOf(d.key) == 0xFFFFFFu) ++saturated;
+            CHECK(saturated <= 1,
+                  "at most one draw sits at full-scale depth — the frame's depth "
+                  "normaliser covers the whole range (%u saturated of %zu)",
+                  saturated, ref.draws.size());
+        }
+        // And within one material+mesh group, draws run near-to-front first —
+        // the documented tiebreaker behaviour of the opaque key layout.
+        {
+            bool monotonic = true;
+            for (std::size_t i = 1; i < ref.draws.size(); ++i) {
+                const uint64_t a = ref.draws[i - 1].key, b = ref.draws[i].key;
+                if (materialOf(a) == materialOf(b) && meshOf(a) == meshOf(b)
+                    && depthOf(a) > depthOf(b)) { monotonic = false; break; }
+            }
+            CHECK(monotonic,
+                  "inside one material+mesh run, depth is non-decreasing");
+        }
+
+        auto sameAsRef = [&](const VisibleSet& other, const char* how) {
+            bool ok = other.size() == ref.size()
+                   && other.culledCount == ref.culledCount
+                   && other.consideredCount == ref.consideredCount;
+            if (ok)
+                for (std::size_t i = 0; i < ref.draws.size(); ++i)
+                    if (other.draws[i].key   != ref.draws[i].key
+                     || other.draws[i].index != ref.draws[i].index) { ok = false; break; }
+            CHECK(ok, "%s gives a byte-identical draw list (%zu vs %zu draws, "
+                      "%u vs %u culled)", how, other.size(), ref.size(),
+                      other.culledCount, ref.culledCount);
+        };
+
+        // 1. Sequential, but through the dispatcher — proves the threaded code
+        //    path itself (chunking + compaction) matches the serial one.
+        VisibleSet a;
+        ParallelForFn seq = [](uint32_t count, uint32_t,
+                               const std::function<void(uint32_t,uint32_t)>& fn) {
+            for (uint32_t i = 0; i < count; ++i) fn(i, i + 1);
+        };
+        buildVisibleSet(world, cam, a, &seq);
+        sameAsRef(a, "one range at a time");
+
+        // 2. REVERSE order. If any range depended on an earlier one having run —
+        //    a shared cursor, an append instead of an indexed write — this breaks.
+        VisibleSet b;
+        ParallelForFn rev = [](uint32_t count, uint32_t,
+                               const std::function<void(uint32_t,uint32_t)>& fn) {
+            for (uint32_t i = count; i-- > 0; ) fn(i, i + 1);
+        };
+        buildVisibleSet(world, cam, b, &rev);
+        sameAsRef(b, "ranges executed in REVERSE");
+
+        // 3. REAL THREADS, one per range. The only check here that can catch an
+        //    actual data race rather than an ordering assumption.
+        VisibleSet c;
+        ParallelForFn threaded = [](uint32_t count, uint32_t,
+                                    const std::function<void(uint32_t,uint32_t)>& fn) {
+            std::vector<std::thread> ts;
+            ts.reserve(count);
+            for (uint32_t i = 0; i < count; ++i)
+                ts.emplace_back([&fn, i] { fn(i, i + 1); });
+            for (auto& t : ts) t.join();      // BLOCKS, as the contract requires
+        };
+        buildVisibleSet(world, cam, c, &threaded);
+        sameAsRef(c, "one OS thread per range");
+
+        // 4. Reused set, threaded, twice — the capacity-reuse path under threads.
+        buildVisibleSet(world, cam, c, &threaded);
+        sameAsRef(c, "a reused set, run threaded twice");
+    }
+
+    // ── sortDraws: it replaced std::sort, so it answers for itself ──────────
+    // A radix sort is only worth having if it is provably a sort. Three things
+    // are asserted, in order of how badly they would break rendering:
+    //   * ORDER — a wrong order draws the scene in the wrong sequence and, for
+    //     the opaque key layout, silently destroys batching;
+    //   * PERMUTATION — a radix pass that drops or duplicates an element loses
+    //     draws or draws them twice, and the counters would still look sane;
+    //   * STABILITY — this is a behaviour CHANGE from std::sort, which is not
+    //     stable. It is the reason "byte-identical submit counters" is now a
+    //     meaningful claim, so it is pinned rather than left as an implementation
+    //     accident.
+    {
+        std::printf("\n-- sortDraws: a stable radix sort over 64-bit keys --\n");
+
+        auto checkSorted = [](const std::vector<VisibleDraw>& v, const char* how) {
+            bool ok = true;
+            for (std::size_t i = 1; i < v.size(); ++i)
+                if (v[i - 1].key > v[i].key) { ok = false; break; }
+            CHECK(ok, "%s comes out ascending by key (%zu draws)", how, v.size());
+        };
+
+        std::vector<VisibleDraw> scratch;
+
+        // 1. Keys spanning every byte, so no pass is skipped. A deterministic LCG:
+        //    a fixed seed means a failure is reproducible.
+        {
+            uint32_t seed = 0xC0FFEEu;
+            auto rnd = [&seed] {
+                seed = seed * 1664525u + 1013904223u;
+                return seed;
+            };
+            std::vector<VisibleDraw> v;
+            for (uint32_t i = 0; i < 5000; ++i)
+                v.push_back({ ((uint64_t)rnd() << 32) | rnd(), i });
+            const std::vector<VisibleDraw> before = v;
+            sortDraws(v, scratch);
+            checkSorted(v, "keys spread over all 8 bytes");
+            CHECK(v.size() == before.size(), "no draws gained or lost (%zu)",
+                  v.size());
+            // A permutation, checked by summing indices — cheap, and catches the
+            // duplicate-element failure a sortedness check happily accepts.
+            uint64_t sumBefore = 0, sumAfter = 0;
+            for (auto& d : before) sumBefore += d.index;
+            for (auto& d : v)      sumAfter  += d.index;
+            CHECK(sumBefore == sumAfter, "the result is a permutation of the input");
+        }
+
+        // 2. The byte-skipping path: only the low bytes vary, which is the shape a
+        //    real frame has (one blend class, few materials, few meshes). If the
+        //    skip logic were wrong this would come out unsorted or unstable.
+        {
+            std::vector<VisibleDraw> v;
+            for (uint32_t i = 0; i < 4000; ++i) {
+                const uint64_t high = 0x0000ABCDEF000000ull;   // constant
+                v.push_back({ high | (uint64_t)((4000 - i) & 0xFFFFFFu), i });
+            }
+            sortDraws(v, scratch);
+            checkSorted(v, "keys sharing every high byte");
+            CHECK(v.front().index == 3999 && v.back().index == 0,
+                  "and the reversed input is fully reversed back "
+                  "(front %u, back %u)", v.front().index, v.back().index);
+        }
+
+        // 3. STABILITY. Every key identical, so the only correct answer is the
+        //    input order preserved. std::sort would have been free to shuffle it.
+        {
+            std::vector<VisibleDraw> v;
+            for (uint32_t i = 0; i < 1000; ++i)
+                v.push_back({ 0x1234567800000000ull, i });
+            sortDraws(v, scratch);
+            bool stable = true;
+            for (uint32_t i = 0; i < v.size(); ++i)
+                if (v[i].index != i) { stable = false; break; }
+            CHECK(stable, "1000 identical keys keep item order exactly");
+        }
+        // Ties AMONG varying keys, the realistic case: groups of equal keys must
+        // each stay internally ordered.
+        {
+            std::vector<VisibleDraw> v;
+            for (uint32_t i = 0; i < 3000; ++i)
+                v.push_back({ (uint64_t)(i % 5) << 40, i });
+            sortDraws(v, scratch);
+            checkSorted(v, "5 key groups");
+            bool stable = true;
+            for (std::size_t i = 1; i < v.size(); ++i)
+                if (v[i - 1].key == v[i].key && v[i - 1].index > v[i].index) {
+                    stable = false; break;
+                }
+            CHECK(stable, "and within each group, item order is preserved");
+        }
+
+        // 4. Degenerate sizes — the early-out and the single-pass boundary.
+        {
+            std::vector<VisibleDraw> v;
+            sortDraws(v, scratch);
+            CHECK(v.empty(), "an empty list sorts to empty, without touching memory");
+            v.push_back({ 42, 7 });
+            sortDraws(v, scratch);
+            CHECK(v.size() == 1 && v[0].index == 7, "a single draw survives intact");
+            v.push_back({ 1, 9 });
+            sortDraws(v, scratch);
+            CHECK(v.size() == 2 && v[0].key == 1 && v[1].key == 42,
+                  "two draws swap into order");
+        }
     }
 
     // ── light packing ───────────────────────────────────────────────────────

@@ -21,7 +21,8 @@
 //     1 000   0.32 ms   0.35    8.3 (vsync)
 //     5 000   0.50      0.55    8.3 (vsync)
 //    20 000   1.13      1.70    7.9 (vsync)
-//    50 000   2.56      3.91    9.3   <- cull > extract now
+//    50 000   2.69      0.88    8.2 (vsync)
+//   100 000   5.37      1.36    9.5   (~105 fps)
 //
 // The lesson worth carrying, because it held for all four: almost none of the cost
 // was arithmetic. It was per-entity work asking questions the query engine answers
@@ -33,12 +34,12 @@
 //
 // Measured NOT to matter, so nobody spends a day on them again: the three registry
 // lookups are ~0.17 ms and reserving m_items up front is ~0.4 ms. Hand-written SIMD
-// was NOT done and is not the next lever. The per-item maths that remains is spread
-// across cores, and within the render path CULL is now larger than extract (3.9 ms
-// vs 2.6 at 50 000 objects) — that is where the next work goes. Sim.prevSnapshot,
-// which used to be ~25 ms of a 34 ms frame at that size, is fixed by the same
-// per-archetype reasoning (src/runtime/docs/issues.md H.0), so the frame is 9.3 ms
-// and the renderer is 8.4 of it.
+// was NOT done, and after the cull was fixed too (issues.md R16 — 3.9 ms -> 0.88)
+// extraction is once again the largest phase: 5.4 ms of a 7.8 ms render path at
+// 100 000 objects. It is already parallel, so what remains is not work but
+// STREAMING — 100 000 RenderItems at ~136 bytes each, twice per frame counting the
+// shadow cull. The next lever is therefore the data layout (SoA, or a narrower
+// RenderItem), not SIMD and not more threads.
 //
 // PARALLELISM, and the two things that make it safe rather than brave:
 //   * A CHUNK IS COMPONENT DATA. Extraction slices archetypes into ranges of

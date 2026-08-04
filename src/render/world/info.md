@@ -56,7 +56,29 @@ Everything here is **GPU-free**. Nothing includes bgfx; nothing dereferences
 | `frustum.h/.cpp` | Is this bounding volume outside the view? |
 | `sort_key.h` | Turn "how should this draw be ordered?" into one `uint64_t`. |
 | `visibility.h/.cpp` | Cull → key → sort → `VisibleSet`, plus the batch-run predicate. |
+| `draw_sort.h/.cpp` | Order the draw list by key: a stable, data-adaptive radix sort. |
 | `light_packing.h/.cpp` | `LightItem[]` → the float layout the shader expects. |
+
+## Threads, without depending on the runtime
+
+The frustum test is the hot loop here (`Render.cull` was the largest phase in the
+render path at 50 000 objects), so it runs on the job pool — but this directory does
+**not** include `runtime/jobs/jobs.h`. Being GPU-free *and* runtime-free is the whole
+reason everything here is unit-testable, and spending that to get threads would be a
+bad trade. `buildVisibleSet` takes an injected `rworld::ParallelForFn` instead;
+`ForwardPipeline` supplies one backed by `jobs::parallelFor`, and `nullptr` runs
+serially.
+
+That indirection also bought the test that matters. `render_world_test` runs one
+world four ways — serial, one range at a time, ranges in **reverse**, and one OS
+thread per range — and demands byte-identical draw lists. Identical rather than
+merely equivalent, because a survivor is written at its own item index rather than
+appended: no two ranges touch the same memory, and surviving order is item order
+however the work was scheduled.
+
+`sortDraws` is **stable**, unlike the `std::sort` it replaced. Draws with equal keys
+keep item order, so a frame orders coincident draws the same way every run — a
+prerequisite for treating "byte-identical submit counters" as evidence of anything.
 
 ## The two design calls worth knowing
 
