@@ -38,9 +38,10 @@ tests:
 # extract 1.13 ms, cull 1.70, shadow 0.76, submit 0.09 — the whole render path is
 # ~3.7 ms and the frame is vsync-bound. Extraction went 15.2 -> 1.1 ms over five
 # changes (issues.md R14/R15); it is now parallel over archetype chunks on
-# engine::jobs. At 50 000 objects the renderer is 8.6 ms of a 34 ms frame and the
-# bottleneck is OUTSIDE this subsystem: Sim.prevSnapshot, ~25 ms, see
-# src/runtime/docs/issues.md H.0. CULL is now the largest render phase at scale.
+# engine::jobs. At 50 000 objects the frame is 9.3 ms and the renderer is 8.4 of it —
+# the ~25 ms Sim.prevSnapshot that used to dominate is fixed (runtime issues.md H.0),
+# so the renderer is the frame again. CULL (3.9 ms) is now the largest render phase
+# at scale, ahead of extract (2.6) — it is the next target, not extraction.
 # R7 (material-bind dedup) is still open: materialBinds == draws on every
 # non-instanced path.
 ---

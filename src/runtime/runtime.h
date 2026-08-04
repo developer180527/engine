@@ -254,6 +254,21 @@ private:
     // reset in stopSimulation like the other world caches (audit H.2 — a
     // query built once on m_ecs left Snapshot-play spinners frozen).
     WorldQueryCache<Transform, const Spinner> m_spinnerQuery;
+
+    // ── Interpolation-snapshot queries (Sim.prevSnapshot) ───────────────────
+    // Two, because writing PrevTransform has two completely different costs.
+    // Overwriting one that EXISTS is a plain memory write; ADDING one is a
+    // structural change that moves the entity to another archetype and must go
+    // through the deferred command buffer. The old code did the structural form
+    // for every entity every fixed step, which measured 12.7 ms per step on a
+    // 50 000-object scene — ~25 ms of a 34 ms frame (issues.md H.0).
+    //
+    // Cameras are excluded at the QUERY, not with a per-entity has<Camera>():
+    // their rotation is late-latched at render rate in onFrame and must never be
+    // dragged back by a lerp. Both are cached per world and reset in
+    // stopSimulation with the others — a query outliving its world is a crash.
+    WorldQueryCache<const Transform, PrevTransform> m_prevSnapQuery;   // overwrite
+    WorldQueryCache<const Transform>                m_prevSnapAddQuery; // first step
     AnimatorSystem m_animatorSystem;
     PluginRegistry m_plugins;
     KitHost        m_kits;              // project kits — dlopened lazily at Play

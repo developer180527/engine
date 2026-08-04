@@ -89,6 +89,8 @@ void EngineRuntime::stopSimulation() {
     m_animatorSystem.resetWorldCache();
     m_renderer.resetWorldCaches();
     m_spinnerQuery.reset();          // sim-world query — world dies below
+    m_prevSnapQuery.reset();         // ditto: PrevTransform snapshot queries
+    m_prevSnapAddQuery.reset();
     m_scriptHost->setPhysicsService(nullptr);
     m_scriptHost->setAudioService(nullptr);
     m_gameWorld.reset();
@@ -132,10 +134,22 @@ void EngineRuntime::tickSimulation(float dt) {
         // step so rendering can lerp. Cameras are excluded — their rotation
         // is late-latched at render rate (onFrame) and must not lag.
         { ENGINE_PROFILE_SCOPE("Sim.prevSnapshot");
-        w.defer_begin();   // set<> during iteration = structural op
-        w.each([](flecs::entity e, Transform& t) {
-            if (e.has<Camera>()) return;
-            e.set<PrevTransform>({t.position, t.rotation, t.scale});
+        // Entities that already have a PrevTransform — everything, after its
+        // first step. Overwriting fields in place: no defer, no command buffer,
+        // no per-entity lookup. This is the pass that runs 60 times a second.
+        m_prevSnapQuery.get(w, [](auto& b) { b.template without<Camera>(); })
+            .each([](const Transform& t, PrevTransform& p) {
+                p.position = t.position;
+                p.rotation = t.rotation;
+                p.scale    = t.scale;
+            });
+        // Newcomers: the ONLY case that needs a structural add, and normally
+        // empty. Deferred because set<> during iteration is a structural op.
+        auto& addQ = m_prevSnapAddQuery.get(w, [](auto& b) {
+            b.template without<PrevTransform>().template without<Camera>(); });
+        w.defer_begin();
+        addQ.each([](flecs::entity e, const Transform& t) {
+            e.set<PrevTransform>({ t.position, t.rotation, t.scale });
         });
         w.defer_end(); }
         m_input.beginTick(hid::nowNs());   // fold staged events -> snapshot

@@ -111,6 +111,13 @@ engine_test(render_pipeline_test)
 # without semantics. Also the only coverage of the SNAPSHOT extraction path, since
 # HeadlessPlatform skips bgfx and the editor's Play mode has no other test.
 engine_test(extract_partition_test)
+# The PrevTransform interpolation snapshot's contract. Rebuilt for speed (12.7 ms
+# -> 0.6 ms per step at 50 k objects, issues.md H.0) into an in-place overwrite pass
+# plus a structural-add pass, and its failure modes are all invisible to timing and
+# to the submit counters: a newcomer that never gets one stutters forever, a
+# post-step value makes the lerp interpolate from the wrong end, and a camera that
+# acquires one makes look direction lag.
+engine_test(prev_snapshot_test)
 # Shader cooking: manifest validation, bgfx uniform-table reflection, interface
 # verification and the .cshader container — all pure functions over bytes, so
 # none of it needs shaderc or a GPU. The subprocess path is covered by actually

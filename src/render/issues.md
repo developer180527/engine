@@ -250,9 +250,11 @@ This retires the runtime's "single-threaded frame orchestration" tradeoff in par
 SIMD was NOT written, deliberately. The remaining per-item maths is spread across
 cores, and the frame's cost has moved somewhere else entirely: at 50 000 objects the
 frame is 34 ms of which the whole renderer is 8.6 (extract 2.6, cull 3.9, shadow 1.8,
-submit 0.3). The other ~25 ms is `Sim.prevSnapshot` — a deferred structural `set<>`
+submit 0.3). The other ~25 ms was `Sim.prevSnapshot` — a deferred structural `set<>`
 per entity per fixed step, which had no profiler zone and so was invisible until now.
-Recorded as `src/runtime/docs/issues.md` H.0 with a fix outline. Hand-optimising this
+Fixed the same way (`src/runtime/docs/issues.md` H.0: 12.7 ms -> 0.63 per step), which
+leaves the 50 000-object frame at 9.3 ms with the renderer 8.4 of it — and CULL, not
+extract, the largest render phase. Hand-optimising this
 file further would be optimising a quarter of the problem.
 
 NOT sanitizer-verified at scene scale: ASan on the windowed host runs ~13 s per frame

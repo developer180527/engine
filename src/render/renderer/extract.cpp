@@ -21,22 +21,24 @@
 //     1 000   0.32 ms   0.35    8.3 (vsync)
 //     5 000   0.50      0.55    8.3 (vsync)
 //    20 000   1.13      1.70    7.9 (vsync)
-//    50 000   2.56      3.91   34.3   <- NOT the renderer, see below
+//    50 000   2.56      3.91    9.3   <- cull > extract now
 //
 // The lesson worth carrying, because it held for all four: almost none of the cost
 // was arithmetic. It was per-entity work asking questions the query engine answers
 // per ARCHETYPE (try_get<PrevTransform>, try_get<SkinnedMesh>, a redundant
 // try_get<Transform>, target(ChildOf) + is_alive() + has<Transform>()), plus one
 // function computing 16 floats with 128 multiplies. Three of the four fixes are in
-// the query DECLARATIONS (renderer.h) and in transform.h, not in this loop.
+// the query DECLARATIONS (renderer.h) and in transform.h, not in this loop. The same
+// pattern then fixed Sim.prevSnapshot outside this subsystem, 12.7 ms -> 0.63.
 //
 // Measured NOT to matter, so nobody spends a day on them again: the three registry
 // lookups are ~0.17 ms and reserving m_items up front is ~0.4 ms. Hand-written SIMD
-// was NOT done and is not the next lever: the per-item maths that remains is now
-// spread across cores, and at 50 000 objects the frame is 34 ms of which the
-// renderer is 8.6 — the rest is Sim.prevSnapshot (~25 ms, two fixed steps), a
-// deferred structural set<> per entity per step. See src/runtime/docs/issues.md H.0.
-// Optimising this file further would be optimising 25% of the problem.
+// was NOT done and is not the next lever. The per-item maths that remains is spread
+// across cores, and within the render path CULL is now larger than extract (3.9 ms
+// vs 2.6 at 50 000 objects) — that is where the next work goes. Sim.prevSnapshot,
+// which used to be ~25 ms of a 34 ms frame at that size, is fixed by the same
+// per-archetype reasoning (src/runtime/docs/issues.md H.0), so the frame is 9.3 ms
+// and the renderer is 8.4 of it.
 //
 // PARALLELISM, and the two things that make it safe rather than brave:
 //   * A CHUNK IS COMPONENT DATA. Extraction slices archetypes into ranges of

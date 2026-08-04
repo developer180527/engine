@@ -273,7 +273,7 @@ If a caller holds a `JobHandle` across a `pumpMain()` call that happens to run a
 
 ## High
 
-### H.0 — `Sim.prevSnapshot` is the largest cost in the frame at scene scale (MEASURED 2026-08-04)
+### H.0 — ✅ FIXED — `Sim.prevSnapshot` was the largest cost in the frame at scene scale
 The interpolation snapshot in `runtime_sim.cpp` runs once per FIXED STEP over every
 entity with a Transform:
 
@@ -311,6 +311,46 @@ Suggested fix, in the order that keeps it safe:
 Correctness to preserve: cameras must keep being excluded (their rotation is
 late-latched at render rate and must not lag), and PrevTransform must be written
 BEFORE the step's broadcasts so rendering lerps from the pre-step state.
+
+**FIXED 2026-08-04**, steps 1–3 exactly as outlined. Two cached queries replace the
+one `w.each`: an in-place overwrite over `(const Transform, PrevTransform)` for
+everything that already has the component, and a structural `set<>` over
+`(const Transform)` `.without<PrevTransform>()` for newcomers — normally empty.
+Cameras are excluded with `.without<Camera>()` on both, so the per-entity
+`has<Camera>()` is gone. Both are `WorldQueryCache` entries reset in
+`stopSimulation` with the others; a query outliving its world is a crash, not a leak.
+
+| objects | before (per step) | after | frame before | frame after |
+|---|---|---|---|---|
+| 20 000 | 12.4 ms | **0.28 ms** | 8.4 (vsync) | 8.4 (vsync) |
+| 50 000 | 12.7 ms | **0.63 ms** | 34.3 ms | **9.3 ms** |
+
+At 50 000 objects the frame is 3.7x faster and the renderer is once again nearly all
+of it (8.4 ms of 9.3). **Step 4 — `jobs::parallelFor` — was deliberately NOT done**,
+because step 4 said to measure first and the measurement says no: 0.63 ms per step is
+no longer worth a job dispatch, and the same work parallelised would still cost the
+round trip. Revisit only if it climbs back.
+
+TESTED by `tests/prev_snapshot_test.cpp`, because every failure mode here is
+invisible to both timing and the render submit counters: a newcomer that never gets
+the component stutters forever, a value captured at the wrong moment makes the lerp
+interpolate from the wrong end, and a camera that acquires one makes look direction
+lag. It asserts the add pass, the overwrite pass, per-entity correctness over 500
+entities (skipping AND crossing), the camera exclusion, and three Snapshot
+start/stop cycles for the cache-reset path. MUTATION-CHECKED: deleting the add pass
+fails 9 assertions, dropping `.without<Camera>()` fails the camera one.
+
+A note on how that test was written, since it is the reusable lesson: its first
+version asserted that after moving an entity externally and stepping, PrevTransform
+would still read the OLD position. It does not — and running the test against the
+PRE-FIX implementation showed it failing identically, which is how the wrong
+expectation was caught instead of being "fixed" in the code. `Prev := Transform` at
+the top of the step means an external move between steps IS the state entering the
+next step. A second draft then tried to observe Prev and Transform diverging via a
+Spinner; that cannot happen headlessly either, because Spinner runs in `tick()` at
+render rate and nothing else mutates a transform inside a step with no plugins and
+no physics bodies. That assertion was removed rather than weakened, and the file
+says so.
 
 ### H.1 — `buildDefaultScene()`: likely typo, `.set<n>()` instead of `.set<Name>()`
 

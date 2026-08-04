@@ -16,6 +16,7 @@ tests:
   - tests/input_test.cpp
   - tests/input_config_test.cpp
   - tests/nav_test.cpp
+  - tests/prev_snapshot_test.cpp
   - tests/sim_purity_check.cpp
   - tests/soak_engine.cpp
 # NOT `hardened`, despite being the most-tested subsystem here (11 tests incl.
@@ -180,7 +181,10 @@ trigger that would revisit it:
   RETIRED 2026-08-04: renderer extraction now runs on `engine::jobs`
   (`jobs::parallelFor` over archetype chunks — see `src/render/renderer/extract.cpp`),
   which was this tradeoff's stated trigger. The rest of the frame is still
-  sequential. Next candidate is `Sim.prevSnapshot`, below.
+  sequential, and the next candidate turned out not to need threading at all:
+  `Sim.prevSnapshot` went from 12.7 ms to 0.63 ms per step at 50 000 objects by
+  doing per-archetype work instead of per-entity structural ops (issues.md H.0).
+  The lesson both share: reach for the query shape before reaching for cores.
 - **Snapshot play mode via full serialization** — editor-only cost.
   Trigger: noticeable Play-button latency on large scenes.
 - **Input singletons + single window** — InputSystem/InputMap are global,
