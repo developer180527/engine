@@ -77,7 +77,11 @@ RenderContext Renderer::makeContext() {
     return rc;
 }
 
+// EVERY per-world query cache must be listed here. A missed one does not leak,
+// it dangles: a new world can land at the same address and false-match the old
+// query. Adding a cache to Renderer means adding a line here.
 void Renderer::resetWorldCaches() {
     m_gameItemQuery.reset();
+    m_gameChildItemQuery.reset();
     m_gameLightQuery.reset();
 }

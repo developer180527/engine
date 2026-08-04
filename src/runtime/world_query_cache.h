@@ -16,9 +16,19 @@ template <typename... Comps>
 class WorldQueryCache {
 public:
     flecs::query<Comps...>& get(flecs::world& w) {
+        return get(w, [](auto&) {});
+    }
+
+    // Same, for a query that needs extra terms (`.with(...)`, `.without(...)`).
+    // `customize` runs ONCE per world, at build time — not per iteration — so
+    // the cost it guards against is exactly the one this class exists for.
+    template <typename Fn>
+    flecs::query<Comps...>& get(flecs::world& w, Fn&& customize) {
         ecs_world_t* ptr = w.c_ptr();
         if (ptr != m_world) {
-            m_query = w.template query_builder<Comps...>().build();
+            auto b = w.template query_builder<Comps...>();
+            customize(b);
+            m_query = b.build();
             m_world = ptr;
         }
         return m_query;

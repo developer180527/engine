@@ -1,40 +1,44 @@
 ---
 status: as-built
-tier: prototype
+tier: working
 verified: 2026-08-04
 covers:
   - src/render/
 tests:
   - tests/gpu_cache_test.cpp
   - tests/render_registry_test.cpp
-# STILL `prototype`, deliberately, and the reason is narrower than it was.
-# Covered now: GpuResourceCache (gpu_cache_test — and it IS wired into a render
-# path, the cooked-texture route through AssetService that the shipped game uses),
-# and the three registries every drawn thing lives in (render_registry_test).
-# What remains untested is SUBMISSION — the pipeline's binding of programs,
-# uniforms and textures — and that is still the bulk of what this subsystem does.
-# It is not testable headlessly: bgfx's Noop backend never sets numDraw (its
-# submit() sets timing and zeroes numPrims, nothing else), so draw counts cannot
-# be asserted without a real GPU harness or a counting seam in the pipeline.
-# The counting seam now EXISTS (render/submit_stats.h, filled by ForwardPipeline,
-# exposed via IRenderPipeline::submitStats). Counting on our side works on any
-# backend including Noop, so a headless pipeline test is now possible — it needs
-# the program/shader setup ForwardPipeline::onAttach wants, which is the remaining
-# work. Prototype until that test exists.
+  - tests/render_pipeline_test.cpp
+# `working` as of 2026-08-04, and the thing that changed is the one this note has
+# been naming as the blocker for weeks: SUBMISSION is tested. It was untestable
+# because bgfx's Noop backend never sets numDraw (its submit() writes timing,
+# zeroes numPrims, and touches nothing else), so draw counts cannot be read back
+# from bgfx headlessly. render/submit_stats.h counts on OUR side of the API, which
+# works on any backend — and render_pipeline_test builds a RenderView by hand (no
+# ECS, no Renderer, no window) and asserts the submission decisions: cull wiring,
+# batch runs, the instanced path AND its negative case, the uniform-buffer draw
+# ceiling, R4's one-palette-per-skinned-item invariant, the shadow pass's separate
+# light-space cull, and that the counters reset per view. Mutation-checked: dropping
+# render()'s stats reset, and disabling the instanced path, each fail it.
+#
+# NOT `hardened`, and the gap is specific: no pixels. Noop executes nothing, so
+# "the shadow map is sampled with the right matrix" and "vs_instanced.sc reads
+# i_data0..3" are outside any headless test's reach — instancing, the shadow cull
+# and shadow instancing are verified by COUNTS and timings, never visually. That
+# needs a real-device harness (golden-image or GPU-timing based), and it is the
+# next thing that would raise this tier. There is also no fuzz/soak/stress lane
+# over the render path.
 #
 # INSTANCING (R5) is live: the submit loop walks rworld::batchRunLength and
 # collapses runs sharing mesh+material into one instanced submit (vs_instanced.sc,
 # model matrix from instance data). 20 001 objects -> 1 draw call. Skinned items,
 # submeshes and data-driven materials fall through to per-draw on purpose.
 #
-# What the seam already measures on fps_shooter (2026-08-04): 12 draws from 10
-# items (1 culled), 3 batch runs — so instancing would remove 9 of 12 submits
-# (R5); 12 material binds for 12 draws, i.e. no dedup at all (R7); and 1 bone
-# palette upload for 1 skinned item, which is R4's invariant machine-checked.
-# Promoting on the strength of a test for an unwired component would be gaming
-# the ladder. See docs/plans/renderer-audit-and-plan.md: 9 ranked findings, 3
-# critical. Phase 2 (VRAM census, duplicate report, leak detector over a real
-# scene) is what will make a higher tier provable.
+# MEASURED on the 20 000-object stress scene (scripts/gen_stress_scene.py), which
+# is reproducible in a way a hand-built project is not — the Render.* profiler
+# zones attribute the frame: extract 9.7 ms, cull 1.7, shadow 0.8, submit 0.09.
+# Submission is now 0.7% of the render path; EXTRACTION is the cost, and its
+# numbers live in render/renderer/extract.cpp. R7 (material-bind dedup) is still
+# open: materialBinds == draws on every non-instanced path.
 ---
 # Render
 

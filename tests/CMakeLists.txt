@@ -97,6 +97,20 @@ engine_test(render_world_test)
 # one real bug (the material name cache in fd08408) — so the aliasing contract is
 # asserted rather than assumed. bgfx Noop: Texture/Mesh own real bgfx handles.
 engine_test(render_registry_test)
+# SUBMISSION — the last uncovered part of src/render, and the part that changes
+# every week. Possible only because SubmitStats counts on our side of the API:
+# bgfx's Noop backend never sets numDraw, so draw counts cannot be read back from
+# bgfx headlessly. Builds a RenderView by hand (no ECS, no Renderer, no window)
+# and asserts the submission DECISIONS — cull wiring, batch runs, instanced runs,
+# the uniform-buffer draw ceiling, the one-palette-per-skinned-item invariant,
+# and the shadow pass's separate light-space cull. It cannot check pixels.
+engine_test(render_pipeline_test)
+# The two-query extraction partition (parentless / parented). Its only failure mode
+# is silent — an entity in neither half vanishes from the frame, one in both is
+# drawn twice — so the partition is asserted rather than trusted to flecs' with/
+# without semantics. Also the only coverage of the SNAPSHOT extraction path, since
+# HeadlessPlatform skips bgfx and the editor's Play mode has no other test.
+engine_test(extract_partition_test)
 # Shader cooking: manifest validation, bgfx uniform-table reflection, interface
 # verification and the .cshader container — all pure functions over bytes, so
 # none of it needs shaderc or a GPU. The subprocess path is covered by actually

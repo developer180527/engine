@@ -129,7 +129,13 @@ bool Renderer::init(void* nwh, int width, int height,
     m_whiteTex = bgfx::createTexture2D(1, 1, false, 1,
         bgfx::TextureFormat::RGBA8, 0, bgfx::makeRef(&kWhite, 4));
 
-    m_itemQuery  = editorWorld.query_builder<const Transform, const MeshRenderer>().build();
+    // Partitioned on ChildOf — see the declarations in renderer.h for why.
+    m_itemQuery = editorWorld.query_builder<const Transform, const MeshRenderer,
+                                            const PrevTransform*>()
+                      .without(flecs::ChildOf, flecs::Wildcard).build();
+    m_childItemQuery = editorWorld.query_builder<const Transform, const MeshRenderer,
+                                                 const PrevTransform*>()
+                      .with(flecs::ChildOf, flecs::Wildcard).build();
     m_lightQuery = editorWorld.query_builder<const Transform, const Light>().build();
 
     // Before the pipeline attaches: onAttach() asks for programs.

@@ -74,9 +74,10 @@ unlikely to be the right shape.
 
 ## R12. `renderer.cpp` (437) mixes device lifecycle with ECS extraction ✅ FIXED
 It owned bgfx init, framebuffers, view ids AND the flecs queries that build
-`RenderItem`s. Extraction is the hot path (38 ms at 20 k objects, one draw call) and
-the next optimisation target, so it wanted to be its own unit — testable against a
-fake world rather than only through a live device.
+`RenderItem`s. Extraction is the hot path (measured at 15.2 ms of a 27.1 ms frame
+over 20 000 objects — see R14, which the split made possible to find) and the next
+optimisation target, so it wanted to be its own unit — testable against a fake
+world rather than only through a live device.
 
 Split four ways, the same shape as `pipeline/`:
 
@@ -105,11 +106,107 @@ thing in its file, which is what the optimisation work needs; a seam for a fake
 world is a separate change, and R13's headless pipeline test is the better place
 to force it.
 
-## R13. `tier: prototype` is still correct, and now for a narrower reason
+## R13. `tier: prototype` is still correct, and now for a narrower reason ✅ FIXED
 Covered: `GpuResourceCache`, the three registries, `world/`, `diag/`, shader
 selection. Not covered: submission. The counting seam makes a headless pipeline
 test possible for the first time (bgfx Noop never sets `numDraw`; our counters do),
 and writing it is the single thing that raises this tier.
+
+`tests/render_pipeline_test.cpp` — 8 cases, 25 assertions, `tier: working`. It
+builds a `RenderView` by hand: no ECS, no `Renderer`, no window, because
+`RenderView` is a struct of spans and `RenderContext` is three registry
+references. That is the whole reason this is a unit test and not an engine boot.
+
+What it asserts, and why each one: an empty view submits nothing; items behind the
+camera are culled (the cull is *wired*, not merely unit-tested in `rworld`); 64
+identical draws collapse to one batch run and one instanced submit; **eight
+distinct materials do NOT** collapse — the negative case, because if the sort key
+stopped separating materials, instancing would render with the wrong one; the draw
+ceiling caps at 4096 and *reports* the 1904 it refused; one bone-palette upload for
+a 4-submesh skinned item (R4, as an assertion instead of a printed warning); the
+shadow pass counts separately and submits nothing when `castShadows` is off; and
+the counters reset per view — which every other assertion depends on.
+
+MUTATION-CHECKED, because a passing test proves nothing until it can fail:
+removing `render()`'s `m_submitStats.reset()` fails 8 assertions, and disabling the
+instanced path (`runLen > 1` → `> 100000`) fails 3. Both restored.
+
+Two things fixed on the way. `ForwardPipeline::submitStats()` was declared
+*private* while `IRenderPipeline` declares it public — legal (an override may
+narrow access) but it meant the counters were reachable only through a base
+pointer, including for the test whose entire purpose is reading them. And the
+first run of the test died inside `bgfx::setVertexBuffer` on handle 65535: the
+fixture held `std::vector<Mesh>` while `RenderItem` holds a raw `Mesh*`, so a
+reallocation dangled every item built earlier. Stable storage now, with the reason
+recorded in the fixture.
+
+Still NOT covered, so this is `working` and not `hardened`: pixels. Noop executes
+nothing, so instancing, the shadow cull and shadow instancing remain verified by
+counts and timings and never visually.
+
+## R14. Extraction's cost was per-entity component lookups, not maths ✅ FIXED
+The whole render path had ONE profiler zone (`"Render"` in runtime_frame.cpp), so
+"38 ms at 20 k objects, all of it extraction" — repeated several times in this
+repo's history, including by me — was **never measured**. It was frame time with an
+assumed cause. Adding `Render.extract` / `.cull` / `.shadow` / `.submit` zones gave
+the real split at 20 000 objects:
+
+| phase | before | after |
+|---|---|---|
+| `Render.extract` | 15.2 ms | **9.7 ms** |
+| `Render.cull` | 1.6 | 1.7 |
+| `Render.shadow` | 0.8 | 0.8 |
+| `Render.submit` | 0.08 | 0.09 |
+| frame | 27.1 ms | **17.8 ms** |
+
+Cadence after the fix is p50 17.75 ms (54.9 fps). The pre-fix cadence was never
+captured — only the 27.1 ms frame cost — so there is no honest before/after fps
+pair to quote, and the frame-time row is the comparison that was actually measured.
+
+Then a differential run — one build, an env-var per suspect — attributed
+extraction itself. The result was not what reading the loop suggests:
+
+| suspect | cost | verdict |
+|---|---|---|
+| `try_get<PrevTransform>` + interpolation | ~6.3 ms | **fixed** — optional query term |
+| `target(ChildOf)`+`is_alive`+`has<Transform>` | ~2.2 ms | **fixed** — two queries |
+| `try_get<Transform>`, redundant | ~1.5 ms | **fixed** — query already had it |
+| three registry lookups | ~0.17 ms | *not worth touching* |
+| `m_items` growth (reserve) | ~0.4 ms | *not worth touching* |
+
+Almost none of it was arithmetic. It was per-entity lookups asking questions the
+query engine answers **per archetype**: does this entity have a parent (no, 20 000
+times), does it have a PrevTransform, and give me the Transform the iteration is
+already holding. So the fix is in the query *declarations*, not the loop body:
+items are matched by two queries partitioned on `ChildOf`, and `PrevTransform` is
+an optional term. Parented entities still get their full ancestor walk, so this is
+a pure speedup — every submit counter is byte-identical at 1 k, 5 k and 20 k.
+
+`getWorldMatrixLerp` gained `localMatrixLerp` + `getWorldMatrixLerpFrom` overloads
+taking components already in hand; the entity-only version stays for callers that
+genuinely only have an entity. `WorldQueryCache::get` gained a builder-customiser
+overload so a cached per-world query can carry extra terms.
+
+Two of my own claims corrected in the process, both now recorded at the code: the
+"38 ms" was frame time and not extraction, and my first guess that the parent
+lookup was 8.5 ms of it was wrong — it is 2.2, and PrevTransform was the big one.
+
+TESTED by `tests/extract_partition_test.cpp`: the partition has exactly one
+failure mode and it is silent — an entity in neither half vanishes from the frame,
+one in both is drawn twice, and both read as content bugs. It asserts the two
+queries cover the single query exactly with no overlap (including a depth-2
+grandchild), that a parentless entity's fast path equals the full walk, that a
+parented one still applies every ancestor (including through an ancestor with no
+Transform), and that passed-in vs looked-up PrevTransform interpolate identically.
+Scope limit, stated at the test: the matrix assertions run production code, but the
+partition assertions build their own queries, so they prove the technique rather
+than that `Renderer::init` uses the right term. Byte-identical submit counters at
+1 k / 5 k / 20 k are the engine-level evidence for that.
+
+REMAINING: 9.7 ms for 20 000 items is ~0.5 µs each, and what is left is real work
+(quaternion nlerp, matrix compose, push_back). The next win is width — SIMD or jobs
+over archetype spans — not more lookup removal. `Render.submit` at 0.09 ms means
+submission is 0.7% of the render path; it is finished as an optimisation target.
 
 ## Not a defect, but the thing to know before touching the pipeline
 Per-draw uniform bytes are a hard budget, not a soft cost: bgfx's Metal backend

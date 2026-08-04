@@ -4,14 +4,28 @@
 // This is the only place in the renderer that knows flecs, Transform, or
 // MeshRenderer exist; everything downstream sees `RenderItem`/`LightItem` spans.
 //
-// IT IS ALSO THE HOT PATH, and that is why it is its own translation unit. With
-// instancing in place a 20 000-object scene submits ONE draw call and still costs
-// ~38 ms a frame — all of it here, per item: a query iteration, a world-matrix
-// lerp, three registry lookups, a try_get<SkinnedMesh>, and a push_back. Draw
-// submission stopped being the bottleneck; this is what replaced it, so the next
-// optimisation (packing extraction output into a pre-sized frame array instead of
-// growing vectors, and hoisting the per-item pointer chases) lands in this file
-// and nowhere else.
+// IT IS ALSO THE HOT PATH, and that is why it is its own translation unit. Draw
+// submission stopped being the bottleneck once instancing landed — a 20 000-object
+// scene submits ONE draw call — and this is what replaced it. MEASURED, with the
+// Render.extract profiler zone, at 20 000 objects:
+//
+//   before   15.2 ms extract, of a 27.1 ms frame
+//   after     9.7 ms extract, of a 17.8 ms frame   (cadence p50 17.75, 54.9 fps)
+//
+// (The pre-fix cadence was not captured, only the 27.1 ms frame cost, so the fps
+// figure is quoted for the after state alone rather than as a before/after pair.)
+//
+// The 5.5 ms came from ONE realisation, and it is the thing to remember before
+// optimising anything here: almost none of the cost was arithmetic. It was
+// per-entity component lookups asking questions the query engine answers per
+// ARCHETYPE — try_get<PrevTransform>, a redundant try_get<Transform>, and
+// target(ChildOf) + is_alive() + has<Transform>() to learn "no parent" 20 000
+// times. The fix was in the query declarations (renderer.h), not in this loop.
+//
+// Measured NOT to matter, so nobody spends a day on them again: the three
+// registry lookups are ~0.17 ms total, and reserving m_items up front is ~0.4 ms.
+// What is left is genuine work — the interpolation and matrix compose — so the
+// next real win is width (SIMD / jobs over archetype spans), not lookup removal.
 //
 // Two properties worth not breaking:
 //   * Bounds are COPIED into the item, not read through the Mesh during culling.
@@ -30,6 +44,7 @@
 
 #include <bx/math.h>
 
+#include "core/profiler.h"
 #include "core/transform_utils.h"        // getWorldMatrixLerp
 #include "render/mesh.h"
 #include "render/material.h"
@@ -39,6 +54,7 @@
 RenderView Renderer::buildView(flecs::world& world, const float view[16],
                                const float proj[16], const RenderTarget& target,
                                bgfx::ViewId baseViewId) {
+    ENGINE_PROFILE_SCOPE("Render.extract");
     RenderView rv;
     rv.view       = Mat4::from(view);
     rv.proj       = Mat4::from(proj);
@@ -54,11 +70,12 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     float vp[16]; bx::mtxMul(vp, view, proj);
     rworld::extractFrustumPlanes(vp, rv.frustum);
 
-    auto extractItem = [&](flecs::entity e, const Transform&, const MeshRenderer& mr) {
+    // Everything about an item EXCEPT its world matrix, which is the only part
+    // that differs between the parentless and parented sets.
+    auto extractItem = [&](flecs::entity e, const MeshRenderer& mr,
+                           RenderItem& it) -> bool {
         const Mesh* mesh = m_assets->getMesh(mr.mesh);
-        if (!mesh) return;
-        RenderItem it;
-        getWorldMatrixLerp(e, m_simAlpha, it.model.m);
+        if (!mesh) return false;
         it.mesh = mesh;
         MaterialHandle mh = mr.materialOverride.valid()
                             ? mr.materialOverride : mesh->material;
@@ -84,7 +101,26 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
                 it.boneCount    = skel->boneCount();
             }
         }
+        return true;
+    };
 
+    // Parentless: the local matrix IS the world matrix. Zero component lookups —
+    // Transform, MeshRenderer and the optional PrevTransform all arrive from the
+    // query, resolved once per archetype instead of once per entity.
+    auto extractFlat = [&](flecs::entity e, const Transform& tr,
+                           const MeshRenderer& mr, const PrevTransform* prev) {
+        RenderItem it;
+        if (!extractItem(e, mr, it)) return;
+        localMatrixLerp(tr, prev, m_simAlpha, it.model.m);
+        m_items.push_back(it);
+    };
+    // Parented: walk the chain. Correctness over speed — a child's world matrix
+    // genuinely depends on ancestors that this query does not hand us.
+    auto extractChild = [&](flecs::entity e, const Transform& tr,
+                            const MeshRenderer& mr, const PrevTransform* prev) {
+        RenderItem it;
+        if (!extractItem(e, mr, it)) return;
+        getWorldMatrixLerpFrom(e, tr, prev, m_simAlpha, it.model.m);
         m_items.push_back(it);
     };
     auto extractLight = [&](flecs::entity e, const Transform&, const Light& lc) {
@@ -110,10 +146,14 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     m_items.clear();
     m_lights.clear();
     if (&world == m_editorWorld) {              // editor world: cached queries
-        m_itemQuery.each(extractItem);
+        m_itemQuery.each(extractFlat);
+        m_childItemQuery.each(extractChild);
         m_lightQuery.each(extractLight);
     } else {                                    // Play snapshot: cached per world
-        m_gameItemQuery.get(world).each(extractItem);
+        m_gameItemQuery.get(world, [](auto& b) {
+            b.without(flecs::ChildOf, flecs::Wildcard); }).each(extractFlat);
+        m_gameChildItemQuery.get(world, [](auto& b) {
+            b.with(flecs::ChildOf, flecs::Wildcard); }).each(extractChild);
         m_gameLightQuery.get(world).each(extractLight);
     }
 

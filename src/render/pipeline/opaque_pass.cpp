@@ -8,13 +8,16 @@
 // reading program creation and shadow matrices first.
 #include "render/forward_pipeline.h"
 
+#include "core/profiler.h"
+
 void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
         // Lights are packed FIRST, because the shadow pass and the lighting
         // shader must agree on which slot is shadowed, and only packing knows
         // the packed slot numbering (rworld::PackedLights::shadowLightIndex).
         m_submitStats.reset();   // per view; the shadow pass counts into it too
         const rworld::PackedLights lights = rworld::packLights(v.lights, v.ambient);
-        renderShadow(v, ctx, lights);
+        { ENGINE_PROFILE_SCOPE("Render.shadow");
+          renderShadow(v, ctx, lights); }
 
         const bgfx::ViewId id = v.baseViewId;
 
@@ -46,6 +49,7 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
         // a statement about how surfaces LOOK, and it should not have to own
         // visibility to make one. m_visible is reused across frames for its
         // capacity (buildVisibleSet clears it).
+        { ENGINE_PROFILE_SCOPE("Render.cull");
             rworld::buildVisibleSet(v.world(), v.camera(), m_visible);
         m_submitStats.itemsConsidered = m_visible.consideredCount;
         m_submitStats.itemsCulled     = m_visible.culledCount;
@@ -58,6 +62,8 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
             i += rworld::batchRunLength(m_visible, i);
             ++m_submitStats.batchRuns;
         }
+        } // Render.cull
+        ENGINE_PROFILE_SCOPE("Render.submit");
 
         // Walk RUNS, not individual draws. rworld::batchRunLength returns how
         // many consecutive sorted draws share mesh AND material — the sort key

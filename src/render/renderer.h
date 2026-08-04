@@ -10,6 +10,7 @@ class ShaderLibrary;   // render/shader/shader_library.h
 #include "render/render_pipeline.h"   // IRenderPipeline, RenderView, RenderItem, LightItem, RenderTarget, Mat4, Vec4
 #include "render/render_context.h"    // RenderContext + asset/texture/material registries
 #include "core/transform.h"
+#include "components/prev_transform.h"   // optional query term in extraction
 #include "components/mesh_renderer.h"
 #include "components/skinned_mesh.h"
 #include "components/light.h"
@@ -127,10 +128,33 @@ private:
     std::unique_ptr<IRenderPipeline>                  m_pipeline;
     bool                                              m_initialized = false;
     uint32_t                                          m_shadowResolution = 2048;
-    flecs::query<const Transform, const MeshRenderer> m_itemQuery;   // editor world
-    flecs::query<const Transform, const Light>        m_lightQuery;  // editor world
-    WorldQueryCache<const Transform, const MeshRenderer> m_gameItemQuery;  // sim world
-    WorldQueryCache<const Transform, const Light>        m_gameLightQuery; // sim world
+    // ── Extraction queries: the shape here IS the optimisation ──────────────
+    // Renderable items are matched by TWO queries partitioned on whether the
+    // entity has a ChildOf parent, and PrevTransform is an OPTIONAL term (the
+    // pointer) rather than a lookup. Both exist for one measured reason: over
+    // 20 000 objects, extraction cost 15.2 ms and almost none of it was
+    // arithmetic — it was per-entity component lookups asking questions the
+    // query engine already knows the answer to per archetype.
+    //
+    //   ~2.2 ms  target(ChildOf) + is_alive() + has<Transform>(), to learn
+    //            "no parent" for every entity in a flat scene
+    //   ~1.5 ms  try_get<Transform>, for what the query just handed us
+    //   ~6.3 ms  try_get<PrevTransform> plus the interpolation
+    //
+    // So: the parentless set (the overwhelming majority of scene content) takes
+    // a path that never asks about parents, and nothing re-looks-up a component
+    // the iteration already has. Together the two queries cover exactly what the
+    // single query did — a parented entity still gets its full ancestor walk.
+    using ItemQuery = flecs::query<const Transform, const MeshRenderer,
+                                   const PrevTransform*>;
+    ItemQuery m_itemQuery;      // editor, parentless
+    ItemQuery m_childItemQuery; // editor, parented
+    flecs::query<const Transform, const Light> m_lightQuery;     // editor world
+    WorldQueryCache<const Transform, const MeshRenderer, const PrevTransform*>
+        m_gameItemQuery;                                         // sim, parentless
+    WorldQueryCache<const Transform, const MeshRenderer, const PrevTransform*>
+        m_gameChildItemQuery;                                    // sim, parented
+    WorldQueryCache<const Transform, const Light> m_gameLightQuery;  // sim world
     std::vector<RenderItem> m_items;
     std::vector<LightItem>  m_lights;
 

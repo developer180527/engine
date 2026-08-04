@@ -49,6 +49,12 @@ public:
 
     void render(const RenderView& v, RenderContext& ctx) override;
 
+    // PUBLIC deliberately, matching IRenderPipeline. It was private here, which
+    // compiles (an override may narrow access) but means the counters are
+    // reachable only through a base pointer — including for tests, whose whole
+    // reason to exist is reading them. See tests/render_pipeline_test.cpp.
+    const rdiag::SubmitStats& submitStats() const override { return m_submitStats; }
+
 private:
     // The program a data-driven material wants: its own shader, its own
     // feature mask. Cached per (path, mask, profile) by ShaderLibrary, so this
@@ -68,8 +74,6 @@ private:
 
     void renderShadow(const RenderView& v, RenderContext& ctx,
                       const rworld::PackedLights& lights);
-
-    const rdiag::SubmitStats& submitStats() const override { return m_submitStats; }
 
     void bind(const float params[4], const float factor[4],
               bgfx::TextureHandle base, bgfx::TextureHandle norm,
