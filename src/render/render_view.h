@@ -30,6 +30,7 @@ struct RenderView {
     RenderTarget target;
     bgfx::ViewId baseViewId = 0;     // engine-allocated; more via RenderContext
     Span<RenderItem> items;          // ALL renderables (unculled) — pipeline culls
+    CullStreams      cull;           // SoA cull working set, parallel to `items`
     Span<LightItem>  lights;
     float ambient = 0.0f;            // grows into skybox / IBL
 
@@ -43,5 +44,5 @@ struct RenderView {
         std::memcpy(c.frustum, frustum, sizeof(frustum));
         return c;
     }
-    RenderWorld world() const { return RenderWorld{ items, lights, ambient }; }
+    RenderWorld world() const { return RenderWorld{ items, cull, lights, ambient }; }
 };

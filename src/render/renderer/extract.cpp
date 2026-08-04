@@ -41,6 +41,18 @@
 // shadow cull. The next lever is therefore the data layout (SoA, or a narrower
 // RenderItem), not SIMD and not more threads.
 //
+// EXTRACTION ALSO BUILDS THE CULL'S WORKING SET (rworld::CullStreams): the world
+// bounding sphere and the material+mesh half of the sort key, written into SoA
+// streams here while the model matrix is still in registers. Not for this file's
+// benefit — it costs ~0.2 ms at 50 000 objects — but because the sphere DOES NOT
+// DEPEND ON THE CAMERA and was being rebuilt once per view, so the shadow pass was
+// redoing every sphere the camera pass had just computed. That duplication is what
+// disappeared (Render.shadow 0.25 -> 0.09 ms at 50 k). See world/issues.md A2.P1 for
+// the full before/after, including the parts that did NOT get faster.
+//
+// The streams are parallel to m_items and must stay that way: the compaction pass
+// moves both, or the cull reads one object's bounds for another's, silently.
+//
 // PARALLELISM, and the two things that make it safe rather than brave:
 //   * A CHUNK IS COMPONENT DATA. Extraction slices archetypes into ranges of
 //     contiguous arrays and the worker body touches no flecs handle at all — that
@@ -172,6 +184,15 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         // and this is the invariant every worker thread depends on being disjoint.
         assert(c.outBegin + c.count <= m_items.size());
         RenderItem* out = m_items.data() + c.outBegin;
+        // The cull streams are filled HERE, in the same slice, because the model
+        // matrix is already in registers — walking the items again later to build
+        // them would spend the bandwidth this exists to save.
+        float* sx = m_cull.x.data() + c.outBegin;
+        float* sy = m_cull.y.data() + c.outBegin;
+        float* sz = m_cull.z.data() + c.outBegin;
+        float* sr = m_cull.r.data() + c.outBegin;
+        uint64_t* sk = m_cull.keyBase.data() + c.outBegin;
+
         uint32_t n = 0;
         for (uint32_t i = 0; i < c.count; ++i) {
             RenderItem& it = out[n];
@@ -179,6 +200,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
             if (!extractItem(c.mr[i], c.skin ? &c.skin[i] : nullptr, it)) continue;
             localMatrixLerp(c.tr[i], c.prev ? &c.prev[i] : nullptr,
                             m_simAlpha, it.model.m);
+            rworld::writeCullEntry(it, sx[n], sy[n], sz[n], sr[n], sk[n]);
             ++n;
         }
         c.written = n;
@@ -268,6 +290,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     const uint32_t flatTotal = collectChunks(*flatQ);
     if (flatTotal) {
         m_items.resize(flatTotal);
+        m_cull.resize(flatTotal);
         const bool parallel = jobs::initialized()
                            && flatTotal >= kExtractParallelMin
                            && m_chunks.size() > 1;
@@ -286,28 +309,47 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         // Compact away the gaps left by items whose mesh was missing. Skipped
         // entirely when nothing was dropped, which is every normal frame.
         uint32_t write = m_chunks[0].written;
-        bool gaps = false;
         for (std::size_t k = 1; k < m_chunks.size(); ++k) {
             const ExtractChunk& c = m_chunks[k];
-            if (write != c.outBegin) {
-                gaps = true;
+            if (write != c.outBegin && c.written) {
+                // Items AND streams move together, or the streams stop describing
+                // the items they are indexed alongside — which the cull would read
+                // as the wrong bounds for the wrong object, silently.
                 std::memmove(m_items.data() + write, m_items.data() + c.outBegin,
                              c.written * sizeof(RenderItem));
+                const std::size_t fb = c.written * sizeof(float);
+                std::memmove(m_cull.x.data() + write, m_cull.x.data() + c.outBegin, fb);
+                std::memmove(m_cull.y.data() + write, m_cull.y.data() + c.outBegin, fb);
+                std::memmove(m_cull.z.data() + write, m_cull.z.data() + c.outBegin, fb);
+                std::memmove(m_cull.r.data() + write, m_cull.r.data() + c.outBegin, fb);
+                std::memmove(m_cull.keyBase.data() + write,
+                             m_cull.keyBase.data() + c.outBegin,
+                             c.written * sizeof(uint64_t));
             }
             write += c.written;
         }
-        (void)gaps;
         m_items.resize(write);
+        m_cull.resize(write);
     }
 
     // Parented items and lights stay serial: they need an entity handle for the
     // ancestor walk, and they are a small minority of a scene. Appended after
     // the parallel block, so nothing races with the resize above.
     childQ->each(extractChild);
+    // The parented path appends with push_back, so its stream entries are written
+    // after the fact — a handful of items in any real scene.
+    if (m_items.size() != m_cull.size()) {
+        const std::size_t first = m_cull.size();
+        m_cull.resize(m_items.size());
+        for (std::size_t i = first; i < m_items.size(); ++i)
+            rworld::writeCullEntry(m_items[i], m_cull.x[i], m_cull.y[i],
+                                   m_cull.z[i], m_cull.r[i], m_cull.keyBase[i]);
+    }
     if (&world == m_editorWorld) m_lightQuery.each(extractLight);
     else                        m_gameLightQuery.get(world).each(extractLight);
 
     rv.items   = { m_items.data(),  m_items.size() };
+    rv.cull    = m_cull.view();
     rv.lights  = { m_lights.data(), m_lights.size() };
     rv.ambient = 0.25f;
     return rv;

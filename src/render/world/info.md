@@ -57,7 +57,35 @@ Everything here is **GPU-free**. Nothing includes bgfx; nothing dereferences
 | `sort_key.h` | Turn "how should this draw be ordered?" into one `uint64_t`. |
 | `visibility.h/.cpp` | Cull → key → sort → `VisibleSet`, plus the batch-run predicate. |
 | `draw_sort.h/.cpp` | Order the draw list by key: a stable, data-adaptive radix sort. |
+| `cull_stream.h` | One RenderItem → the 24 bytes the cull reads (`writeCullEntry`). |
 | `light_packing.h/.cpp` | `LightItem[]` → the float layout the shader expects. |
+
+## The cull reads streams, not items
+
+`RenderItem` is 144 bytes and the cull used to touch offsets 0..141 — all three of
+its cache lines — to recover a bounding sphere and two ids. `CullStreams`
+(render_world.h) is the SoA alternative: parallel `x/y/z/r/keyBase` arrays, 24 bytes
+per item, filled by extraction while the model matrix is still in registers.
+
+The bigger reason is not the byte count. **The world bounding sphere does not depend
+on the camera**, yet it was rebuilt per view — once against the camera frustum and
+again against the light's. Building it once at extraction cut `Render.shadow` from
+0.25 ms to 0.09 at 50 000 objects, because the shadow pass now reads the same stream
+instead of redoing the work.
+
+Two encodings worth knowing before touching it. The radius carries both sentinels, so
+the hot loop needs no side table: `r < 0` means the item is not renderable, `r ==
+infinity` means renderable but unbounded (never culled — an unbounded mesh is a
+missing-data problem, and dropping it silently would read as a renderer bug). And the
+sort key is split: extraction packs material+mesh (`opaqueKeyBase`), the cull ORs in
+depth (`withOpaqueDepth`), and `render_world_test` asserts the split form equals the
+single-shot `makeSortKey` over randomised inputs — a one-bit disagreement would
+reorder draws and break batching while producing perfectly plausible keys.
+
+`buildVisibleSet` REQUIRES the streams; there is no fallback that rebuilds them from
+the items. A fallback would be the path the tests exercise while the fused one ships.
+Callers that are not extraction use `rworld::fillCullStream`, which goes through the
+same `writeCullEntry`.
 
 ## Threads, without depending on the runtime
 

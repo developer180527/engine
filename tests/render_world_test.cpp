@@ -22,6 +22,7 @@
 #include "render/world/sort_key.h"
 #include "render/world/visibility.h"
 #include "render/world/draw_sort.h"
+#include "render/world/cull_stream.h"
 
 static int g_failures = 0;
 #define CHECK(cond, ...) do {                                          \
@@ -52,6 +53,17 @@ static void boxFrustum(float planes[6][4], float half = 10.0f) {
         planes[i][0] = n[i][0]; planes[i][1] = n[i][1]; planes[i][2] = n[i][2];
         planes[i][3] = half;    // inside => dot(n,p) + half > 0
     }
+}
+
+// buildVisibleSet reads the SoA cull streams, not the items — so a hand-built
+// world has to fill them, exactly as extraction does. Going through the shared
+// rworld::fillCullStream is the point: it is the same writeCullEntry the engine
+// uses, so these tests cover the production rule rather than a test-only copy.
+static rworld::CullStreamStore g_stream;
+static void setItems(RenderWorld& w, const std::vector<RenderItem>& items) {
+    w.items = Span<RenderItem>{ items.data(), items.size() };
+    rworld::fillCullStream(w.items, g_stream);
+    w.cull = g_stream.view();
 }
 
 static RenderItem itemAt(float x, float y, float z, uint32_t mat, uint32_t mesh,
@@ -182,7 +194,7 @@ int main() {
         items.push_back(itemAt(0,   0, -4, /*mat*/2, /*mesh*/1));  // visible
 
         RenderWorld world;
-        world.items = Span<RenderItem>{ items.data(), items.size() };
+        setItems(world, items);
 
         VisibleSet set;
         buildVisibleSet(world, cam, set);
@@ -223,7 +235,7 @@ int main() {
         unbounded.hasBounds = false;
         items.push_back(unbounded);
 
-        world.items = Span<RenderItem>{ items.data(), items.size() };
+        setItems(world, items);
         buildVisibleSet(world, cam, set);
         CHECK(set.size() == 4, "meshless item dropped, unbounded item kept "
               "(%zu draws)", set.size());
@@ -383,7 +395,7 @@ int main() {
         items[5000].hasBounds = false;
 
         RenderWorld world;
-        world.items = Span<RenderItem>{ items.data(), items.size() };
+        setItems(world, items);
 
         VisibleSet ref;
         buildVisibleSet(world, cam, ref, nullptr);          // serial baseline
@@ -470,6 +482,42 @@ int main() {
         // 4. Reused set, threaded, twice — the capacity-reuse path under threads.
         buildVisibleSet(world, cam, c, &threaded);
         sameAsRef(c, "a reused set, run threaded twice");
+    }
+
+    // ── the split key must equal the single-shot key ────────────────────────
+    // Extraction packs material+mesh once (opaqueKeyBase) and the cull ORs in the
+    // depth (withOpaqueDepth), because the cull reads a 24-byte stream instead of a
+    // 144-byte RenderItem. That is only sound if the two forms agree exactly — a
+    // one-bit disagreement would reorder draws and break batching, silently, since
+    // both produce plausible keys. sort_key.h claims this; here it is asserted.
+    {
+        std::printf("\n-- split sort key == single-shot sort key --\n");
+        uint32_t seed = 0xABCDEF01u;
+        auto rnd = [&seed] { seed = seed * 1664525u + 1013904223u; return seed; };
+        int mismatches = 0;
+        for (int i = 0; i < 4000; ++i) {
+            const uint32_t mat  = rnd() & kMaxMaterialKey;
+            const uint32_t mesh = rnd() & kMaxMeshKey;
+            const float depth = (float)(rnd() & 0xFFFF) / 65535.0f;
+            const uint64_t split  = withOpaqueDepth(opaqueKeyBase(mat, mesh), depth);
+            const uint64_t single = makeSortKey(BlendClass::Opaque, depth, mat, mesh);
+            if (split != single) ++mismatches;
+        }
+        CHECK(mismatches == 0,
+              "4000 randomised (material, mesh, depth) triples agree (%d differ)",
+              mismatches);
+        // The extremes, where a shift or mask error would hide.
+        CHECK(withOpaqueDepth(opaqueKeyBase(0, 0), 0.0f)
+              == makeSortKey(BlendClass::Opaque, 0.0f, 0, 0), "all-zero agrees");
+        CHECK(withOpaqueDepth(opaqueKeyBase(kMaxMaterialKey, kMaxMeshKey), 1.0f)
+              == makeSortKey(BlendClass::Opaque, 1.0f, kMaxMaterialKey, kMaxMeshKey),
+              "all-max agrees");
+        // Depth must not bleed into the material/mesh fields: two draws that differ
+        // only in depth must still be the same batch.
+        const uint64_t a = withOpaqueDepth(opaqueKeyBase(7, 9), 0.1f);
+        const uint64_t b = withOpaqueDepth(opaqueKeyBase(7, 9), 0.9f);
+        CHECK(sameBatch(a, b) && a != b,
+              "depth changes the key without changing the batch");
     }
 
     // ── sortDraws: it replaced std::sort, so it answers for itself ──────────

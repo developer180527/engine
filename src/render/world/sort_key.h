@@ -81,6 +81,34 @@ inline uint64_t makeSortKey(BlendClass blend, float depth01,
     return cls | ((uint64_t)mat << 45) | ((uint64_t)mesh << 24) | d;
 }
 
+// ── Split form: the half that does not depend on the camera ─────────────────
+// Extraction knows material and mesh; only the cull knows depth. Precomputing the
+// base means the cull ORs in 24 bits instead of repacking the whole key per view,
+// and it is what lets the cull read a stream instead of RenderItem (see
+// CullStreams). `makeSortKey` stays the single-shot form for callers with
+// everything in hand, and the two agree by construction:
+//     withOpaqueDepth(opaqueKeyBase(m, s), d) == makeSortKey(Opaque, d, m, s)
+// which render_world_test asserts over randomised inputs.
+//
+// TRANSPARENT keys cannot be split this way: their layout puts depth ABOVE
+// material, so the base bits move. Not a limitation today — no RenderItem carries
+// a blend class yet — but a transparent path must pack its own stream rather than
+// reuse this one.
+inline uint64_t opaqueKeyBase(uint32_t materialKey, uint32_t meshKey) {
+    assert(materialKey <= kMaxMaterialKey);
+    assert(meshKey <= kMaxMeshKey);
+    const uint64_t cls = (uint64_t)(uint8_t)BlendClass::Opaque << 61;
+    return cls | ((uint64_t)(materialKey & 0xFFFFu) << 45)
+               | ((uint64_t)(meshKey & 0x1FFFFFu) << 24);
+}
+
+inline uint64_t withOpaqueDepth(uint64_t base, float depth01) {
+    if (depth01 < 0.0f) depth01 = 0.0f;
+    if (depth01 > 1.0f) depth01 = 1.0f;
+    constexpr uint32_t kDepthMax = 0xFFFFFFu;
+    return base | (uint64_t)(uint32_t)(depth01 * (float)kDepthMax);
+}
+
 // Do two OPAQUE draws share material AND mesh? The instancing predicate: a run
 // of these can collapse into one instanced submit. Only meaningful for opaque —
 // transparent draws are depth-ordered and cannot be reordered into batches.

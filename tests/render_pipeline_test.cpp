@@ -38,6 +38,7 @@
 #include "render/material_registry.h"
 #include "render/texture_registry.h"
 #include "render/world/frustum.h"   // extractFrustumPlanes
+#include "render/world/cull_stream.h" // the cull reads SoA streams, not items
 
 namespace { int g_failures = 0; }
 #define CHECK(cond, ...) do {                                       \
@@ -115,6 +116,16 @@ struct Fixture {
     }
 };
 
+// The pipeline's cull reads the SoA streams (CullStreams), which extraction fills.
+// A hand-built RenderView must do the same, through the shared helper so this test
+// covers the production rule and not a copy of it.
+static rworld::CullStreamStore g_stream;
+static void setViewItems(RenderView& rv, const RenderItem* p, std::size_t n) {
+    rv.items = { p, n };
+    rworld::fillCullStream(rv.items, g_stream);
+    rv.cull = g_stream.view();
+}
+
 // A camera at +Z looking down -Z, matching the engine's convention.
 static void buildCamera(RenderView& rv, float aspect = 1.0f) {
     const bx::Vec3 eye{ 0.0f, 0.0f, 20.0f }, at{ 0.0f, 0.0f, 0.0f },
@@ -171,7 +182,7 @@ static void testCulling(Fixture& fx, ForwardPipeline& pipe) {
         items.push_back(itemAt(mesh, fx.nextMeshKey, mat, 0.0f, 0.0f, 400.0f));
 
     RenderView rv; buildCamera(rv);
-    rv.items = { items.data(), items.size() };
+    setViewItems(rv, items.data(), items.size());
     RenderContext rc = fx.context();
     pipe.render(rv, rc);
     const auto& s = pipe.submitStats();
@@ -196,7 +207,7 @@ static void testInstancedRun(Fixture& fx, ForwardPipeline& pipe) {
                                (float)(i / 8) - 4.0f, 0.0f));
 
     RenderView rv; buildCamera(rv);
-    rv.items = { items.data(), items.size() };
+    setViewItems(rv, items.data(), items.size());
     RenderContext rc = fx.context();
     pipe.render(rv, rc);
     const auto& s = pipe.submitStats();
@@ -239,7 +250,7 @@ static void testDistinctMaterialsDoNotBatch(Fixture& fx, ForwardPipeline& pipe) 
         items.push_back(itemAt(mesh, fx.nextMeshKey, mats.back(), (float)(i - 4), 0.0f, 0.0f));
     }
     RenderView rv; buildCamera(rv);
-    rv.items = { items.data(), items.size() };
+    setViewItems(rv, items.data(), items.size());
     RenderContext rc = fx.context();
     pipe.render(rv, rc);
     const auto& s = pipe.submitStats();
@@ -273,7 +284,7 @@ static void testDrawCeiling(Fixture& fx, ForwardPipeline& pipe) {
                               (float)((i / 60) % 60 - 30) * 0.1f, 0.0f));
     }
     RenderView rv; buildCamera(rv);
-    rv.items = { items.data(), items.size() };
+    setViewItems(rv, items.data(), items.size());
     RenderContext rc = fx.context();
     pipe.render(rv, rc);
     const auto& s = pipe.submitStats();
@@ -307,7 +318,7 @@ static void testBonePalettePerItem(Fixture& fx, ForwardPipeline& pipe) {
     it.boneCount    = 4;
 
     RenderView rv; buildCamera(rv);
-    rv.items = { &it, 1 };
+    setViewItems(rv, &it, 1);
     RenderContext rc = fx.context();
     pipe.render(rv, rc);
     const auto& s = pipe.submitStats();
@@ -339,7 +350,7 @@ static void testShadowPassCulls(Fixture& fx, ForwardPipeline& pipe) {
     sun.castShadows = true;
 
     RenderView rv; buildCamera(rv);
-    rv.items  = { items.data(), items.size() };
+    setViewItems(rv, items.data(), items.size());
     rv.lights = { &sun, 1 };
     RenderContext rc = fx.context();
     pipe.render(rv, rc);
@@ -375,7 +386,7 @@ static void testStatsResetPerView(Fixture& fx, ForwardPipeline& pipe) {
     Mesh* mesh = fx.makeMesh(mat);
     RenderItem it = itemAt(mesh, fx.nextMeshKey, mat, 0.0f, 0.0f, 0.0f);
     RenderView rv; buildCamera(rv);
-    rv.items = { &it, 1 };
+    setViewItems(rv, &it, 1);
     RenderContext rc = fx.context();
 
     pipe.render(rv, rc);

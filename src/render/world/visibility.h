@@ -58,7 +58,11 @@ struct VisibleSet {
     // ── Scratch, public only so its capacity survives across frames ─────────
     // Not part of the result. A survivor of the cull, before the frame's depth
     // range is known and keys can be built.
-    struct Survivor { uint32_t index; float dist; uint32_t mat, mesh; };
+    struct Survivor {
+        uint64_t keyBase;   // material+mesh, packed at extraction
+        uint32_t index;
+        float    dist;      // view-space depth, normalised once the range is known
+    };
     // One per parallel range: how many survivors it wrote into its slice, and
     // the reductions it computed locally. Kept out of the loop body so no two
     // threads touch the same accumulator.

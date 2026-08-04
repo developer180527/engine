@@ -86,6 +86,41 @@ struct RenderItem {
     bool            hasBounds = false;   // false = never culled
 };
 
+// ── CullStreams — the cull's working set, SoA ────────────────────────────────
+//
+// Parallel arrays, one entry per RenderItem, holding the ONLY things the cull
+// reads. Two reasons this exists, and the second is the bigger one:
+//
+//   1. RenderItem is 144 bytes and the cull touched offsets 0..141 — all three
+//      cache lines — to extract a bounding sphere and two ids. Reading 24 bytes of
+//      stream instead of 144 bytes of struct is the difference.
+//   2. THE SPHERE DOES NOT DEPEND ON THE CAMERA, yet it was recomputed per view:
+//      once for the camera frustum and again for the light's. Computing it at
+//      extraction, where the matrix is already in registers, does it once.
+//
+// Separate arrays rather than an array of {x,y,z,r} structs, because the next step
+// is a 4-wide test: four centres load contiguously from x[] and nothing is
+// deinterleaved first.
+//
+// RADIUS CARRIES TWO SENTINELS, so the hot loop needs no side table:
+//   r <  0        the item is not renderable (no mesh) — skip it entirely
+//   r == infinity renderable but unbounded — never culled, by design, because an
+//                 unbounded mesh is a missing-data problem and dropping it
+//                 silently would look like a renderer bug
+struct CullStreams {
+    Span<float>    x, y, z;    // world bounding-sphere centre
+    Span<float>    r;          // radius, plus the sentinels above
+    Span<uint64_t> keyBase;    // sort key with the depth field left zero
+
+    std::size_t size() const { return r.size(); }
+    bool empty() const { return r.empty(); }
+    // Every stream must be the same length as the item array it describes.
+    bool consistent(std::size_t items) const {
+        return r.size() == items && x.size() == items && y.size() == items
+            && z.size() == items && keyBase.size() == items;
+    }
+};
+
 // The camera half of a view: everything visibility needs, nothing it doesn't.
 // Deliberately separate from RenderTarget, which is where bgfx begins.
 struct ViewCamera {
@@ -98,6 +133,7 @@ struct ViewCamera {
 // One frame, fully extracted: no ECS, no registries, no game-state pointers.
 struct RenderWorld {
     Span<RenderItem> items;       // ALL renderables — visibility culls
+    CullStreams      cull;        // parallel to `items`; see CullStreams
     Span<LightItem>  lights;
     float            ambient = 0.0f;
 };

@@ -1,76 +1,57 @@
-render: cull 3.9 -> 0.88 ms, and std::sort was the bulk of it
+render: the cull reads 24-byte SoA streams, not the 144-byte RenderItem
 
-R15 named cull as the next target: 3.83 ms of an 8.4 ms render path at 50 000
-objects, plus 1.86 more in the shadow pass's own cull. Sub-zones (Cull.test /
-.compact / .key / .sort) attributed it before anything changed.
+RenderItem is 144 bytes and the cull touched offsets 0..141, all three of its cache
+lines, to recover a bounding sphere and two ids. CullStreams (world/render_world.h)
+is the SoA alternative: parallel x/y/z/r/keyBase arrays, 24 bytes per item, filled by
+extraction while the model matrix is still in registers.
 
-  @50k camera pass   before    after
-  Cull.test          2.36 ms   0.37
-  Cull.key           0.46      0.21
-  Cull.sort          0.90      0.22
-  Render.cull        3.83      0.88
-  Render.shadow      1.86      0.25
+THE BIGGER REASON WAS NOT THE BYTE COUNT. The world bounding sphere DOES NOT DEPEND ON
+THE CAMERA, yet it was rebuilt per view, once against the camera frustum and again
+against the light's. The shadow pass was recomputing every sphere the camera pass had
+just computed. Building it once at extraction is what that pass's 0.25 -> 0.09 ms is.
 
-WORLDSPHERE DID FOUR SQUARE ROOTS PER ITEM: three basis-row lengths plus the local
-diagonal, once per item per frustum, so twice per item per frame with a shadow
-caster. Both reductions are exact, not approximations: max(sqrt a, sqrt b, sqrt c) ==
-sqrt(max(a,b,c)) since sqrt is monotonic, and diag*maxScale == sqrt(diagSq*maxScaleSq).
-Four roots became one.
+MEASURED, three-run medians:
 
-It was worth 4%. A single run first suggested it was SLOWER; three runs each gave
-medians 1.914 vs 1.985 ms. The useful conclusion is the negative one, that loop is
-not arithmetic-bound, and it is what redirected the work to parallelism instead of
-more math. Recorded, so nobody re-derives it.
+                       before    after
+  50 k Render.shadow   0.25 ms   0.09
+  50 k Render.cull     0.94      0.83
+  50 k Render.extract  2.69      2.89
+  50 k Render          4.14      4.06
+  100 k Render.shadow  0.48      0.15
+  100 k Render.cull    1.62      1.34
+  100 k Render.extract 5.37      5.54
+  100 k Render         7.80      7.42
 
-THE FRUSTUM TEST IS NOW PARALLEL, chunked like extraction. rworld is GPU-free AND
-runtime-free by construction, that is what makes all of it unit-testable, so it
-does not include the job facade. The caller injects a ParallelForFn; ForwardPipeline
-passes one backed by jobs::parallelFor, nullptr runs serially. Survivors are written
-at their OWN item index rather than appended, so no two ranges touch the same memory
-and surviving order is item order however the work was scheduled; gaps close with one
-memmove per range. Identical results, not merely equivalent.
+NET ~2% AT 50 K, ~5% AT 100 K, smaller than the byte arithmetic implies. Extraction 
+absorbed most of what the cull and shadow passes gave up,
+because the work MOVED rather than disappeared: extraction now computes the sphere and
+writes five streams. Only the duplication genuinely vanished. Both phases were already
+parallel across 12 cores, so the bandwidth being saved was already spread, the same
+conclusion the earlier 4% sqrt result pointed at.
 
-STD::SORT BECAME A STABLE RADIX SORT (world/draw_sort.h/.cpp): 1.15 -> 0.22 ms, 5.3x.
-The keys are unsigned integers, so counting beats comparing. Data-adaptive: one
-histogram pass finds which of the 8 bytes vary and constant bytes are skipped, which
-is the normal case rather than a benchmark trick, the high bytes are blend class,
-material and mesh, so a few-material scene sorts in three passes instead of eight.
-Also STABLE, which std::sort was not: equal keys keep item order, so a frame orders
-coincident draws the same way every run. That is what makes 'byte-identical submit
-counters' a meaningful claim.
+What it DID buy, and the reason to keep it: the cull now reads four contiguous float
+arrays, which is the precondition for a 4-wide test. Writing NEON first against the
+144-byte AoS layout would have meant deinterleaving four items out of three cache lines
+each before any arithmetic, the LAYOUT, not the instruction set, was in the way.
 
-TESTED, and the injected dispatcher is what makes it possible: render_world_test runs
-one world four ways, serial, one range at a time, ranges in REVERSE, and one OS
-thread per range, demanding byte-identical draw lists; the thread version is the only
-check that can catch a real race. sortDraws gets its own cases: order, permutation
-(index-sum, because sortedness happily accepts duplicates), stability with all-equal
-and with grouped keys, the byte-skipping path, and 0/1/2-element sizes.
+TWO ENCODINGS to know before touching it. The radius carries both sentinels so the hot
+loop needs no side table: r < 0 is 'not renderable', r == infinity is 'renderable but
+unbounded, never culled' (an unbounded mesh is a missing-data problem; dropping it
+silently would read as a renderer bug). And the sort key is SPLIT, extraction packs
+material+mesh (opaqueKeyBase), the cull ORs in depth (withOpaqueDepth), with
+render_world_test asserting the split form equals the single-shot makeSortKey over
+4 000 randomised triples plus the extremes. A one-bit disagreement would reorder draws
+and break batching while producing perfectly plausible keys.
 
-A HOLE IN THAT TEST, found by mutation: comparing parallel against serial cannot catch
-a bug the two SHARE. Breaking the maxDist reduction to keep one range's value failed
-ZERO assertions. Fixed with an ABSOLUTE assertion, an under-estimated depth
-normaliser clamps everything past it to one saturated code, so at most one draw may
-sit at full scale; that mutation now fails with 4554 of 5999 saturated. The test DATA
-was wrong too: distances of i % 90 gave every range the same local maximum, making the
-bug undetectable by construction. depthOf() added to sort_key.h so a test can read the
-field back.
+buildVisibleSet REQUIRES the streams; there is deliberately no fallback that rebuilds
+them from the items, because a fallback is the path the tests exercise while the fused
+one ships. Callers that are not extraction use rworld::fillCullStream, and both go
+through the same writeCullEntry, one definition of the rule, not two.
 
-Mutations now caught: lost maxDist reduction, culledCount assigned instead of
-accumulated, survivors appended instead of indexed, inverted byte-skip predicate, an
-unstable radix pass, a missing odd-pass swap-back.
+Extraction's compaction now moves items AND streams together. They are indexed
+alongside each other, so a partial move would have the cull reading one object's bounds
+for another's, silently.
 
-WHERE IT STANDS, shadows on:
+51/51 ctest, submit counters byte-identical at 20 k and 50 k, fps_shooter clean.
 
-  objects   extract  cull   shadow  submit  render  frame
-   20 000   1.98     0.56   0.28    0.13    2.95    8.2 (vsync)
-   50 000   2.69     0.88   0.25    0.32    4.14    8.2 (vsync)
-  100 000   5.37     1.36   0.48    0.59    7.80    9.5 (~105 fps)
-
-100 000 objects render at over 100 fps in ONE draw call. Extraction is the largest
-phase again and is already parallel, so it is bound by streaming RenderItems rather
-than by work, the next lever there is data layout (SoA, or a narrower RenderItem),
-not SIMD and not more threads.
-
-51/51 ctest. Submit counters byte-identical at 20 k and 50 k. issues.md R16 recorded;
-world/info.md documents the injected-dispatcher decision.
 

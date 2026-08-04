@@ -15,6 +15,7 @@ class ShaderLibrary;   // render/shader/shader_library.h
 #include "components/skinned_mesh.h"
 #include "components/light.h"
 #include "animation/skeleton_registry.h"
+#include "render/world/cull_stream.h"   // CullStreamStore (extraction fills it)
 #include "runtime/world_query_cache.h"
 
 // Owns the GPU device lifecycle and ALL render-side state: framebuffers,
@@ -180,6 +181,12 @@ private:
         uint32_t written  = 0;
     };
     std::vector<ExtractChunk> m_chunks;   // reused for capacity across frames
+
+    // The cull's SoA working set, filled alongside m_items and kept parallel to it.
+    // Owned here rather than by the pipeline because extraction is what produces
+    // it — and producing it here is the point: the bounding sphere is built once,
+    // while the model matrix is hot, instead of once per view inside each cull.
+    rworld::CullStreamStore m_cull;
 
     bgfx::ViewId        m_viewCursor    = 5; // first free view past reserved 0..4
     bgfx::TextureHandle m_flatNormalTex = BGFX_INVALID_HANDLE;

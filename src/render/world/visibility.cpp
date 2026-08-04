@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cassert>
 #include <cstring>            // memmove, for the compaction pass
+#include <limits>
 #include <thread>             // hardware_concurrency — a grain hint, see cullGrain
 
 #include "core/profiler.h"
@@ -43,6 +45,14 @@ void buildVisibleSet(const RenderWorld& world, const ViewCamera& cam,
     out.culledCount     = 0;
     if (n == 0) return;
 
+    // The streams ARE the input; there is no fallback that rebuilds them from the
+    // items. A second path would be the one the tests exercise while the fused one
+    // ships. Callers that are not extraction use rworld::fillCullStream.
+    assert(world.cull.consistent(n)
+           && "RenderWorld::cull must be filled and parallel to items — see "
+              "rworld::fillCullStream");
+    if (!world.cull.consistent(n)) return;
+
     // Distance is collected first and normalized after, because the sort key
     // wants depth in [0,1] and the frame's actual depth range is not known
     // until every item has been examined. Normalizing against a guessed far
@@ -63,54 +73,45 @@ void buildVisibleSet(const RenderWorld& world, const ViewCamera& cam,
     // The per-range body. ONE implementation, whether it runs on the job pool or
     // in a loop right here — a separate serial version would be the one every
     // test exercises and the parallel one the version that ships.
+    //
+    // Reads the SoA streams, never the items: 24 bytes per item instead of the
+    // 144-byte RenderItem whose three cache lines this loop used to walk, and the
+    // bounding sphere arrives precomputed rather than being rebuilt from a matrix
+    // once per view (see CullStreams).
+    const float* SX = world.cull.x.data;
+    const float* SY = world.cull.y.data;
+    const float* SZ = world.cull.z.data;
+    const float* SR = world.cull.r.data;
+    const uint64_t* SK = world.cull.keyBase.data;
+
     auto cullRange = [&](uint32_t r) {
         const uint32_t begin = r * grain;
         const uint32_t end   = begin + grain < n ? begin + grain : n;
         VisibleSet::Survivor* dst = out.survivors.data() + begin;
         uint32_t written = 0, culled = 0;
         float maxDist = 0.0f;
-
         const float* V = cam.view.m;
+
         for (uint32_t i = begin; i < end; ++i) {
-            const RenderItem& it = world.items[i];
-            if (!it.mesh) continue;        // not renderable
+            const float rad = SR[i];
+            if (rad < 0.0f) continue;         // not renderable — see the sentinels
 
-            // The point the depth is measured to. An item's transform ORIGIN is
-            // not its centre — a mesh pivoted at its base or offset from its
-            // geometry would sort by its pivot while being culled by its bounds
-            // (issues.md A2.1). The bounding sphere's centre is already computed
-            // for the cull, so using it costs nothing.
-            float cx = it.model.m[12], cy = it.model.m[13], cz = it.model.m[14];
-
-            // Items without bounds are never culled: an unbounded mesh is a
-            // missing-data problem, and silently dropping it would look like a
-            // rendering bug rather than the asset issue it is.
-            if (it.hasBounds) {
-                const BoundingSphere s =
-                    worldSphere(it.model.m, it.boundsCenter, it.boundsSize);
-                if (outsideFrustum(s, cam.frustum)) { ++culled; continue; }
-                cx = s.x; cy = s.y; cz = s.z;
+            const float cx = SX[i], cy = SY[i], cz = SZ[i];
+            // An infinite radius can never be rejected, so the test is skipped
+            // rather than relying on -inf comparisons behaving.
+            if (rad != std::numeric_limits<float>::infinity()) {
+                BoundingSphere sp; sp.x = cx; sp.y = cy; sp.z = cz; sp.radius = rad;
+                if (outsideFrustum(sp, cam.frustum)) { ++culled; continue; }
             }
 
-            // VIEW-SPACE DEPTH, not distance from the eye (issues.md A1.3/A2.1).
-            // sort_key.h has always documented depth01 as "view depth", and
-            // Euclidean distance is not that: it makes spherical shells around the
-            // camera, so two objects at the same depth get different keys as one
-            // moves off-axis. Today that only perturbs the tiebreaker inside a
-            // material group, but transparency — which the key layout is already
-            // built for — needs true planar depth or it renders in the wrong order.
-            //
-            // Row-vector convention: view-space z is the third COLUMN of `view`.
-            // Taken as a magnitude so the sign convention of the caller's view
-            // matrix (right-handed looks down -Z) cannot silently collapse every
-            // depth to zero. Also strictly cheaper than what it replaced: three
-            // multiply-adds instead of three subtractions, three multiplies and a
-            // square root.
-            const float z = cx*V[2] + cy*V[6] + cz*V[10] + V[14];
-            const float d = z < 0.0f ? -z : z;
+            // VIEW-SPACE depth of the sphere centre. Row-vector convention: view
+            // space z is the third column of `view`. Magnitude, so a caller's
+            // handedness cannot collapse every depth to zero.
+            const float zv = cx*V[2] + cy*V[6] + cz*V[10] + V[14];
+            const float d  = zv < 0.0f ? -zv : zv;
             if (d > maxDist) maxDist = d;
 
-            dst[written++] = { i, d, it.matKey, it.meshKey };
+            dst[written++] = { SK[i], i, d };
         }
         // Written once, at the end: the accumulators live in the range's own
         // slot, so no two threads share a counter.
@@ -156,11 +157,11 @@ void buildVisibleSet(const RenderWorld& world, const ViewCamera& cam,
       out.draws.resize(total);
       for (uint32_t i = 0; i < total; ++i) {
           const VisibleSet::Survivor& p = out.survivors[i];
-          // Blend class is not yet carried by RenderItem — every draw is opaque
-          // today (the pipeline has no transparent path wired). Stated here
+          // Only the depth field is added here; material and mesh were packed at
+          // extraction. Blend class is not yet carried by RenderItem — every draw
+          // is opaque today (the pipeline has no transparent path wired). Stated
           // rather than hidden, so the sort key is honest about what it knows.
-          out.draws[i] = { makeSortKey(BlendClass::Opaque, p.dist * inv,
-                                       p.mat, p.mesh), p.index };
+          out.draws[i] = { withOpaqueDepth(p.keyBase, p.dist * inv), p.index };
       }
     }
 
