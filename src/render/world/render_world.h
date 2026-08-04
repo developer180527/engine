@@ -55,35 +55,52 @@ struct LightItem {
     bool      castShadows  = false;
 };
 
-// One drawable, resolved ONCE at extraction (handles -> pointers). POD + tight;
-// meshKey/matKey are the batching sort keys.
+// One drawable, resolved once at extraction. POD, and FIELD ORDER IS DELIBERATE —
+// see the note under the struct before adding anything to it.
 struct RenderItem {
-    Mat4            model;
-    const Mesh*     mesh = nullptr;
-    const Material* mat  = nullptr;   // resolved fallback material (see `material`)
-    const Texture*  tex  = nullptr;
-    uint32_t        meshKey = 0;
-    uint32_t        matKey  = 0;
-    // Fallback material HANDLE for this draw (per-entity override, else the
-    // mesh's own material). Submesh ranges carry their own material and fall
-    // back to this when unset — resolved per range at draw time, not here.
-    MaterialHandle  material;
+    // ── Read by SUBMISSION, hot: first cache line and a bit ─────────────────
+    Mat4         model;                    // 64 B: setTransform, or instance data
+    const Mesh*  mesh = nullptr;           // vbh/ibh/submeshes/doubleSided
+    const float* boneMatrices = nullptr;   // -> SkinnedMesh::skinMatrices, or null
 
-    // Non-null when this item has a SkinnedMesh component.
-    // Points to SkinnedMesh::skinMatrices (kMaxBones * 16 floats).
-    // Pipeline selects the skinned shader program when this is set.
-    const float*    boneMatrices = nullptr;
-    int             boneCount    = 0;
-
+    // ── Read only when BUILDING THE CULL STREAMS, at extraction ─────────────
+    // Cold for submission, which never looks at any of it. Kept on the item
+    // because rworld::writeCullEntry takes a RenderItem: the item is the INPUT
+    // the streams are derived from (see cull_stream.h).
+    //
     // LOCAL-SPACE BOUNDS, COPIED AT EXTRACTION. Culling used to reach through
-    // `mesh->boundsCenter()` for every item every frame: a pointer chase into
-    // a GPU-resource object, per item, per view — and shadow cascades multiply
-    // the view count. Copying 6 floats makes the cull loop a linear scan over
-    // contiguous PODs, and (more importantly) lets visibility compile and be
-    // tested without Mesh or bgfx at all.
-    Vec3            boundsCenter { 0.0f, 0.0f, 0.0f };
-    Vec3            boundsSize   { 0.0f, 0.0f, 0.0f };
-    bool            hasBounds = false;   // false = never culled
+    // `mesh->boundsCenter()` for every item every view, chasing a pointer into a
+    // GPU-resource object; now the sphere is built once here and the cull reads
+    // only its own stream.
+    Vec3     boundsCenter { 0.0f, 0.0f, 0.0f };
+    Vec3     boundsSize   { 0.0f, 0.0f, 0.0f };
+    uint32_t meshKey = 0;                  // batching ids -> the sort key's base
+    uint32_t matKey  = 0;
+
+    // Fallback material HANDLE for this draw (per-entity override, else the
+    // mesh's own). Submesh ranges carry their own and fall back to this —
+    // resolved per range at draw time, not here.
+    MaterialHandle material;
+
+    int      boneCount = 0;
+    bool     hasBounds = false;            // false = never culled
+
+    // ── 128 bytes, and the two things that got it there ─────────────────────
+    // It was 144, spanning three cache lines for a struct the submit path reads
+    // by RANDOM index (draws are sorted, so items are visited out of order).
+    //
+    // `const Material* mat` and `const Texture* tex` were removed: they were
+    // WRITE-ONLY. Extraction resolved both handles and stored the pointers, and
+    // nothing ever read them — ForwardPipeline::bindMaterial re-resolves through
+    // ctx.materials/ctx.textures. So they cost 16 bytes per item plus two
+    // registry lookups per item per frame, for nothing. That pair of lookups is
+    // exactly what an earlier differential measured at ~0.17 ms per 20 000 items
+    // and dismissed as "not worth touching" — it was not a cost worth paying at
+    // all.
+    //
+    // The rest is ordering: pointers and the matrix first, then the extraction-
+    // only block, then the small scalars packed together instead of each padding
+    // out to 8. Adding a field in the middle undoes this; add to the cold block.
 };
 
 // ── CullStreams — the cull's working set ─────────────────────────────────────

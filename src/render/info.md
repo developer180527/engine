@@ -45,8 +45,10 @@ tests:
 # sphere the camera pass had just built. At 100 000 objects: extract 5.41, cull 1.37,
 # shadow 0.15, submit 0.36, render 7.29, frame ~9.0 ms in ONE draw call. Extraction is
 # the largest phase and is already parallel. NEON was measured and DECLINED (the plane
-# arithmetic is ~4% of the cull, so 2.3x on it is 0.4% of the frame); the open lever
-# is a narrower RenderItem.
+# arithmetic is ~4% of the cull, so 2.3x on it is 0.4% of the frame), and RenderItem is
+# down to 128 bytes with two write-only fields deleted (A3). Both were small, and A3
+# records why: extraction is parallel over 12 cores, so per-item savings divide by the
+# core count. The next lever is incremental extraction, not micro-optimisation.
 # R7 (material-bind dedup) is still open: materialBinds == draws on every
 # non-instanced path.
 ---

@@ -315,6 +315,57 @@ is the tiebreaker.
 The layout now follows the memory, not the instruction set. That is the sentence worth
 keeping from this whole exercise.
 
+## A3 — `RenderItem` was 144 bytes, two of them write-only ✅ FIXED
+
+Not from the external audit; found while looking for the next lever after the cull
+stopped reading `RenderItem` at all.
+
+**`const Material* mat` and `const Texture* tex` were WRITE-ONLY.** Extraction
+resolved both handles and stored the pointers; nothing ever read them, because
+`ForwardPipeline::bindMaterial` re-resolves through `ctx.materials` /`ctx.textures`.
+So they cost 16 bytes per item plus two registry lookups per item per frame, for
+nothing — and they were a second source of truth for an item's material, which is a
+stale-cache bug waiting for the first code that mutates a material mid-frame.
+
+That pair of lookups is exactly what an earlier differential measured at ~0.17 ms per
+20 000 items and filed under "measured NOT to matter, so nobody spends a day on
+them". The conclusion was right and the reason was wrong: they were not a small cost
+worth keeping, they were a cost buying nothing.
+
+Removed, and the remainder repacked — matrix and pointers first, the extraction-only
+block (bounds, keys, handle) after, small scalars grouped instead of each padding out
+to 8. **144 → 128 bytes: exactly two cache lines**, for a struct the submit path reads
+by RANDOM index, since draws are visited in sorted order.
+
+| `Render.extract`, 3-run medians | 144 B | 128 B |
+|---|---|---|
+| 50 000 objects | 2.866 ms | 2.859 (flat) |
+| 100 000 objects | 5.518 | **5.342** (−3.2%) |
+
+### Why 3% and not 15% — the thing to know before the next micro-optimisation
+
+The old differential said those two lookups were 0.17 ms per 20 000 items, which
+would predict ~0.85 ms saved at 100 000. The actual saving is 0.18 ms. The difference
+is not measurement error: **that differential ran against SERIAL extraction.**
+Extraction is now `jobs::parallelFor` across 12 cores, so a per-item cost divides by
+the core count before it reaches wall time. 0.17 ms of serial work is ~0.014 ms of
+frame time.
+
+Which reframes every remaining idea in this file: once a phase is parallel, per-item
+savings are worth roughly `1/cores` of what they look like, and the cheap wins are
+gone. What is left in extraction is the ECS iteration and the writes themselves, both
+already parallel — so the next real lever is not a smaller item or fewer
+instructions, it is **not extracting at all** for things that did not change
+(persistent/incremental extraction keyed off flecs change detection). That is a
+design change, not an optimisation, and it should not be started without first
+measuring how much of a typical frame's item set is actually static.
+
+Bounds and keys stay on `RenderItem` deliberately: `rworld::writeCullEntry` takes a
+`RenderItem`, so the item is the input the streams are derived from. Splitting the
+submit-only fields from the stream-source fields would shrink it further, at the cost
+of two structures to keep parallel — not obviously worth it while the cold block is
+never touched by submission anyway.
+
 ---
 
 ## Where the cull stands after this pass

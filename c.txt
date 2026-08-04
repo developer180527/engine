@@ -1,0 +1,49 @@
+render: RenderItem 144 -> 128 bytes, and two of them were write-only
+
+Found looking for the next lever after the cull stopped reading RenderItem at all.
+
+const Material* mat and const Texture* tex WERE WRITE-ONLY. Extraction resolved both
+handles and stored the pointers; nothing ever read them, because
+ForwardPipeline::bindMaterial re-resolves through ctx.materials/ctx.textures. They
+cost 16 bytes per item plus two registry lookups per item per frame for nothing, and
+they were a SECOND SOURCE OF TRUTH for an item's material, which is a stale-cache bug
+waiting for the first code that mutates a material mid-frame.
+
+Those are exactly the lookups an earlier differential measured at 0.17 ms per 20 000
+items and filed under 'measured NOT to matter, so nobody spends a day on them'. The
+conclusion was right and the reason was wrong: not a small cost worth keeping, a cost
+buying nothing.
+
+Removed, and the remainder repacked, matrix and pointers first, the extraction-only
+block (bounds, keys, material handle) after, small scalars grouped instead of each
+padding out to 8. 144 -> 128 bytes: exactly two cache lines, for a struct the submit
+path reads by RANDOM index since draws are visited in sorted order.
+
+  Render.extract, 3-run medians    144 B     128 B
+  50 000 objects                   2.866 ms  2.859  (flat)
+  100 000 objects                  5.518     5.342  (-3.2%)
+
+WHY 3% AND NOT 15%: the part worth keeping. The old differential predicted ~0.85 ms
+saved at 100 000; the actual saving is 0.18. That is not measurement error: THAT
+DIFFERENTIAL RAN AGAINST SERIAL EXTRACTION. Extraction is now jobs::parallelFor across
+12 cores, so a per-item cost divides by the core count before it reaches wall time,
+0.17 ms of serial work is ~0.014 ms of frame time.
+
+Which reframes the remaining backlog, and explains why the last several changes each
+returned 2-5% where the same edits would have returned far more three commits ago:
+once a phase is parallel, per-item savings are worth roughly 1/cores of what they look
+like, and the cheap wins are spent. The next real lever is NOT EXTRACTING AT ALL for
+entities that did not change, incremental extraction off flecs change detection,
+which is a design change and should begin by measuring how static a typical frame's
+item set is rather than assuming most of it is.
+
+Bounds and keys stay on RenderItem deliberately: rworld::writeCullEntry takes a
+RenderItem, so the item is the input the streams are derived from. Splitting
+submit-only fields from stream-source fields would shrink it further at the cost of
+two structures to keep parallel, not worth it while submission never touches the cold
+block.
+
+51/51 ctest, submit counters byte-identical at 50 k (31128 culled / 18873 instanced).
+Recorded as world/issues.md A3, with the parallel-divides-savings note also in
+extract.cpp's header where the next person will look.
+

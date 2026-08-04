@@ -37,10 +37,17 @@
 // was NOT done, and after the cull was fixed too (issues.md R16 — 3.9 ms -> 0.88)
 // extraction is once again the largest phase: 5.4 ms of a 7.8 ms render path at
 // 100 000 objects. It is already parallel, so what remains is not work but
-// STREAMING — 100 000 RenderItems at 144 bytes each. The cull no longer reads them at
-// all, so what is left is extraction's own pass; the open lever is a NARROWER
-// RenderItem (the submit path needs the matrix and four pointers, not 144 bytes),
-// not SIMD and not more threads.
+// STREAMING — 100 000 RenderItems, now 128 bytes each (two write-only fields removed,
+// the rest repacked; world/issues.md A3). The cull no longer reads them at all.
+//
+// AND THAT IS ABOUT THE END OF THE CHEAP WINS, for a reason worth carrying: this loop
+// is parallel across 12 cores, so a per-item saving divides by the core count before
+// it reaches frame time. Deleting two registry lookups per item — measured at 0.17 ms
+// per 20 000 items back when extraction was SERIAL — bought 0.18 ms at 100 000, not
+// the ~0.85 ms the old number predicts. The next real lever is therefore not a
+// narrower item or fewer instructions but NOT EXTRACTING AT ALL for entities that did
+// not change (incremental extraction off flecs change detection), which is a design
+// change and should start with measuring how static a typical frame's item set is.
 //
 // EXTRACTION ALSO BUILDS THE CULL'S WORKING SET (CullStreams): the world bounding
 // sphere and the material+mesh half of the sort key, written here while the model
@@ -147,9 +154,6 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         MaterialHandle mh = mr.materialOverride.valid()
                             ? mr.materialOverride : mesh->material;
         it.material = mh;                    // fallback for submesh ranges
-        it.mat = mh.valid() ? m_materials->getMaterial(mh) : nullptr;
-        it.tex = (it.mat && it.mat->hasTexture())
-                 ? m_textures->getTexture(it.mat->baseColorTexture) : nullptr;
         it.meshKey = mr.mesh.id;
         it.matKey  = mh.id;
 
