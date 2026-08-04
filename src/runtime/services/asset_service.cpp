@@ -123,15 +123,11 @@ struct AssetService::AsyncState {
     // Loaded cache — written by main thread in drain, read by query*().
     // Meshes carry residency bookkeeping (bytes + LRU stamp) so
     // evictOverBudget can keep the cache bounded (audit Q6).
-    struct MeshResidency {
-        MeshHandle h;
-        uint64_t   bytes   = 0;
-        uint64_t   lastUse = 0;
-    };
-    mutable std::mutex                              loadedMtx;
-    std::unordered_map<std::string, MeshResidency>  loadedMeshes;
+    // loadedMeshes / its mutex / the LRU clock moved to AssetService itself —
+    // see the note there. A cache that only exists once a worker thread has been
+    // spawned is a cache the synchronous path cannot use.
+    // Guarded by AssetService::m_loadedMtx, which covers both loaded maps.
     std::unordered_map<std::string, TextureHandle>  loadedTextures;
-    uint64_t                                        useClock = 0;   // LRU ticks
     // Keys whose load FAILED (parse error, bad file, bgfx buffer failure).
     // Without this a failed asset has no handle and is no longer in flight —
     // indistinguishable from "never requested" to pollers like isSceneReady,
@@ -242,6 +238,43 @@ static TexGPU resolveTextureGPU(const char* texPath,
 MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin) {
     if (!cookedPath || cookedPath[0] == '\0') return {};
 
+    // ── Dedup by cooked path, and it is not an optimisation ─────────────────
+    // Two entities referencing the same mesh must SHARE one pair of GPU buffers.
+    // Without this, sync loadMesh created a new vertex+index buffer per CALL, and
+    // bgfx's pool is BGFX_CONFIG_MAX_INDEX_BUFFERS = 4096: a scene of 50 000
+    // entities drawing 176 distinct cooked meshes loaded 4 089 of them and then
+    // failed 45 911 times with "bgfx buffer creation failed", rendering 8% of the
+    // scene. The count is the giveaway — it is the handle pool, not the files.
+    //
+    // Textures already worked this way ("every load of the same cooked texture
+    // uploaded ANOTHER copy to the GPU", renderer audit R1 -> m_texCache). Meshes
+    // never got the same treatment, and the primitive path hid it: every stress
+    // scene to date used engine://primitive/cube, which is one shared mesh and
+    // therefore one buffer pair however many entities reference it.
+    //
+    // Reuses the ASYNC path's map rather than introducing a second one. One cache
+    // per resource kind is the point: a sync load and an async load of the same
+    // path must not each create buffers. When async is absent (tools, tests) this
+    // degrades to the old no-dedup behaviour rather than silently doing nothing.
+    const std::string key = cookedPath;
+    {
+        std::lock_guard<std::mutex> lk(m_loadedMtx);
+        auto it = m_loadedMeshes.find(key);
+        if (it != m_loadedMeshes.end() && it->second.h.valid()) {
+            it->second.lastUse = ++m_useClock;   // keep LRU honest
+            if (outSkin) {
+                // A cached skinned mesh cannot hand back its skeleton/clip
+                // handles from here, so fall through to a full load rather than
+                // return a mesh whose skin the caller silently never receives.
+                if (m_meshes.getMesh(it->second.h) == nullptr
+                    || !m_skeletons) { /* fall through */ }
+                else { return it->second.h; }
+            } else {
+                return it->second.h;
+            }
+        }
+    }
+
     std::filesystem::path absPath(cookedPath);
     if (absPath.is_relative() && !m_cacheRoot.empty())
         absPath = m_cacheRoot / absPath;
@@ -331,6 +364,17 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin) {
     }
 
     MeshHandle result = m_meshes.addMesh(std::move(mesh));
+
+    // Publish into the shared cache so the next reference to this path reuses
+    // these buffers. Residency bytes match what the async drain records, so
+    // evictOverBudget accounts for sync-loaded meshes too instead of treating
+    // them as free.
+    if (result.valid()) {
+        const uint64_t bytes = (uint64_t)asset.vertexData.size()
+                             + (uint64_t)asset.indexData.size();
+        std::lock_guard<std::mutex> lk(m_loadedMtx);
+        m_loadedMeshes[key] = { result, bytes, ++m_useClock };
+    }
 
     // Skinned payload: decode + register the skeleton and embedded clips
     // (shared decode with the editor's AsyncLoader — animation/cooked_skin.h).
@@ -758,10 +802,10 @@ void AssetService::loadMeshAsync(const char* cookedPath) {
     // Already loaded? (A fresh request also clears any recorded failure —
     // explicit retry semantics — and stamps use for the LRU.)
     {
-        std::lock_guard<std::mutex> lk(m_async->loadedMtx);
-        if (auto it = m_async->loadedMeshes.find(key);
-            it != m_async->loadedMeshes.end()) {
-            it->second.lastUse = ++m_async->useClock;
+        std::lock_guard<std::mutex> lk(m_loadedMtx);
+        if (auto it = m_loadedMeshes.find(key);
+            it != m_loadedMeshes.end()) {
+            it->second.lastUse = ++m_useClock;
             return;
         }
         m_async->failedKeys.erase(key);
@@ -783,7 +827,7 @@ void AssetService::loadTextureAsync(const char* cookedPath) {
     std::string key = resolvePath(cookedPath);
 
     {
-        std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+        std::lock_guard<std::mutex> lk(m_loadedMtx);
         if (m_async->loadedTextures.count(key)) return;
         m_async->failedKeys.erase(key);              // retry semantics
     }
@@ -803,17 +847,17 @@ void AssetService::loadTextureAsync(const char* cookedPath) {
 uint32_t AssetService::queryMesh(const char* cookedPath) const {
     if (!m_async || !cookedPath) return 0;
     std::string key = resolvePath(cookedPath);
-    std::lock_guard<std::mutex> lk(m_async->loadedMtx);
-    auto it = m_async->loadedMeshes.find(key);
-    if (it == m_async->loadedMeshes.end()) return 0;
-    it->second.lastUse = ++m_async->useClock;   // a query IS a use (LRU)
+    std::lock_guard<std::mutex> lk(m_loadedMtx);
+    auto it = m_loadedMeshes.find(key);
+    if (it == m_loadedMeshes.end()) return 0;
+    it->second.lastUse = ++m_useClock;   // a query IS a use (LRU)
     return it->second.h.id;
 }
 
 uint32_t AssetService::queryTexture(const char* cookedPath) const {
     if (!m_async || !cookedPath) return 0;
     std::string key = resolvePath(cookedPath);
-    std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+    std::lock_guard<std::mutex> lk(m_loadedMtx);
     auto it = m_async->loadedTextures.find(key);
     return (it != m_async->loadedTextures.end()) ? it->second.id : 0;
 }
@@ -824,9 +868,9 @@ void AssetService::setResidencyBudget(uint64_t bytes) {
 
 uint64_t AssetService::residentBytes() const {
     if (!m_async) return 0;
-    std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+    std::lock_guard<std::mutex> lk(m_loadedMtx);
     uint64_t sum = 0;
-    for (const auto& [k, e] : m_async->loadedMeshes) sum += e.bytes;
+    for (const auto& [k, e] : m_loadedMeshes) sum += e.bytes;
     return sum;
 }
 
@@ -838,16 +882,16 @@ size_t AssetService::evictOverBudget(const std::unordered_set<uint32_t>& inUse) 
     struct Victim { std::string key; MeshHandle h; uint64_t bytes; };
     std::vector<Victim> victims;
     {
-        std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+        std::lock_guard<std::mutex> lk(m_loadedMtx);
         uint64_t total = 0;
-        for (const auto& [k, e] : m_async->loadedMeshes) total += e.bytes;
+        for (const auto& [k, e] : m_loadedMeshes) total += e.bytes;
         if (total <= m_residencyBudget) return 0;
 
         // LRU order: oldest stamp first.
         std::vector<const std::pair<const std::string,
-                                    AsyncState::MeshResidency>*> byAge;
-        byAge.reserve(m_async->loadedMeshes.size());
-        for (const auto& kv : m_async->loadedMeshes) byAge.push_back(&kv);
+                                    AssetService::MeshResidency>*> byAge;
+        byAge.reserve(m_loadedMeshes.size());
+        for (const auto& kv : m_loadedMeshes) byAge.push_back(&kv);
         std::sort(byAge.begin(), byAge.end(),
                   [](auto* a, auto* b) {
                       return a->second.lastUse < b->second.lastUse;
@@ -862,7 +906,7 @@ size_t AssetService::evictOverBudget(const std::unordered_set<uint32_t>& inUse) 
             victims.push_back({kv->first, kv->second.h, kv->second.bytes});
             total -= kv->second.bytes;
         }
-        for (const auto& v : victims) m_async->loadedMeshes.erase(v.key);
+        for (const auto& v : victims) m_loadedMeshes.erase(v.key);
     }
 
     for (const auto& v : victims) {
@@ -884,7 +928,7 @@ bool AssetService::isLoading(const char* cookedPath) const {
 bool AssetService::loadFailed(const char* cookedPath) const {
     if (!m_async || !cookedPath) return false;
     std::string key = resolvePath(cookedPath);
-    std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+    std::lock_guard<std::mutex> lk(m_loadedMtx);
     return m_async->failedKeys.count(key) > 0;
 }
 
@@ -924,7 +968,7 @@ bool AssetService::drainUploads() {
     if (!item.success) {
         LOG_ERROR("AssetService", "Async load failed: %s — %s",
                   item.key.c_str(), item.error.c_str());
-        { std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+        { std::lock_guard<std::mutex> lk(m_loadedMtx);
           m_async->failedKeys.insert(item.key); }   // pollers must see this
         return true; // consumed an item even on failure
     }
@@ -942,7 +986,7 @@ bool AssetService::drainUploads() {
             if (bgfx::isValid(ibh)) bgfx::destroy(ibh);
             LOG_ERROR("AssetService", "Async bgfx buffer creation failed: %s",
                       item.key.c_str());
-            { std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+            { std::lock_guard<std::mutex> lk(m_loadedMtx);
               m_async->failedKeys.insert(item.key); }
             return true;
         }
@@ -1022,9 +1066,9 @@ bool AssetService::drainUploads() {
             const uint64_t bytes =
                 (item.vertexMem ? item.vertexMem->size : 0u) +
                 (item.indexMem  ? item.indexMem->size  : 0u);
-            std::lock_guard<std::mutex> lk(m_async->loadedMtx);
-            m_async->loadedMeshes[item.key] =
-                {h, bytes, ++m_async->useClock};
+            std::lock_guard<std::mutex> lk(m_loadedMtx);
+            m_loadedMeshes[item.key] =
+                {h, bytes, ++m_useClock};
         }
         LOG_SUCCESS("AssetService", "Async mesh ready: %s (handle=%u)",
                     item.key.c_str(), h.id);
@@ -1042,7 +1086,7 @@ bool AssetService::drainUploads() {
         Texture tex(th, item.texData.w, item.texData.h);
         TextureHandle handle = m_textures.addTexture(std::move(tex));
         {
-            std::lock_guard<std::mutex> lk(m_async->loadedMtx);
+            std::lock_guard<std::mutex> lk(m_loadedMtx);
             m_async->loadedTextures[item.key] = handle;
         }
         LOG_SUCCESS("AssetService", "Async texture ready: %s (%ux%u, handle=%u)",

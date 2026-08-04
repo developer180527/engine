@@ -216,10 +216,16 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
     // ── Fast path: cooked binary via AssetService (runtime) ────────────
     // If cookedPath is present and AssetService is available, load directly
     // from the cooked binary — no Assimp, no glTF import, no worker queue.
-    std::string cookedPath = j.value("cookedPath", std::string{});
-    if (!cookedPath.empty() && std::filesystem::path(cookedPath).is_relative()
-        && !ctx.projectRoot.empty())
-        cookedPath = (ctx.projectRoot / cookedPath).string();
+    //
+    // PASSED RELATIVE, DELIBERATELY. `cookedPath` comes from the registry as
+    // "meshs/<uuid>.cooked", which is relative to the project's .cache — and
+    // AssetService::loadMesh resolves relative paths against exactly that. This
+    // used to pre-join ctx.projectRoot, producing "<project>/meshs/<uuid>.cooked",
+    // a path that has never existed. Every cooked mesh load therefore failed and
+    // fell through to the Assimp source importer below, which is why nothing
+    // looked broken: scenes still rendered, just via the slow path, and a shipped
+    // dist with no source assets would have failed outright.
+    const std::string cookedPath = j.value("cookedPath", std::string{});
     if (!cookedPath.empty() && ctx.assetService) {
         MeshHandle h = ctx.assetService->loadMesh(cookedPath.c_str());
         if (h.valid()) {

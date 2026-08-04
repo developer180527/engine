@@ -196,6 +196,27 @@ private:
     // See docs/plans/renderer-audit-and-plan.md Phase 1.
     gpucache::GpuResourceCache<TextureHandle> m_texCache;
 
+    // ── Loaded-mesh cache: path -> handle, shared by the SYNC and ASYNC paths
+    // It lives here, not inside AsyncState, because it is a resource cache and
+    // not an async concern — and because putting it there made it invisible to
+    // synchronous loads. AsyncState is created lazily by ensureWorker(), so a
+    // scene that loads every mesh synchronously (the cooked fast path) never had
+    // a cache at all: each of 50 000 entities created its own vertex+index
+    // buffers and bgfx's 4 096-handle pool ran out after 4 089 of them.
+    // Textures avoided this because m_texCache above already sat at this level.
+    struct MeshResidency {
+        MeshHandle h;
+        uint64_t   bytes   = 0;
+        uint64_t   lastUse = 0;
+    };
+    mutable std::mutex                             m_loadedMtx;
+    // `mutable` alongside m_useClock: queryMesh() is const and must still
+    // stamp LRU use, or the cache evicts what is being actively read.
+    mutable std::unordered_map<std::string, MeshResidency> m_loadedMeshes;
+    mutable uint64_t                               m_useClock = 0;   // LRU ticks
+    // `mutable` because queryMesh() is const and a query IS a use: not
+    // stamping it would make the LRU evict assets that are actively read.
+
     // Sync helpers
     TextureHandle loadTextureFromCooked(const std::filesystem::path& absPath);
     TextureHandle resolveTexture(const char* texPath,
