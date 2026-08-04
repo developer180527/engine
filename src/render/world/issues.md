@@ -23,7 +23,7 @@ have to be re-argued from reading.
 | A2.3 / A2.P4 | Dynamic `maxDist` wastes depth precision | **REAL, latent** | open |
 | A2.P2 | Packing `VisibleDraw` to 12 bytes is faster | **FALSE — measured slower** | declined |
 | A2.P3 | Fixed `kCullGrain` leaves cores idle | **REAL** | fixed |
-| A2.P1 | SoA / SIMD frustum culling | **REAL** | SoA done; SIMD next |
+| A2.P1 | SoA / SIMD frustum culling | **REAL (layout), nil (SIMD)** | streams done; NEON measured and declined |
 
 ---
 
@@ -262,12 +262,58 @@ arrays, which is the precondition for a 4-wide test. Doing SIMD first, against t
 lines each before any arithmetic — the layout, not the instruction set, was the thing
 in the way.
 
-NEXT, in order, each to be measured rather than assumed:
-1. NEON 4-wide plane test over the streams, behind a portable wrapper.
-2. An A/B on interleaving `x/y/z/r` into one 16-byte array: one write stream in
-   extraction instead of four, at the cost of a deinterleave before any SIMD. With no
-   SIMD written yet and extraction the larger phase, interleaved may well win — which
-   is why it is a measurement, not a decision.
+### Both follow-ups resolved by measurement — and the answer reversed the design
+
+A standalone benchmark over 100 000 spheres at the stress scene's ~65% cull ratio, with
+the four combinations of layout and instruction set (survivor counts identical in all
+four, so they are the same computation):
+
+| variant | per 100 k | vs scalar |
+|---|---|---|
+| scalar, separate arrays, early-exit | 0.1465 ms | — |
+| **NEON, separate arrays** | 0.0636 | **2.31×** |
+| NEON, interleaved + `vld4q_f32` | 0.0738 | 1.98× |
+| scalar, interleaved | 0.1156 | 1.27× |
+
+**1. NEON: DECLINED, and the arithmetic is the reason.** The scalar plane test costs
+1.47 ns per item. The cull's real in-engine cost is ~33 ns per item (0.07 ms per
+2 083-item range). So the plane arithmetic is **~4% of the phase**, and a 2.31× win on
+4% is ~2% of the cull — 0.4% of the render path, roughly 0.03 ms at 100 000 objects.
+That does not justify intrinsics, a portable NEON/SSE wrapper, or the determinism
+problem FMA introduces (fused multiply-add rounds differently from mul-then-add, so a
+SIMD path could flip a borderline cull decision and break the byte-identical-counter
+evidence every other test here leans on).
+
+Recorded so it is not re-attempted on intuition. If it is revisited, `vld4q_f32`
+deinterleaves the current layout in one instruction, so nothing is blocked.
+
+*A caution about that table*: the working set is 1.6 MB and therefore cache-resident,
+so it measures ALU throughput, not the streaming behaviour of a real frame. It is
+trustworthy for "the arithmetic is not the cost" and untrustworthy for anything else.
+The first version of this benchmark also reported the scalar variant at 0.0012 ms —
+12 picoseconds per item — because the whole call was hoisted out of the repetition
+loop. Perturbing the planes per repetition and consuming every result fixed it.
+
+**2. Interleaving: ADOPTED, reversing the original choice.** The reason for four
+parallel arrays was that a 4-wide test wants four centres loaded contiguously. With
+SIMD declined, that premise is gone, and what is left is stream count: four arrays are
+four prefetch streams and four TLB entries, and the scalar benchmark showed one
+16-byte read beating them by 1.27× on identical data. In-engine, three-run medians:
+
+| | separate arrays | interleaved |
+|---|---|---|
+| 50 k `Render.cull` | 0.83 ms | **0.78** |
+| 50 k `Render` total | 4.06 | **3.91** |
+| 100 k `Render.cull` | 1.34 | 1.37 (flat) |
+| 100 k `Render` total | 7.42 | **7.29** |
+
+~5% on the cull at 50 k, nothing measurable at 100 k, ~2–4% on the render path. Small,
+but it also **halves the stream count** (two, not five) and drops extraction's
+compaction from five `memmove`s to two — so it is simpler as well as no slower, which
+is the tiebreaker.
+
+The layout now follows the memory, not the instruction set. That is the sentence worth
+keeping from this whole exercise.
 
 ---
 
@@ -279,8 +325,8 @@ Three-run medians, shadows on, same machine:
 |---|---|
 | 5 000 | 0.34 ms |
 | 20 000 | 0.52 |
-| 50 000 | 0.83 |
-| 100 000 | 1.34 |
+| 50 000 | 0.78 |
+| 100 000 | 1.37 |
 
 A1.1 and A1.3 were **not** made for speed and were not isolated for timing; no speed
 claim is made for either.

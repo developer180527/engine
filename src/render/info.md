@@ -35,17 +35,18 @@ tests:
 #
 # MEASURED on the stress scene (scripts/gen_stress_scene.py), which is reproducible
 # in a way a hand-built project is not. At 20 000 objects the Render.* zones read
-# extract 1.13 ms, cull 1.70, shadow 0.76, submit 0.09 — the whole render path is
-# ~3.7 ms and the frame is vsync-bound. Extraction went 15.2 -> 1.1 ms over five
+# extract 1.13 ms, cull 0.52, shadow 0.28, submit 0.13 — the whole render path is
+# ~2.1 ms and the frame is vsync-bound. Extraction went 15.2 -> 1.1 ms over five
 # changes (issues.md R14/R15); it is now parallel over archetype chunks on
 # engine::jobs, and so is the frustum cull (R16: 3.9 ms -> 0.83, with std::sort
 # replaced by a stable radix sort, 1.15 -> 0.22). The cull now reads SoA streams
 # (world/issues.md A2.P1) rather than the 144-byte RenderItem, which is what took the
 # SHADOW pass from 0.48 ms to 0.15 at 100 k — its cull was rebuilding every bounding
-# sphere the camera pass had just built. At 100 000 objects: extract 5.54, cull 1.34,
-# shadow 0.15, submit 0.36, render 7.42, frame 7.77 ms — vsync-bound, in ONE draw
-# call. Extraction is the largest phase and is already parallel; the open lever there
-# is a 4-wide NEON plane test over the streams, and a narrower RenderItem.
+# sphere the camera pass had just built. At 100 000 objects: extract 5.41, cull 1.37,
+# shadow 0.15, submit 0.36, render 7.29, frame ~9.0 ms in ONE draw call. Extraction is
+# the largest phase and is already parallel. NEON was measured and DECLINED (the plane
+# arithmetic is ~4% of the cull, so 2.3x on it is 0.4% of the frame); the open lever
+# is a narrower RenderItem.
 # R7 (material-bind dedup) is still open: materialBinds == draws on every
 # non-instanced path.
 ---

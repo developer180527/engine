@@ -24,11 +24,11 @@
 namespace rworld {
 
 // The single rule. See CullStreams for what the radius sentinels mean.
-inline void writeCullEntry(const RenderItem& it, float& x, float& y, float& z,
-                           float& r, uint64_t& keyBase) {
+inline void writeCullEntry(const RenderItem& it, CullSphere& out,
+                           uint64_t& keyBase) {
     if (!it.mesh) {                       // not renderable
-        x = y = z = 0.0f;
-        r = -1.0f;
+        out = CullSphere{};
+        out.r = -1.0f;
         keyBase = 0;
         return;
     }
@@ -37,31 +37,26 @@ inline void writeCullEntry(const RenderItem& it, float& x, float& y, float& z,
         // Unbounded: keep the transform origin as the centre so depth sorting
         // still means something, and make the radius infinite so the plane test
         // can never reject it.
-        x = it.model.m[12]; y = it.model.m[13]; z = it.model.m[14];
-        r = std::numeric_limits<float>::infinity();
+        out.x = it.model.m[12]; out.y = it.model.m[13]; out.z = it.model.m[14];
+        out.r = std::numeric_limits<float>::infinity();
         return;
     }
     const BoundingSphere s = worldSphere(it.model.m, it.boundsCenter, it.boundsSize);
-    x = s.x; y = s.y; z = s.z; r = s.radius;
+    out.x = s.x; out.y = s.y; out.z = s.z; out.r = s.radius;
 }
 
 // Owning storage for the streams. Kept across frames for its capacity, like the
 // rest of the render-side scratch.
 struct CullStreamStore {
-    std::vector<float>    x, y, z, r;
-    std::vector<uint64_t> keyBase;
+    std::vector<CullSphere> sphere;
+    std::vector<uint64_t>   keyBase;
 
-    void resize(std::size_t n) {
-        x.resize(n); y.resize(n); z.resize(n); r.resize(n); keyBase.resize(n);
-    }
-    std::size_t size() const { return r.size(); }
+    void resize(std::size_t n) { sphere.resize(n); keyBase.resize(n); }
+    std::size_t size() const { return sphere.size(); }
 
     CullStreams view() const {
         CullStreams s;
-        s.x = { x.data(), x.size() };
-        s.y = { y.data(), y.size() };
-        s.z = { z.data(), z.size() };
-        s.r = { r.data(), r.size() };
+        s.sphere  = { sphere.data(),  sphere.size() };
         s.keyBase = { keyBase.data(), keyBase.size() };
         return s;
     }
@@ -72,8 +67,7 @@ struct CullStreamStore {
 inline void fillCullStream(const Span<RenderItem>& items, CullStreamStore& out) {
     out.resize(items.size());
     for (std::size_t i = 0; i < items.size(); ++i)
-        writeCullEntry(items[i], out.x[i], out.y[i], out.z[i], out.r[i],
-                       out.keyBase[i]);
+        writeCullEntry(items[i], out.sphere[i], out.keyBase[i]);
 }
 
 } // namespace rworld

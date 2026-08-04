@@ -86,38 +86,51 @@ struct RenderItem {
     bool            hasBounds = false;   // false = never culled
 };
 
-// ── CullStreams — the cull's working set, SoA ────────────────────────────────
+// ── CullStreams — the cull's working set ─────────────────────────────────────
 //
-// Parallel arrays, one entry per RenderItem, holding the ONLY things the cull
-// reads. Two reasons this exists, and the second is the bigger one:
+// One entry per RenderItem, holding the ONLY things the cull reads. Two reasons it
+// exists, and the second is the bigger one:
 //
 //   1. RenderItem is 144 bytes and the cull touched offsets 0..141 — all three
 //      cache lines — to extract a bounding sphere and two ids. Reading 24 bytes of
-//      stream instead of 144 bytes of struct is the difference.
+//      stream instead beats that.
 //   2. THE SPHERE DOES NOT DEPEND ON THE CAMERA, yet it was recomputed per view:
 //      once for the camera frustum and again for the light's. Computing it at
 //      extraction, where the matrix is already in registers, does it once.
 //
-// Separate arrays rather than an array of {x,y,z,r} structs, because the next step
-// is a 4-wide test: four centres load contiguously from x[] and nothing is
-// deinterleaved first.
+// INTERLEAVED {x,y,z,r}, NOT FOUR PARALLEL ARRAYS — and that is a reversal, so the
+// reasoning is worth keeping. The first version used separate x/y/z/r arrays on the
+// grounds that a 4-wide test wants to load four centres contiguously. Measured, that
+// premise does not pay: over 100 000 spheres the scalar plane test costs 1.47 ns per
+// item while the cull's real in-engine cost is ~33 ns per item, so the arithmetic is
+// ~4% of the phase and a 2.3x NEON win on it is ~0.4% of the render path. What DOES
+// pay is stream count: one 16-byte sequential read instead of four independent ones
+// measured 1.27x faster on the same data, because four arrays are four streams for
+// the prefetcher and four TLB entries.
+//
+// So the layout follows the memory, not the instruction set. If SIMD is revisited,
+// arm64's `vld4q_f32` deinterleaves this layout in one instruction (measured at
+// 1.98x — still not worth it, but not blocked either).
 //
 // RADIUS CARRIES TWO SENTINELS, so the hot loop needs no side table:
 //   r <  0        the item is not renderable (no mesh) — skip it entirely
 //   r == infinity renderable but unbounded — never culled, by design, because an
 //                 unbounded mesh is a missing-data problem and dropping it
 //                 silently would look like a renderer bug
-struct CullStreams {
-    Span<float>    x, y, z;    // world bounding-sphere centre
-    Span<float>    r;          // radius, plus the sentinels above
-    Span<uint64_t> keyBase;    // sort key with the depth field left zero
+struct CullSphere {
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+    float r = 0.0f;                        // plus the sentinels above
+};
 
-    std::size_t size() const { return r.size(); }
-    bool empty() const { return r.empty(); }
+struct CullStreams {
+    Span<CullSphere> sphere;   // world bounding sphere, one 16-byte read per item
+    Span<uint64_t>   keyBase;  // sort key with the depth field left zero
+
+    std::size_t size() const { return sphere.size(); }
+    bool empty() const { return sphere.empty(); }
     // Every stream must be the same length as the item array it describes.
     bool consistent(std::size_t items) const {
-        return r.size() == items && x.size() == items && y.size() == items
-            && z.size() == items && keyBase.size() == items;
+        return sphere.size() == items && keyBase.size() == items;
     }
 };
 

@@ -64,8 +64,16 @@ Everything here is **GPU-free**. Nothing includes bgfx; nothing dereferences
 
 `RenderItem` is 144 bytes and the cull used to touch offsets 0..141 — all three of
 its cache lines — to recover a bounding sphere and two ids. `CullStreams`
-(render_world.h) is the SoA alternative: parallel `x/y/z/r/keyBase` arrays, 24 bytes
-per item, filled by extraction while the model matrix is still in registers.
+(render_world.h) is the alternative: an interleaved 16-byte `CullSphere` plus a
+`keyBase`, 24 bytes per item, filled by extraction while the model matrix is still in
+registers.
+
+The layout is **interleaved, not four parallel arrays**, and that is a reversal worth
+knowing: the original reason for separate arrays was 4-wide SIMD, which measurement
+then declined (the plane arithmetic is ~4% of the cull's cost, so a 2.3× NEON win on it
+is 0.4% of the render path). What remained was stream count — two sequential streams
+instead of five. See `issues.md` A2.P1 for both benchmarks, including the one that was
+wrong the first time.
 
 The bigger reason is not the byte count. **The world bounding sphere does not depend
 on the camera**, yet it was rebuilt per view — once against the camera frustum and

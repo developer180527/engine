@@ -19,10 +19,10 @@
 //
 //   objects   extract   cull    frame
 //     1 000   0.32 ms   0.35    8.3 (vsync)
-//     5 000   0.50      0.55    8.3 (vsync)
-//    20 000   1.13      1.70    7.9 (vsync)
-//    50 000   2.69      0.88    8.2 (vsync)
-//   100 000   5.37      1.36    9.5   (~105 fps)
+//     5 000   0.50      0.34    8.3 (vsync)
+//    20 000   1.13      0.52    8.2 (vsync)
+//    50 000   2.83      0.78    8.2 (vsync)
+//   100 000   5.41      1.37    9.0   (~111 fps)
 //
 // The lesson worth carrying, because it held for all four: almost none of the cost
 // was arithmetic. It was per-entity work asking questions the query engine answers
@@ -37,13 +37,15 @@
 // was NOT done, and after the cull was fixed too (issues.md R16 — 3.9 ms -> 0.88)
 // extraction is once again the largest phase: 5.4 ms of a 7.8 ms render path at
 // 100 000 objects. It is already parallel, so what remains is not work but
-// STREAMING — 100 000 RenderItems at ~136 bytes each, twice per frame counting the
-// shadow cull. The next lever is therefore the data layout (SoA, or a narrower
-// RenderItem), not SIMD and not more threads.
+// STREAMING — 100 000 RenderItems at 144 bytes each. The cull no longer reads them at
+// all, so what is left is extraction's own pass; the open lever is a NARROWER
+// RenderItem (the submit path needs the matrix and four pointers, not 144 bytes),
+// not SIMD and not more threads.
 //
-// EXTRACTION ALSO BUILDS THE CULL'S WORKING SET (rworld::CullStreams): the world
-// bounding sphere and the material+mesh half of the sort key, written into SoA
-// streams here while the model matrix is still in registers. Not for this file's
+// EXTRACTION ALSO BUILDS THE CULL'S WORKING SET (CullStreams): the world bounding
+// sphere and the material+mesh half of the sort key, written here while the model
+// matrix is still in registers — two streams, an interleaved 16-byte sphere plus a
+// key (the layout is measured, see world/issues.md A2.P1). Not for this file's
 // benefit — it costs ~0.2 ms at 50 000 objects — but because the sphere DOES NOT
 // DEPEND ON THE CAMERA and was being rebuilt once per view, so the shadow pass was
 // redoing every sphere the camera pass had just computed. That duplication is what
@@ -187,11 +189,8 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         // The cull streams are filled HERE, in the same slice, because the model
         // matrix is already in registers — walking the items again later to build
         // them would spend the bandwidth this exists to save.
-        float* sx = m_cull.x.data() + c.outBegin;
-        float* sy = m_cull.y.data() + c.outBegin;
-        float* sz = m_cull.z.data() + c.outBegin;
-        float* sr = m_cull.r.data() + c.outBegin;
-        uint64_t* sk = m_cull.keyBase.data() + c.outBegin;
+        CullSphere* sp = m_cull.sphere.data() + c.outBegin;
+        uint64_t*           sk = m_cull.keyBase.data() + c.outBegin;
 
         uint32_t n = 0;
         for (uint32_t i = 0; i < c.count; ++i) {
@@ -200,7 +199,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
             if (!extractItem(c.mr[i], c.skin ? &c.skin[i] : nullptr, it)) continue;
             localMatrixLerp(c.tr[i], c.prev ? &c.prev[i] : nullptr,
                             m_simAlpha, it.model.m);
-            rworld::writeCullEntry(it, sx[n], sy[n], sz[n], sr[n], sk[n]);
+            rworld::writeCullEntry(it, sp[n], sk[n]);
             ++n;
         }
         c.written = n;
@@ -317,11 +316,9 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
                 // as the wrong bounds for the wrong object, silently.
                 std::memmove(m_items.data() + write, m_items.data() + c.outBegin,
                              c.written * sizeof(RenderItem));
-                const std::size_t fb = c.written * sizeof(float);
-                std::memmove(m_cull.x.data() + write, m_cull.x.data() + c.outBegin, fb);
-                std::memmove(m_cull.y.data() + write, m_cull.y.data() + c.outBegin, fb);
-                std::memmove(m_cull.z.data() + write, m_cull.z.data() + c.outBegin, fb);
-                std::memmove(m_cull.r.data() + write, m_cull.r.data() + c.outBegin, fb);
+                std::memmove(m_cull.sphere.data() + write,
+                             m_cull.sphere.data() + c.outBegin,
+                             c.written * sizeof(CullSphere));
                 std::memmove(m_cull.keyBase.data() + write,
                              m_cull.keyBase.data() + c.outBegin,
                              c.written * sizeof(uint64_t));
@@ -342,8 +339,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         const std::size_t first = m_cull.size();
         m_cull.resize(m_items.size());
         for (std::size_t i = first; i < m_items.size(); ++i)
-            rworld::writeCullEntry(m_items[i], m_cull.x[i], m_cull.y[i],
-                                   m_cull.z[i], m_cull.r[i], m_cull.keyBase[i]);
+            rworld::writeCullEntry(m_items[i], m_cull.sphere[i], m_cull.keyBase[i]);
     }
     if (&world == m_editorWorld) m_lightQuery.each(extractLight);
     else                        m_gameLightQuery.get(world).each(extractLight);

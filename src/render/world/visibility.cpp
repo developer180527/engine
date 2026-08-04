@@ -74,15 +74,13 @@ void buildVisibleSet(const RenderWorld& world, const ViewCamera& cam,
     // in a loop right here — a separate serial version would be the one every
     // test exercises and the parallel one the version that ships.
     //
-    // Reads the SoA streams, never the items: 24 bytes per item instead of the
-    // 144-byte RenderItem whose three cache lines this loop used to walk, and the
-    // bounding sphere arrives precomputed rather than being rebuilt from a matrix
-    // once per view (see CullStreams).
-    const float* SX = world.cull.x.data;
-    const float* SY = world.cull.y.data;
-    const float* SZ = world.cull.z.data;
-    const float* SR = world.cull.r.data;
-    const uint64_t* SK = world.cull.keyBase.data;
+    // Reads the streams, never the items: 24 bytes per item instead of the 144-byte
+    // RenderItem whose three cache lines this loop used to walk, and the bounding
+    // sphere arrives precomputed rather than being rebuilt from a matrix once per
+    // view. Two sequential streams, not five — see CullStreams for the measurement
+    // that chose an interleaved sphere over four parallel arrays.
+    const CullSphere* SP = world.cull.sphere.data;
+    const uint64_t*   SK = world.cull.keyBase.data;
 
     auto cullRange = [&](uint32_t r) {
         const uint32_t begin = r * grain;
@@ -93,14 +91,14 @@ void buildVisibleSet(const RenderWorld& world, const ViewCamera& cam,
         const float* V = cam.view.m;
 
         for (uint32_t i = begin; i < end; ++i) {
-            const float rad = SR[i];
-            if (rad < 0.0f) continue;         // not renderable — see the sentinels
+            const CullSphere s = SP[i];       // one 16-byte sequential read
+            if (s.r < 0.0f) continue;         // not renderable — see the sentinels
 
-            const float cx = SX[i], cy = SY[i], cz = SZ[i];
+            const float cx = s.x, cy = s.y, cz = s.z;
             // An infinite radius can never be rejected, so the test is skipped
             // rather than relying on -inf comparisons behaving.
-            if (rad != std::numeric_limits<float>::infinity()) {
-                BoundingSphere sp; sp.x = cx; sp.y = cy; sp.z = cz; sp.radius = rad;
+            if (s.r != std::numeric_limits<float>::infinity()) {
+                BoundingSphere sp; sp.x = cx; sp.y = cy; sp.z = cz; sp.radius = s.r;
                 if (outsideFrustum(sp, cam.frustum)) { ++culled; continue; }
             }
 
