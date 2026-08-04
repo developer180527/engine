@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <cmath>
 #include <vector>
+#include <cstdint>
 
 #include <flecs.h>
 #include <bx/math.h>
@@ -205,6 +206,76 @@ static void testPrevTransformInterpolation() {
           "(%.2f)", nullPrev[12]);
 }
 
+// ── 5. The direct SRT compose equals the two-mtxMul reference ───────────────
+// Transform::getMatrix stopped composing S*R*T with two 4x4 multiplies and now
+// writes the 16 floats directly, because three quarters of that arithmetic was
+// against structural zeros. It is the most-called function in the engine, so
+// "looks right" is not good enough: the reference form is reproduced here and
+// the two are compared over randomised transforms, including negative and
+// non-uniform scale and unnormalised-ish rotations.
+static void referenceGetMatrix(const Transform& t, float out[16]) {
+    float rotMtx[16];
+    bx::mtxFromQuaternion(rotMtx, t.rotation);
+    float scaleMtx[16];
+    bx::mtxScale(scaleMtx, t.scale.x, t.scale.y, t.scale.z);
+    float sr[16];
+    bx::mtxMul(sr, scaleMtx, rotMtx);
+    float transMtx[16];
+    bx::mtxTranslate(transMtx, t.position.x, t.position.y, t.position.z);
+    bx::mtxMul(out, sr, transMtx);
+}
+
+static void testComposeMatchesReference() {
+    std::printf("\n-- direct SRT compose == the two-multiply reference --\n");
+    // Deterministic LCG: a fixed seed so a failure is reproducible, which a
+    // time-seeded random test is not.
+    uint32_t seed = 0x5EED1234u;
+    auto rnd = [&seed] {
+        seed = seed * 1664525u + 1013904223u;
+        return (float)((seed >> 8) & 0xFFFF) / 32768.0f - 1.0f;   // [-1, 1)
+    };
+
+    int mismatches = 0;
+    float worst = 0.0f;
+    for (int i = 0; i < 2000; ++i) {
+        Transform t;
+        t.position = { rnd() * 500.0f, rnd() * 500.0f, rnd() * 500.0f };
+        t.rotation = bx::fromEuler(bx::Vec3{ rnd() * 3.14f, rnd() * 3.14f,
+                                            rnd() * 3.14f });
+        // Non-uniform, and occasionally negative or near-zero — mirrored geometry
+        // and degenerate scales are real content, and a compose that only works
+        // for positive uniform scale would pass a gentler test.
+        t.scale = { rnd() * 4.0f, rnd() * 4.0f, rnd() * 4.0f };
+        if (i % 7 == 0) t.scale.y = 0.0f;
+        if (i % 11 == 0) t.scale.x = -t.scale.x;
+
+        float fast[16], ref[16];
+        t.getMatrix(fast);
+        referenceGetMatrix(t, ref);
+        for (int k = 0; k < 16; ++k) {
+            const float d = std::fabs(fast[k] - ref[k]);
+            if (d > worst) worst = d;
+        }
+        if (!mtxNear(fast, ref, 1e-5f)) ++mismatches;
+    }
+    CHECK(mismatches == 0,
+          "2000 randomised transforms compose identically (%d mismatches, "
+          "worst element delta %.3e)", mismatches, worst);
+
+    // The gizmo's contract, stated separately because code reads m[12..14]
+    // directly and would silently misplace a handle if this ever changed.
+    Transform t;
+    t.position = { 7.0f, -3.0f, 11.0f };
+    t.rotation = bx::fromEuler(bx::Vec3{ 0.9f, 0.2f, -1.3f });
+    t.scale    = { 3.0f, 0.5f, 2.0f };
+    float m[16];
+    t.getMatrix(m);
+    CHECK(m[12] == 7.0f && m[13] == -3.0f && m[14] == 11.0f && m[15] == 1.0f,
+          "the translation row is position EXACTLY, whatever the scale/rotation");
+    CHECK(m[3] == 0.0f && m[7] == 0.0f && m[11] == 0.0f,
+          "and the projective column stays zero");
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("extract_partition_test: the two-query extraction partition\n");
@@ -213,6 +284,7 @@ int main() {
     testFlatMatchesFullWalk();
     testChildIncludesAncestors();
     testPrevTransformInterpolation();
+    testComposeMatchesReference();
 
     if (g_failures) {
         std::printf("\nextract_partition_test: %d FAILURE(S)\n", g_failures);

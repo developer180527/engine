@@ -33,12 +33,16 @@ tests:
 # model matrix from instance data). 20 001 objects -> 1 draw call. Skinned items,
 # submeshes and data-driven materials fall through to per-draw on purpose.
 #
-# MEASURED on the 20 000-object stress scene (scripts/gen_stress_scene.py), which
-# is reproducible in a way a hand-built project is not — the Render.* profiler
-# zones attribute the frame: extract 9.7 ms, cull 1.7, shadow 0.8, submit 0.09.
-# Submission is now 0.7% of the render path; EXTRACTION is the cost, and its
-# numbers live in render/renderer/extract.cpp. R7 (material-bind dedup) is still
-# open: materialBinds == draws on every non-instanced path.
+# MEASURED on the stress scene (scripts/gen_stress_scene.py), which is reproducible
+# in a way a hand-built project is not. At 20 000 objects the Render.* zones read
+# extract 1.13 ms, cull 1.70, shadow 0.76, submit 0.09 — the whole render path is
+# ~3.7 ms and the frame is vsync-bound. Extraction went 15.2 -> 1.1 ms over five
+# changes (issues.md R14/R15); it is now parallel over archetype chunks on
+# engine::jobs. At 50 000 objects the renderer is 8.6 ms of a 34 ms frame and the
+# bottleneck is OUTSIDE this subsystem: Sim.prevSnapshot, ~25 ms, see
+# src/runtime/docs/issues.md H.0. CULL is now the largest render phase at scale.
+# R7 (material-bind dedup) is still open: materialBinds == draws on every
+# non-instanced path.
 ---
 # Render
 
@@ -64,9 +68,10 @@ Two layers:
      `render*` entry points, which differ only in which target they pick.
    - `renderer/extract.cpp` — queries `Transform + MeshRenderer` and
      `Transform + Light` into flat `RenderItem`/`LightItem` arrays. The pipeline
-     never touches the ECS. **This is the hot path**: a 20 000-object scene
-     submits one draw call and still spends ~38 ms per frame here, per item, so
-     it is where the next optimisation goes.
+     never touches the ECS. Was the hot path — 15.2 ms at 20 000 objects, now
+     1.1 ms — via partitioned/optional query terms, a direct SRT compose, and
+     `jobs::parallelFor` over archetype chunks. The file header carries the full
+     measurement history and the reason SIMD was not the answer.
 2. **Pipeline** — `IRenderPipeline` (`render_pipeline.h`) is the swap point
    (`Renderer::setPipeline`). There is exactly ONE implementation,
    `ForwardPipeline`, split one concern per TU:

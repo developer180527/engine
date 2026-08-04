@@ -208,6 +208,60 @@ REMAINING: 9.7 ms for 20 000 items is ~0.5 µs each, and what is left is real wo
 over archetype spans — not more lookup removal. `Render.submit` at 0.09 ms means
 submission is 0.7% of the render path; it is finished as an optimisation target.
 
+## R15. Extraction, continued: 6.6 ms of the remaining 9.7 was still avoidable ✅ FIXED
+R14 got extraction from 15.2 ms to 9.7 ms at 20 000 objects and said the next lever
+was "width — SIMD or jobs". Half right. Three more changes, in the order they were
+measured:
+
+| change | extract @20k |
+|---|---|
+| (after R14) | 9.7 ms |
+| `Transform::getMatrix` composes SRT directly | 8.0 ms |
+| `SkinnedMesh` as an optional query term | 6.6 ms |
+| chunked extraction on the job pool | **1.1 ms** |
+
+**getMatrix was doing two full 4x4 multiplies** — 128 multiplies, 96 adds — to
+compose an SRT where S is diagonal and T is the identity with one row replaced.
+Three quarters of that arithmetic was against structural zeros. Written out
+directly it is the same 16 floats, and this is the most-called function in the
+engine (every entity every frame, plus physics sync, animation, gizmos). Verified
+BIT-EXACT against the two-multiply reference over 2 000 randomised transforms
+including negative, non-uniform and zero scale (worst element delta 0.0), and the
+`m[12..14] == position` contract the gizmo depends on is asserted separately.
+
+**SkinnedMesh** was the last per-entity `try_get` in the loop, worth ~1.4 ms — and
+removing it had a second effect that mattered more than the time: the per-item body
+now touches NO ECS handle, only component arrays. That is what made the parallel
+step a safety argument about disjoint slices rather than about flecs thread rules.
+
+**Chunked jobs**: extraction slices each matching archetype into 512-item ranges of
+contiguous arrays (walking TABLES, so 20 000 objects in one archetype is a few dozen
+chunks, not 20 000 iterations), then `jobs::parallelFor` fills disjoint slices of a
+pre-sized `m_items`. Items whose mesh is missing leave gaps, which a compaction pass
+closes — skipped entirely when nothing was dropped, i.e. every normal frame.
+
+ONE BODY serial or parallel. Below 2 048 items, or with no job pool (headless tools,
+tests), the same `extractChunk` runs in a loop. Two implementations would mean the
+tests exercise one and the shipped engine the other, and the drift would be silent.
+
+This retires the runtime's "single-threaded frame orchestration" tradeoff in part —
+`engine::jobs` over extraction was its stated trigger.
+
+SIMD was NOT written, deliberately. The remaining per-item maths is spread across
+cores, and the frame's cost has moved somewhere else entirely: at 50 000 objects the
+frame is 34 ms of which the whole renderer is 8.6 (extract 2.6, cull 3.9, shadow 1.8,
+submit 0.3). The other ~25 ms is `Sim.prevSnapshot` — a deferred structural `set<>`
+per entity per fixed step, which had no profiler zone and so was invisible until now.
+Recorded as `src/runtime/docs/issues.md` H.0 with a fix outline. Hand-optimising this
+file further would be optimising a quarter of the problem.
+
+NOT sanitizer-verified at scene scale: ASan on the windowed host runs ~13 s per frame
+here, so that run was abandoned rather than left to burn. What stands behind the
+parallel path: byte-identical submit counters serial vs parallel at 1 k / 5 k / 20 k /
+50 k (and those counters depend on every matrix, because culling reads them), a debug
+assert on the slice arithmetic, and the render + sim tests passing under ASan. A TSan
+lane over a scene this size is still worth having and is not yet there.
+
 ## Not a defect, but the thing to know before touching the pipeline
 Per-draw uniform bytes are a hard budget, not a soft cost: bgfx's Metal backend
 commits them into a fixed 8 MB buffer with no bounds check, so ~8192 draws

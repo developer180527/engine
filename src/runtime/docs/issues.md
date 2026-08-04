@@ -273,6 +273,45 @@ If a caller holds a `JobHandle` across a `pumpMain()` call that happens to run a
 
 ## High
 
+### H.0 — `Sim.prevSnapshot` is the largest cost in the frame at scene scale (MEASURED 2026-08-04)
+The interpolation snapshot in `runtime_sim.cpp` runs once per FIXED STEP over every
+entity with a Transform:
+
+```cpp
+w.defer_begin();
+w.each([](flecs::entity e, Transform& t) {
+    if (e.has<Camera>()) return;
+    e.set<PrevTransform>({t.position, t.rotation, t.scale});
+});
+w.defer_end();
+```
+
+On a 50 000-object scene that is **12.7 ms per step, ~25 ms of a 34 ms frame** —
+three times the entire render path (8.6 ms) after the extraction work. It was
+invisible until 2026-08-04 because the block had no profiler zone; it has one now
+(`Sim.prevSnapshot`), which is how the number above exists.
+
+Why it costs that much is the same mistake the renderer's extraction just had fixed,
+in a worse form: `set<>` is a STRUCTURAL operation, so every entity every step goes
+through the deferred command buffer — allocate a command, copy the payload, replay
+it — plus an `e.has<Camera>()` pair lookup per entity. For an entity that already
+has a PrevTransform, none of that is needed: the component exists, and overwriting
+its fields is a plain memory write.
+
+Suggested fix, in the order that keeps it safe:
+1. A query over `(Transform, PrevTransform)` that bulk-copies in place, no defer and
+   no per-entity lookup — this covers every entity after its first step.
+2. A second query over `(Transform)` `.without<PrevTransform>()` for the newcomers,
+   which is the only case that needs a structural `set<>` and is nearly always empty.
+3. Exclude cameras with `.without<Camera>()` on both, so the per-entity `has<Camera>`
+   disappears into the query.
+4. Then consider `jobs::parallelFor` over chunks, as extraction does — but measure
+   after 1–3, which may already make it negligible.
+
+Correctness to preserve: cameras must keep being excluded (their rotation is
+late-latched at render rate and must not lag), and PrevTransform must be written
+BEFORE the step's broadcasts so rendering lerps from the pre-step state.
+
 ### H.1 — `buildDefaultScene()`: likely typo, `.set<n>()` instead of `.set<Name>()`
 
 ```cpp

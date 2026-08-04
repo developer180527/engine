@@ -131,12 +131,13 @@ void EngineRuntime::tickSimulation(float dt) {
         // Interpolation snapshot: remember where everything WAS before this
         // step so rendering can lerp. Cameras are excluded — their rotation
         // is late-latched at render rate (onFrame) and must not lag.
+        { ENGINE_PROFILE_SCOPE("Sim.prevSnapshot");
         w.defer_begin();   // set<> during iteration = structural op
         w.each([](flecs::entity e, Transform& t) {
             if (e.has<Camera>()) return;
             e.set<PrevTransform>({t.position, t.rotation, t.scale});
         });
-        w.defer_end();
+        w.defer_end(); }
         m_input.beginTick(hid::nowNs());   // fold staged events -> snapshot
         m_simElapsed += kSimDt;
         ++m_simFrame;

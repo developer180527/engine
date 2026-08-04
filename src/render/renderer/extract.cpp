@@ -6,26 +6,57 @@
 //
 // IT IS ALSO THE HOT PATH, and that is why it is its own translation unit. Draw
 // submission stopped being the bottleneck once instancing landed — a 20 000-object
-// scene submits ONE draw call — and this is what replaced it. MEASURED, with the
-// Render.extract profiler zone, at 20 000 objects:
+// scene submits ONE draw call — and this is what replaced it. Render.extract, at
+// 20 000 objects, over four changes:
 //
-//   before   15.2 ms extract, of a 27.1 ms frame
-//   after     9.7 ms extract, of a 17.8 ms frame   (cadence p50 17.75, 54.9 fps)
+//   15.2 ms  start
+//    9.7 ms  optional/partitioned queries instead of per-entity lookups
+//    8.0 ms  Transform::getMatrix composes SRT directly (was two 4x4 multiplies)
+//    6.6 ms  SkinnedMesh as an optional term too
+//    1.1 ms  chunked extraction on the job pool
 //
-// (The pre-fix cadence was not captured, only the 27.1 ms frame cost, so the fps
-// figure is quoted for the after state alone rather than as a before/after pair.)
+// Scaling now (shadows on, same machine):
 //
-// The 5.5 ms came from ONE realisation, and it is the thing to remember before
-// optimising anything here: almost none of the cost was arithmetic. It was
-// per-entity component lookups asking questions the query engine answers per
-// ARCHETYPE — try_get<PrevTransform>, a redundant try_get<Transform>, and
-// target(ChildOf) + is_alive() + has<Transform>() to learn "no parent" 20 000
-// times. The fix was in the query declarations (renderer.h), not in this loop.
+//   objects   extract   cull    frame
+//     1 000   0.32 ms   0.35    8.3 (vsync)
+//     5 000   0.50      0.55    8.3 (vsync)
+//    20 000   1.13      1.70    7.9 (vsync)
+//    50 000   2.56      3.91   34.3   <- NOT the renderer, see below
 //
-// Measured NOT to matter, so nobody spends a day on them again: the three
-// registry lookups are ~0.17 ms total, and reserving m_items up front is ~0.4 ms.
-// What is left is genuine work — the interpolation and matrix compose — so the
-// next real win is width (SIMD / jobs over archetype spans), not lookup removal.
+// The lesson worth carrying, because it held for all four: almost none of the cost
+// was arithmetic. It was per-entity work asking questions the query engine answers
+// per ARCHETYPE (try_get<PrevTransform>, try_get<SkinnedMesh>, a redundant
+// try_get<Transform>, target(ChildOf) + is_alive() + has<Transform>()), plus one
+// function computing 16 floats with 128 multiplies. Three of the four fixes are in
+// the query DECLARATIONS (renderer.h) and in transform.h, not in this loop.
+//
+// Measured NOT to matter, so nobody spends a day on them again: the three registry
+// lookups are ~0.17 ms and reserving m_items up front is ~0.4 ms. Hand-written SIMD
+// was NOT done and is not the next lever: the per-item maths that remains is now
+// spread across cores, and at 50 000 objects the frame is 34 ms of which the
+// renderer is 8.6 — the rest is Sim.prevSnapshot (~25 ms, two fixed steps), a
+// deferred structural set<> per entity per step. See src/runtime/docs/issues.md H.0.
+// Optimising this file further would be optimising 25% of the problem.
+//
+// PARALLELISM, and the two things that make it safe rather than brave:
+//   * A CHUNK IS COMPONENT DATA. Extraction slices archetypes into ranges of
+//     contiguous arrays and the worker body touches no flecs handle at all — that
+//     is only possible because PrevTransform and SkinnedMesh became query terms.
+//     The registries it reads (mesh/material/texture/skeleton) are const lookups
+//     into vectors, and each chunk writes a DISJOINT slice of m_items.
+//   * ONE BODY, serial or parallel. Below kExtractParallelMin, or with no job pool
+//     (headless tools, tests), the same extractChunk runs in a loop. A separate
+//     serial implementation would be the one every test exercises and the parallel
+//     one the version that ships; they would drift, invisibly.
+// Parented items stay serial: they need an entity handle to walk ancestors, and
+// they are a small minority of any scene.
+//
+// NOT sanitizer-verified at scene scale: ASan on the windowed host runs ~13 s per
+// frame here, so the 20 000-object run under it was abandoned. The evidence is that
+// every submit counter is byte-identical serial vs parallel at 1 k / 5 k / 20 k /
+// 50 k — and those counters depend on every matrix, since culling reads them — plus
+// a debug assert on the slice arithmetic. A TSan lane over a scene this size is
+// still worth having.
 //
 // Two properties worth not breaking:
 //   * Bounds are COPIED into the item, not read through the Mesh during culling.
@@ -40,16 +71,29 @@
 //     outlives its world is a crash, not a leak.
 #include "render/renderer.h"
 
+#include <cassert>
 #include <cmath>
+#include <cstring>   // memmove, for the compaction pass
 
 #include <bx/math.h>
 
 #include "core/profiler.h"
+#include "runtime/jobs/jobs.h"
 #include "core/transform_utils.h"        // getWorldMatrixLerp
 #include "render/mesh.h"
 #include "render/material.h"
 #include "render/texture.h"
 #include "render/world/frustum.h"        // shared frustum-plane extraction
+
+namespace {
+// Items per job. Sized so one chunk is comfortably more than the ~10 µs the job
+// facade asks for (measured ~0.3 µs per item, so 512 items is ~150 µs), while
+// still giving a 20 000-object scene enough chunks to spread over every core.
+constexpr uint32_t kExtractGrain = 512;
+// Below this, threading loses: the parallelFor round trip costs more than the
+// work. MEASURED — see the scaling table in this file's header.
+constexpr uint32_t kExtractParallelMin = 2048;
+} // namespace
 
 RenderView Renderer::buildView(flecs::world& world, const float view[16],
                                const float proj[16], const RenderTarget& target,
@@ -72,7 +116,13 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
 
     // Everything about an item EXCEPT its world matrix, which is the only part
     // that differs between the parentless and parented sets.
-    auto extractItem = [&](flecs::entity e, const MeshRenderer& mr,
+    //
+    // Takes no entity — deliberately. Every component it needs arrives from the
+    // query, so this reads COMPONENT DATA and nothing else. That is what makes
+    // the parentless path safe to run off the main thread (see the parallel
+    // extraction below); an ECS handle in here would put flecs lookups on worker
+    // threads, which is a different and much harder safety argument.
+    auto extractItem = [&](const MeshRenderer& mr, const SkinnedMesh* skin,
                            RenderItem& it) -> bool {
         const Mesh* mesh = m_assets->getMesh(mr.mesh);
         if (!mesh) return false;
@@ -92,8 +142,10 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
             it.boundsSize   = mesh->boundsSize();
         }
 
-        // Skinned mesh: pass the bone palette to the pipeline
-        const SkinnedMesh* skin = e.try_get<SkinnedMesh>();
+        // Skinned mesh: pass the bone palette to the pipeline. Another optional
+        // query term rather than a try_get — worth ~1.4 ms per frame at 20 000
+        // objects, because skinned and static entities live in different
+        // archetypes and the query already knows which is which.
         if (skin && skin->hasSkinMatrices && m_skeletons) {
             const Skeleton* skel = m_skeletons->get(skin->skeleton);
             if (skel) {
@@ -107,19 +159,34 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     // Parentless: the local matrix IS the world matrix. Zero component lookups —
     // Transform, MeshRenderer and the optional PrevTransform all arrive from the
     // query, resolved once per archetype instead of once per entity.
-    auto extractFlat = [&](flecs::entity e, const Transform& tr,
-                           const MeshRenderer& mr, const PrevTransform* prev) {
-        RenderItem it;
-        if (!extractItem(e, mr, it)) return;
-        localMatrixLerp(tr, prev, m_simAlpha, it.model.m);
-        m_items.push_back(it);
+    // ── The parentless path, as a chunk of contiguous component arrays ──────
+    // Writes straight into m_items at a reserved offset instead of push_back, so
+    // chunks are independent and can run on different threads. Returns how many
+    // it wrote, which is <= count when an item's mesh is missing.
+    auto extractChunk = [&](ExtractChunk& c) {
+        // The one thing that would corrupt memory rather than just render wrong:
+        // a chunk writing past its reserved slice. Cheap enough to keep in debug,
+        // and this is the invariant every worker thread depends on being disjoint.
+        assert(c.outBegin + c.count <= m_items.size());
+        RenderItem* out = m_items.data() + c.outBegin;
+        uint32_t n = 0;
+        for (uint32_t i = 0; i < c.count; ++i) {
+            RenderItem& it = out[n];
+            it = RenderItem{};
+            if (!extractItem(c.mr[i], c.skin ? &c.skin[i] : nullptr, it)) continue;
+            localMatrixLerp(c.tr[i], c.prev ? &c.prev[i] : nullptr,
+                            m_simAlpha, it.model.m);
+            ++n;
+        }
+        c.written = n;
     };
     // Parented: walk the chain. Correctness over speed — a child's world matrix
     // genuinely depends on ancestors that this query does not hand us.
     auto extractChild = [&](flecs::entity e, const Transform& tr,
-                            const MeshRenderer& mr, const PrevTransform* prev) {
+                            const MeshRenderer& mr, const PrevTransform* prev,
+                            const SkinnedMesh* skin) {
         RenderItem it;
-        if (!extractItem(e, mr, it)) return;
+        if (!extractItem(mr, skin, it)) return;
         getWorldMatrixLerpFrom(e, tr, prev, m_simAlpha, it.model.m);
         m_items.push_back(it);
     };
@@ -143,19 +210,99 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         m_lights.push_back(li);
     };
 
+    // Slice every matching archetype into job-sized ranges. Serial, and cheap:
+    // this walks TABLES, not entities — 20 000 objects sharing one mesh is a
+    // single table, hence a few dozen chunks rather than 20 000 iterations.
+    auto collectChunks = [&](ItemQuery& q) {
+        m_chunks.clear();
+        uint32_t total = 0;
+        q.run([&](flecs::iter& it) {
+            while (it.next()) {
+                const uint32_t n = (uint32_t)it.count();
+                if (n == 0) continue;
+                auto trF = it.field<const Transform>(0);
+                auto mrF = it.field<const MeshRenderer>(1);
+                const Transform*    tr = &trF[0];
+                const MeshRenderer* mr = &mrF[0];
+                // Optional terms are absent for a whole ARCHETYPE, never per
+                // entity — which is exactly why they cost nothing to read.
+                const PrevTransform* prev = it.is_set(2)
+                    ? &it.field<const PrevTransform>(2)[0] : nullptr;
+                const SkinnedMesh* skin = it.is_set(3)
+                    ? &it.field<const SkinnedMesh>(3)[0] : nullptr;
+
+                for (uint32_t off = 0; off < n; off += kExtractGrain) {
+                    const uint32_t c = n - off < kExtractGrain ? n - off
+                                                              : kExtractGrain;
+                    m_chunks.push_back(ExtractChunk{
+                        tr + off, mr + off,
+                        prev ? prev + off : nullptr,
+                        skin ? skin + off : nullptr,
+                        c, total, 0 });
+                    total += c;
+                }
+            }
+        });
+        return total;
+    };
+
     m_items.clear();
     m_lights.clear();
+
+    ItemQuery* flatQ  = nullptr;
+    ItemQuery* childQ = nullptr;
     if (&world == m_editorWorld) {              // editor world: cached queries
-        m_itemQuery.each(extractFlat);
-        m_childItemQuery.each(extractChild);
-        m_lightQuery.each(extractLight);
+        flatQ  = &m_itemQuery;
+        childQ = &m_childItemQuery;
     } else {                                    // Play snapshot: cached per world
-        m_gameItemQuery.get(world, [](auto& b) {
-            b.without(flecs::ChildOf, flecs::Wildcard); }).each(extractFlat);
-        m_gameChildItemQuery.get(world, [](auto& b) {
-            b.with(flecs::ChildOf, flecs::Wildcard); }).each(extractChild);
-        m_gameLightQuery.get(world).each(extractLight);
+        flatQ = &m_gameItemQuery.get(world, [](auto& b) {
+            b.without(flecs::ChildOf, flecs::Wildcard); });
+        childQ = &m_gameChildItemQuery.get(world, [](auto& b) {
+            b.with(flecs::ChildOf, flecs::Wildcard); });
     }
+
+    // Parentless items: sized up front, then filled in parallel.
+    const uint32_t flatTotal = collectChunks(*flatQ);
+    if (flatTotal) {
+        m_items.resize(flatTotal);
+        const bool parallel = jobs::initialized()
+                           && flatTotal >= kExtractParallelMin
+                           && m_chunks.size() > 1;
+        // ONE body either way. A separate serial implementation would be the
+        // version every test exercises and the parallel one the version that
+        // ships — the two would drift, and the drift would be invisible.
+        if (parallel) {
+            jobs::parallelFor("Extract.chunk", (uint32_t)m_chunks.size(), 1,
+                [&](uint32_t begin, uint32_t end) {
+                    for (uint32_t k = begin; k < end; ++k) extractChunk(m_chunks[k]);
+                });
+        } else {
+            for (auto& c : m_chunks) extractChunk(c);
+        }
+
+        // Compact away the gaps left by items whose mesh was missing. Skipped
+        // entirely when nothing was dropped, which is every normal frame.
+        uint32_t write = m_chunks[0].written;
+        bool gaps = false;
+        for (std::size_t k = 1; k < m_chunks.size(); ++k) {
+            const ExtractChunk& c = m_chunks[k];
+            if (write != c.outBegin) {
+                gaps = true;
+                std::memmove(m_items.data() + write, m_items.data() + c.outBegin,
+                             c.written * sizeof(RenderItem));
+            }
+            write += c.written;
+        }
+        (void)gaps;
+        m_items.resize(write);
+    }
+
+    // Parented items and lights stay serial: they need an entity handle for the
+    // ancestor walk, and they are a small minority of a scene. Appended after
+    // the parallel block, so nothing races with the resize above.
+    childQ->each(extractChild);
+    if (&world == m_editorWorld) m_lightQuery.each(extractLight);
+    else                        m_gameLightQuery.get(world).each(extractLight);
 
     rv.items   = { m_items.data(),  m_items.size() };
     rv.lights  = { m_lights.data(), m_lights.size() };

@@ -176,8 +176,11 @@ trigger that would revisit it:
   explicit dependency declarations for simplicity. Misuse is mitigated by
   lifecycle guards (init/attach/tick order is enforced with loud errors).
 - **Single-threaded frame orchestration** — Jolt parallelizes internally,
-  asset decode is off-thread; the frame itself is sequential. Trigger:
-  the planned shared job system (flecs set_threads + engine::jobs).
+  asset decode is off-thread; the frame itself is mostly sequential. PARTIALLY
+  RETIRED 2026-08-04: renderer extraction now runs on `engine::jobs`
+  (`jobs::parallelFor` over archetype chunks — see `src/render/renderer/extract.cpp`),
+  which was this tradeoff's stated trigger. The rest of the frame is still
+  sequential. Next candidate is `Sim.prevSnapshot`, below.
 - **Snapshot play mode via full serialization** — editor-only cost.
   Trigger: noticeable Play-button latency on large scenes.
 - **Input singletons + single window** — InputSystem/InputMap are global,

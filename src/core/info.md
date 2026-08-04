@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-01
+verified: 2026-08-04
 covers:
   - src/core/
 tests:
@@ -21,6 +21,21 @@ include renderer, ECS, or editor headers.
   slots. Slot 0 is reserved as the null handle in every registry.
 - **`transform.h` / `transform_utils.h`** — position/rotation(quat)/scale
   component + matrix composition helpers (bx conventions, row-major).
+  `Transform::getMatrix` writes the SRT matrix directly rather than composing
+  it with two `bx::mtxMul`s: same 16 floats, but the multiply form spent 128
+  multiplies computing them, three quarters against the structural zeros of a
+  diagonal S and a near-identity T. It is the most-called function in the
+  engine, and it was the bulk of the renderer's extraction cost at 20 000
+  objects. Bit-exact equivalence to the two-multiply reference is asserted over
+  randomised transforms in `tests/extract_partition_test.cpp` — including
+  negative, non-uniform and zero scale.
+  `getMatrix`'s standing contract is unchanged and load-bearing: `m[12..14]`
+  equals `position` exactly, whatever the scale or rotation, which is how the
+  gizmo reads position back out.
+  `localMatrixLerp` / `getWorldMatrixLerpFrom` take components the caller
+  already holds; the entity-only `getWorldMatrixLerp` remains for callers that
+  only have an entity. Passing them in rather than looking them up is worth
+  several ms per frame at scene scale — see `src/render/issues.md` R14.
 - **`math_types.h`** — small shared math types.
 - **`entity_id_util.h`** — stable entity id helpers for serialization.
 - **`logger.h`** — LOG_INFO/WARN/ERROR/SUCCESS → stdout + editor console.

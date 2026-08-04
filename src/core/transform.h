@@ -25,39 +25,46 @@ struct Transform {
     // Compose into a 4x4 model matrix in bgfx row-major convention.
     //
     // Standard SRT order: vertex is first scaled, then rotated, then
-    // translated. In matrix form for row vectors: out = S * R * T.
+    // translated. In matrix form for row vectors: out = S * R * T. After it,
+    // the translation row (m[12..14]) equals position exactly, independent of
+    // scale or rotation — the property that lets the gizmo read position
+    // straight out of those three floats.
     //
-    // We build this manually because:
-    //   - bx::mtxSRT takes Euler angles, not a quaternion
-    //   - bx::mtxFromQuaternion(out, q, t) bakes translation INTO the
-    //     rotation result in a way that combines weirdly with scale
-    //     (would scale the translation too)
+    // WRITTEN OUT DIRECTLY, not as bx::mtxMul(bx::mtxMul(S, R), T). Both forms
+    // give the same 16 floats; the multiply form spends 128 multiplies and
+    // 96 adds computing them, and three quarters of that arithmetic is against
+    // structural zeros and ones — S is diagonal and T is the identity with one
+    // row replaced. This is the most-called function in the engine (every
+    // entity, every frame, plus physics sync, animation and gizmos), and it was
+    // measurably expensive: it is the bulk of the extraction pass's remaining
+    // cost at 20 000 objects.
     //
-    // So: build R alone, build S, build T, multiply in order S*R*T.
-    // After this composition, the matrix's translation row (m[12..14])
-    // equals position.{x,y,z} exactly — independent of scale or rotation.
-    // That property is what lets the gizmo extract position by reading
-    // those three floats directly.
+    // The algebra, so the constants below are checkable rather than magic. With
+    // row vectors, S = diag(sx, sy, sz, 1) scales R's ROWS: (S*R)[i][j] =
+    // s_i * R[i][j]. Multiplying that by T then leaves rows 0..2 untouched
+    // (their 4th element is 0, so T's translation row contributes nothing) and
+    // replaces row 3 with T's, which is position. Hence: scale each rotation
+    // row, drop position in the last row, done.
+    //
+    // Equivalence to the reference two-multiply form is asserted over randomised
+    // transforms in tests/extract_partition_test.cpp — it is not an eyeballed
+    // refactor.
     void getMatrix(float out[16]) const {
-        // Pure rotation matrix from the quaternion. mtxFromQuaternion's
-        // single-arg overload writes the rotation with a zero translation row.
-        float rotMtx[16];
-        bx::mtxFromQuaternion(rotMtx, rotation);
+        // Rotation only. The single-argument overload writes a zero translation
+        // row, which is why the rows below can be scaled independently.
+        float r[16];
+        bx::mtxFromQuaternion(r, rotation);
 
-        float scaleMtx[16];
-        bx::mtxScale(scaleMtx, scale.x, scale.y, scale.z);
+        out[ 0] = r[ 0] * scale.x; out[ 1] = r[ 1] * scale.x;
+        out[ 2] = r[ 2] * scale.x; out[ 3] = 0.0f;
 
-        // SR = S * R
-        float sr[16];
-        bx::mtxMul(sr, scaleMtx, rotMtx);
+        out[ 4] = r[ 4] * scale.y; out[ 5] = r[ 5] * scale.y;
+        out[ 6] = r[ 6] * scale.y; out[ 7] = 0.0f;
 
-        // out = SR with translation row set to position. We can't simply
-        // multiply by a translation matrix because in row-vector convention
-        // S*R*T puts T's translation row into m[12..14] of the result —
-        // exactly what we want. Build T explicitly and multiply.
-        float transMtx[16];
-        bx::mtxTranslate(transMtx, position.x, position.y, position.z);
+        out[ 8] = r[ 8] * scale.z; out[ 9] = r[ 9] * scale.z;
+        out[10] = r[10] * scale.z; out[11] = 0.0f;
 
-        bx::mtxMul(out, sr, transMtx);
+        out[12] = position.x; out[13] = position.y; out[14] = position.z;
+        out[15] = 1.0f;
     }
 };

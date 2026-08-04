@@ -140,23 +140,46 @@ private:
     //            "no parent" for every entity in a flat scene
     //   ~1.5 ms  try_get<Transform>, for what the query just handed us
     //   ~6.3 ms  try_get<PrevTransform> plus the interpolation
+    //   ~1.4 ms  try_get<SkinnedMesh>, also now an optional term
     //
     // So: the parentless set (the overwhelming majority of scene content) takes
     // a path that never asks about parents, and nothing re-looks-up a component
     // the iteration already has. Together the two queries cover exactly what the
     // single query did — a parented entity still gets its full ancestor walk.
     using ItemQuery = flecs::query<const Transform, const MeshRenderer,
-                                   const PrevTransform*>;
+                                   const PrevTransform*, const SkinnedMesh*>;
     ItemQuery m_itemQuery;      // editor, parentless
     ItemQuery m_childItemQuery; // editor, parented
     flecs::query<const Transform, const Light> m_lightQuery;     // editor world
-    WorldQueryCache<const Transform, const MeshRenderer, const PrevTransform*>
-        m_gameItemQuery;                                         // sim, parentless
-    WorldQueryCache<const Transform, const MeshRenderer, const PrevTransform*>
-        m_gameChildItemQuery;                                    // sim, parented
+    WorldQueryCache<const Transform, const MeshRenderer, const PrevTransform*,
+                    const SkinnedMesh*> m_gameItemQuery;         // sim, parentless
+    WorldQueryCache<const Transform, const MeshRenderer, const PrevTransform*,
+                    const SkinnedMesh*> m_gameChildItemQuery;    // sim, parented
     WorldQueryCache<const Transform, const Light> m_gameLightQuery;  // sim world
     std::vector<RenderItem> m_items;
     std::vector<LightItem>  m_lights;
+
+    // ── Parallel extraction scratch ─────────────────────────────────────────
+    // One archetype's component arrays, sliced to a job-sized range. Extraction
+    // collects these serially (a handful of tables — cheap) and then processes
+    // them on the job pool, because a chunk is CONTIGUOUS component data with no
+    // ECS handle in it: that is what makes the work safe off the main thread.
+    //
+    // `outBegin` is assigned in table order so the output array comes out in the
+    // same order a serial pass would produce — the sort key does not depend on
+    // it, but a stable order means the submit counters are comparable run to run.
+    // `written` is per-chunk because an item whose mesh is missing produces
+    // nothing, so a chunk can write fewer items than it read.
+    struct ExtractChunk {
+        const Transform*     tr   = nullptr;
+        const MeshRenderer*  mr   = nullptr;
+        const PrevTransform* prev = nullptr;   // null: absent in this archetype
+        const SkinnedMesh*   skin = nullptr;   // null: absent in this archetype
+        uint32_t count    = 0;
+        uint32_t outBegin = 0;
+        uint32_t written  = 0;
+    };
+    std::vector<ExtractChunk> m_chunks;   // reused for capacity across frames
 
     bgfx::ViewId        m_viewCursor    = 5; // first free view past reserved 0..4
     bgfx::TextureHandle m_flatNormalTex = BGFX_INVALID_HANDLE;

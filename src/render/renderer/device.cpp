@@ -131,10 +131,12 @@ bool Renderer::init(void* nwh, int width, int height,
 
     // Partitioned on ChildOf — see the declarations in renderer.h for why.
     m_itemQuery = editorWorld.query_builder<const Transform, const MeshRenderer,
-                                            const PrevTransform*>()
+                                            const PrevTransform*,
+                                            const SkinnedMesh*>()
                       .without(flecs::ChildOf, flecs::Wildcard).build();
     m_childItemQuery = editorWorld.query_builder<const Transform, const MeshRenderer,
-                                                 const PrevTransform*>()
+                                                 const PrevTransform*,
+                                                 const SkinnedMesh*>()
                       .with(flecs::ChildOf, flecs::Wildcard).build();
     m_lightQuery = editorWorld.query_builder<const Transform, const Light>().build();
 
