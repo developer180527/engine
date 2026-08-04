@@ -68,6 +68,12 @@ struct SerdeContext {
     AssetService*             assetService = nullptr;
 
     ImporterRegistry*         importers   = nullptr;     // disk load: glTF (sync)
+
+    // Load: id-collision index. Optional, but a loader creating many entities
+    // MUST set it — createEntity's fallback is findById, which is O(n) and made
+    // scene load quadratic (97.6% of a 22 s load over 50 000 entities). One-off
+    // callers like undo can leave it null.
+    EntityIdIndex*            idIndex     = nullptr;
     AssetStorage*             storage      = nullptr;     // disk load: import target
     PrimitiveLibrary*         primitives   = nullptr;     // disk load: primitive shortcut
     std::vector<PendingMesh>* pendingAsync = nullptr;     // disk load: Assimp queue
@@ -432,7 +438,17 @@ inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
                                   SerdeContext& ctx, IdPolicy policy) {
     flecs::entity e = w.entity();                       // anonymous
     uint64_t id = (policy == IdPolicy::Preserve) ? je.value("id", (uint64_t)0) : 0;
-    if (id == 0 || findById(w, id).is_alive()) {        // dedupe: never silently alias
+    // Dedupe: never silently alias an id that is already live. Through the index
+    // when the caller supplied one (O(1)); otherwise the O(n) scan, which is only
+    // acceptable for one-off callers — see EntityIdIndex.
+    if (ctx.idIndex) {
+        const uint64_t fresh = ctx.idIndex->unique(id);
+        if (id != 0 && fresh != id)
+            LOG_WARN("Scene", "EntityId %llu already live — reassigning",
+                     (unsigned long long)id);
+        id = fresh;
+        ctx.idIndex->add(id, e);
+    } else if (id == 0 || findById(w, id).is_alive()) {
         if (id != 0) LOG_WARN("Scene", "EntityId %llu already live — reassigning",
                               (unsigned long long)id);
         do { id = generateEntityId(); } while (findById(w, id).is_alive());

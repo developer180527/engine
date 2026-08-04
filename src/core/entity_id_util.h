@@ -1,6 +1,7 @@
 #pragma once
 #include <flecs.h>
 #include <random>
+#include <unordered_map>
 #include <vector>
 #include "components/entity_id.h"
 #include "components/name.h"
@@ -38,8 +39,47 @@ inline void assignMissingIds(flecs::world& w) {
     for (auto e : need) e.set<EntityId>({ generateEntityId() });
 }
 
-// Resolve an entity by stable id. O(n) — used by load (one pass) and undo
-// (infrequent), not per-frame.
+// ── EntityIdIndex — the thing to use instead of findById in a LOOP ──────────
+//
+// findById below is O(n). Its comment used to say "used by load (one pass)", and
+// that was the bug: scene load called it PER ENTITY as a collision check, so
+// loading n entities cost O(n^2). Sampling a 50 000-object load put **97.6% of the
+// whole 22 seconds** inside findById, reached from EntitySerde::createEntity.
+//
+// Build this once per load, then ask it. Seeded from the world so pre-existing
+// entities still collide, and inserted into as entities are created so ids
+// assigned within one load collide with each other too — both of which the
+// per-entity findById gave for free and which a naive map would lose.
+struct EntityIdIndex {
+    std::unordered_map<uint64_t, flecs::entity> map;
+
+    // One query over the world. Call before the create loop.
+    void build(flecs::world& w) {
+        map.clear();
+        w.query_builder<const EntityId>().build()
+            .each([&](flecs::entity e, const EntityId& eid) {
+                if (eid.value) map.emplace(eid.value, e);
+            });
+    }
+    bool taken(uint64_t id) const {
+        if (id == 0) return true;                  // 0 is never a valid id
+        auto it = map.find(id);
+        return it != map.end() && it->second.is_alive();
+    }
+    void add(uint64_t id, flecs::entity e) { if (id) map[id] = e; }
+
+    // The wanted id if it is free, otherwise a freshly generated free one.
+    // Returns 0 never.
+    uint64_t unique(uint64_t wanted) {
+        uint64_t id = wanted;
+        while (taken(id)) id = generateEntityId();
+        return id;
+    }
+};
+
+// Resolve an entity by stable id. O(n) — fine for a ONE-OFF lookup (undo, an
+// editor click). NEVER call it in a loop over entities: use EntityIdIndex, or the
+// loop is quadratic. See the note above.
 inline flecs::entity findById(flecs::world& w, uint64_t id) {
     if (id == 0) return flecs::entity{};
     flecs::entity found{};

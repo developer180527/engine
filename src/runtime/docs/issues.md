@@ -273,7 +273,7 @@ If a caller holds a `JobHandle` across a `pumpMain()` call that happens to run a
 
 ## High
 
-### H.0b — scene LOAD, not the frame, is what limits scene size (MEASURED 2026-08-05)
+### H.0b — ✅ FIXED — scene load was O(n²): a full ECS query per entity created
 Bisected with real cooked assets (`scripts/gen_fuzz_scene.py`, Medieval Village
 MegaKit, 176 cooked meshes), separating boot+load from per-frame cost by timing
 `--frames 1` against `--frames 11`:
@@ -299,6 +299,57 @@ created, and its per-key lookups are string comparisons), per-entity archetype m
 from setting components one at a time, and asset resolution per entity. A sampling
 profiler on a `--frames 1` run of the 50 k scene would settle it in one shot — that is
 the next step, not more speculation.
+
+**ROOT-CAUSED AND FIXED, same day, by sampling instead of guessing.** `sample` on a
+`--frames 1` run put **97.6% of the entire load** in one place:
+
+```
+main -> SceneSerializer::loadAsync
+  -> EntitySerde::createEntity            9075 / 9294 samples
+    -> findById(flecs::world&, uint64_t)  9045   <- entity_id_util.h:47
+      -> flecs::iterable<EntityId>::each  9033
+```
+
+`createEntity` called `findById` **per entity** as an id-collision check, and
+`findById` is a full ECS query over every entity carrying `EntityId`. Creating entity
+*k* scanned the *k* already created — n×O(n). `findById`'s own comment said "used by
+load (one pass)", and that assumption was the bug. The same pattern was in
+`scene_service.cpp`'s cooked-scene loader, which ironically already built an
+`id -> entity` map as it went and just didn't use it for the check.
+
+Fixed with `EntityIdIndex` (core/entity_id_util.h): built once per load with a single
+query, seeded from the world so pre-existing entities still collide, and inserted into
+as entities are created so ids assigned *within* one load collide with each other too
+— both properties the per-entity scan gave for free and a naive map would lose.
+Threaded through `SerdeContext::idIndex`; `createEntity` falls back to `findById` when
+it is absent, so one-off callers (undo, an editor click) are unaffected.
+
+| objects | load before | after | ms/entity before | after |
+|---|---|---|---|---|
+| 10 000 | 2.4 s | 1.52 s | 0.24 | 0.152 |
+| 25 000 | 7.0 s | 2.92 s | 0.28 | 0.117 |
+| 40 000 | 14.8 s | 4.17 s | 0.37 | 0.104 |
+| 50 000 | **22.0 s** | **4.78 s** | 0.44 | **0.096** |
+
+**4.6x at 50 000, and the SHAPE is the proof**: per-entity cost went from doubling
+across the range (0.24 -> 0.44) to flat-and-improving (0.152 -> 0.096, fixed costs
+amortising). A quadratic term that disappears is a stronger result than a number that
+merely got smaller.
+
+What remains is ~0.1 ms per entity of genuinely linear work — still worth attention
+eventually (nlohmann materialises the whole 27 MB document before the first entity
+exists), but it is no longer the thing that limits scene size.
+
+**AN ANOMALY THAT SURVIVED, AND AN ARTIFACT I DESTROYED.** One specific generated
+scene (`bz25000`) loads pathologically slowly — >150 s — and still did after this fix.
+It is not size (25 000 loads in 2.92 s elsewhere), not hierarchy (0% vs 15% children
+made no difference), not the project directory, not `project.json`, and not a stale
+SQLite WAL (removing it changed nothing); the DB is byte-identical in shape to a
+healthy project's. Swapping a healthy scene file into that same directory loads in
+2.77 s, which localises the cause to **that one scene FILE**. I then overwrote it
+during that very test, so the artifact is gone and cannot be diagnosed. That was
+careless — the test should have copied the suspect file aside first. If it recurs, keep
+the file.
 
 **A RETRACTION, recorded because the wrong number was quoted in a commit message.**
 An earlier session reported this scene at ">18 s per frame" with a "cliff between

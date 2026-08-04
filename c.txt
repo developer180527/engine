@@ -1,53 +1,51 @@
-fuzz: the 20k-50k cliff does not exist, retracting it, with the numbers
+scene: load was O(n^2): a full ECS query per entity created
 
-Bisected with a bounded driver (per-run timeout recorded as data, so a pathological
-size cannot eat the sweep), separating boot+load from per-frame cost by timing
---frames 1 against --frames 11:
+Sampling a --frames 1 load of a 50 000-object scene put 97.6% of the entire 22
+seconds in one place:
 
-  objects   load     ms/entity  frame
-   10 000   2.4 s    0.24      
-   20 000   4.8 s    0.24       (noise)
-   25 000   7.0 s    0.28      
-   40 000   14.8 s   0.37       67 ms
-   50 000   22.0 s   0.44       93 ms
+  main -> SceneSerializer::loadAsync
+    -> EntitySerde::createEntity            9075 / 9294 samples
+      -> findById(flecs::world&, uint64_t)  9045      <- entity_id_util.h:47
+        -> flecs::iterable<EntityId>::each  9033
 
-BOTH CURVES ARE SMOOTH. There is no discontinuity. 25 000 objects, the exact size
-that previously timed out past 150 s, load in 7 s, and 50 000 run at 93 ms per frame,
-not the >18 s per frame the previous commit message claimed.
+createEntity called findById PER ENTITY as an id-collision check, and findById is a
+full ECS query over every entity carrying EntityId. Creating entity k scanned the k
+already created, n x O(n). findById's own comment said 'used by load (one pass)', and
+that assumption was the bug. scene_service.cpp's cooked-scene loader had the same
+pattern, and ironically already built an id -> entity map as it went without using it
+for the check.
 
-RETRACTION. That figure came from runs killed by a tool timeout; contention from those
-killed processes is the likely cause, but a check for orphaned processes afterwards
-found none, so it cannot be confirmed. The honest statement is that the measurement was
-unreliable and the conclusion drawn from it was wrong. Recorded as such in
-src/runtime/docs/issues.md rather than dropped, because the wrong number was quoted in
-a commit.
+FIXED with EntityIdIndex (core/entity_id_util.h): one query up front, then O(1)
+lookups. Two properties the per-entity scan gave for free and a naive map would lose,
+it is seeded from the world so pre-existing entities still collide, AND inserted into
+as entities are created so ids assigned within one load collide with each other too.
+Threaded through SerdeContext::idIndex and used by all three loaders (JSON disk,
+memory snapshot, cooked binary); createEntity keeps findById as the fallback when no
+index is supplied, so one-off callers like undo are unaffected.
 
-A CONFOUND THAT NEARLY BECAME THE ANSWER. The generator was edited mid-sweep to fix
-"parent" -> "parentId" (SceneSerializer::restoreParents reads parentId, and an unknown
-key is silently ignored, so 15% of every scene generated before that were "children"
-that loaded as roots, and the hierarchy layer was inert with nothing saying so). That
-made 25 000 the first size with real parenting, which alone could explain a jump, and
-ChildOf being an archetype pair made "table explosion" a plausible story. Measured
-instead of believed: 25 000 objects load in 6.94 s with no children and 7.04 s with
-15% children. Hierarchy is not a factor.
+  objects   load before   after    ms/entity before  after
+   10 000   2.4 s         1.52 s   0.24              0.152
+   25 000   7.0 s         2.92 s   0.28              0.117
+   40 000   14.8 s        4.17 s   0.37              0.104
+   50 000   22.0 s        4.78 s   0.44              0.096
 
-THE REAL FINDING: scene LOAD dominates and is mildly superlinear (~N^1.35). Per-entity
-cost nearly doubles from 10 k to 50 k, so opening a 50 000-object scene takes 22
-seconds, while the whole renderer, extraction through submit, is single-digit
-milliseconds at the same sizes. 0.24 ms to create ONE entity with four components is
-already two orders of magnitude off what flecs can do, and the superlinearity sits on
-top of that.
+4.6x at 50 000, and THE SHAPE IS THE PROOF: per-entity cost went from doubling across
+the range to flat-and-improving as fixed costs amortise. A quadratic term that
+disappears is a stronger result than a number that merely got smaller. What remains is
+~0.1 ms per entity of genuinely linear work, nlohmann still materialises the whole
+27 MB document before the first entity exists, but that no longer limits scene size.
 
-Deliberately NOT diagnosed further. Candidates, none confirmed: nlohmann's DOM for a
-27 MB scene (materialised whole before the first entity is created, string-compare key
-lookups), per-entity archetype moves from setting components one at a time, and
-per-entity asset resolution. A sampling profiler on a --frames 1 run of the 50 k scene
-settles it in one shot; that is the next step rather than more speculation.
+AN ANOMALY SURVIVED, AND I DESTROYED THE ARTIFACT. One specific generated scene loads
+pathologically (>150 s) and still did after this fix. Ruled out: size (25 000 loads in
+2.92 s elsewhere), hierarchy (0% vs 15% children, 6.94 vs 7.04 s), the project
+directory, project.json, and a stale SQLite WAL, the DB is identical in shape to a
+healthy project's. Swapping a healthy scene file into that same directory loads in
+2.77 s, localising it to that one scene FILE. I then overwrote the file during that
+very test, so it cannot be diagnosed. Careless: the test should have copied the suspect
+aside first. Noted in issues.md so it is kept if it recurs.
 
-Also re-verifies the two docs the previous commit made stale, which is the doc gate
-doing its job: runtime/docs/info.md now records the mesh dedup and WHY it failed (the
-cache lived inside AsyncState, created lazily, so synchronous scene loads had none),
-and scene/info.md records that cookedPath must stay RELATIVE, with a note not to
-absolutise it again.
+src/core/info.md re-verified in the same commit rather than left to fail the docs gate:
+it is `hardened`, so staleness there is an error, and findById's contract needed the
+warning anyway, O(n), one-off lookups only, loaders use the index.
 
-51/51 ctest.
+51/51 ctest. Render submit counters unchanged.

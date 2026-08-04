@@ -89,6 +89,11 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
         size_t        idx;  // index into scene.entities
     };
     std::vector<EntityInfo> created;
+    // Collision checks go through this index, not findById: it was called per
+    // entity, and findById is a full query, so a cooked-scene load was quadratic
+    // (the same bug as the JSON path — see core/entity_id_util.h).
+    EntityIdIndex ids;
+    ids.build(m_world);
     std::unordered_map<uint64_t, flecs::entity> byId;
 
     for (size_t i = 0; i < scene.entities.size(); ++i) {
@@ -97,13 +102,15 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
 
         // Identity
         uint64_t id = se.entityId;
-        if (id == 0 || findById(m_world, id).is_alive()) {
-            if (id != 0)
+        {
+            const uint64_t fresh = ids.unique(id);
+            if (id != 0 && fresh != id)
                 LOG_WARN("SceneService", "EntityId %llu already live — reassigning",
                          (unsigned long long)id);
-            do { id = generateEntityId(); } while (findById(m_world, id).is_alive());
+            id = fresh;
         }
         e.set<EntityId>({id});
+        ids.add(id, e);
         byId[id] = e;
 
         // Name

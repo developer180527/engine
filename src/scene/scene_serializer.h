@@ -147,6 +147,12 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
     ctx.projectRoot  = projectRoot;
     ctx.assetLib     = assetLib;
 
+    // ONE query for the id index, then O(1) collision checks. Without this,
+    // createEntity falls back to findById per entity and the load is quadratic.
+    EntityIdIndex ids;
+    ids.build(ecs);
+    ctx.idIndex = &ids;
+
     for (const auto& je : scene.value("entities", nlohmann::json::array()))
         EntitySerde::createEntity(ecs, je, ctx, IdPolicy::Preserve);
 
@@ -239,6 +245,10 @@ inline void loadIntoWorld(const std::string& snapshot, flecs::world& world,
     }
     SerdeContext ctx;
     ctx.mode = SerdeMode::Memory;                       // reuse live handle ids directly
+
+    EntityIdIndex ids;                                  // see the disk path
+    ids.build(world);
+    ctx.idIndex = &ids;
 
     int count = 0;
     for (const auto& je : scene.value("entities", nlohmann::json::array())) {

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-04
+verified: 2026-08-05
 covers:
   - src/core/
 tests:
@@ -38,6 +38,14 @@ include renderer, ECS, or editor headers.
   several ms per frame at scene scale — see `src/render/issues.md` R14.
 - **`math_types.h`** — small shared math types.
 - **`entity_id_util.h`** — stable entity id helpers for serialization.
+  `findById` is O(n) and is for ONE-OFF lookups only (undo, an editor click). Loaders
+  must use **`EntityIdIndex`**: built once with a single query, then O(1) collision
+  checks. Calling `findById` per entity is what made scene load quadratic — sampling a
+  50 000-object load put 97.6% of its 22 seconds inside it, reached from
+  `EntitySerde::createEntity` (runtime issues.md H.0b, fixed 2026-08-05: 22.0 s ->
+  4.78 s, and per-entity cost stopped growing with N). The index is seeded from the
+  world AND inserted into as entities are created, so ids colliding within one load are
+  still caught.
 - **`logger.h`** — LOG_INFO/WARN/ERROR/SUCCESS → stdout + editor console.
 - **`profiler.h`** — extensible instrumenting profiler (hub + channel
   registry; timer is the first channel). `ENGINE_PROFILE_SCOPE("name")`.
