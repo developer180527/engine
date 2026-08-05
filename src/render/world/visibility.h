@@ -42,9 +42,21 @@ using ParallelForFn =
 
 // One draw, ordered. `index` refers back into RenderWorld::items — the item
 // itself is not copied, since the sort only needs the key.
+//
+// `submesh` makes a submesh RANGE a first-class draw rather than something expanded
+// inside the submit loop. kWholeMesh means "draw the mesh's whole index buffer".
+// Before this, one entry per ITEM meant submesh draws could neither batch nor dedup:
+// the sort grouped by the item's material, then submission bound A, B, C for each
+// item's own ranges, so 96 of a 176-mesh kit could never instance and material binds
+// equalled draws exactly. Expanding BEFORE the sort is what lets a range's own
+// material into the key.
+//
+// Still 16 bytes: the padding after `index` was already there.
 struct VisibleDraw {
-    uint64_t key   = 0;
-    uint32_t index = 0;
+    static constexpr uint16_t kWholeMesh = 0xFFFFu;
+    uint64_t key     = 0;
+    uint32_t index   = 0;
+    uint16_t submesh = kWholeMesh;
 };
 
 struct VisibleSet {
@@ -83,9 +95,18 @@ struct VisibleSet {
 void buildVisibleSet(const RenderWorld& world, const ViewCamera& cam,
                      VisibleSet& out, const ParallelForFn* parallel = nullptr);
 
-// Number of draws at the start of the batch run beginning at `first` — i.e.
-// how many consecutive draws share mesh AND material. Returns >= 1.
+// Number of draws at the start of the batch run beginning at `first` — i.e. how many
+// consecutive draws share mesh AND material AND the same submesh range. Returns >= 1.
 // The instancing hook: a run longer than 1 can collapse into one submit.
-std::size_t batchRunLength(const VisibleSet& set, std::size_t first);
+//
+// The submesh comparison is not optional. Two ranges of one mesh that happen to share
+// a material produce EQUAL keys (material+mesh are all the key holds) while needing
+// different index ranges — instancing them together would draw one range's indices for
+// the other's geometry.
+std::size_t batchRunLength(const std::vector<VisibleDraw>& draws, std::size_t first);
+// Convenience for the common case of asking about a VisibleSet's own list.
+inline std::size_t batchRunLength(const VisibleSet& set, std::size_t first) {
+    return batchRunLength(set.draws, first);
+}
 
 } // namespace rworld

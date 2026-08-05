@@ -102,6 +102,13 @@ inline uint64_t opaqueKeyBase(uint32_t materialKey, uint32_t meshKey) {
                | ((uint64_t)(meshKey & 0x1FFFFFu) << 24);
 }
 
+// Re-key an existing draw onto a different material without recomputing depth: the
+// depth code is already quantised, so it is ORed straight back on. Used when submesh
+// ranges are expanded into their own draws and each takes its range's material.
+inline uint64_t withOpaqueDepthCode(uint64_t base, uint32_t depthCode) {
+    return base | (uint64_t)(depthCode & 0xFFFFFFu);
+}
+
 inline uint64_t withOpaqueDepth(uint64_t base, float depth01) {
     if (depth01 < 0.0f) depth01 = 0.0f;
     if (depth01 > 1.0f) depth01 = 1.0f;

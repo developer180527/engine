@@ -1,48 +1,61 @@
-render: implement R7 material-bind dedup, and measure it at zero
+render: submesh-granular visible sets, 3067 draws + 534 refused becomes 299
 
-R7 said materialBinds == draws means no dedup is happening. Implemented, and measured
-at EXACTLY zero benefit on real content. The negative result is the valuable part, so
-it is recorded rather than quietly shipped as a win.
+R17 named this as the prerequisite for both instancing and material-bind dedup on real
+content. VisibleDraw now carries a submesh ordinal, ranges are expanded into their own
+draws BEFORE the sort, and each range's key holds ITS OWN material.
 
-  scene                      draws                      material binds
-  5 000 real MegaKit props   2 869 (2 811 submesh)      2 869 , not one hit
-  20 000 cubes               1                          1
+50 000 real cooked props: the case that previously could not be drawn at all:
 
-WHY, AND WHY A DEEPER CACHE WOULD BE A BUG. The dedup can only skip a material's
-uniform uploads when that material was bound by the IMMEDIATELY PREVIOUS draw: bgfx
-holds one set of uniform values at a time, so skipping an upload because the material
-was bound two draws ago would render it with the other material's values. One-deep is
-the only correct depth.
+                    before                     after
+  draws             3 067 + 534 REFUSED        299
+  frame             INCOMPLETE (ceiling hit)   complete, ceiling not reached
+  instanced         0 submits                  299 covering 41 571 items
+  material binds    3 067                      299
 
-One-deep cannot hit here because SUBMESHES ARE EXPANDED AT SUBMIT TIME, outside the
-visible set and outside the sort. The sort groups draws by the ITEM's material key,
-then each item loops its ranges binding a different material per range, so the bind
-sequence is A, B, C, A, B, C… With ~1.7 material groups per mesh that is every
-multi-material prop in the kit, and the single-material items that WOULD group are
-exactly the ones that instance instead and never reach the per-draw path. Zero hits is
-what the structure predicts, not a bug in the dedup.
+5 000 props: 2 869 -> 299 draws and binds; instanced 58 submits covering 966 items ->
+299 covering 4 884. Synthetic cubes unchanged at 1 draw / 1 bind, the control that
+shows expansion costs nothing when there is nothing to expand.
 
-THE PREREQUISITE IS THE SAME ONE BLOCKING INSTANCING. A visible set with one entry per
-item cannot order submesh draws, so they can neither batch nor dedup, which is also
-why 50 000 real props produced ZERO instanced submits. Both open findings are one root
-cause: submesh draws are second-class citizens of the sort. Fixing it means VisibleDraw
-addressing an (item, submesh) pair so the key can carry the range's own material, at the
-cost of a larger visible set and a sort over more entries. Worth starting from the
-measurement that 98% of draws in this scene (2 811 of 2 869) are submesh draws.
+WHERE THE EXPANSION LIVES. In the pipeline, not rworld, because that is where Mesh* is
+legal: world/ never dereferences a Mesh, and that is the whole reason culling and
+sorting are unit-testable without bgfx. Cost is one pass plus one extra radix sort over
+~1.7x the entries (Render.expand 3.8 ms at 50 k, against ~41 000 submits removed);
+content with no submeshes skips both.
 
-KEPT ANYWAY, AND NOT FOR SPEED. No performance claim is made. The change split the
-material's UNIFORM uploads from bindDrawState's per-draw encoder state, and that
-distinction was implicit and easy to get wrong: bgfx PERSISTS uniform values across
-submits but DISCARDS textures, state, transform and vertex buffer at every submit. That
-is now written down at the code. It also makes materialBinds count REAL binds rather
-than draws, so when submesh sorting lands the counter will show the win instead of
-needing a new metric.
+batchRunLength HAD TO LEARN ABOUT SUBMESHES, and this is not optional: two ranges of one
+mesh that share a material produce EQUAL keys, material and mesh are all the key holds,
+while needing different index ranges. Instancing them together would draw one range's
+indices for the other's geometry.
 
-Verified the shadow pass never touches m_uParams/m_uColorFactor/m_uTexFlags, so the
-cache cannot be invalidated across passes, and it resets at the top of every view. The
-data-driven path is deliberately NOT deduped, its uniform blocks and sampler set are
-variable-length, so caching them means caching a vector and invalidating it correctly,
-and nothing has measured it as a cost.
+SKINNED ITEMS ARE NOT EXPANDED, AND THE TEST CAUGHT IT. The first version expanded
+everything and render_pipeline_test failed immediately: one skinned item with 4 ranges
+produced 4 bone-palette uploads instead of 1, re-introducing exactly the bug R4 fixed.
+Structural, not a slip, a palette is a per-ITEM uniform relied upon to persist across
+that item's submits, and expansion scatters an item's ranges so other items' palettes
+land in between; deduping would render with the wrong bones. Skinned draws are excluded
+from instancing anyway, so expansion buys them nothing and they keep whole-item entries
+plus their submesh loop at submit. R4's invariant holds unchanged.
 
-52/52 ctest. Cube-scene submit counters unchanged. Recorded as issues.md R17.
+THE BOTTLENECK MOVED. At 50 000 real props the frame is 43.9 ms with Render 27.3, of
+which EXTRACTION is 20.5, against 2.83 for 50 000 cubes. Real content is ~7x more
+expensive per item: 176 distinct Mesh dereferences instead of one shared primitive,
+PrevTransform interpolation actually running (25% of the scene moves), and 15% of items
+taking the parented ancestor walk. Submission is no longer the wall for either content
+shape; extraction is.
+
+STILL OPEN: the shadow pass keeps the old submeshes.empty() exclusion and its inner loop
+— 322 draws with 28 instanced submits at 50 k. Out of scope to keep one change
+reviewable. It can go further than the colour pass ever can: depth-only means material
+identity is irrelevant, so a mesh's ranges could collapse into ONE draw over the whole
+index buffer, if submeshes partition it contiguously. Check that first.
+
+Also adds docs/architecture/renderer-vs-production.md, written this session to answer
+'is bgfx the bottleneck, did we make an architectural mistake' with numbers: no on both
+counts, bgfx's own draw limit is 65 535, our 4 096 guards Metal's unchecked 8 MB uniform
+scratch, and bgfx already supports compute, indirect draws and multi-threaded encoders
+that we do not use. The doc's own work list is updated in the same commit so it does not
+ship stale: item 1 is this change, and the remaining order is LOD, then indirect +
+bindless, then multi-threaded encoders.
+
+52/52 ctest. Recorded as issues.md R18.
 

@@ -390,6 +390,63 @@ written down at the code. It also makes `materialBinds` mean *real binds* rather
 *draws*, so when submesh sorting lands the counter will show the win instead of
 needing a new metric. No performance claim is made for it today.
 
+## R18. Submesh-granular visible sets ✅ FIXED — the draw wall is gone
+R17 named this as the prerequisite for both instancing and bind dedup on real content.
+Done: `VisibleDraw` now carries a `submesh` ordinal, ranges are expanded into their own
+draws BEFORE the sort, and each range's key holds ITS OWN material.
+
+**50 000 real props (the case that could not be drawn at all):**
+
+| | before | after |
+|---|---|---|
+| draws | 3 067 **+ 534 refused** | **299** |
+| frame | **INCOMPLETE** (ceiling hit) | complete, ceiling not reached |
+| instanced | 0 submits | **299 covering 41 571 items** |
+| material binds | 3 067 | **299** |
+
+5 000 props: draws 2 869 → **299**, binds 2 869 → **299**, instanced 58 submits covering
+966 items → 299 covering 4 884. Synthetic cubes unchanged (1 draw, 1 bind), which is the
+control.
+
+**Where the expansion lives, and why not in `rworld`.** In the pipeline, because that is
+where `Mesh*` is legal — `world/` never dereferences a Mesh, and that is the whole
+reason culling and sorting are unit-testable without bgfx. Doing it after the cull means
+one extra pass plus one extra radix sort over ~1.7x the entries; content with no
+submeshes skips both and uses the cull's list directly, which is why the cube numbers did
+not move. Cost at 50 k real: `Render.expand` 3.8 ms, against ~41 000 submits removed.
+
+**`batchRunLength` had to learn about submeshes, and this is not optional.** Two ranges
+of one mesh that share a material produce EQUAL keys — material and mesh are all the key
+holds — while needing different index ranges. Instancing them together would draw one
+range's indices for the other's geometry. The run predicate now compares the submesh
+ordinal as well.
+
+**SKINNED ITEMS ARE DELIBERATELY NOT EXPANDED, and the test caught it.** The first
+version expanded everything, and `render_pipeline_test` immediately failed: one skinned
+item with 4 ranges produced **4 bone-palette uploads instead of 1**, re-introducing
+exactly the bug R4 fixed. The reason is structural, not a slip — a palette is a per-ITEM
+uniform relied upon to persist across that item's submits, and expansion scatters an
+item's ranges across the sorted list so other items' palettes land in between. Deduping
+would render with the wrong bones. Since skinned draws are excluded from instancing
+anyway, expansion buys them nothing, so they keep whole-item entries and their submesh
+loop at submit. R4's invariant holds unchanged.
+
+**THE BOTTLENECK MOVED, and the new number is worse than the synthetic one suggests.**
+At 50 000 real props the frame is 43.9 ms with `Render` 27.3, of which **extraction is
+20.5 ms** — against 2.83 ms for 50 000 cubes. Real content is ~7x more expensive per item
+to extract, for three compounding reasons: 176 distinct `Mesh` objects dereferenced
+instead of one shared primitive (cache misses in `writeCullEntry`), PrevTransform
+interpolation actually running because 25% of the scene moves, and 15% of items taking
+the parented ancestor walk. Submission is no longer the wall; extraction is, for both
+content shapes.
+
+**STILL OPEN: the shadow pass.** It keeps the old `submeshes.empty()` exclusion and its
+own inner submesh loop — 322 draws with only 28 instanced submits covering 63 items at
+50 k. Deliberately out of scope here to keep one change reviewable. Note the shadow pass
+could go further than the colour pass ever can: it is depth-only, so material identity is
+irrelevant and a mesh's ranges could collapse into ONE draw over the whole index buffer —
+worth checking first that submeshes actually partition the buffer contiguously.
+
 ## Not a defect, but the thing to know before touching the pipeline
 Per-draw uniform bytes are a hard budget, not a soft cost: bgfx's Metal backend
 commits them into a fixed 8 MB buffer with no bounds check, so ~8192 draws

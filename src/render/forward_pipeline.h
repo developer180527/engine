@@ -8,6 +8,7 @@
 #include "render/render_pipeline.h"
 #include "render/world/light_packing.h"
 #include "render/world/visibility.h"
+#include "render/world/draw_sort.h"   // the expanded draw list is re-sorted here
 #include "render/shader/shader_library.h"
 #include "render/mesh.h"
 #include "render/material.h"
@@ -184,6 +185,13 @@ private:
     // once, in onAttach, because a std::function constructed per view per frame
     // would allocate in the hot path.
     rworld::ParallelForFn m_cullParallel;
+
+    // Submesh-expanded draw list: one entry per (item, range), each carrying that
+    // range's OWN material in its key, then re-sorted so ranges group across items.
+    // Only built when some visible item actually has submeshes — a scene of
+    // single-material meshes uses m_visible.draws directly and pays nothing.
+    std::vector<rworld::VisibleDraw> m_drawList;
+    std::vector<rworld::VisibleDraw> m_drawScratch;   // radix ping-pong
 
     rworld::VisibleSet m_visible;   // reused across frames for its capacity
     // Shadow-map edge length. NOT a constant any more: it is the single

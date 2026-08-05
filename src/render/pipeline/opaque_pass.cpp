@@ -56,15 +56,72 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
         m_submitStats.itemsConsidered = m_visible.consideredCount;
         m_submitStats.itemsCulled     = m_visible.culledCount;
 
-        // Runs of consecutive draws sharing mesh AND material. Counted from the
-        // sorted set BEFORE submitting, because that is what instancing would
-        // collapse: draws - batchRuns is the saving, stated as a number rather
-        // than assumed (audit R5).
-        for (std::size_t i = 0; i < m_visible.draws.size(); ) {
-            i += rworld::batchRunLength(m_visible, i);
+        } // Render.cull
+
+        // ── Expand submesh ranges into their own draws ──────────────────────
+        // The cull produces one draw per ITEM. A multi-material mesh needs one
+        // draw per range, and each range must carry ITS OWN material in the key —
+        // otherwise the sort groups by the item's material, submission binds
+        // A,B,C per item, and neither instancing nor bind dedup can ever apply.
+        //
+        // Done here rather than in rworld because this is where Mesh* is legal:
+        // world/ is deliberately GPU-free and never dereferences a Mesh, which is
+        // what makes culling and sorting unit-testable. The cost is one pass plus
+        // one extra radix sort over ~1.7x the entries on real content, and ZERO on
+        // content without submeshes — that case skips both and uses the cull's
+        // list as-is.
+        const std::vector<rworld::VisibleDraw>* drawList = &m_visible.draws;
+        { ENGINE_PROFILE_SCOPE("Render.expand");
+          // SKINNED items are deliberately NOT expanded. Their bone palette is a
+          // per-ITEM uniform (4.7 KB for 73 bones), uploaded once per item and
+          // relied upon to persist across that item's submits — audit R4. Expanding
+          // them scatters their ranges across the sorted list, so other items'
+          // palettes land in between and each range needs its own re-upload: the
+          // exact regression R4 fixed, re-introduced. Expansion buys them nothing
+          // anyway, since skinned draws are excluded from instancing.
+          auto expandable = [&](const RenderItem& it) {
+              return !it.mesh->submeshes.empty()
+                  && !(it.boneMatrices != nullptr && it.boneCount > 0);
+          };
+          bool anySub = false;
+          for (const auto& d : m_visible.draws)
+              if (expandable(v.items[d.index])) { anySub = true; break; }
+          if (anySub) {
+              m_drawList.clear();
+              m_drawList.reserve(m_visible.draws.size() * 2);
+              for (const auto& d : m_visible.draws) {
+                  const RenderItem& it = v.items[d.index];
+                  if (!expandable(it)) { m_drawList.push_back(d); continue; }
+                  // Depth is already quantised in the key; only the material half
+                  // is rebuilt, so ranges of one mesh sort next to each other and
+                  // ranges sharing a material sort together across items.
+                  const uint32_t depth = rworld::depthOf(d.key);
+                  uint16_t si = 0;
+                  for (const auto& sub : it.mesh->submeshes) {
+                      const uint32_t matKey = sub.material.valid() ? sub.material.id
+                                                                  : it.matKey;
+                      rworld::VisibleDraw e;
+                      e.key = rworld::withOpaqueDepthCode(
+                                  rworld::opaqueKeyBase(matKey, it.meshKey), depth);
+                      e.index   = d.index;
+                      e.submesh = si++;
+                      m_drawList.push_back(e);
+                  }
+              }
+              rworld::sortDraws(m_drawList, m_drawScratch);
+              drawList = &m_drawList;
+          }
+        }
+
+        // Runs of consecutive draws sharing mesh, material AND submesh range —
+        // counted over the EXPANDED list, because that is the list submission walks
+        // and therefore what instancing can actually collapse. draws - batchRuns is
+        // the saving, stated as a number rather than assumed (audit R5).
+        for (std::size_t i = 0; i < drawList->size(); ) {
+            i += rworld::batchRunLength(*drawList, i);
             ++m_submitStats.batchRuns;
         }
-        } // Render.cull
+
         ENGINE_PROFILE_SCOPE("Render.submit");
 
         // Walk RUNS, not individual draws. rworld::batchRunLength returns how
@@ -72,9 +129,9 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
         // was built so that adjacency means batchability (see world/sort_key.h),
         // and a run longer than 1 collapses into a single instanced submit.
         const bool caps = 0 != (bgfx::getCaps()->supported & BGFX_CAPS_INSTANCING);
-        for (std::size_t di = 0; di < m_visible.draws.size(); ) {
-            const rworld::VisibleDraw& d = m_visible.draws[di];
-            const std::size_t runLen = rworld::batchRunLength(m_visible, di);
+        for (std::size_t di = 0; di < drawList->size(); ) {
+            const rworld::VisibleDraw& d = (*drawList)[di];
+            const std::size_t runLen = rworld::batchRunLength(*drawList, di);
             const RenderItem& it = v.items[d.index];
             const uint64_t state = it.mesh->doubleSided
                 ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
@@ -227,11 +284,24 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
             // with the wrong shader, so those fall through to per-draw.
             const Material* runMat = it.material.valid()
                 ? ctx.materials.getMaterial(it.material) : nullptr;
+            // SUBMESHED MESHES CAN NOW INSTANCE. batchRunLength requires the whole
+            // run to share the same submesh ordinal, so every instance in the run
+            // draws the same index range with the same material — which is exactly
+            // the condition instancing needs. Before submesh expansion this had to
+            // exclude them, and that single clause is why 96 of the kit's 176 meshes
+            // never instanced.
             const bool instanceable =
                    caps && runLen > 1 && !skinned
-                && it.mesh->submeshes.empty()
                 && !(runMat && runMat->dataDriven)
                 && bgfx::isValid(m_instancedProgram);
+
+            // The index range this draw covers, and the material that owns it.
+            const bool whole = d.submesh == rworld::VisibleDraw::kWholeMesh
+                            || d.submesh >= it.mesh->submeshes.size();
+            const SubmeshRange* sub = whole ? nullptr
+                                            : &it.mesh->submeshes[d.submesh];
+            const MaterialHandle drawMat =
+                (sub && sub->material.valid()) ? sub->material : it.material;
 
             if (instanceable) {
                 const uint16_t stride = 64;               // one mat4 per instance
@@ -243,19 +313,21 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                     bgfx::allocInstanceDataBuffer(&idb, avail, stride);
                     uint8_t* dst = idb.data;
                     for (uint32_t k = 0; k < avail; ++k) {
-                        const RenderItem& ri =
-                            v.items[m_visible.draws[di + k].index];
+                        const RenderItem& ri = v.items[(*drawList)[di + k].index];
                         std::memcpy(dst, ri.model.ptr(), stride);
                         dst += stride;
                     }
                     m_instancing = true;
                     drawProgram = m_instancedProgram;
-                    bindMaterial(it.material);           // shared by the whole run
+                    bindMaterial(drawMat);               // shared by the whole run
                     bgfx::setInstanceDataBuffer(&idb);
-                    bgfx::setIndexBuffer(it.mesh->ibh);
+                    if (sub) bgfx::setIndexBuffer(it.mesh->ibh, sub->indexOffset,
+                                                  sub->indexCount);
+                    else     bgfx::setIndexBuffer(it.mesh->ibh);
                     bgfx::submit(id, drawProgram);
                     m_instancing = false;
                     ++m_submitStats.draws;
+                    if (sub) ++m_submitStats.submeshDraws;
                     ++m_submitStats.instancedDraws;
                     m_submitStats.instancedItems += avail;
                     di += avail;
@@ -265,27 +337,34 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                 // per-draw rather than dropping the objects.
             }
 
-            if (it.mesh->submeshes.empty()) {
-                drawProgram = defaultProg;
-                bindMaterial(it.material);
-                bgfx::setIndexBuffer(it.mesh->ibh);
-                bgfx::submit(id, drawProgram);
-                ++m_submitStats.draws;
-                if (skinned) ++m_submitStats.skinnedDraws;
-            } else {
-                for (const auto& sub : it.mesh->submeshes) {
+            // One draw per list entry — EXCEPT an unexpanded multi-range item, which
+            // today means a skinned one (see `expandable`). That still needs its
+            // ranges walked here, which is safe because its palette was uploaded
+            // once above and persists across these submits.
+            if (!sub && !it.mesh->submeshes.empty()) {
+                for (const auto& sm : it.mesh->submeshes) {
                     if (drawBudgetExhausted()) break;
-                    // Reset per submesh: each range picks its own material, so
-                    // a data-driven one must not leak its program to the next.
-                    drawProgram = defaultProg;
-                    bindMaterial(sub.material.valid() ? sub.material : it.material);
-                    bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
+                    drawProgram = defaultProg;   // a data-driven range must not leak
+                    bindMaterial(sm.material.valid() ? sm.material : it.material);
+                    bgfx::setIndexBuffer(it.mesh->ibh, sm.indexOffset, sm.indexCount);
                     bgfx::submit(id, drawProgram);
                     ++m_submitStats.draws;
                     ++m_submitStats.submeshDraws;
                     if (skinned) ++m_submitStats.skinnedDraws;
                 }
+                ++di;
+                continue;
             }
+
+            drawProgram = defaultProg;
+            bindMaterial(drawMat);
+            if (sub) bgfx::setIndexBuffer(it.mesh->ibh, sub->indexOffset,
+                                          sub->indexCount);
+            else     bgfx::setIndexBuffer(it.mesh->ibh);
+            bgfx::submit(id, drawProgram);
+            ++m_submitStats.draws;
+            if (sub) ++m_submitStats.submeshDraws;
+            if (skinned) ++m_submitStats.skinnedDraws;
             ++di;
         }
 

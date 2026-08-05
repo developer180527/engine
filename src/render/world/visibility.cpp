@@ -170,11 +170,12 @@ void buildVisibleSet(const RenderWorld& world, const ViewCamera& cam,
     }
 }
 
-std::size_t batchRunLength(const VisibleSet& set, std::size_t first) {
-    if (first >= set.draws.size()) return 0;
+std::size_t batchRunLength(const std::vector<VisibleDraw>& draws, std::size_t first) {
+    if (first >= draws.size()) return 0;
     std::size_t n = 1;
-    while (first + n < set.draws.size()
-           && sameBatch(set.draws[first].key, set.draws[first + n].key))
+    while (first + n < draws.size()
+           && sameBatch(draws[first].key, draws[first + n].key)
+           && draws[first].submesh == draws[first + n].submesh)
         ++n;
     return n;
 }
