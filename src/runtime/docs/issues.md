@@ -273,6 +273,45 @@ If a caller holds a `JobHandle` across a `pumpMain()` call that happens to run a
 
 ## High
 
+### H.0c — ⚠️ PARTLY FIXED — startup: what the 2.6 s actually was (PROFILED 2026-08-05)
+`sample` on `engine_host fps_shooter --frames 1`, 1 722 main-thread samples:
+
+| cost | samples | where |
+|---|---|---|
+| kit `dlopen` | 953 (55%) | `KitHost::loadKit` → `ModuleLibrary::load` → dyld `mapSegments` → `fcntl` |
+| audio device start | 585 (34%) | `AudioPlugin::onAttach` → `ma_engine_init` → `ma_device_start` → **blocked** on a CoreAudio condvar |
+| fallback glTF import | 173 (10%) | 3 stale-uuid meshes → `GltfImporter::load` → `stbi_load` |
+
+**FIXED: the audio block.** All 585 samples were a WAIT, not work — the main thread sat
+in `HALB_IOThread::StartAndWaitForState` while an audio device spun up, before the first
+frame could be drawn. Nothing on screen depends on that. `ma_engine_config::noAutoStart`
+makes `ma_engine_init` return without starting the device, and the start now runs on a
+job; `m_ready` flips only once the device is live, so a sound requested in that window
+no-ops exactly as it would if audio had failed — every entry point already checked it.
+**Startup 2.60 s → 1.16 s** (three warm runs: 1.99 first, then 1.16, 1.16).
+
+`onDetach` waits on that job before `ma_engine_uninit`, or shutdown would race a device
+coming up. Safe because `EngineRuntime::shutdown` detaches plugins BEFORE
+`jobs::shutdown()` — an ordering the runtime already relies on for Jolt's adapter.
+
+**STILL OPEN — the kit `dlopen`, now the majority of startup.** ~950 ms in dyld mapping
+one kit `.dylib`, dominated by `fcntl` (code-signature validation / page mapping), so
+most of it is not ours to optimise. Two things worth knowing: it is triggered by
+`startSimulation`, so in the EDITOR this cost moves to pressing Play rather than boot;
+and loading several kits would multiply it. Worth revisiting only with a measurement of
+a signed/unsigned or prebuilt-vs-fresh dylib, not by guessing.
+
+**NOT A BUG — the glTF fallback.** Those 173 samples are three meshes in `main.scene`
+whose uuids are absent from the registry (a stale cook), so they correctly fall back to
+the source importer. Re-cooking the project removes it; the engine is behaving as
+designed.
+
+**For context on "startup takes ages": the EDITOR is ~1.0–1.5 s warm.** What is slow is
+the FIRST launch after an engine rebuild, which re-cooks shaders and materials
+(`standard: 1 variant x 3 profiles x 2 stages = 6 shaderc invocations`) because the cook
+key includes engine state. That is the DDC working correctly, not a defect — measured
+by running the editor twice: the second run shows zero `shaderc` invocations.
+
 ### H.0b — ✅ FIXED — scene load was O(n²): a full ECS query per entity created
 Bisected with real cooked assets (`scripts/gen_fuzz_scene.py`, Medieval Village
 MegaKit, 176 cooked meshes), separating boot+load from per-frame cost by timing

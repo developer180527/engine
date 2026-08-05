@@ -12,11 +12,13 @@
 #include "runtime/runtime_context.h"
 #include "runtime/scripting/script_services.h"
 #include "miniaudio.h"
+#include "runtime/jobs/jobs.h"   // device start runs off the main thread
 
 #include <flecs.h>
 #include <unordered_map>
 #include <string>
 #include <filesystem>
+#include <atomic>
 #include <cstdio>
 
 class AudioPlugin final : public IEnginePlugin, public IAudioService {
@@ -37,20 +39,58 @@ public:
                 return mem::realloc(p, sz);
             };
         cfg.allocationCallbacks.onFree = [](void* p, void*) { mem::free(p); };
+
+        // ── The device is started OFF the main thread, deliberately ──────────
+        // Sampling engine_host startup put 585 of 1722 main-thread samples — 34%,
+        // ~536 ms — inside ma_engine_init, and all of it was BLOCKED: the stack
+        // ended in ma_device_start -> CoreAudio's HALB_IOThread::StartAndWaitForState
+        // -> a condvar wait. The main thread was not computing anything, it was
+        // waiting for an audio device to spin up before the first frame could be
+        // drawn. Nothing on screen depends on that.
+        //
+        // noAutoStart makes ma_engine_init return without starting the device; the
+        // start then happens on a job. m_ready flips only once the device is
+        // actually running, so a sound requested during that window no-ops exactly
+        // as it would have if audio had failed — every entry point already checks.
+        // Silent audio for the first fraction of a second is a better trade than a
+        // stalled boot, and this is where a game shows a logo anyway.
+        cfg.noAutoStart = MA_TRUE;
         if (ma_engine_init(&cfg, &m_engine) != MA_SUCCESS) {
             LOG_ERROR("Audio", "ma_engine_init failed - audio disabled");
             m_ready = false;
             return;
         }
-        m_ready = true;
-        LOG_SUCCESS("Audio", "miniaudio engine started");
+        m_engineInit = true;
+
+        if (jobs::initialized()) {
+            m_startJob = jobs::run("audio.deviceStart", [this] {
+                if (ma_engine_start(&m_engine) != MA_SUCCESS) {
+                    LOG_ERROR("Audio", "ma_engine_start failed - audio disabled");
+                    return;
+                }
+                m_ready = true;
+                LOG_SUCCESS("Audio", "miniaudio device started (async)");
+            });
+        } else {
+            // Tools and tests without a job pool: same behaviour as before.
+            if (ma_engine_start(&m_engine) == MA_SUCCESS) {
+                m_ready = true;
+                LOG_SUCCESS("Audio", "miniaudio engine started");
+            } else {
+                LOG_ERROR("Audio", "ma_engine_start failed - audio disabled");
+            }
+        }
     }
 
     void onDetach() override {
-        if (!m_ready) return;
-        stopAll();
+        // The start job touches m_engine, so it MUST finish before uninit —
+        // otherwise shutdown races a device coming up and tears down under it.
+        if (m_startJob.valid()) { jobs::wait(m_startJob); m_startJob = {}; }
+        if (!m_engineInit) return;
+        if (m_ready) stopAll();
         ma_engine_uninit(&m_engine);
         m_ready = false;
+        m_engineInit = false;
     }
 
     // ── Simulation lifecycle ────────────────────────────────────────────
@@ -141,7 +181,10 @@ private:
     }
 
     ma_engine                                m_engine{};
-    bool                                     m_ready = false;
+    // Written by the device-start job, read by the main thread every frame.
+    std::atomic<bool>                        m_ready{false};
+    bool                                     m_engineInit = false;
+    jobs::JobHandle                          m_startJob;
     std::filesystem::path                    m_assetsRoot;
     std::unordered_map<uint32_t, ma_sound*>  m_sounds;
     uint32_t                                 m_nextHandle = 0;

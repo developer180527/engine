@@ -1,51 +1,48 @@
-scene: load was O(n^2): a full ECS query per entity created
+runtime: startup 2.60s -> 1.16s, the main thread was waiting on an audio device
 
-Sampling a --frames 1 load of a 50 000-object scene put 97.6% of the entire 22
-seconds in one place:
+Profiled rather than guessed. `sample` on engine_host fps_shooter --frames 1, 1 722
+main-thread samples:
 
-  main -> SceneSerializer::loadAsync
-    -> EntitySerde::createEntity            9075 / 9294 samples
-      -> findById(flecs::world&, uint64_t)  9045      <- entity_id_util.h:47
-        -> flecs::iterable<EntityId>::each  9033
+  953 (55%)  kit dlopen, KitHost::loadKit -> dyld mapSegments -> fcntl
+  585 (34%)  AudioPlugin::onAttach -> ma_engine_init -> ma_device_start -> BLOCKED
+  173 (10%)  3 stale-uuid meshes falling back to GltfImporter -> stbi_load
 
-createEntity called findById PER ENTITY as an id-collision check, and findById is a
-full ECS query over every entity carrying EntityId. Creating entity k scanned the k
-already created, n x O(n). findById's own comment said 'used by load (one pass)', and
-that assumption was the bug. scene_service.cpp's cooked-scene loader had the same
-pattern, and ironically already built an id -> entity map as it went without using it
-for the check.
+FIXED: THE AUDIO BLOCK. All 585 samples were a WAIT, not work, the main thread sat in
+CoreAudio's HALB_IOThread::StartAndWaitForState while an audio device spun up, before
+the first frame could be drawn. Nothing on screen depends on that.
 
-FIXED with EntityIdIndex (core/entity_id_util.h): one query up front, then O(1)
-lookups. Two properties the per-entity scan gave for free and a naive map would lose,
-it is seeded from the world so pre-existing entities still collide, AND inserted into
-as entities are created so ids assigned within one load collide with each other too.
-Threaded through SerdeContext::idIndex and used by all three loaders (JSON disk,
-memory snapshot, cooked binary); createEntity keeps findById as the fallback when no
-index is supplied, so one-off callers like undo are unaffected.
+ma_engine_config::noAutoStart makes ma_engine_init return without starting the device,
+and the start now runs on a job. m_ready flips only once the device is actually live, so
+a sound requested during that window no-ops exactly as it would have if audio had
+failed, every entry point already guarded on it. Silent audio for a fraction of a
+second beats a stalled boot, and that is where a game shows a logo anyway.
 
-  objects   load before   after    ms/entity before  after
-   10 000   2.4 s         1.52 s   0.24              0.152
-   25 000   7.0 s         2.92 s   0.28              0.117
-   40 000   14.8 s        4.17 s   0.37              0.104
-   50 000   22.0 s        4.78 s   0.44              0.096
+onDetach waits on the start job before ma_engine_uninit, or shutdown would race a device
+coming up and tear down under it. Safe because EngineRuntime::shutdown detaches plugins
+BEFORE jobs::shutdown(), verified, not assumed; it is the same ordering Jolt's job
+adapter already depends on.
 
-4.6x at 50 000, and THE SHAPE IS THE PROOF: per-entity cost went from doubling across
-the range to flat-and-improving as fixed costs amortise. A quadratic term that
-disappears is a stronger result than a number that merely got smaller. What remains is
-~0.1 ms per entity of genuinely linear work, nlohmann still materialises the whole
-27 MB document before the first entity exists, but that no longer limits scene size.
+Measured: 2.60 s -> 1.16 s (first run 1.99 s, then 1.16, 1.16).
 
-AN ANOMALY SURVIVED, AND I DESTROYED THE ARTIFACT. One specific generated scene loads
-pathologically (>150 s) and still did after this fix. Ruled out: size (25 000 loads in
-2.92 s elsewhere), hierarchy (0% vs 15% children, 6.94 vs 7.04 s), the project
-directory, project.json, and a stale SQLite WAL, the DB is identical in shape to a
-healthy project's. Swapping a healthy scene file into that same directory loads in
-2.77 s, localising it to that one scene FILE. I then overwrote the file during that
-very test, so it cannot be diagnosed. Careless: the test should have copied the suspect
-aside first. Noted in issues.md so it is kept if it recurs.
+TWO OF MY OWN GUESSES CORRECTED, recorded so they are not re-litigated:
 
-src/core/info.md re-verified in the same commit rather than left to fail the docs gate:
-it is `hardened`, so staleness there is an error, and findById's contract needed the
-warning anyway, O(n), one-off lookups only, loaders use the index.
+  I suspected the editor re-cooked shaders on every start, having seen '6 shaderc
+  invocations' in the first profile. It does not. Running the editor twice shows ZERO
+  invocations both times, that cook was a one-time cold event after my engine rebuilds,
+  because the cook key includes engine state. The DDC is working.
 
-51/51 ctest. Render submit counters unchanged.
+  The editor is ~1.0-1.5 s warm. Whatever 'takes ages' refers to, it is not the warm
+  path; the most likely candidate is the legitimate first-launch-after-rebuild re-cook.
+
+STILL OPEN: the kit dlopen is now the MAJORITY of startup, ~950 ms in dyld dominated by
+fcntl (code-signature validation / page mapping), so most of it is not ours to
+optimise. Two things worth knowing before anyone tries: it is triggered by
+startSimulation, so in the EDITOR that cost moves to pressing Play rather than boot, and
+several kits would multiply it. Revisit with a signed-vs-unsigned dylib measurement, not
+by guessing.
+
+NOT A BUG: the glTF fallback. Three main.scene meshes have uuids absent from the
+registry (a stale cook), so the source importer correctly takes over. Re-cooking the
+project removes those 173 samples.
+
+Recorded as runtime issues.md H.0c. 51/51 ctest.
