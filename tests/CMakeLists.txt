@@ -199,7 +199,13 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     engine_fuzz_target(fuzz_ddc_manifest_test ddc_manifest)
     engine_fuzz_target(fuzz_mesh_loader_test  mesh_loader)
     engine_test(import_test)
-    engine_test(residency_test)   # cooks its own fixture via MeshCooker
+    engine_test(residency_test)
+# One cooked mesh must cost ONE pair of GPU buffers. Pins the fix for a bug that
+# rendered 8% of a 50 000-entity scene: loadMesh created buffers per CALL, and bgfx's
+# pool is 4096, so the rest failed with "bgfx buffer creation failed" and nothing
+# crashed. Loads 5 000 times on purpose — past the pool — so the test reproduces the
+# original failure rather than just checking a handle is reused.
+engine_test(mesh_dedup_test)   # cooks its own fixture via MeshCooker
 endif()
 
 # ── kit lifecycle — loads the project's real combat kit mid-play ─────────────

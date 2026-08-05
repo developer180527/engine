@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-07-31
+verified: 2026-08-05
 covers:
   - src/plugins/
 tests:
@@ -38,6 +38,17 @@ Both run through the same `PluginRegistry` broadcasts.
   component schemas.
 - **`AudioPlugin`** (`audio_plugin.h` + `audio_impl.cpp`) — miniaudio
   engine; implements `IAudioService` for scripts.
+  **The device starts on a JOB, not on the main thread.** Profiling
+  `engine_host --frames 1` put 585 of 1 722 main-thread samples — ~536 ms, 34% of
+  startup — inside `ma_engine_init`, all of it BLOCKED in `ma_device_start` ->
+  CoreAudio's `HALB_IOThread::StartAndWaitForState`. The main thread was waiting for
+  an audio device before the first frame could be drawn, which nothing on screen
+  depends on. `ma_engine_config::noAutoStart` + `jobs::run` moved it off the boot
+  path (startup 2.60 s -> 1.16 s); `m_ready` flips only once the device is live, so
+  a sound requested in that window no-ops exactly as it would if audio had failed.
+  `onDetach` waits on that job before `ma_engine_uninit` — safe only because
+  `EngineRuntime::shutdown` detaches plugins BEFORE `jobs::shutdown()`. Do not
+  reorder those two.
 - **`NullPhysicsPlugin` / `NullScriptPlugin`** — stand-ins that draw a
   "not installed" editor panel; useful as minimal plugin examples.
 

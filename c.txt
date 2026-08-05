@@ -1,48 +1,40 @@
-runtime: startup 2.60s -> 1.16s, the main thread was waiting on an audio device
+tests: pin the mesh dedup, one cooked mesh, one pair of GPU buffers
 
-Profiled rather than guessed. `sample` on engine_host fps_shooter --frames 1, 1 722
-main-thread samples:
+The dedup fix was unpinned, so it could regress silently, and its failure mode is
+exactly the kind that does: nothing crashes, the scene just renders 8% of itself and
+the error text blames the files instead of the handle pool.
 
-  953 (55%)  kit dlopen, KitHost::loadKit -> dyld mapSegments -> fcntl
-  585 (34%)  AudioPlugin::onAttach -> ma_engine_init -> ma_device_start -> BLOCKED
-  173 (10%)  3 stale-uuid meshes falling back to GltfImporter -> stbi_load
+tests/mesh_dedup_test.cpp. Real cooked meshes (MeshCooker on a tiny OBJ), real
+AssetService, bgfx Noop, no project assets required, so it runs in CI.
 
-FIXED: THE AUDIO BLOCK. All 585 samples were a WAIT, not work, the main thread sat in
-CoreAudio's HALB_IOThread::StartAndWaitForState while an audio device spun up, before
-the first frame could be drawn. Nothing on screen depends on that.
+IT LOADS ONE PATH 5 000 TIMES: past BGFX_CONFIG_MAX_INDEX_BUFFERS (4096), on
+purpose. A test that loaded twice and checked the handle matched would pass against a
+broken implementation; this one reproduces the production failure.
 
-ma_engine_config::noAutoStart makes ma_engine_init return without starting the device,
-and the start now runs on a job. m_ready flips only once the device is actually live, so
-a sound requested during that window no-ops exactly as it would have if audio had
-failed, every entry point already guarded on it. Silent audio for a fraction of a
-second beats a stalled boot, and that is where a game shows a logo anyway.
+Ten assertions, three cases:
+  * the regression: 5 000 loads all succeed, all return the SAME handle, create
+    exactly one buffer pair, and leave one mesh in the registry;
+  * the negative case: a DIFFERENT cooked path gets its own handle and its own
+    buffers, so dedup is by path and not 'always return the first mesh'. Without this,
+    a constant-handle implementation passes everything above;
+  * failure isolation: a missing cooked file yields an invalid handle, allocates no
+    buffers, and does not poison a later good load of a valid path.
 
-onDetach waits on the start job before ma_engine_uninit, or shutdown would race a device
-coming up and tear down under it. Safe because EngineRuntime::shutdown detaches plugins
-BEFORE jobs::shutdown(), verified, not assumed; it is the same ordering Jolt's job
-adapter already depends on.
+MUTATION-CHECKED. Removing the dedup early-return reproduces the original bug with the
+original numbers: 907 of 5 000 handles invalid, vb 3 -> 4096 (pool capped), 4 093
+meshes in the registry, and the different-path case collapses to handle 0 as well. Six
+of ten assertions fail. It fails in the SHAPE of the real defect, not merely with
+different numbers.
 
-Measured: 2.60 s -> 1.16 s (first run 1.99 s, then 1.16, 1.16).
+Buffer counts are read after bgfx::frame(), because getStats() reflects the last
+SUBMITTED frame and destroy() is deferred to submission, the same trap that made
+render_registry_test once report a leak that did not exist.
 
-TWO OF MY OWN GUESSES CORRECTED, recorded so they are not re-litigated:
+Two doc gates fired and are handled in the same commit rather than left to break the
+docs test: runtime/docs/info.md cites this test as the pin (with the mutation numbers),
+and plugins/info.md was stale from the audio change, it now records the async device
+start and, more importantly, that onDetach waits on that job so EngineRuntime::shutdown
+must keep detaching plugins BEFORE jobs::shutdown(). Do not reorder those two.
 
-  I suspected the editor re-cooked shaders on every start, having seen '6 shaderc
-  invocations' in the first profile. It does not. Running the editor twice shows ZERO
-  invocations both times, that cook was a one-time cold event after my engine rebuilds,
-  because the cook key includes engine state. The DDC is working.
+52/52 ctest.
 
-  The editor is ~1.0-1.5 s warm. Whatever 'takes ages' refers to, it is not the warm
-  path; the most likely candidate is the legitimate first-launch-after-rebuild re-cook.
-
-STILL OPEN: the kit dlopen is now the MAJORITY of startup, ~950 ms in dyld dominated by
-fcntl (code-signature validation / page mapping), so most of it is not ours to
-optimise. Two things worth knowing before anyone tries: it is triggered by
-startSimulation, so in the EDITOR that cost moves to pressing Play rather than boot, and
-several kits would multiply it. Revisit with a signed-vs-unsigned dylib measurement, not
-by guessing.
-
-NOT A BUG: the glTF fallback. Three main.scene meshes have uuids absent from the
-registry (a stale cook), so the source importer correctly takes over. Re-cooking the
-project removes those 173 samples.
-
-Recorded as runtime issues.md H.0c. 51/51 ctest.

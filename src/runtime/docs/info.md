@@ -12,6 +12,7 @@ tests:
   - tests/script_host_test.cpp
   - tests/kit_lifecycle_test.cpp
   - tests/residency_test.cpp
+  - tests/mesh_dedup_test.cpp
   - tests/material_name_test.cpp
   - tests/input_test.cpp
   - tests/input_config_test.cpp
@@ -83,7 +84,10 @@ required.
   always have been at — textures avoided the bug only because their cache already sat
   there. Found by `scripts/gen_fuzz_scene.py`; every prior stress scene used
   `engine://primitive/cube`, one shared mesh, so nothing ever allocated a second
-  buffer pair.
+  buffer pair. Pinned by `tests/mesh_dedup_test.cpp`, which loads ONE cooked path
+  5 000 times — past bgfx's 4 096 pool — so it reproduces the original failure instead
+  of merely checking that a handle is reused: with the dedup removed it reports 907
+  invalid handles, 4 096 buffers and 4 093 registry meshes.
 - **`AsyncLoader`** (`async_loader.h/.cpp`) — legacy import path used by the
   editor for source-format assets (FBX via Assimp etc.).
 - **Input** (`input_system.h`, `input_map.h`) — polled GLFW state with
