@@ -349,6 +349,47 @@ phase again (5.4 ms at 100 k) and it is already parallel, so it is bound by stre
 RenderItems rather than by work — the next lever there is the data layout (SoA, or a
 narrower RenderItem), not more threads.
 
+## R17. R7's material-bind dedup: implemented, and it buys NOTHING yet
+R7 said `materialBinds == draws` means no dedup is happening. It is now implemented —
+and measured at **exactly zero benefit** on real content. The negative result is more
+useful than the change, so it is recorded before it is re-attempted.
+
+| scene | draws | material binds |
+|---|---|---|
+| 5 000 real MegaKit props | 2 869 (2 811 from submeshes) | **2 869 — not one hit** |
+| 20 000 cubes | 1 | 1 |
+
+**Why, and why a "better" cache would be a BUG.** The dedup can only skip a material's
+uniform uploads when the material is the one bound by the IMMEDIATELY PREVIOUS draw:
+bgfx holds a single set of uniform values at a time, so skipping an upload because that
+material was bound two draws ago would render it with the *other* material's values.
+One-deep is the only correct design.
+
+That makes it worthless for this content, because **submeshes are expanded at submit
+time, outside the visible set and outside the sort.** The sort groups draws by the
+ITEM's material key, then each item loops its own ranges binding a different material
+per range — so the actual bind sequence is A, B, C, A, B, C… and one-deep never hits.
+With ~1.7 material groups per mesh, that is every multi-material item in the kit. The
+single-material items, which *would* group, are the ones that instance instead, so they
+never reach the per-draw path at all. Zero hits is exactly what the structure predicts.
+
+**THE PREREQUISITE, and it is the same one blocking instancing.** A visible set with one
+entry per item cannot order submesh draws, so submesh draws can neither batch nor
+dedup — which is also why 50 000 real props produced ZERO instanced submits. Both
+findings are one root cause: submesh draws are second-class citizens of the sort.
+Fixing it means `VisibleDraw` addressing a (item, submesh) pair so the key can carry the
+range's own material, at the cost of a larger visible set and a sort over more entries.
+That is a real design change with a real trade-off, and it should start by measuring how
+many draws in a representative scene are submesh draws (here: 2 811 of 2 869 — 98%).
+
+**KEPT anyway, and the reason is not performance.** The change split the material's
+UNIFORM uploads from `bindDrawState`'s per-draw encoder state, and that distinction was
+previously implicit and easy to get wrong — bgfx persists uniform values across submits
+but discards textures, state, transform and vertex buffer at every submit. It is now
+written down at the code. It also makes `materialBinds` mean *real binds* rather than
+*draws*, so when submesh sorting lands the counter will show the win instead of
+needing a new metric. No performance claim is made for it today.
+
 ## Not a defect, but the thing to know before touching the pipeline
 Per-draw uniform bytes are a hard budget, not a soft cost: bgfx's Metal backend
 commits them into a fixed 8 MB buffer with no bounds check, so ~8192 draws

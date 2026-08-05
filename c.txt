@@ -1,40 +1,48 @@
-tests: pin the mesh dedup, one cooked mesh, one pair of GPU buffers
+render: implement R7 material-bind dedup, and measure it at zero
 
-The dedup fix was unpinned, so it could regress silently, and its failure mode is
-exactly the kind that does: nothing crashes, the scene just renders 8% of itself and
-the error text blames the files instead of the handle pool.
+R7 said materialBinds == draws means no dedup is happening. Implemented, and measured
+at EXACTLY zero benefit on real content. The negative result is the valuable part, so
+it is recorded rather than quietly shipped as a win.
 
-tests/mesh_dedup_test.cpp. Real cooked meshes (MeshCooker on a tiny OBJ), real
-AssetService, bgfx Noop, no project assets required, so it runs in CI.
+  scene                      draws                      material binds
+  5 000 real MegaKit props   2 869 (2 811 submesh)      2 869 , not one hit
+  20 000 cubes               1                          1
 
-IT LOADS ONE PATH 5 000 TIMES: past BGFX_CONFIG_MAX_INDEX_BUFFERS (4096), on
-purpose. A test that loaded twice and checked the handle matched would pass against a
-broken implementation; this one reproduces the production failure.
+WHY, AND WHY A DEEPER CACHE WOULD BE A BUG. The dedup can only skip a material's
+uniform uploads when that material was bound by the IMMEDIATELY PREVIOUS draw: bgfx
+holds one set of uniform values at a time, so skipping an upload because the material
+was bound two draws ago would render it with the other material's values. One-deep is
+the only correct depth.
 
-Ten assertions, three cases:
-  * the regression: 5 000 loads all succeed, all return the SAME handle, create
-    exactly one buffer pair, and leave one mesh in the registry;
-  * the negative case: a DIFFERENT cooked path gets its own handle and its own
-    buffers, so dedup is by path and not 'always return the first mesh'. Without this,
-    a constant-handle implementation passes everything above;
-  * failure isolation: a missing cooked file yields an invalid handle, allocates no
-    buffers, and does not poison a later good load of a valid path.
+One-deep cannot hit here because SUBMESHES ARE EXPANDED AT SUBMIT TIME, outside the
+visible set and outside the sort. The sort groups draws by the ITEM's material key,
+then each item loops its ranges binding a different material per range, so the bind
+sequence is A, B, C, A, B, C… With ~1.7 material groups per mesh that is every
+multi-material prop in the kit, and the single-material items that WOULD group are
+exactly the ones that instance instead and never reach the per-draw path. Zero hits is
+what the structure predicts, not a bug in the dedup.
 
-MUTATION-CHECKED. Removing the dedup early-return reproduces the original bug with the
-original numbers: 907 of 5 000 handles invalid, vb 3 -> 4096 (pool capped), 4 093
-meshes in the registry, and the different-path case collapses to handle 0 as well. Six
-of ten assertions fail. It fails in the SHAPE of the real defect, not merely with
-different numbers.
+THE PREREQUISITE IS THE SAME ONE BLOCKING INSTANCING. A visible set with one entry per
+item cannot order submesh draws, so they can neither batch nor dedup, which is also
+why 50 000 real props produced ZERO instanced submits. Both open findings are one root
+cause: submesh draws are second-class citizens of the sort. Fixing it means VisibleDraw
+addressing an (item, submesh) pair so the key can carry the range's own material, at the
+cost of a larger visible set and a sort over more entries. Worth starting from the
+measurement that 98% of draws in this scene (2 811 of 2 869) are submesh draws.
 
-Buffer counts are read after bgfx::frame(), because getStats() reflects the last
-SUBMITTED frame and destroy() is deferred to submission, the same trap that made
-render_registry_test once report a leak that did not exist.
+KEPT ANYWAY, AND NOT FOR SPEED. No performance claim is made. The change split the
+material's UNIFORM uploads from bindDrawState's per-draw encoder state, and that
+distinction was implicit and easy to get wrong: bgfx PERSISTS uniform values across
+submits but DISCARDS textures, state, transform and vertex buffer at every submit. That
+is now written down at the code. It also makes materialBinds count REAL binds rather
+than draws, so when submesh sorting lands the counter will show the win instead of
+needing a new metric.
 
-Two doc gates fired and are handled in the same commit rather than left to break the
-docs test: runtime/docs/info.md cites this test as the pin (with the mutation numbers),
-and plugins/info.md was stale from the audio change, it now records the async device
-start and, more importantly, that onDetach waits on that job so EngineRuntime::shutdown
-must keep detaching plugins BEFORE jobs::shutdown(). Do not reorder those two.
+Verified the shadow pass never touches m_uParams/m_uColorFactor/m_uTexFlags, so the
+cache cannot be invalidated across passes, and it resets at the top of every view. The
+data-driven path is deliberately NOT deduped, its uniform blocks and sampler set are
+variable-length, so caching them means caching a vector and invalidating it correctly,
+and nothing has measured it as a cost.
 
-52/52 ctest.
+52/52 ctest. Cube-scene submit counters unchanged. Recorded as issues.md R17.
 

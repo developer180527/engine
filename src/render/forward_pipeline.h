@@ -75,9 +75,30 @@ private:
     void renderShadow(const RenderView& v, RenderContext& ctx,
                       const rworld::PackedLights& lights);
 
-    void bind(const float params[4], const float factor[4],
-              bgfx::TextureHandle base, bgfx::TextureHandle norm,
-              uint64_t state, const RenderItem& it);
+    // Per-draw encoder state (textures, state, transform, vertex buffer). The
+    // material's uniforms are NOT here — see BoundMaterial.
+    void bindDrawState(bgfx::TextureHandle base, bgfx::TextureHandle norm,
+                       uint64_t state, const RenderItem& it);
+
+    // ── R7: the last FIXED-PATH material bound this pass ────────────────────
+    // Draws arrive sorted with material above mesh in the key, so consecutive
+    // draws usually share one material and re-uploading its uniforms per draw is
+    // pure waste. Only the UNIFORMS are skippable: in bgfx a uniform VALUE
+    // persists until something overwrites it, whereas setTexture/setState/
+    // setTransform/setVertexBuffer are per-draw encoder state that submit()
+    // discards — so those are re-issued every draw regardless, and skipping them
+    // would render with whatever the previous draw left bound.
+    //
+    // Reset at the top of every render() and renderShadow(): a stale entry across
+    // views would skip an upload the new view never made.
+    struct BoundMaterial {
+        uint32_t id = UINT32_MAX;        // material handle id; UINT32_MAX = none
+        bgfx::TextureHandle base = BGFX_INVALID_HANDLE;
+        bgfx::TextureHandle norm = BGFX_INVALID_HANDLE;
+        void reset() { id = UINT32_MAX; }
+        bool holds(uint32_t mid) const { return id == mid && mid != UINT32_MAX; }
+    };
+    BoundMaterial m_boundMat;
 
     // True only while submitting an instanced run — see bind() and the run loop.
     bool m_instancing = false;

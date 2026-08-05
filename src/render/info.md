@@ -49,8 +49,11 @@ tests:
 # down to 128 bytes with two write-only fields deleted (A3). Both were small, and A3
 # records why: extraction is parallel over 12 cores, so per-item savings divide by the
 # core count. The next lever is incremental extraction, not micro-optimisation.
-# R7 (material-bind dedup) is still open: materialBinds == draws on every
-# non-instanced path.
+# R7 (material-bind dedup) is IMPLEMENTED and measures zero benefit — see issues.md
+# R17. Submeshes are expanded at submit time, outside the sort, so materials cycle
+# A,B,C within every item and a one-deep cache (the only CORRECT depth, since bgfx
+# holds one uniform set at a time) never hits. Same root cause as real content
+# producing zero instanced submits: submesh draws are second-class in the visible set.
 ---
 # Render
 

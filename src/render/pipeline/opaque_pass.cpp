@@ -15,6 +15,7 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
         // shader must agree on which slot is shadowed, and only packing knows
         // the packed slot numbering (rworld::PackedLights::shadowLightIndex).
         m_submitStats.reset();   // per view; the shadow pass counts into it too
+        m_boundMat.reset();      // R7: no material carried over from another view
         const rworld::PackedLights lights = rworld::packLights(v.lights, v.ambient);
         { ENGINE_PROFILE_SCOPE("Render.shadow");
           renderShadow(v, ctx, lights); }
@@ -112,7 +113,9 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
             // its OWN material (falling back to the item's material when unset)
             // instead of the whole mesh sharing a single material.
             auto bindMaterial = [&](MaterialHandle mh) {
-                ++m_submitStats.materialBinds;   // R7: one per DRAW today
+                // Resolving the handle is cheap (a vector index) and the fixed path
+                // below needs `mat` only when it actually re-uploads; the
+                // data-driven path needs it every draw.
                 const Material* mat = mh.valid() ? ctx.materials.getMaterial(mh) : nullptr;
 
                 // ── Data-driven: a cooked .material ─────────────────────────
@@ -123,6 +126,13 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                 if (mat && mat->dataDriven && ctx.shaders) {
                     const bgfx::ProgramHandle mp = programFor(*mat, ctx);
                     if (bgfx::isValid(mp)) {
+                        // NOT deduped, deliberately: a data-driven material's
+                        // uniform blocks and sampler set are variable-length, so
+                        // caching them means caching a vector per material and
+                        // invalidating it correctly. The fixed path is what cooked
+                        // geometry uses and where the measured win is; this stays a
+                        // full bind per draw until something measures it as a cost.
+                        ++m_submitStats.materialBinds;
                         for (const auto& b : mat->blocks) {
                             if (b.values.empty()) continue;
                             const bgfx::UniformHandle u = ctx.shaders->uniform(
@@ -180,21 +190,31 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                 }
 
                 // ── Fixed path: materials embedded in cooked geometry ───────
-                const Texture*  tex = (mat && mat->hasTexture())
-                                    ? ctx.textures.getTexture(mat->baseColorTexture) : nullptr;
-                const Texture*  nm  = (mat && mat->normalMapTexture.valid())
-                                    ? ctx.textures.getTexture(mat->normalMapTexture) : nullptr;
-                const float rough = mat ? mat->roughness : 0.7f;
-                const float metal = mat ? mat->metallic  : 0.0f;
-                float params[4] = { 0.0f, rough, metal, 0.0f };
-                float texFlags[4] = { tex ? 1.0f : 0.0f, nm ? 1.0f : 0.0f, 0, 0 };
-                float factor[4] = { 1, 1, 1, 1 };
-                if (mat) { factor[0]=mat->baseColorFactor[0]; factor[1]=mat->baseColorFactor[1];
-                           factor[2]=mat->baseColorFactor[2]; factor[3]=mat->baseColorFactor[3]; }
-                const bgfx::TextureHandle base = tex ? tex->handle : ctx.whiteTex;
-                const bgfx::TextureHandle norm = nm  ? nm->handle  : ctx.flatNormalTex;
-                bgfx::setUniform(m_uTexFlags, texFlags);
-                bind(params, factor, base, norm, state, it);
+                // R7. The uniform uploads happen only when the material actually
+                // changed since the last draw; the resolved texture handles are
+                // cached alongside so an unchanged material costs no registry
+                // lookups either. The per-draw state below is re-issued always.
+                if (!m_boundMat.holds(mh.id)) {
+                    const Texture*  tex = (mat && mat->hasTexture())
+                                        ? ctx.textures.getTexture(mat->baseColorTexture) : nullptr;
+                    const Texture*  nm  = (mat && mat->normalMapTexture.valid())
+                                        ? ctx.textures.getTexture(mat->normalMapTexture) : nullptr;
+                    const float rough = mat ? mat->roughness : 0.7f;
+                    const float metal = mat ? mat->metallic  : 0.0f;
+                    float params[4] = { 0.0f, rough, metal, 0.0f };
+                    float texFlags[4] = { tex ? 1.0f : 0.0f, nm ? 1.0f : 0.0f, 0, 0 };
+                    float factor[4] = { 1, 1, 1, 1 };
+                    if (mat) { factor[0]=mat->baseColorFactor[0]; factor[1]=mat->baseColorFactor[1];
+                               factor[2]=mat->baseColorFactor[2]; factor[3]=mat->baseColorFactor[3]; }
+                    bgfx::setUniform(m_uTexFlags, texFlags);
+                    bgfx::setUniform(m_uParams, params);
+                    bgfx::setUniform(m_uColorFactor, factor);
+                    m_boundMat.id   = mh.id;
+                    m_boundMat.base = tex ? tex->handle : ctx.whiteTex;
+                    m_boundMat.norm = nm  ? nm->handle  : ctx.flatNormalTex;
+                    ++m_submitStats.materialBinds;   // now counts REAL binds
+                }
+                bindDrawState(m_boundMat.base, m_boundMat.norm, state, it);
             };
 
             if (drawBudgetExhausted()) { ++di; continue; }
@@ -272,11 +292,11 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
         submitDebugLines(id, ctx);   // debug lines last, drawn over the meshes
     }
 
-void ForwardPipeline::bind(const float params[4], const float factor[4],
-              bgfx::TextureHandle base, bgfx::TextureHandle norm,
-              uint64_t state, const RenderItem& it) {
-        bgfx::setUniform(m_uParams, params);
-        bgfx::setUniform(m_uColorFactor, factor);
+// PER-DRAW state only. Everything here is discarded by submit(), so it must be
+// re-issued for every draw — which is exactly why the material UNIFORMS were split
+// out of it (R7): those persist, these do not.
+void ForwardPipeline::bindDrawState(bgfx::TextureHandle base,
+              bgfx::TextureHandle norm, uint64_t state, const RenderItem& it) {
         bgfx::setTexture(0, m_sBaseColor, base);
         bgfx::setTexture(1, m_sNormalMap, norm);
         bgfx::setTexture(2, m_sShadowMap, m_shadowMap);
