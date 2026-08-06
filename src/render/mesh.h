@@ -35,6 +35,28 @@ struct Mesh {
         -std::numeric_limits<float>::infinity()
     };
 
+    // Do the submesh ranges tile [0, indexCount) exactly — contiguous, ascending,
+    // no gaps, no overlap, covering everything?
+    //
+    // The DEPTH-ONLY passes care: a shadow draw binds no material, so if the ranges
+    // tile, drawing the whole index buffer once renders exactly the same geometry as
+    // drawing every range, for one draw instead of N — and it lets the mesh instance.
+    // MeshCooker builds ranges by appending sequentially and sums the same counts
+    // into header.indexCount, so cooked meshes tile by construction; this checks it
+    // rather than trusting it, because a mesh can also arrive through the source
+    // importers and a future cooker change must not silently break shadows.
+    //
+    // O(submeshes) — averages under two on real content, and only the shadow pass
+    // calls it, once per drawn caster.
+    bool submeshesTile() const {
+        uint32_t next = 0;
+        for (const auto& s : submeshes) {
+            if (s.indexOffset != next) return false;
+            next += s.indexCount;
+        }
+        return next == indexCount;
+    }
+
     bool hasBounds() const { return boundsMin.x <= boundsMax.x; }
     bx::Vec3 boundsCenter() const {
         return { (boundsMin.x+boundsMax.x)*0.5f,

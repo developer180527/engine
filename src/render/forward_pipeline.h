@@ -156,6 +156,7 @@ private:
     // if-statements on a counter.
     bool m_warnedNoInstancing  = false;   // backend reports no instancing support
     bool m_warnedInstanceBuf    = false;  // per-frame instance buffer ran out
+    bool m_warnedShadowRanges   = false;  // a caster's ranges do not tile its ibh
 
     // Loud ONCE per run: a per-frame message would bury the log it belongs in.
     bool m_warnedDrawCeiling = false;

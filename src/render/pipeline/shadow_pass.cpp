@@ -91,11 +91,26 @@ void ForwardPipeline::renderShadow(const RenderView& v, RenderContext& ctx,
             if (!it.mesh) { ++sdi; continue; }
             const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
 
+            // A shadow draw binds NO material — the program is fixed and depth-only —
+            // so a mesh whose ranges tile its index buffer can be drawn as ONE whole
+            // buffer instead of range by range. That is strictly better than the
+            // colour pass's expansion: fewer draws AND it makes submeshed casters
+            // instanceable, which they never were.
+            const bool oneDraw = it.mesh->submeshes.empty()
+                              || it.mesh->submeshesTile();
+            if (!oneDraw && !m_warnedShadowRanges) {
+                m_warnedShadowRanges = true;
+                LOG_WARN("Renderer",
+                         "a caster's submesh ranges do not tile its index buffer, so "
+                         "its shadow is drawn range by range and cannot instance — "
+                         "expected only from non-cooked meshes");
+            }
+
             // Instanced run. Simpler than the colour pass: the shadow program is
             // fixed, so there is no data-driven material to conflict with. Skinned
-            // casters still carry a per-item bone palette in uniforms and submeshes
-            // still need per-range index draws, so both fall through.
-            if (shCaps && runLen > 1 && !skinned && it.mesh->submeshes.empty()
+            // casters still carry a per-item bone palette in uniforms, so they fall
+            // through.
+            if (shCaps && runLen > 1 && !skinned && oneDraw
                 && bgfx::isValid(m_instancedShadowProgram)) {
                 const uint16_t stride = 64;
                 const uint32_t avail =
@@ -131,7 +146,7 @@ void ForwardPipeline::renderShadow(const RenderView& v, RenderContext& ctx,
                 ++m_submitStats.shadowBonePaletteUploads;   // once per item — R4
             }
             if (drawBudgetExhausted()) continue;
-            if (it.mesh->submeshes.empty()) {
+            if (oneDraw) {
                 bgfx::setState(st); bgfx::setTransform(it.model.ptr());
                 bgfx::setVertexBuffer(0, it.mesh->vbh);
                 bgfx::setIndexBuffer(it.mesh->ibh);

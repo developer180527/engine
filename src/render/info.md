@@ -130,6 +130,17 @@ skinning.
 0 = shadow, 1 = scene (offscreen FB), 2 = backbuffer clear, 3 = MSAA resolve,
 4 = game view; 5+ allocated via `m_viewCursor`. ImGui uses high ids (editor).
 
+## Shadow pass
+Depth-only, one 2048² map, first shadow-casting light. It binds **no material** — the
+program is fixed — which is why a caster whose submesh ranges tile its index buffer is
+drawn as ONE whole-buffer draw rather than range by range (`Mesh::submeshesTile()`,
+issues.md R19): same triangles, one draw, and submeshed casters can instance. A mesh
+that fails the tiling check falls back to per-range draws and logs once.
+
+The flip side of ignoring materials: **alpha-tested casters cast solid shadows.** Foliage
+and fences need an alpha-test shadow variant selected per range, which is a feature, not
+a fix, and would partly undo the range collapse where it applies.
+
 ## Diagnostics
 
 Renderer events go through **`core/logger.h` with the `Renderer` tag**, not `printf`.

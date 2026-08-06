@@ -440,12 +440,51 @@ interpolation actually running because 25% of the scene moves, and 15% of items 
 the parented ancestor walk. Submission is no longer the wall; extraction is, for both
 content shapes.
 
-**STILL OPEN: the shadow pass.** It keeps the old `submeshes.empty()` exclusion and its
-own inner submesh loop — 322 draws with only 28 instanced submits covering 63 items at
-50 k. Deliberately out of scope here to keep one change reviewable. Note the shadow pass
-could go further than the colour pass ever can: it is depth-only, so material identity is
-irrelevant and a mesh's ranges could collapse into ONE draw over the whole index buffer —
-worth checking first that submeshes actually partition the buffer contiguously.
+**The shadow pass was left open here and is now fixed by R19 below** — and it went
+further than the colour pass ever can, exactly as suspected: depth-only means material
+identity is irrelevant, so a mesh's ranges collapse into ONE draw over the whole index
+buffer. The suspicion that submeshes partition the buffer contiguously was checked rather
+than assumed.
+
+## R19. Shadow pass: one draw per caster, and submeshed casters instance ✅ FIXED
+R18 left this open. The shadow pass had the same `submeshes.empty()` exclusion and its
+own inner range loop, so a multi-material prop cost one shadow draw per material group
+and could never instance.
+
+**It did not need R18's treatment — it needed less.** A shadow draw binds NO material:
+the program is fixed and depth-only, and the old range loop existed purely to walk index
+ranges. So if a mesh's ranges TILE its index buffer, drawing the whole buffer once
+renders exactly the same triangles as drawing every range — one draw instead of N, and
+the mesh becomes instanceable.
+
+| | before | after |
+|---|---|---|
+| 5 000 props, shadow draws | 1 227 | **175** |
+| 5 000 props, shadow instanced | 76 submits / 386 items | **169 / 884** |
+| 5 000 props, `Render.shadow` | 0.566 ms | **0.186 ms** |
+| 50 000 props, shadow draws | 322 | **120** |
+| 20 000 cubes (control) | 1 | 1 — unchanged |
+
+**The tiling assumption is checked, not trusted.** `Mesh::submeshesTile()` verifies the
+ranges are contiguous from zero, non-overlapping, and sum to `indexCount`. MeshCooker
+builds them by appending sequentially and accumulates the same counts into
+`header.indexCount`, so cooked meshes tile by construction — but a mesh can also arrive
+through the source importers, and a future cooker change must not silently break shadows.
+A mesh that fails the check falls back to per-range draws and logs once. Across the
+kit's 176 cooked meshes the warning fired **zero** times.
+
+Cost of the check: O(submeshes), averaging under two on real content, and only for
+casters that survive the light cull.
+
+A side effect worth knowing: shadow draws count against the same `kMaxDrawsPerFrame`
+ceiling as colour draws, so cutting 1 052 shadow draws at 5 000 props also buys the
+colour pass that much more headroom before the ceiling.
+
+NOT addressed, and it is the real remaining shadow limitation: **alpha-tested casters.**
+Collapsing ranges is only sound because the shadow program ignores materials entirely —
+which also means foliage and fences cast solid rectangular shadows today. Per-material
+shadow handling (an alpha-test variant of the shadow program, selected per range) is a
+separate feature, and it would partly undo this collapse for the materials that need it.
 
 ## Not a defect, but the thing to know before touching the pipeline
 Per-draw uniform bytes are a hard budget, not a soft cost: bgfx's Metal backend

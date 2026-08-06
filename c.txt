@@ -1,48 +1,44 @@
-render: route diagnostics through the logger, and log the silent failures
+render: one shadow draw per caster, and submeshed casters instance
 
-Every renderer printf bypassed core/logger.h, and Logger is not just stdout, it keeps
-the ring buffer the EDITOR CONSOLE reads. So renderer diagnostics were invisible to
-anyone not watching a terminal, including DRAW CEILING HIT, the one message that says
-the frame on screen is missing geometry. It was on stderr.
+R18 left the shadow pass open. It had the same submeshes.empty() exclusion and its own
+inner range loop, so a multi-material prop cost one shadow draw per material group and
+could never instance.
 
-CONVERTED. All printf/fprintf in src/render are gone (shader/ already used the logger),
-with levels that carry information:
+IT DID NOT NEED R18'S TREATMENT, IT NEEDED LESS. A shadow draw binds NO material: the
+program is fixed and depth-only, and the range loop existed purely to walk index ranges.
+So if a mesh's ranges TILE its index buffer, drawing the whole buffer once renders
+exactly the same triangles as drawing every range, one draw instead of N, and the mesh
+becomes instanceable. No expansion, no extra sort, no extra pass.
 
-  LOG_ERROR    output is wrong or the device is gone, draw ceiling hit (frame
-               INCOMPLETE), null native window handle, bgfx init failed
-  LOG_WARN     degraded but still rendering, a material's shader missing from the
-               cooked cache
-  LOG_INFO/SUCCESS  one-time facts, scene framebuffer, shadow map size and cost,
-               which standard program was selected
+                                  before                   after
+  5 000 props, shadow draws       1 227                    175
+  5 000 props, shadow instanced   76 submits / 386 items   169 / 884
+  5 000 props, Render.shadow      0.566 ms                 0.186 ms
+  50 000 props, shadow draws      322                      120
+  20 000 cubes (control)          1                        1, unchanged
 
-ADDED: two degradations that were completely silent and both change the shape of every
-frame:
+Whole render path at 5 000 real props is now 2.57 ms: extract 0.59, expand 0.44, cull
+0.21, shadow 0.19, submit 1.10.
 
-  * no BGFX_CAPS_INSTANCING: every batch run falls back to per-draw. On real content
-    that is the difference between 299 draws and 41 571, and nothing said so.
-  * instance data buffer exhausted mid-frame: that run and every later one submit
-    per-draw, so the frame's draw count exceeds what batchRuns predicts. Previously a
-    bare `continue`.
+THE TILING ASSUMPTION IS CHECKED, NOT TRUSTED. Mesh::submeshesTile() verifies the ranges
+are contiguous from zero, non-overlapping, and sum to indexCount. MeshCooker appends them
+sequentially and accumulates the same counts into header.indexCount, so cooked meshes tile
+by construction, but meshes also arrive through the source importers, and a future cooker
+change must not silently break shadows. A mesh that fails the check falls back to
+per-range draws and logs once through the Renderer tag. Across the kit's 176 cooked meshes
+the warning fired ZERO times. Cost: O(submeshes), under two on average, and only for
+casters that survive the light cull.
 
-THE HARD RULE, now written into info.md: every renderer log site is latched or deduped.
-These live in or beside the submit loop, and a diagnostic that fired per draw would cost
-more than the thing it reports and bury the log it belongs in. Bools for the ceiling and
-the two new warnings, std::set for missing shaders and data-driven binds. Add a log here
-only with a latch.
+Side effect worth knowing: shadow draws count against the same kMaxDrawsPerFrame ceiling
+as colour draws, so cutting 1 052 shadow draws at 5 000 props also buys the colour pass
+that much more headroom.
 
-diag/diag_report.h deliberately keeps printf: it renders multi-line REPORTS (submit
-counters, VRAM census) on demand from tools, not events, and eleven lines per report in
-the editor console is noise.
-
-Verified the ceiling actually routes through the logger by reading render_pipeline_test's
-output, that test trips the ceiling by design, rather than trusting the macro swap.
-
-Re-verifying the docs caught THREE STALE CLAIMS left by my own earlier commits, all now
-corrected: render/info.md still said submeshes fall through to per-draw (R18 changed
-that), that R7's dedup buys nothing (R18 is exactly what made it work, 2 869 binds for
-2 869 draws became 299 for 299), and that bone palettes are uploaded per submit inside
-the submesh loop (R4 hoisted that to once per item, and it is why skinned items are the
-one thing R18 does not expand). world/info.md now records that VisibleDraw carries a
-submesh ordinal and why batchRunLength must compare it.
+NOT ADDRESSED, and it is the real remaining shadow limitation: ALPHA-TESTED CASTERS.
+Collapsing ranges is only sound because the shadow program ignores materials entirely,
+which also means foliage and fences cast solid rectangular shadows today. That predates
+this change. Fixing it needs an alpha-test shadow variant selected per range, which is a
+feature rather than a fix, and it would partly undo this collapse for the materials that
+need it. Recorded in issues.md R19 and in a new Shadow pass section of render/info.md.
 
 52/52 ctest, docs 0 errors.
+
