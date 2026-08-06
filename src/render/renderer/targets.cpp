@@ -10,9 +10,10 @@
 // three lines of RenderTarget each, which is only visible when they sit together.
 #include "render/renderer.h"
 
-#include <cstdio>
 
 #include <bgfx/bgfx.h>
+
+#include "core/logger.h"
 
 void Renderer::destroyTargets() {
     if (bgfx::isValid(m_sceneFB))       bgfx::destroy(m_sceneFB);
@@ -51,7 +52,7 @@ void Renderer::createSceneFB(int w, int h) {
     bgfx::setViewFrameBuffer(kSceneView, m_sceneFB);
     bgfx::setViewClear(kSceneView, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x1a1a1aff, 1.0f, 0);
     bgfx::setViewRect(kSceneView, 0, 0, W, H);
-    std::printf("[Renderer] Scene FB: %dx%d\n", w, h);
+    LOG_INFO("Renderer", "scene framebuffer %dx%d", w, h);
 }
 
 // Lazily created at the scene FB's size, because the editor only needs it once

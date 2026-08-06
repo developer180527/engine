@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-04
+verified: 2026-08-06
 covers:
   - src/render/
 tests:
@@ -29,9 +29,12 @@ tests:
 # over the render path.
 #
 # INSTANCING (R5) is live: the submit loop walks rworld::batchRunLength and
-# collapses runs sharing mesh+material into one instanced submit (vs_instanced.sc,
-# model matrix from instance data). 20 001 objects -> 1 draw call. Skinned items,
-# submeshes and data-driven materials fall through to per-draw on purpose.
+# collapses runs sharing mesh+material+SUBMESH into one instanced submit
+# (vs_instanced.sc, model matrix from instance data). 20 001 cubes -> 1 draw call, and
+# since R18 submeshed meshes instance too: 50 000 real props went from 3 067 draws with
+# 534 REFUSED to 299 draws. Skinned items and data-driven materials still fall through
+# to per-draw on purpose — a skinned item's bone palette is per-ITEM (R4) and a
+# data-driven material supplies its own program.
 #
 # MEASURED on the stress scene (scripts/gen_stress_scene.py), which is reproducible
 # in a way a hand-built project is not. At 20 000 objects the Render.* zones read
@@ -49,11 +52,14 @@ tests:
 # down to 128 bytes with two write-only fields deleted (A3). Both were small, and A3
 # records why: extraction is parallel over 12 cores, so per-item savings divide by the
 # core count. The next lever is incremental extraction, not micro-optimisation.
-# R7 (material-bind dedup) is IMPLEMENTED and measures zero benefit — see issues.md
-# R17. Submeshes are expanded at submit time, outside the sort, so materials cycle
-# A,B,C within every item and a one-deep cache (the only CORRECT depth, since bgfx
-# holds one uniform set at a time) never hits. Same root cause as real content
-# producing zero instanced submits: submesh draws are second-class in the visible set.
+# R7 (material-bind dedup) measured ZERO benefit when it landed (issues.md R17) and now
+# works, because R18 removed the reason it could not: submesh ranges are expanded BEFORE
+# the sort and carry their own material, so identical materials are adjacent and the
+# one-deep cache (the only CORRECT depth — bgfx holds one uniform set at a time) hits.
+# 5 000 real props: 2 869 binds for 2 869 draws -> 299 for 299.
+#
+# Diagnostics go through core/logger.h with the `Renderer` tag, never printf, because
+# Logger also feeds the EDITOR CONSOLE — see the Diagnostics section below.
 ---
 # Render
 
@@ -111,14 +117,45 @@ Two layers:
 
 ## Skinning (GPU)
 Bone palettes are uploaded as a vec4 array uniform (`u_boneMatrices`,
-128 bones × 4 vec4). **The uniform must be set before every `submit()`** —
-bgfx consumes uniform state per submit, so it is set inside the submesh loop
-in both the main and shadow passes. The vertex shader (`vs_skinned.sc`)
-reconstructs mat4s and does 4-influence linear blend skinning.
+128 bones × 4 vec4), **ONCE PER ITEM — not per submit** (audit R4). bgfx uniform
+VALUES persist across submits, so one upload covers every range that item draws;
+uploading inside the material bind re-sent 4.7 KB per range per frame for identical
+data. This is also why skinned items are the one thing R18 does NOT expand into
+per-range draws: expansion scatters an item's ranges across the sorted list, other
+items' palettes land in between, and each range would need its own re-upload. The
+vertex shader (`vs_skinned.sc`) reconstructs mat4s and does 4-influence linear blend
+skinning.
 
 ## View IDs
 0 = shadow, 1 = scene (offscreen FB), 2 = backbuffer clear, 3 = MSAA resolve,
 4 = game view; 5+ allocated via `m_viewCursor`. ImGui uses high ids (editor).
+
+## Diagnostics
+
+Renderer events go through **`core/logger.h` with the `Renderer` tag**, not `printf`.
+That is not cosmetic: `Logger` writes to stdout *and* keeps a ring buffer the **editor
+console** reads, so a `printf` diagnostic is invisible to anyone not watching a
+terminal. The draw-ceiling message — the one that says the frame on screen is missing
+geometry — was on `stderr` until 2026-08-05.
+
+Levels mean something here:
+
+| level | when | example |
+|---|---|---|
+| `LOG_ERROR` | output is wrong or the device is gone | draw ceiling hit (**frame incomplete**), null window handle, bgfx init failed |
+| `LOG_WARN` | silently degraded, still rendering | no `BGFX_CAPS_INSTANCING`, instance buffer exhausted, material's shader missing from the cooked cache |
+| `LOG_INFO`/`SUCCESS` | one-time facts worth seeing | scene framebuffer size, shadow-map size and cost, which standard program was chosen |
+
+**EVERY renderer log site is latched or deduped**, and that is a hard rule rather than
+a style preference: these live in or beside the submit loop, and a diagnostic that fired
+per draw would cost more than the thing it reports and bury the log it belongs in. The
+ceiling uses `m_warnedDrawCeiling`, missing shaders a `std::set` of names, data-driven
+binds a set of material+shader pairs, and the two instancing degradations their own
+`m_warned*` bools. Add a log here only with a latch.
+
+`render/diag/diag_report.h` deliberately keeps `printf`: it renders multi-line REPORTS
+(submit counters, VRAM census) on demand from tools, not events, and pushing eleven
+lines per report into the editor console would be noise.
 
 ## Invariants
 - Row-major matrices, row-vector convention (`v * M`), matching bx.

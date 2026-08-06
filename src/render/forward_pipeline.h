@@ -13,6 +13,7 @@
 #include "render/mesh.h"
 #include "render/material.h"
 #include "render/texture.h"
+#include "core/logger.h"           // renderer diagnostics reach the EDITOR console
 #include "core/debug_draw.h"          // dbg::DebugDraw / DebugVertex (line pass)
 #include <bgfx/bgfx.h>
 #include <bx/math.h>
@@ -65,9 +66,10 @@ private:
         const auto path = ctx.shaders->resolveByName(mat.shaderName);
         if (path.empty()) {
             if (m_missingShaders.insert(mat.shaderName).second)
-                std::printf("[ForwardPipeline] material wants shader \"%s\", "
-                            "which is not in the cooked cache\n",
-                            mat.shaderName.c_str());
+                LOG_WARN("Renderer",
+                         "material wants shader \"%s\", which is not in the cooked "
+                         "cache — falling back to the fixed path",
+                         mat.shaderName.c_str());
             return BGFX_INVALID_HANDLE;
         }
         return ctx.shaders->program(path, mat.featureMask);
@@ -147,6 +149,14 @@ private:
     // headroom against a limit we do not control.
     static constexpr uint32_t kMaxDrawsPerFrame = 4096;
 
+    // ── Once-per-run latches for silent degradations ────────────────────────
+    // Every renderer log is latched or already deduped. A diagnostic inside the
+    // submit loop that fired per draw would cost more than the thing it reports
+    // and bury the log it belongs in — which is why these are bools and not
+    // if-statements on a counter.
+    bool m_warnedNoInstancing  = false;   // backend reports no instancing support
+    bool m_warnedInstanceBuf    = false;  // per-frame instance buffer ran out
+
     // Loud ONCE per run: a per-frame message would bury the log it belongs in.
     bool m_warnedDrawCeiling = false;
     bool drawBudgetExhausted() {
@@ -155,13 +165,16 @@ private:
         ++m_submitStats.drawsDropped;
         if (!m_warnedDrawCeiling) {
             m_warnedDrawCeiling = true;
-            std::fprintf(stderr,
-                "[ForwardPipeline] DRAW CEILING HIT: %u draws this frame. The "
-                "Metal backend's uniform scratch buffer is a fixed 8 MB and this "
-                "pipeline uses ~1 KB per draw, so bgfx writes past the end at "
-                "~8192 draws (SIGSEGV in RendererContextMtl::commit). Refusing to "
-                "submit more — THIS FRAME IS INCOMPLETE. Reduce draws (instancing) "
-                "or per-draw uniforms (material-bind dedup).\n", total);
+            // ERROR, not warning: geometry is missing from what the player sees.
+            // Through the logger so it reaches the editor console — on stderr it
+            // was invisible to anyone not watching a terminal.
+            LOG_ERROR("Renderer",
+                "DRAW CEILING HIT: %u draws this frame (limit %u). The Metal "
+                "backend's uniform scratch is a fixed 8 MB and this pipeline uses "
+                "~1 KB per draw, so bgfx writes past the end at ~8192 draws "
+                "(SIGSEGV in RendererContextMtl::commit). Refusing to submit more "
+                "— THIS FRAME IS INCOMPLETE. Reduce draws or per-draw uniforms.",
+                total, kMaxDrawsPerFrame);
         }
         return true;
     }

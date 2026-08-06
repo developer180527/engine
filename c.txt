@@ -1,61 +1,48 @@
-render: submesh-granular visible sets, 3067 draws + 534 refused becomes 299
+render: route diagnostics through the logger, and log the silent failures
 
-R17 named this as the prerequisite for both instancing and material-bind dedup on real
-content. VisibleDraw now carries a submesh ordinal, ranges are expanded into their own
-draws BEFORE the sort, and each range's key holds ITS OWN material.
+Every renderer printf bypassed core/logger.h, and Logger is not just stdout, it keeps
+the ring buffer the EDITOR CONSOLE reads. So renderer diagnostics were invisible to
+anyone not watching a terminal, including DRAW CEILING HIT, the one message that says
+the frame on screen is missing geometry. It was on stderr.
 
-50 000 real cooked props: the case that previously could not be drawn at all:
+CONVERTED. All printf/fprintf in src/render are gone (shader/ already used the logger),
+with levels that carry information:
 
-                    before                     after
-  draws             3 067 + 534 REFUSED        299
-  frame             INCOMPLETE (ceiling hit)   complete, ceiling not reached
-  instanced         0 submits                  299 covering 41 571 items
-  material binds    3 067                      299
+  LOG_ERROR    output is wrong or the device is gone, draw ceiling hit (frame
+               INCOMPLETE), null native window handle, bgfx init failed
+  LOG_WARN     degraded but still rendering, a material's shader missing from the
+               cooked cache
+  LOG_INFO/SUCCESS  one-time facts, scene framebuffer, shadow map size and cost,
+               which standard program was selected
 
-5 000 props: 2 869 -> 299 draws and binds; instanced 58 submits covering 966 items ->
-299 covering 4 884. Synthetic cubes unchanged at 1 draw / 1 bind, the control that
-shows expansion costs nothing when there is nothing to expand.
+ADDED: two degradations that were completely silent and both change the shape of every
+frame:
 
-WHERE THE EXPANSION LIVES. In the pipeline, not rworld, because that is where Mesh* is
-legal: world/ never dereferences a Mesh, and that is the whole reason culling and
-sorting are unit-testable without bgfx. Cost is one pass plus one extra radix sort over
-~1.7x the entries (Render.expand 3.8 ms at 50 k, against ~41 000 submits removed);
-content with no submeshes skips both.
+  * no BGFX_CAPS_INSTANCING: every batch run falls back to per-draw. On real content
+    that is the difference between 299 draws and 41 571, and nothing said so.
+  * instance data buffer exhausted mid-frame: that run and every later one submit
+    per-draw, so the frame's draw count exceeds what batchRuns predicts. Previously a
+    bare `continue`.
 
-batchRunLength HAD TO LEARN ABOUT SUBMESHES, and this is not optional: two ranges of one
-mesh that share a material produce EQUAL keys, material and mesh are all the key holds,
-while needing different index ranges. Instancing them together would draw one range's
-indices for the other's geometry.
+THE HARD RULE, now written into info.md: every renderer log site is latched or deduped.
+These live in or beside the submit loop, and a diagnostic that fired per draw would cost
+more than the thing it reports and bury the log it belongs in. Bools for the ceiling and
+the two new warnings, std::set for missing shaders and data-driven binds. Add a log here
+only with a latch.
 
-SKINNED ITEMS ARE NOT EXPANDED, AND THE TEST CAUGHT IT. The first version expanded
-everything and render_pipeline_test failed immediately: one skinned item with 4 ranges
-produced 4 bone-palette uploads instead of 1, re-introducing exactly the bug R4 fixed.
-Structural, not a slip, a palette is a per-ITEM uniform relied upon to persist across
-that item's submits, and expansion scatters an item's ranges so other items' palettes
-land in between; deduping would render with the wrong bones. Skinned draws are excluded
-from instancing anyway, so expansion buys them nothing and they keep whole-item entries
-plus their submesh loop at submit. R4's invariant holds unchanged.
+diag/diag_report.h deliberately keeps printf: it renders multi-line REPORTS (submit
+counters, VRAM census) on demand from tools, not events, and eleven lines per report in
+the editor console is noise.
 
-THE BOTTLENECK MOVED. At 50 000 real props the frame is 43.9 ms with Render 27.3, of
-which EXTRACTION is 20.5, against 2.83 for 50 000 cubes. Real content is ~7x more
-expensive per item: 176 distinct Mesh dereferences instead of one shared primitive,
-PrevTransform interpolation actually running (25% of the scene moves), and 15% of items
-taking the parented ancestor walk. Submission is no longer the wall for either content
-shape; extraction is.
+Verified the ceiling actually routes through the logger by reading render_pipeline_test's
+output, that test trips the ceiling by design, rather than trusting the macro swap.
 
-STILL OPEN: the shadow pass keeps the old submeshes.empty() exclusion and its inner loop
-— 322 draws with 28 instanced submits at 50 k. Out of scope to keep one change
-reviewable. It can go further than the colour pass ever can: depth-only means material
-identity is irrelevant, so a mesh's ranges could collapse into ONE draw over the whole
-index buffer, if submeshes partition it contiguously. Check that first.
+Re-verifying the docs caught THREE STALE CLAIMS left by my own earlier commits, all now
+corrected: render/info.md still said submeshes fall through to per-draw (R18 changed
+that), that R7's dedup buys nothing (R18 is exactly what made it work, 2 869 binds for
+2 869 draws became 299 for 299), and that bone palettes are uploaded per submit inside
+the submesh loop (R4 hoisted that to once per item, and it is why skinned items are the
+one thing R18 does not expand). world/info.md now records that VisibleDraw carries a
+submesh ordinal and why batchRunLength must compare it.
 
-Also adds docs/architecture/renderer-vs-production.md, written this session to answer
-'is bgfx the bottleneck, did we make an architectural mistake' with numbers: no on both
-counts, bgfx's own draw limit is 65 535, our 4 096 guards Metal's unchecked 8 MB uniform
-scratch, and bgfx already supports compute, indirect draws and multi-threaded encoders
-that we do not use. The doc's own work list is updated in the same commit so it does not
-ship stale: item 1 is this change, and the remaining order is LOD, then indirect +
-bindless, then multi-threaded encoders.
-
-52/52 ctest. Recorded as issues.md R18.
-
+52/52 ctest, docs 0 errors.

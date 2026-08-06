@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-04
+verified: 2026-08-06
 covers:
   - src/render/world/
 tests:
@@ -56,6 +56,7 @@ Everything here is **GPU-free**. Nothing includes bgfx; nothing dereferences
 | `frustum.h/.cpp` | Is this bounding volume outside the view? |
 | `sort_key.h` | Turn "how should this draw be ordered?" into one `uint64_t`. |
 | `visibility.h/.cpp` | Cull → key → sort → `VisibleSet`, plus the batch-run predicate. |
+| | `VisibleDraw` carries a `submesh` ordinal since R18, and `batchRunLength` compares it: two ranges of one mesh sharing a material have EQUAL keys but need different index ranges, so instancing them together would draw the wrong geometry. The expansion itself lives in the pipeline, because it needs `Mesh*` and this layer must never dereference one. |
 | `draw_sort.h/.cpp` | Order the draw list by key: a stable, data-adaptive radix sort. |
 | `cull_stream.h` | One RenderItem → the 24 bytes the cull reads (`writeCullEntry`). |
 | `light_packing.h/.cpp` | `LightItem[]` → the float layout the shader expects. |

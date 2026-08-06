@@ -5,6 +5,8 @@
 // duplicate all of them (see that header).
 #include "render/forward_pipeline.h"
 
+#include "core/logger.h"
+
 #include "runtime/jobs/jobs.h"
 #include "render/pipeline/shader_blobs.h"
 
@@ -37,11 +39,11 @@ void ForwardPipeline::onAttach(RenderContext& attachCtx) {
             // Record which path won, once, at attach. Silently falling back is
             // how "my shader edits do nothing" happens.
             m_programFromAsset = bgfx::isValid(m_program);
-            std::printf("[ForwardPipeline] standard program: %s\n",
+            LOG_SUCCESS("Renderer", "standard program: %s",
                         m_programFromAsset ? "cooked .cshader"
                                            : "compiled-in (cook failed/absent)");
         } else {
-            std::printf("[ForwardPipeline] standard program: compiled-in "
+            LOG_INFO("Renderer", "standard program: compiled-in "
                         "(no cooked shader supplied)\n");
         }
         if (!bgfx::isValid(m_program)) {
@@ -95,7 +97,7 @@ void ForwardPipeline::onAttach(RenderContext& attachCtx) {
                                             bgfx::TextureFormat::D32F, smFlags);
         // Report the cost. This one allocation dominates GPU memory on a
         // low-end machine, so it should never be a silent decision.
-        std::printf("[Renderer] Shadow map %ux%u D32F = %.1f MB\n",
+        LOG_INFO("Renderer", "shadow map %ux%u D32F = %.1f MB",
                     SHADOW_SIZE, SHADOW_SIZE,
                     (double)SHADOW_SIZE * SHADOW_SIZE * 4.0 / (1024.0 * 1024.0));
         m_shadowFB  = bgfx::createFrameBuffer(1, &m_shadowMap, false);

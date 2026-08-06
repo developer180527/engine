@@ -129,6 +129,14 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
         // was built so that adjacency means batchability (see world/sort_key.h),
         // and a run longer than 1 collapses into a single instanced submit.
         const bool caps = 0 != (bgfx::getCaps()->supported & BGFX_CAPS_INSTANCING);
+        if (!caps && !m_warnedNoInstancing) {
+            m_warnedNoInstancing = true;
+            // Silent until now: without instancing every batch run falls through to
+            // per-draw, which is the difference between 299 draws and 41 571 on a
+            // real scene — and nothing said so.
+            LOG_WARN("Renderer", "backend reports no BGFX_CAPS_INSTANCING — every "
+                                 "batch run falls back to per-draw submits");
+        }
         for (std::size_t di = 0; di < drawList->size(); ) {
             const rworld::VisibleDraw& d = (*drawList)[di];
             const std::size_t runLen = rworld::batchRunLength(*drawList, di);
@@ -232,12 +240,12 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                         // at" is exactly this branch being taken.
                         if (m_boundDataDriven.insert(mat->shaderName + "/"
                                 + std::to_string(mh.id)).second)
-                            std::printf("[ForwardPipeline] data-driven bind: "
-                                        "material %u on shader \"%s\" "
-                                        "(%zu block(s), %zu texture(s))\n",
-                                        mh.id, mat->shaderName.c_str(),
-                                        mat->blocks.size(),
-                                        mat->textureBinds.size());
+                            LOG_INFO("Renderer",
+                                     "data-driven bind: material %u on shader "
+                                     "\"%s\" (%zu block(s), %zu texture(s))",
+                                     mh.id, mat->shaderName.c_str(),
+                                     mat->blocks.size(),
+                                     mat->textureBinds.size());
                         drawProgram = mp;
                         return;
                     }
@@ -335,6 +343,14 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                 }
                 // Instance buffer exhausted this frame — fall through to
                 // per-draw rather than dropping the objects.
+                if (!m_warnedInstanceBuf) {
+                    m_warnedInstanceBuf = true;
+                    LOG_WARN("Renderer",
+                             "instance data buffer exhausted (%u of %u instances "
+                             "available) — this run and later ones submit per-draw, "
+                             "so the draw count for this frame is higher than the "
+                             "batch runs suggest", avail, want);
+                }
             }
 
             // One draw per list entry — EXCEPT an unexpanded multi-range item, which

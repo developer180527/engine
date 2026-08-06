@@ -16,6 +16,7 @@
 #include <bgfx/platform.h>
 #include <bx/allocator.h>
 
+#include "core/logger.h"
 #include "core/memory/mem.h"
 #include "render/forward_pipeline.h"
 #include "render/shader/shader_library.h"
@@ -92,9 +93,9 @@ bool Renderer::init(void* nwh, int width, int height,
     // half of the old comment above that described a real hazard. Fail here,
     // where the message can name the cause.
     if (!nwh) {
-        std::printf("[Renderer] init called with a null native window handle — "
-                    "the platform reports it supports rendering but produced no "
-                    "window. Refusing to initialise bgfx.\n");
+        LOG_ERROR("Renderer", "init called with a null native window handle — the "
+                              "platform reports it supports rendering but produced "
+                              "no window. Refusing to initialise bgfx.");
         return false;
     }
 
@@ -115,7 +116,7 @@ bool Renderer::init(void* nwh, int width, int height,
     m_backW = width; m_backH = height;
     init.resolution.reset  = BGFX_RESET_VSYNC;
     if (!bgfx::init(init)) {
-        std::printf("[Renderer] bgfx init failed\n");
+        LOG_ERROR("Renderer", "bgfx init failed — no GPU device");
         return false;
     }
 
