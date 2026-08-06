@@ -486,6 +486,73 @@ which also means foliage and fences cast solid rectangular shadows today. Per-ma
 shadow handling (an alpha-test variant of the shadow program, selected per range) is a
 separate feature, and it would partly undo this collapse for the materials that need it.
 
+## R20. Discrete LOD ✅ BUILT — and it bought nothing yet, which was predicted
+The renderer had **no LOD at all** (`grep -rn lod src/render src/components src/scene`
+returned nothing). It is item 2 on the work list in
+`docs/architecture/renderer-vs-production.md`.
+
+**Measured BEFORE building it, and reported before building it: LOD cannot move today's
+bottleneck.** At 50 000 real props the frame is CPU 24.8 ms (extract 18.8, expand 3.2,
+submit 1.4, cull 0.85, shadow 0.19) against GPU 9.11 ms avg — CPU-bound about 3.6×.
+LOD reduces *GPU* triangles and *draws*; extraction still walks every entity whatever
+mesh it picks. Built anyway, because it is a missing system rather than an optimisation,
+and because the moment geometry density or output resolution rises it is the only lever
+that reduces the workload itself instead of moving it.
+
+**Shape.** Level 0 is `MeshRenderer::mesh`; `LodMesh` holds up to three COARSER levels
+plus the thresholds. That is Unreal's arrangement rather than Unity's, and the reason is
+failure modes: one source of truth for "what mesh is this", and deleting the component
+degrades to full detail rather than to nothing.
+
+**The metric is screen height, not distance** — `h = r * projYScale / d`, where
+`projYScale` is `proj[5]` (= 1/tan(fovY/2)), already in the matrix. Distance thresholds
+break on two things this engine supports today: a changed FOV (zooming a scope would
+coarsen the world) and mixed object scale. Being a ratio it is also resolution
+independent.
+
+**The dangerous part is not selection, it is the SORT KEY.** Selection runs at
+extraction, after `writeCullEntry` (which is where the world bounding sphere it needs
+already exists), and it must then REPAIR `keyBase`, because that key had the level-0
+mesh and material ids packed into it. A stale key is not a sorting nit: the submit loop
+collapses runs of equal keys into one instanced submit, so items at different levels
+would all be drawn with whichever mesh the run happened to start on. Verified by
+mutation — deleting the repair on a 20 000-prop scene with 9 967 chains moved draws
+299 → 395 and desynced material binds (394 for 395 draws).
+
+**Bounds deliberately stay level 0's.** A coarser mesh has slightly different bounds,
+and letting them change with the level would flip an object's cull result as it crossed
+a threshold — popping at the screen edge, which is worse than a marginally conservative
+sphere. It also stops the selection feeding back into itself.
+
+**Cost.** `LodMesh` is an optional query term like `PrevTransform` and `SkinnedMesh`
+before it, so an archetype either has one or does not and a scene with no chains pays
+nothing per item. With 9 967 chains out of 20 000 entities, `Render.extract` went
+7.91 → 8.32 ms — about 40 ns per LOD-bearing item, which is the sphere-to-screen-height
+division plus a registry lookup for the swapped mesh.
+
+**WHAT IT DID NOT SHOW, and this is the honest limit of the measurement.** Draws stayed
+at 299 and GPU time at ~5.5 ms, because the fuzz generator's `--lods` layer builds chains
+out of OTHER KIT MESHES — there is no LOD *generation*. Mesh decimation is a cooker
+feature and does not exist, so no level in any test scene actually has fewer triangles
+than the one above it. What is verified is that the path is correct: the term resolves,
+the census is exact (511 / 3 669 / 3 776 / 2 011 summing to the 9 967 chains authored),
+no chain broke, and the key repair is load-bearing. What is NOT verified is any
+performance benefit, because nothing in the tree can yet produce a cheaper level.
+
+**Also deliberately out of scope**, so the gaps are known rather than discovered:
+- **LOD generation** (decimation in MeshCooker). Without it, chains must be authored
+  from separately modelled meshes.
+- **Editor authoring.** There is no inspector for `LodMesh`; chains come from `.scene`
+  JSON or a generator. Serde is hand-written because levels are asset references.
+- **Async level loading.** `loadMesh`'s last resort is an Assimp import on a worker that
+  completes by setting a `MeshRenderer` — a mechanism that cannot fill slot 2 of an
+  `LodMesh`. Levels therefore resolve synchronously from cooked meshes only, and an
+  unresolved level SHORTENS the chain (a warning, latched, plus the `broken` census
+  count) rather than punching a hole in the frame.
+- **Cross-fading / dithered transitions.** Switching is a hard pop today.
+- **Max draw distance.** Selection can never return "invisible"; culling by distance is
+  a separate feature, and conflating the two is how objects vanish unaccountably.
+
 ## Not a defect, but the thing to know before touching the pipeline
 Per-draw uniform bytes are a hard budget, not a soft cost: bgfx's Metal backend
 commits them into a fixed 8 MB buffer with no bounds check, so ~8192 draws

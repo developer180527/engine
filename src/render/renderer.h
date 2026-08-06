@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <filesystem>
 #include <memory>
 
@@ -13,6 +14,7 @@ class ShaderLibrary;   // render/shader/shader_library.h
 #include "components/prev_transform.h"   // optional query term in extraction
 #include "components/mesh_renderer.h"
 #include "components/skinned_mesh.h"
+#include "components/lod_mesh.h"         // optional query term in extraction
 #include "components/light.h"
 #include "animation/skeleton_registry.h"
 #include "render/world/cull_stream.h"   // CullStreamStore (extraction fills it)
@@ -95,6 +97,22 @@ public:
     // Debug-line collector (owned by EngineRuntime) drawn into each world view.
     void setDebugDraw(const dbg::DebugDraw* dd) { m_debugDraw = dd; }
 
+    // How many items last frame's extraction placed at each LOD level, plus how
+    // many hit a broken chain (a level whose mesh handle does not resolve, which
+    // falls back to a finer level). `level[0]` counts only entities that HAVE an
+    // LOD chain and stayed at full detail — items with no chain are not LOD
+    // decisions and are not counted, so all-zero means "nothing in this scene is
+    // authored with LODs", not "LOD is broken".
+    struct LodCensus {
+        uint32_t level[rworld::kMaxLodLevels] = {};
+        uint32_t broken = 0;
+        bool empty() const {
+            for (uint32_t n : level) if (n) return false;
+            return broken == 0;
+        }
+    };
+    LodCensus lodCensus() const;
+
     bgfx::TextureHandle sceneColorTexture() const { return m_sceneColorTex; }
     bgfx::TextureHandle gameColorTex()      const { return m_gameColorTex; }
     int sceneW() const { return m_sceneW; }
@@ -147,15 +165,22 @@ private:
     // a path that never asks about parents, and nothing re-looks-up a component
     // the iteration already has. Together the two queries cover exactly what the
     // single query did — a parented entity still gets its full ancestor walk.
+    //
+    // LodMesh joined the list for the same reason and at the same price: LOD chains
+    // are authored on a MINORITY of entities, so an archetype either has one or it
+    // does not, and the loop pays a null check per chunk rather than a lookup per
+    // entity. An LOD system that cost every non-LOD entity anything would be a
+    // regression on the scenes that are already the bottleneck.
     using ItemQuery = flecs::query<const Transform, const MeshRenderer,
-                                   const PrevTransform*, const SkinnedMesh*>;
+                                   const PrevTransform*, const SkinnedMesh*,
+                                   const LodMesh*>;
     ItemQuery m_itemQuery;      // editor, parentless
     ItemQuery m_childItemQuery; // editor, parented
     flecs::query<const Transform, const Light> m_lightQuery;     // editor world
     WorldQueryCache<const Transform, const MeshRenderer, const PrevTransform*,
-                    const SkinnedMesh*> m_gameItemQuery;         // sim, parentless
+                    const SkinnedMesh*, const LodMesh*> m_gameItemQuery;
     WorldQueryCache<const Transform, const MeshRenderer, const PrevTransform*,
-                    const SkinnedMesh*> m_gameChildItemQuery;    // sim, parented
+                    const SkinnedMesh*, const LodMesh*> m_gameChildItemQuery;
     WorldQueryCache<const Transform, const Light> m_gameLightQuery;  // sim world
     std::vector<RenderItem> m_items;
     std::vector<LightItem>  m_lights;
@@ -176,11 +201,36 @@ private:
         const MeshRenderer*  mr   = nullptr;
         const PrevTransform* prev = nullptr;   // null: absent in this archetype
         const SkinnedMesh*   skin = nullptr;   // null: absent in this archetype
+        const LodMesh*       lod  = nullptr;   // null: absent in this archetype
         uint32_t count    = 0;
         uint32_t outBegin = 0;
         uint32_t written  = 0;
     };
     std::vector<ExtractChunk> m_chunks;   // reused for capacity across frames
+
+    // ── LOD selection census ────────────────────────────────────────────────
+    // How many items extraction placed at each level this frame, and how many
+    // asked for a level whose mesh is missing (a broken chain, which falls back
+    // to a finer level rather than dropping the item).
+    //
+    // Counted because LOD is the one render feature whose whole job is to be
+    // invisible: if the thresholds are wrong the frame still looks right from the
+    // camera that authored them and merely costs too much, or looks subtly coarse
+    // and costs too little. Without a per-level count there is no way to tell
+    // which — and a census that nobody can read is how the draw ceiling stayed
+    // invisible on stderr for weeks.
+    //
+    // Written from the PARALLEL extraction loop, so these are relaxed atomics.
+    // A per-chunk tally reduced afterwards would avoid the atomics, but the
+    // increment happens once per LOD-bearing item, not once per item, and it is
+    // a diagnostic — the honest trade is the simpler code until it measures.
+    std::atomic<uint32_t> m_lodCount[rworld::kMaxLodLevels] = {};
+    std::atomic<uint32_t> m_lodBroken = 0;
+    // Latched, like every other renderer log site (see render/info.md): a broken
+    // chain is per-item and per-frame, so an unlatched warning would fire tens of
+    // thousands of times and cost more than the thing it reports. The count above
+    // is how you learn the scale; this is how you learn it happened at all.
+    std::atomic_flag m_warnedLodBroken = ATOMIC_FLAG_INIT;
 
     // The cull's SoA working set, filled alongside m_items and kept parallel to it.
     // Owned here rather than by the pipeline because extraction is what produces

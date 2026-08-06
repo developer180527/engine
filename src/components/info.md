@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-07-31
+verified: 2026-08-06
 covers:
   - src/components/
 tests:
@@ -20,6 +20,10 @@ No logic beyond trivial helpers — systems and plugins own behavior.
 - `mesh_renderer.h` — `MeshHandle` + material override.
 - `skinned_mesh.h` — skeleton handle + bone palette
   (`skinMatrices[128*16]`, `hasSkinMatrices`).
+- `lod_mesh.h` — the COARSER levels of a mesh plus their screen-height
+  thresholds. Level 0 is `mesh_renderer.h`'s own mesh, so no chain (or
+  `count == 0`) means full detail; the renderer selects a level at extraction
+  (`render/world/lod.h`, `render/issues.md` R20).
 - `animator.h` — clip handle, time, speed, playing/looping flags.
 - `camera.h`, `light.h` — render inputs (game view picks the primary camera).
 - `rigid_body.h`, `character_controller.h`, `collision_events.h` — physics

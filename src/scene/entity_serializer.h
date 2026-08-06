@@ -29,6 +29,7 @@
 #include "components/character_controller.h"
 #include "components/entity_id.h"
 #include "components/skinned_mesh.h"
+#include "components/lod_mesh.h"
 #include "components/animator.h"
 #include "render/asset_registry.h"
 #include "assets/asset_ref.h"
@@ -280,6 +281,83 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
     if (ctx.pendingAsync) ctx.pendingAsync->push_back({e, srcPath}); // Assimp on a worker
 }
 
+// ── LodMesh (the coarser levels; level 0 is MeshRenderer's own mesh) ──────────
+//
+// LEVELS RESOLVE SYNCHRONOUSLY, AND ONLY FROM A COOKED MESH (or a live handle in
+// Memory mode). That is a real limitation, stated rather than hidden: loadMesh's
+// last resort is `ctx.pendingAsync`, an Assimp import on a worker that completes
+// later by setting a MeshRenderer on the entity. There is no shape of that
+// mechanism that can fill slot 2 of an LodMesh, so rather than half-wire it, a
+// level that is not cooked is DROPPED and the chain is shortened.
+//
+// Shortening is safe by construction, not by luck: `coarsenBelow` is indexed from
+// the fine end, so dropping the tail removes the coarsest levels and the remaining
+// thresholds keep their meaning. And LOD meshes are cooker output — a decimated
+// level has no hand-authored source to import — so the cooked path is the one that
+// will actually be exercised. A dropped level costs triangles, never correctness;
+// render/world/lod.h's selection walks back to finer levels for the same reason.
+inline bool hasLodMesh(flecs::entity e) { return e.try_get<LodMesh>() != nullptr; }
+inline void saveLodMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx) {
+    const LodMesh* lm = e.try_get<LodMesh>(); if (!lm || lm->count == 0) return;
+    nlohmann::json levels = nlohmann::json::array();
+    for (uint8_t i = 0; i < lm->count && i < rworld::kMaxLodLevels - 1; ++i) {
+        nlohmann::json lj = nlohmann::json::object();
+        const Mesh* mesh = ctx.meshLookup ? ctx.meshLookup(lm->mesh[i]) : nullptr;
+        if (ctx.mode == SerdeMode::Memory) {
+            lj["handleId"] = lm->mesh[i].id;
+        } else if (mesh && !mesh->sourcePath.empty() && ctx.cookedPathLookup) {
+            std::string cooked = ctx.cookedPathLookup(mesh->sourcePath);
+            if (cooked.empty()) continue;      // uncooked: drop, see the note above
+            lj["cookedPath"] = cooked;
+            // The source ref rides along so the level survives a re-cook that
+            // changes the cooked filename — resolution prefers cookedPath.
+            assetref::toJson(assetref::make(mesh->sourcePath, ctx.projectRoot,
+                                            ctx.assetLib), lj);
+        } else {
+            continue;
+        }
+        levels.push_back(std::move(lj));
+    }
+    if (levels.empty()) return;               // nothing survived: omit entirely
+    // Only the thresholds the surviving levels use. Writing all three when one
+    // level exists would round-trip into a chain that claims levels it lacks.
+    nlohmann::json below = nlohmann::json::array();
+    for (std::size_t i = 0; i < levels.size(); ++i) below.push_back(lm->coarsenBelow[i]);
+    j["levels"]       = std::move(levels);
+    j["coarsenBelow"] = std::move(below);
+}
+inline void loadLodMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
+    if (!j.contains("levels") || !j["levels"].is_array()) return;
+    LodMesh lm;
+    const auto& levels = j["levels"];
+    const bool  hasBelow = j.contains("coarsenBelow") && j["coarsenBelow"].is_array();
+    for (const auto& lj : levels) {
+        if (lm.count >= rworld::kMaxLodLevels - 1) break;
+        MeshHandle h;
+        if (ctx.mode == SerdeMode::Memory) {
+            h.id = lj.value("handleId", 0u);
+        } else {
+            const std::string cooked = lj.value("cookedPath", std::string{});
+            if (!cooked.empty() && ctx.assetService)
+                h = ctx.assetService->loadMesh(cooked.c_str());   // relative — see loadMesh
+        }
+        if (!h.valid()) {
+            LOG_WARN("Scene", "LOD level %u unresolved, chain shortened",
+                     (unsigned)lm.count + 1);
+            break;   // BREAK, not continue: a gap would shift every coarser level
+                     // one threshold finer, silently changing when it appears.
+        }
+        // Read the threshold at the SOURCE index, so a shortened chain still uses
+        // the thresholds that were authored for the levels that survived.
+        const std::size_t src = (std::size_t)lm.count;
+        if (hasBelow && src < j["coarsenBelow"].size())
+            lm.coarsenBelow[lm.count] = j["coarsenBelow"][src].get<float>();
+        lm.mesh[lm.count] = h;
+        ++lm.count;
+    }
+    if (lm.count) e.set<LodMesh>(lm);
+}
+
 // ── The one table ─────────────────────────────────────────────────────────────
 // ── CharacterController (capsule controller; 'grounded' is runtime-only) ──────
 inline bool hasCharacterController(flecs::entity e) { return e.try_get<CharacterController>() != nullptr; }
@@ -403,6 +481,9 @@ inline const std::vector<ComponentSerde>& table() {
         { "transform",    hasTransform, saveTransform, loadTransform },
         { "name",         hasName,      saveName,      loadName      },
         { "meshRenderer", hasMesh,      saveMesh,      loadMesh      },
+        // After meshRenderer, and it has to stay there: a chain describes the
+        // coarser levels of THAT mesh, and load order is the table order.
+        { "lodMesh",      hasLodMesh,   saveLodMesh,   loadLodMesh   },
         { "camera",       hasCamera,    saveCamera,    loadCamera    },
         { "rigidBody",    hasRigidBody, saveRigidBody, loadRigidBody },
         { "script",       hasScript,    saveScript,    loadScript    },

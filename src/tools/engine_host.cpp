@@ -218,6 +218,19 @@ int main(int argc, char** argv) {
             rdiag::printOwnerCosts(rdiag::byOwner(cen));
             if (const auto* pipe = engine.renderer().pipeline())
                 rdiag::printSubmitStats(pipe->submitStats(), "engine_host");
+            // LOD is the one render feature whose job is to be invisible, so the
+            // only way to tell a working chain from an inert one is the per-level
+            // count. Silent when the scene has no LOD chains at all — printing
+            // four zeros every 300 frames would train everyone to ignore it.
+            if (const auto lod = engine.renderer().lodCensus(); !lod.empty()) {
+                std::printf("[LOD] engine_host — levels");
+                for (uint32_t i = 0; i < rworld::kMaxLodLevels; ++i)
+                    std::printf("  L%u %u", i, lod.level[i]);
+                if (lod.broken)
+                    std::printf("   BROKEN %u (fell back to a finer level)",
+                                lod.broken);
+                std::printf("\n");
+            }
             renderStats.report("engine_host");
         }
         engine.frameEnd();

@@ -20,7 +20,7 @@ The Medieval Village MegaKit is 176 models with 1-4 material groups each (80 hav
 71 have 2, 23 have 3, 2 have 4 — ~1.7 average), already cooked. That is the shape of
 real content, so it is what the renderer should be measured against.
 
-FIVE LAYERS, all driven from ONE seed so a finding is reproducible by seed alone:
+SIX LAYERS, all driven from ONE seed so a finding is reproducible by seed alone:
 
   L0  ASSETS    which cooked meshes, drawn from the source project's registry
   L1  PLACEMENT position, rotation, and NON-UNIFORM scale
@@ -28,6 +28,8 @@ FIVE LAYERS, all driven from ONE seed so a finding is reproducible by seed alone
   L3  HIERARCHY a fraction are parented, so the ancestor walk and nested-scale
                 bounding spheres are exercised
   L4  CAMERA    placed so a tunable fraction of the scene starts outside the frustum
+  L5  LOD       a fraction get an LOD chain (--lods), so the selection path, the
+                mesh swap and the sort-key repair are exercised at scene scale
 
 NON-DESTRUCTIVE. The generated project borrows the source project's cooked cache:
 the big directories are symlinked, and registry.db is COPIED so the engine's scan
@@ -96,6 +98,16 @@ def main():
                     help="L2: fraction with a Spinner (transforms change per frame)")
     ap.add_argument("--children", type=float, default=0.15,
                     help="L3: fraction parented to an earlier entity")
+    ap.add_argument("--lods", type=float, default=0.0,
+                    help="L5: fraction of entities given an LOD chain. The levels "
+                         "are OTHER KIT MESHES, not decimated versions of the same "
+                         "one — LOD generation is a cooker feature that does not "
+                         "exist yet, and the renderer cannot tell the difference. "
+                         "What this exercises is the whole selection path: the "
+                         "optional query term, the mesh swap, and above all the "
+                         "SORT KEY REPAIR, because a stale key makes the submit "
+                         "loop draw an instanced run with the wrong mesh. The frame "
+                         "looks like nonsense on purpose; the counters do not.")
     ap.add_argument("--nonuniform", type=float, default=0.30,
                     help="L1: fraction with non-uniform scale (the nested-scale "
                          "bounding-sphere case when combined with --children)")
@@ -135,7 +147,7 @@ def main():
 
     spawned = []                            # ids eligible to be parents (L3)
     next_id = 1000
-    counts = {"movers": 0, "children": 0, "nonuniform": 0}
+    counts = {"movers": 0, "children": 0, "nonuniform": 0, "lods": 0}
 
     for i in range(a.objects):
         uuid, src_path, cooked = meshes[rng.randrange(len(meshes))]   # L0
@@ -166,6 +178,21 @@ def main():
             "meshRenderer": {"asset": uuid, "cookedPath": cooked, "path": src_path},
             "transform": {"position": pos, "rotation": rot, "scale": scale},
         }
+
+        # L5: LOD chain. Thresholds are deliberately GENEROUS (0.5 / 0.2 / 0.05
+        # of the viewport height) rather than the component defaults, so that at
+        # this scene's spread most entities land on a coarser level and the census
+        # is not three zeros and a big L0 — a chain that never triggers proves
+        # only that it compiles.
+        if a.lods > 0.0 and rng.random() < a.lods:
+            levels = [meshes[rng.randrange(len(meshes))]
+                      for _ in range(rng.randint(1, 3))]
+            e["lodMesh"] = {
+                "levels": [{"asset": u, "cookedPath": c, "path": p}
+                           for (u, p, c) in levels],
+                "coarsenBelow": [0.5, 0.2, 0.05][:len(levels)],
+            }
+            counts["lods"] += 1
 
         # L2: motion. A Spinner rewrites this entity's rotation every frame, so
         # extraction and the PrevTransform snapshot cannot be skipped for it.
@@ -211,7 +238,7 @@ def main():
           f"({a.format}, filter='{a.filter}')")
     print(f"  seed {a.seed}  spread +-{spread:.0f}  shadows={'on' if a.shadows else 'off'}")
     print(f"  movers {counts['movers']}  children {counts['children']}  "
-          f"non-uniform scale {counts['nonuniform']}")
+          f"non-uniform scale {counts['nonuniform']}  lod chains {counts['lods']}")
 
 
 if __name__ == "__main__":

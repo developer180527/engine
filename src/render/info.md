@@ -141,6 +141,39 @@ The flip side of ignoring materials: **alpha-tested casters cast solid shadows.*
 and fences need an alpha-test shadow variant selected per range, which is a feature, not
 a fix, and would partly undo the range collapse where it applies.
 
+## LOD
+Discrete levels, selected at extraction (`issues.md` R20). **Level 0 is
+`MeshRenderer::mesh`**; `LodMesh` (`components/lod_mesh.h`) holds up to three coarser
+levels and their thresholds, so an entity with no chain renders at full detail and
+deleting the component is a valid way to say so.
+
+The metric is **screen height, not distance**: `h = r * projYScale / d`, with
+`projYScale = proj[5] = 1/tan(fovY/2)`. Distance thresholds break on a changed FOV
+(zooming a scope would coarsen the world) and on mixed object scale; a ratio of the
+viewport is also resolution independent. Selection itself is a pure function in
+`world/lod.h` and is the only part with a test that can fail.
+
+Three properties that are load-bearing rather than incidental:
+
+- **Selection repairs the sort key.** It runs after `writeCullEntry`, so `keyBase`
+  already has level 0's mesh/material ids packed in. Leaving it stale would let the
+  submit loop instance items at different levels together and draw them all with one
+  mesh. Mutation-verified: removing the repair moved 299 draws → 395.
+- **Bounds stay level 0's**, so an object's cull result cannot flip as it crosses a
+  threshold, and the screen height that chose a level is not altered by the choice.
+- **A broken chain degrades to MORE detail.** An unresolved level falls back toward
+  level 0 and is counted (`Renderer::lodCensus().broken`, plus one latched `LOG_WARN`).
+
+`lodCensus()` reports how many items landed on each level for the last view extracted —
+LOD's whole job is to be invisible, so per-level counts are the only way to tell a
+working chain from an inert one. `engine_host` prints it every 300 frames, and stays
+silent when the scene has no chains.
+
+**Not built, and known:** LOD *generation* (decimation in MeshCooker), an inspector for
+authoring chains, async level loads, cross-fading, and max draw distance. Because
+nothing yet produces a cheaper level, **no performance benefit has been measured** —
+only correctness. See `issues.md` R20 for what that measurement did and did not cover.
+
 ## Diagnostics
 
 Renderer events go through **`core/logger.h` with the `Renderer` tag**, not `printf`.

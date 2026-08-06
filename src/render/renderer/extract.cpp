@@ -98,9 +98,11 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>   // memmove, for the compaction pass
+#include <limits>
 
 #include <bx/math.h>
 
+#include "core/logger.h"
 #include "core/profiler.h"
 #include "runtime/jobs/jobs.h"
 #include "core/transform_utils.h"        // getWorldMatrixLerp
@@ -108,6 +110,7 @@
 #include "render/material.h"
 #include "render/texture.h"
 #include "render/world/frustum.h"        // shared frustum-plane extraction
+#include "render/world/lod.h"            // screen-height LOD selection
 
 namespace {
 // Items per job. Sized so one chunk is comfortably more than the ~10 µs the job
@@ -177,6 +180,72 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         return true;
     };
 
+    // ── LOD: swap in a coarser mesh once the item's screen size is known ────
+    //
+    // Runs AFTER writeCullEntry, because the world bounding sphere it needs is
+    // exactly what that call just produced — recomputing a radius here would
+    // duplicate the one piece of per-item arithmetic this file works hardest to
+    // do only once.
+    //
+    // It therefore has to REPAIR the sort key. writeCullEntry packed mesh and
+    // material ids into keyBase, and changing which mesh draws invalidates both.
+    // Leaving the key stale is not a cosmetic sorting problem: the submit loop
+    // collapses runs of equal keys into ONE INSTANCED SUBMIT, so items at
+    // different levels sharing a stale key would all be drawn with whichever
+    // mesh the run started on. Hence keyBase is an out-parameter here rather
+    // than something a caller might forget.
+    //
+    // The BOUNDS deliberately stay level 0's. A coarser mesh has slightly
+    // different bounds, and letting them change with the level would make an
+    // object's cull result flip as it crosses a threshold — objects popping in
+    // and out at the screen edge, which is worse than a marginally conservative
+    // sphere. It also keeps the LOD decision from feeding back into itself: the
+    // screen height that chose the level is not altered by the choice.
+    const float projYScale = proj[5];   // = 1 / tan(fovY/2); see world/lod.h
+    auto applyLod = [&](const MeshRenderer& mr, const LodMesh& lod,
+                        const CullSphere& sp, RenderItem& it, uint64_t& keyBase) {
+        if (lod.count == 0) return;                  // inert chain
+        // Sentinel radii are not sizes: a missing mesh (< 0) or an unbounded one
+        // (infinity) has no screen height to threshold against, so it stays at
+        // full detail. Unbounded already means "missing data" to the cull, and
+        // guessing a level for it would hide that.
+        if (!(sp.r > 0.0f) || sp.r == std::numeric_limits<float>::infinity()) return;
+
+        // Same view-space depth as the cull computes (visibility.cpp): row-vector
+        // convention, magnitude so handedness cannot collapse it to zero.
+        const float zv = sp.x * view[2] + sp.y * view[6] + sp.z * view[10] + view[14];
+        const float h  = rworld::lodScreenHeight(sp.r, zv < 0.0f ? -zv : zv,
+                                                 projYScale);
+
+        uint8_t level = rworld::selectLod(lod.count, lod.coarsenBelow, h);
+        // Walk back toward finer levels if the chosen one does not resolve. A
+        // half-cooked chain must degrade to MORE detail, never to a hole in the
+        // frame — and it is counted, because silently drawing level 0 everywhere
+        // is indistinguishable from LOD not working at all.
+        while (level > 0) {
+            const MeshHandle mh = lod.mesh[level - 1];
+            if (const Mesh* lm = m_assets->getMesh(mh)) {
+                it.mesh    = lm;
+                it.meshKey = mh.id;
+                MaterialHandle mat = mr.materialOverride.valid()
+                                     ? mr.materialOverride : lm->material;
+                it.material = mat;
+                it.matKey   = mat.id;
+                keyBase = rworld::opaqueKeyBase(it.matKey, it.meshKey);
+                break;
+            }
+            m_lodBroken.fetch_add(1, std::memory_order_relaxed);
+            if (!m_warnedLodBroken.test_and_set(std::memory_order_relaxed))
+                LOG_WARN("Renderer", "LOD level %u has no mesh — falling back to a "
+                                     "finer level. The scene is drawing more "
+                                     "triangles than it asked to; check that every "
+                                     "level in the chain is cooked.",
+                         (unsigned)level);
+            --level;
+        }
+        m_lodCount[level].fetch_add(1, std::memory_order_relaxed);
+    };
+
     // Parentless: the local matrix IS the world matrix. Zero component lookups —
     // Transform, MeshRenderer and the optional PrevTransform all arrive from the
     // query, resolved once per archetype instead of once per entity.
@@ -204,6 +273,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
             localMatrixLerp(c.tr[i], c.prev ? &c.prev[i] : nullptr,
                             m_simAlpha, it.model.m);
             rworld::writeCullEntry(it, sp[n], sk[n]);
+            if (c.lod) applyLod(c.mr[i], c.lod[i], sp[n], it, sk[n]);
             ++n;
         }
         c.written = n;
@@ -212,11 +282,21 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     // genuinely depends on ancestors that this query does not hand us.
     auto extractChild = [&](flecs::entity e, const Transform& tr,
                             const MeshRenderer& mr, const PrevTransform* prev,
-                            const SkinnedMesh* skin) {
+                            const SkinnedMesh* skin, const LodMesh* lod) {
         RenderItem it;
         if (!extractItem(mr, skin, it)) return;
         getWorldMatrixLerpFrom(e, tr, prev, m_simAlpha, it.model.m);
+        // Stream entry written HERE rather than in a fix-up pass afterwards. It
+        // used to be a second loop over the appended tail, which was fine while
+        // the entry depended only on the item — LOD selection needs the sphere AND
+        // the components, and carrying `mr`/`lod` forward to a later pass would
+        // mean side arrays for a handful of items. One append, everything in hand.
+        CullSphere sp; uint64_t kb;
+        rworld::writeCullEntry(it, sp, kb);
+        if (lod) applyLod(mr, *lod, sp, it, kb);
         m_items.push_back(it);
+        m_cull.sphere.push_back(sp);
+        m_cull.keyBase.push_back(kb);
     };
     auto extractLight = [&](flecs::entity e, const Transform&, const Light& lc) {
         float m[16]; getWorldMatrixLerp(e, m_simAlpha, m);
@@ -258,6 +338,8 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
                     ? &it.field<const PrevTransform>(2)[0] : nullptr;
                 const SkinnedMesh* skin = it.is_set(3)
                     ? &it.field<const SkinnedMesh>(3)[0] : nullptr;
+                const LodMesh* lod = it.is_set(4)
+                    ? &it.field<const LodMesh>(4)[0] : nullptr;
 
                 for (uint32_t off = 0; off < n; off += kExtractGrain) {
                     const uint32_t c = n - off < kExtractGrain ? n - off
@@ -266,6 +348,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
                         tr + off, mr + off,
                         prev ? prev + off : nullptr,
                         skin ? skin + off : nullptr,
+                        lod ? lod + off : nullptr,
                         c, total, 0 });
                     total += c;
                 }
@@ -276,6 +359,11 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
 
     m_items.clear();
     m_lights.clear();
+    // Per-VIEW, not per-frame, and that is the honest reading: the census
+    // describes the last view extracted. The scene and game views have different
+    // cameras and legitimately pick different levels.
+    for (auto& c : m_lodCount) c.store(0, std::memory_order_relaxed);
+    m_lodBroken.store(0, std::memory_order_relaxed);
 
     ItemQuery* flatQ  = nullptr;
     ItemQuery* childQ = nullptr;
@@ -337,14 +425,11 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     // ancestor walk, and they are a small minority of a scene. Appended after
     // the parallel block, so nothing races with the resize above.
     childQ->each(extractChild);
-    // The parented path appends with push_back, so its stream entries are written
-    // after the fact — a handful of items in any real scene.
-    if (m_items.size() != m_cull.size()) {
-        const std::size_t first = m_cull.size();
-        m_cull.resize(m_items.size());
-        for (std::size_t i = first; i < m_items.size(); ++i)
-            rworld::writeCullEntry(m_items[i], m_cull.sphere[i], m_cull.keyBase[i]);
-    }
+    // extractChild appends its own stream entry, so the two stay parallel by
+    // construction. Asserted rather than repaired: a length mismatch means the
+    // cull would read one object's bounds for another's, and the failure mode of
+    // that is a silently wrong frame, not a crash.
+    assert(m_cull.size() == m_items.size());
     if (&world == m_editorWorld) m_lightQuery.each(extractLight);
     else                        m_gameLightQuery.get(world).each(extractLight);
 
@@ -353,4 +438,12 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     rv.lights  = { m_lights.data(), m_lights.size() };
     rv.ambient = 0.25f;
     return rv;
+}
+
+Renderer::LodCensus Renderer::lodCensus() const {
+    LodCensus c;
+    for (std::size_t i = 0; i < rworld::kMaxLodLevels; ++i)
+        c.level[i] = m_lodCount[i].load(std::memory_order_relaxed);
+    c.broken = m_lodBroken.load(std::memory_order_relaxed);
+    return c;
 }

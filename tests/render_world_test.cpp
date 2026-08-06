@@ -10,6 +10,7 @@
 //
 // The whole point of RenderItem carrying its own bounds is that this file
 // links without bgfx, without Mesh, and without a device.
+#include <cmath>
 #include <cstdio>
 #include <thread>
 #include <vector>
@@ -23,6 +24,7 @@
 #include "render/world/visibility.h"
 #include "render/world/draw_sort.h"
 #include "render/world/cull_stream.h"
+#include "render/world/lod.h"
 
 static int g_failures = 0;
 #define CHECK(cond, ...) do {                                          \
@@ -671,6 +673,85 @@ int main() {
         CHECK(capped.shadowLightIndex == -1,
               "a shadow caster dropped at the cap does not leave a stale index "
               "(%d)", capped.shadowLightIndex);
+    }
+
+    // ── LOD selection ───────────────────────────────────────────────────────
+    // The whole system's correctness is one function, and its failure mode is
+    // silent: a wrong threshold does not crash, it makes props pop between
+    // detail levels as the camera moves. So the properties are asserted, not
+    // just a couple of sample points.
+    {
+        // 1 / tan(45°/2) — a 45° vertical FOV, the engine's default ballpark.
+        const float projY = 1.0f / std::tan(0.5f * 45.0f * 3.14159265f / 180.0f);
+        const float below[3] = { 0.30f, 0.10f, 0.03f };
+
+        // A 1 m-radius object. h = r * projY / d, so with projY ~2.414 the
+        // thresholds land at roughly 8 m, 24 m and 80 m.
+        CHECK(selectLod(3, below, lodScreenHeight(1.0f, 2.0f,   projY)) == 0,
+              "up close, full detail");
+        CHECK(selectLod(3, below, lodScreenHeight(1.0f, 15.0f,  projY)) == 1,
+              "past the first threshold, level 1");
+        CHECK(selectLod(3, below, lodScreenHeight(1.0f, 40.0f,  projY)) == 2,
+              "past the second, level 2");
+        CHECK(selectLod(3, below, lodScreenHeight(1.0f, 500.0f, projY)) == 3,
+              "far away, the coarsest level");
+
+        // A chain of zero coarser levels must be inert, not out of bounds. This
+        // is a freshly added component's state and every non-LOD entity's.
+        CHECK(selectLod(0, below, 0.0f) == 0, "an empty chain always draws level 0");
+        CHECK(selectLod(3, nullptr, 0.0f) == 0, "a null threshold array is inert");
+
+        // MONOTONICITY, over the whole interesting range. This is the property
+        // that stops popping, and it is the one a hand-written comparison chain
+        // (or a mis-ordered `>` in the scan) breaks while still passing the four
+        // sample points above. Mutation-checked: flipping the scan's comparison
+        // to `h > coarsenBelow[level]` fails here and passes every case above
+        // except the boundaries.
+        uint8_t worst = 0;
+        bool monotone = true;
+        for (int i = 2000; i >= 1; --i) {          // depth 200 m -> 0.1 m: h rises
+            const float h = lodScreenHeight(1.0f, (float)i * 0.1f, projY);
+            const uint8_t l = selectLod(3, below, h);
+            if (i == 2000) worst = l;
+            if (l > worst) { monotone = false; break; }   // got COARSER while nearer
+            worst = l;
+        }
+        CHECK(monotone, "level never coarsens as the object grows on screen");
+
+        // Never out of range, for any input including the degenerate ones the
+        // extraction path can hand it.
+        const float hs[] = { 0.0f, -1.0f, 1e30f, 0.03f, 0.10f, 0.30f };
+        bool inRange = true;
+        for (float h : hs) if (selectLod(3, below, h) > 3) inRange = false;
+        CHECK(inRange, "the selected level is always within the chain");
+
+        // Exactly AT a threshold stays on the finer level — the comparison is
+        // `h < coarsenBelow`, so the boundary belongs to the better-looking side.
+        CHECK(selectLod(3, below, 0.30f) == 0, "at a threshold, the finer level wins");
+
+        // A mis-ordered chain is conservative rather than invalid: authoring the
+        // thresholds ascending must waste triangles, never punch a hole in the
+        // frame. The scan stops at the first threshold h clears, and with an
+        // ascending chain that is index 0 for anything but the very smallest h —
+        // so the whole chain degrades to full detail. Wasteful, visibly so in the
+        // census, and never wrong on screen.
+        const float bad[3] = { 0.03f, 0.10f, 0.30f };   // ascending — wrong
+        CHECK(selectLod(3, bad, 0.05f) == 0,
+              "a mis-ordered chain degrades to full detail, not to garbage");
+        CHECK(selectLod(3, bad, 0.01f) <= 3,
+              "a mis-ordered chain stays in range even below every threshold");
+
+        // Screen height is scale-invariant in the way that matters: an object
+        // twice as big at twice the distance is the same size on screen, which is
+        // the entire reason this is not a distance threshold.
+        CHECK(selectLod(3, below, lodScreenHeight(1.0f, 15.0f, projY)) ==
+              selectLod(3, below, lodScreenHeight(2.0f, 30.0f, projY)),
+              "twice as big at twice the range picks the same level");
+        // And FOV-invariance the other way: zooming in (a larger projY) must
+        // refine, never coarsen.
+        CHECK(selectLod(3, below, lodScreenHeight(1.0f, 40.0f, projY * 4.0f)) <
+              selectLod(3, below, lodScreenHeight(1.0f, 40.0f, projY)),
+              "zooming in selects a finer level at the same distance");
     }
 
     if (g_failures) {

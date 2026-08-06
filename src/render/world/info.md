@@ -59,6 +59,7 @@ Everything here is **GPU-free**. Nothing includes bgfx; nothing dereferences
 | | `VisibleDraw` carries a `submesh` ordinal since R18, and `batchRunLength` compares it: two ranges of one mesh sharing a material have EQUAL keys but need different index ranges, so instancing them together would draw the wrong geometry. The expansion itself lives in the pipeline, because it needs `Mesh*` and this layer must never dereference one. |
 | `draw_sort.h/.cpp` | Order the draw list by key: a stable, data-adaptive radix sort. |
 | `cull_stream.h` | One RenderItem → the 24 bytes the cull reads (`writeCullEntry`). |
+| `lod.h` | How big is this on screen, and which detail level draws? `lodScreenHeight` + `selectLod`, and nothing else — the mesh swap needs a registry, so it lives in extraction. |
 | `light_packing.h/.cpp` | `LightItem[]` → the float layout the shader expects. |
 
 ## The cull reads streams, not items
@@ -140,10 +141,14 @@ changes.
   handles transparency correctly; nothing produces it. Stated rather than hidden.
 - **`kMaxLights = 16`, hard.** Lights past the cap are dropped. The fix is
   clustered forward (`docs/architecture/renderer-architecture.md` §2), not a bigger array.
-- **No instancing yet.** `batchRunLength()` exists and is tested; `ForwardPipeline`
-  does not yet collapse a run into one instanced submit.
-- **Single-threaded.** `buildVisibleSet` is a serial scan. The data layout is
-  deliberately parallel-friendly; nothing splits it across jobs yet.
+- **LOD selection decides the level, not the visibility.** `selectLod` can never
+  return "invisible": a max-draw-distance rule is a separate feature, and merging
+  the two is how objects vanish unaccountably. It also does not cross-fade —
+  switching levels is a hard pop today.
+- ~~**No instancing yet.**~~ Live since R5: `ForwardPipeline` walks
+  `batchRunLength` and collapses runs into one instanced submit.
+- ~~**Single-threaded.**~~ `buildVisibleSet` takes an injected `ParallelForFn` and
+  runs over ranges on the job pool (R16); `sortDraws` is a stable radix sort.
 
 ## Tier evidence (`working`)
 - Builds clean, wired into `engine_runtime`, consumed by `ForwardPipeline`.

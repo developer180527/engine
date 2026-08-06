@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-05
+verified: 2026-08-06
 parses-external-input: true
 covers:
   - src/scene/
@@ -28,6 +28,13 @@ prefabs.
   `Disk` (cross-session: AssetRef uuid+relative refs, semantic clipIndex —
   session handles NEVER hit disk) and `Memory` (same-session snapshot: live
   handle reuse). Add a component once here and every path picks it up.
+  `lodMesh` is hand-written for the same reason `meshRenderer` is — its levels are
+  asset references — with one limitation stated in place: **levels resolve
+  SYNCHRONOUSLY from cooked meshes only.** `loadMesh`'s last resort is an Assimp
+  import on a worker that completes by setting a `MeshRenderer`, and no shape of that
+  can fill slot 2 of an `LodMesh`. An unresolved level therefore SHORTENS the chain
+  (`break`, not `continue` — a gap would shift every coarser level one threshold
+  finer), which costs triangles and never correctness.
 - **`reflected_serde.h`** — the GENERIC half of serde, driven by flecs meta:
   any component registered with `.member<>()` that isn't in the hand-written
   table saves/loads automatically under the entity's `"reflected"` sub-object,
