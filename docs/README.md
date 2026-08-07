@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-04
+verified: 2026-08-06
 covers:
   - docs/
 ---
@@ -50,4 +50,19 @@ claim about freshness as much as about tests. See
 - **The renderer** — [`architecture/renderer-architecture.md`](architecture/renderer-architecture.md)
   for the target design, [`plans/renderer-audit-and-plan.md`](plans/renderer-audit-and-plan.md)
   for the ranked findings and which are fixed.
-- **Using the engine** — [`guides/engine-api.md`](guides/engine-api.md).
+- **Using the engine** — [`guides/engine-api.md`](guides/engine-api.md),
+  [`guides/scripting.md`](guides/scripting.md) and its
+  [API reference](guides/scripting-api.md),
+  [`guides/performance.md`](guides/performance.md).
+- **Is bgfx holding us back?** — [`architecture/renderer-vs-production.md`](architecture/renderer-vs-production.md)
+  answers that with numbers (short version: no, and here is what we don't use yet).
+- **The rest of the architecture** — [`architecture/overview.md`](architecture/overview.md),
+  [`architecture/asset-system.md`](architecture/asset-system.md),
+  [`architecture/dependencies.md`](architecture/dependencies.md).
+- **Plans not yet started** — [`plans/`](plans/): animation, soak/fuzz testing,
+  scripting integration, the infrastructure backlog, and `plans/future-plans/`
+  for notes that are deliberately speculative (crash reporting, IDE ideas).
+
+This list is hand-maintained and therefore the one thing here that CAN go stale.
+`engine_doctor` checks front-matter, not prose — see the note in
+[`process/engineering-standards.md`](process/engineering-standards.md).

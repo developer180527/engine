@@ -1,3 +1,6 @@
+---
+status: decided
+---
 \# What are these modules? 
 
 This folder "modules" contains software components which are self contained,

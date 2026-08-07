@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-04
+verified: 2026-08-06
 covers:
   - docs/
 ---
@@ -59,13 +59,13 @@ out-of-process crash isolation, GC. It is genuinely studio-shaped.
 |---|---|---|
 | R1 | GPU resources had no identity/refcount/dedup | **done** — `GpuResourceCache`, wired for textures through `AssetService` |
 | R2 | Extraction/submission split never happened | **done** — `src/render/world/` |
-| R3 | Shaders are compile-time blobs | **half** — shaders are live in a shipped dist; materials are cooked but not loaded |
-| R4 | Bone palette uploaded per submesh | **open** — still inside `bindMaterial` (`forward_pipeline.h:272`) |
-| R5 | No instancing | **open** — `batchRunLength()` exists and is tested; nothing consumes it |
+| R3 | Shaders are compile-time blobs | **done for authored content** — a shipped dist renders its standard program from a cooked `.cshader`, and `.cmat` materials load by name. Mesh-EMBEDDED materials still use the fixed struct (Phase 5 step 4) |
+| R4 | Bone palette uploaded per submesh | **done** — hoisted to once per item (`pipeline/opaque_pass.cpp`) |
+| R5 | No instancing | **done** — runs collapse into instanced submits; 299 covering 41 571 items at 50 k props |
 | R6 | Render targets ~5× the naive figure (71 MB) | **mostly explained** — shadow map was the bulk; now a project setting, rt down to 23 MB |
-| R7 | Redundant material binds | **open** — no state comparison anywhere in the pipeline |
+| R7 | Redundant material binds | **done, and measured at zero** (R17) — the dedup is real, the saving was not, because binds were already 1:1 with draws. Kept: it is what makes submesh expansion safe |
 | R8 | Textures outside the residency system | **done** — texture cache is budgeted and refcounted |
-| R9 | No LOD, cascades, occlusion, streaming | **open, deliberately deferred** |
+| R9 | No LOD, cascades, occlusion, streaming | **LOD built (R20), bought nothing measurable** — no decimation in `MeshCooker`, so no level is cheaper than the one above. Cascades / occlusion / streaming still open |
 
 Measured along the way: cook 8 min → 1.8 s; dist 85.7 → 53.6 MB; shipped GPU
 peak 71.1 → 63.7 MB with textures actually loading.
@@ -105,20 +105,32 @@ Verified in a shipped `fps_shooter` dist: `standard program: cooked .cshader`,
 ### Next — finish Phase 5 (R3)
 1. ~~Resolve the packaging decision.~~ **done** — §3
 2. ~~`ForwardPipeline` consumes `ShaderLibrary`.~~ **done** — verified in a dist
-3. `AssetService` loads `.cmat`; `Material` gains the data-driven fields;
-   the pipeline uploads prebuilt blocks instead of reading `Material::roughness`.
-4. Delete the hardcoded fields from `material.h`, and the compiled-in fallback
-   for the standard program. **Not done until this deletion happens** — until
-   then both paths exist and either could be the one that runs.
+3. ~~`AssetService` loads `.cmat`; the pipeline uploads prebuilt blocks.~~
+   **done** — materials resolve by authored name, verified in a dist.
+4. **The remaining step.** Mesh-EMBEDDED materials (`CookedMaterial` inside
+   cooked geometry) still fill the fixed struct, and that is what every surface
+   in `fps_shooter` currently renders through — so this is a MIGRATION, not a
+   deletion: `AssetService` must synthesize a data-driven Material against the
+   standard shader at mesh load, and only then do the fixed fields have no
+   writer and delete cleanly. Same for the compiled-in program fallback.
+   **Phase 5 is not finished until both are gone** — until then two paths exist
+   and either could be the one that runs.
 5. Live-verify `fps_shooter` renders identically.
 
 *Unlocks:* the stated goal — a game defines its look without rebuilding the
 engine. `src/render/shader` → `working`.
 
-### Then — Phase 4, submission efficiency
-Cheap, because the hooks exist: instancing off `batchRunLength()` (R5), state
-dedup against the previous draw (R7), bone palette hoisted out of `bindMaterial`
-(R4). All three are contained changes with measurable results.
+### ~~Then — Phase 4, submission efficiency~~ — **done** (R17–R20)
+All three landed: instancing off `batchRunLength()` (R5), material-bind dedup
+(R7), bone palette hoisted to once per item (R4). Submesh-granular visible sets
+(R18) were the prerequisite that made the first two work on real content —
+50 000 props went from *3 067 draws + 534 refused, frame incomplete* to **299
+draws covering 41 571 items**.
+
+Two results were negative and are recorded as such: R7's dedup saved nothing
+(binds were already 1:1 with draws) and R20's LOD bought nothing measurable (no
+decimation, so no level is cheaper). Both were kept — the dedup is what makes
+submesh expansion safe, and LOD is correct and waits on a decimator.
 
 ### Then — render graph (tier-2 customization)
 Deliberately after Phase 5. The engine has **two passes**; a render graph for two
