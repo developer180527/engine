@@ -1,39 +1,57 @@
-render: decimation gives LOD something to select, 62.2% of triangles
+scene: fuzz both deserializers, and six bugs, two memory-unsafe
 
-R20 built LOD selection, mutation-tested it, and measured it at exactly zero
-benefit. The reason was never selection: `MeshCooker` could not decimate, so a
-"level" was another kit mesh with the same triangle count. Selection was correct
-and had nothing to select. This is the missing half.
+Task said "scene-deserializer fuzzer" (singular). There are two, and only
+fuzzing both is worth anything: `assetlib::loadScene` reads the cooked binary,
+`EntitySerde::createEntity` reads the authored JSON, and each had bugs the
+other's target could never have found.
 
-`decimate.{h,cpp}`, vertex clustering, chosen over quadric error metrics on
-purpose: it cannot produce non-manifold output, it is O(n), and it is
-deterministic, which the shared DDC requires. The cell representative is the
-cell's first vertex in index order, never a centroid, so every attribute on a
-surviving vertex belongs to a real one. Authors steer by triangle RATIO, because
-grid resolution is absolute and the same value gives 96% reduction on a dense
-mesh and 0% on a prop.
+── fuzz_scene_loader_test (the cooked binary) ────────────────────────────────
+Found the SAME two bugs `fuzz_mesh_loader_test` had already found and fixed in
+the mesh loader, carried verbatim:
 
-The cooker emits three levels (40/15/5%) for static meshes above 2 000
-triangles, and ships a level only if it is 20% cheaper than its parent, a level
-that is not meaningfully cheaper is worse than no level, which is the state R20
-measured. `lodCount` did NOT go into `MeshHeader`: it is a fixed-size block and
-`static_assert(sizeof(MeshHeader) == 80)` caught the growth, so the count leads
-the LOD section instead.
+  - allocation sized straight from a header count. 2.7 GB requested from a
+    3 482-byte file; entityCount=0xFFFFFFFF asks for 1 TB. A 20-iteration
+    explore run was SIGKILLed by the OOM killer.
+  - `return f.good() || f.eof()` accepted truncation as success, handing back
+    zero-filled records while the header still claimed the original counts.
 
-Three bugs found wiring it up, all of the same shape, LOD looking inert at
-scene scale for reasons that were not LOD:
+That is the finding worth keeping: a hardening that lands in one deserializer
+and not its sibling is a coincidence, not a policy. And the scene path is the
+more exposed of the two, a shipped dist opens one with no registry and no
+source assets to fall back on.
 
-  - `AssetService`'s mesh dedup cache returned on a HIT without handing back the
-    chain, so exactly one entity per mesh got levels. 20 000 objects over 176
-    meshes meant 176 LOD'd entities. The chain now lives in `MeshResidency`.
-  - only `SceneService` set `LodMesh`; `entity_serializer` did not. The same
-    asset rendered with LOD in the player and without it in the editor.
-  - `gen_fuzz_scene.py` selected `ASSET_STATE_COOKED = 1`, which is `Registered`,
-    not `Ready`. The 20 000-entity fuzz scene was drawing 2 objects. Every LOD
-    measurement taken on it was taken on an empty scene.
+A third was unique to it: `stringTableRead` computed `offset + length` in
+32-bit. offset=0xFFFFFFF0 with length=0x20 wraps to 0x10, passes the bound, and
+builds a std::string from a pointer 4 GB past the buffer. Reproduced as an
+88-byte read from offset 4294967234 in a 32-byte table.
 
-And the census now counts TRIANGLES, not just entities per level. Entities per
-level says LOD is running; triangles say whether it is worth running, which is
-the question R20 could not answer. Measured on the fuzz scene: L0 475, L1 710,
-L2 795, L3 541, 0 broken, 3 719 383 triangles submitted against 9 828 860 at full
-detail, 62.2% saved.
+── fuzz_entity_serde_test (the authored JSON) ────────────────────────────────
+A `.scene` is a text file people hand-edit, merge, and resolve conflicts in, so
+malformed is the normal case, not the adversarial one. Three bugs, each hidden
+behind the one before it:
+
+  - every wrong-typed field THREW. nlohmann's `value()` does not fall back to
+    the default when a key exists with the wrong type. `scene_serializer.h`
+    wraps only `json::parse` in try/catch, so one `"fov": "60"` propagated out
+    of scene load and took the editor or the player with it. ~1 case in 20.
+  - `j["position"][0..2]` on a short array is UNDEFINED BEHAVIOUR, nlohmann's
+    const `operator[](size_type)` is not `at()`, has no bounds check, and
+    returns a reference to nothing. Five sites. Segfault, unwindable stack.
+    Only reachable once the throw above stopped getting there first.
+  - non-finite values accepted. JSON has no NaN literal, but `1e999` parses to
+    +inf, and an infinite scale or fov corrupts a frame nowhere near the load.
+
+Component loads are now individually try/caught, and the granularity is the
+fix: a malformed COMPONENT is skipped and logged, the rest of the entity still
+loads. Wrapping the function would turn a bad field into a missing entity;
+wrapping the load, the obvious fix, would turn it into a missing scene.
+
+All nine seeds are pinned in tests/fuzz/corpus/, and each fix was verified by
+reverting it alone: 9 failures without the tolerance, a segfault without the
+bounds check, 6 failures without the finite guard.
+
+`src/scene` reaches `hardened`, it had `parses-external-input: true` and no
+fuzz test, which was exactly what the tier required. `src/runtime` stays
+`working` and the roadmap says why: the fuzzers cover the parse and the
+string-table reads SceneService makes, but nothing drives SceneService itself,
+and scenes are only one of its untrusted inputs.

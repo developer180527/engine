@@ -1,0 +1,30 @@
+# entity_serde — every bug this target has found, pinned forever.
+# One decimal master seed per line; `--seed <n>` reproduces one exactly.
+
+# ── createEntity threw on a wrong-typed field ────────────────────────────────
+# nlohmann's `value()` does not fall back to the default when the key exists
+# with the wrong type — it throws. scene_serializer.h wraps only json::parse in
+# try/catch, so one `"fov": "60"` in a hand-edited .scene propagated out of
+# scene load and took down the editor or the player. Roughly 1 case in 20.
+2277151743773813066
+12660276661850738527
+2267135806626478818
+8704601960889612507
+3600414414911528964
+1004782555136890424
+
+# ── SEGFAULT: short float array, const operator[] out of range ───────────────
+# `j["halfExtent"][0..2]` on a two-element array. nlohmann's CONST
+# operator[](size_type) is undefined behaviour out of range — not at(), no
+# bounds check, no exception. Five sites had it (position, rotation, scale,
+# clearColor, halfExtent, color). Reproduced as a null-json deref with an
+# unwindable-stack crash. Only reachable AFTER the type-tolerance fix above,
+# because until then the wrong-type throw got there first.
+5813135465557942230
+
+# ── Non-finite values accepted ───────────────────────────────────────────────
+# JSON has no NaN literal, but `1e999` parses to +inf, and an infinite scale or
+# fov propagates into every world matrix and projection downstream — corrupting
+# a frame far from the load that caused it.
+1363229889033388563
+3343848946614325241

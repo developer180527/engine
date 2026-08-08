@@ -9,6 +9,7 @@ tests:
   - tests/cook_infra_test.cpp
   - tests/fuzz_ddc_manifest_test.cpp
   - tests/fuzz_mesh_loader_test.cpp
+  - tests/fuzz_scene_loader_test.cpp  # loadScene, hostile bytes
   - tests/cook_hardening_test.cpp   # result framing, DDC GC, schema versioning
   - tests/cook_deps_test.cpp        # declared inputs must move the cook key
 ---
@@ -33,6 +34,15 @@ are the on-disk containers cookers write and the runtime reads. They live here
 rather than in the engine because a cooked format is a contract between the
 offline and online halves, and `engine_core` (which hosts the cookers) must stay
 GPU-free.
+
+`loadScene` was hardened by `fuzz_scene_loader_test` against the exact two bugs
+`loadMesh` had already been fixed for — allocation sized straight from a header
+count (2.7 GB from a 3 482-byte file; a 20-iteration run was OOM-killed), and
+`return f.good() || f.eof()` accepting a truncated file as success. It carried
+both verbatim, which is the lesson worth keeping: a hardening that lands in one
+deserializer and not its sibling is a coincidence, not a policy. A third was
+unique to it — `stringTableRead` computed `offset + length` in 32-bit, so the
+bound wrapped and the read ran off the heap.
 
 Every loader treats its input as **untrusted**: cooked blobs travel through a
 SHARED DDC, so "another machine wrote this" is the threat model, not a

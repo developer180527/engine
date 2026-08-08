@@ -185,7 +185,12 @@ inline std::string stringTableReadZ(const std::vector<char>& table,
 inline std::string stringTableRead(const std::vector<char>& table,
                                    uint32_t offset, uint32_t length) {
     if (offset == 0xFFFFFFFF || length == 0) return {};
-    if (offset + length > table.size()) return {};
+    // 64-bit, and it has to be. Both fields are uint32_t, so `offset + length`
+    // computes in 32-bit and WRAPS: offset=0xFFFFFFF0 with length=0x20 yields
+    // 0x10, sails past the bound, and hands back a std::string built from a
+    // pointer 4 GB beyond the buffer. A corrupt cooked scene — a bad disk, a
+    // truncated DDC blob from another machine — is enough to reach it.
+    if ((uint64_t)offset + (uint64_t)length > (uint64_t)table.size()) return {};
     return std::string(table.data() + offset, length);
 }
 

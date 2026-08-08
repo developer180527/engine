@@ -20,7 +20,7 @@ nothing should be until a shipped game has run on it.
 
 ## 1. Where the engine stands
 
-**20 tracked subsystems: 4 hardened, 12 working, 4 prototype, 0 production.**
+**20 tracked subsystems: 5 hardened, 11 working, 4 prototype, 0 production.**
 
 Test lanes: **29 unit, 5 stress, 2 fuzz-regress, 2 docs**; doc contract 56 docs,
 0 errors, 0 warnings. Zero `TODO` comments remain in `src/` — the stale ones
@@ -142,7 +142,7 @@ tier-1 (material + shader) is proven.
 | Gap | Cost of leaving it |
 |---|---|
 | **Windows build** | The stated target (i3-10105 / UHD 630 / 4 GB) cannot run anything yet. Also: shader cooking has no `CreateProcess` path, and D3D bytecode needs a Windows runner. |
-| **Scene-deserializer fuzzer** | Blocks `src/runtime` and `src/scene` from `hardened`; both parse untrusted input |
+| **`src/runtime` scene consumption** | Both scene deserializers now have fuzz targets (`fuzz_scene_loader_test`, `fuzz_entity_serde_test`), which raised `src/scene` to `hardened` and found six bugs — two of them memory-unsafe. `src/runtime` stays `working`: the fuzzers cover the PARSE and the string-table reads `SceneService` makes, but nothing drives `SceneService` itself, and scenes are only one of its untrusted inputs. |
 | **`src/editor` has no tests** | Largest untested surface in the tree |
 | **Networking** | `modules/net` is an FFI seam with nothing behind it. Transport scope undecided. |
 | **Texture UUIDs in `.cmat`** | Materials declare no dependency edge on their textures |

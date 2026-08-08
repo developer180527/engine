@@ -12,6 +12,7 @@ tests:
   - tests/script_host_test.cpp
   - tests/kit_lifecycle_test.cpp
   - tests/residency_test.cpp
+  - tests/fuzz_scene_loader_test.cpp  # the cooked scene SceneService consumes
   - tests/mesh_dedup_test.cpp
   - tests/material_name_test.cpp
   - tests/input_test.cpp

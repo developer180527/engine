@@ -179,9 +179,16 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     #   <name>_explore  fresh seeds, label `fuzz-explore`, NOT part of the unit
     #                   lane — long-running, for nightly/self-hosted campaigns.
     #                   Its only job is to feed the corpus.
+    # LIB defaults to engine_core — the deserializers under test are pure byte
+    # parsers and must stay linkable without the renderer. A target that reaches
+    # into ECS components (the JSON entity path) passes LIB engine_runtime.
     function(engine_fuzz_target name domain)
+        cmake_parse_arguments(EFT "" "LIB" "" ${ARGN})
+        if(NOT EFT_LIB)
+            set(EFT_LIB engine_core)
+        endif()
         add_executable(${name} ${name}.cpp)
-        target_link_libraries(${name} PRIVATE engine_core)
+        target_link_libraries(${name} PRIVATE ${EFT_LIB})
         target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
         set_target_properties(${name} PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
@@ -201,6 +208,8 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
 
     engine_fuzz_target(fuzz_ddc_manifest_test ddc_manifest)
     engine_fuzz_target(fuzz_mesh_loader_test  mesh_loader)
+    engine_fuzz_target(fuzz_scene_loader_test scene_loader)
+    engine_fuzz_target(fuzz_entity_serde_test entity_serde LIB engine_runtime)
     engine_test(import_test)
     engine_test(residency_test)
 # One cooked mesh must cost ONE pair of GPU buffers. Pins the fix for a bug that

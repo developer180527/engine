@@ -1,14 +1,41 @@
 ---
 status: as-built
-tier: working
+tier: hardened
 verified: 2026-08-08
 parses-external-input: true
 covers:
   - src/scene/
 tests:
   - tests/kit_lifecycle_test.cpp
+  - tests/fuzz_entity_serde_test.cpp  # the JSON deserializer, hostile input
 ---
 # Scene
+
+## Hostile input
+`.scene` JSON is the most-edited untrusted input in the tree: people hand-edit
+it, merge it, and resolve conflicts in it, so malformed is the NORMAL case, not
+the adversarial one. `tests/fuzz_entity_serde_test.cpp` drives `createEntity`
+with wrong-typed, short, non-finite and deeply nested values. It found three
+bugs, and the order matters — each was hidden behind the one before it:
+
+1. **Any wrong-typed field threw.** nlohmann's `value()` does not fall back to
+   the default when a key exists with the wrong type; it throws `type_error`.
+   `scene_serializer.h` wraps only `json::parse` in try/catch, so one
+   `"fov": "60"` propagated out of scene load. Now every component load is
+   individually try/caught: a malformed COMPONENT is skipped and logged, and
+   the rest of the entity still loads. The granularity is deliberate — wrapping
+   the whole function turns a bad field into a missing entity, and wrapping the
+   whole load turns it into a missing scene.
+2. **A short float array was undefined behaviour.** `j["position"][0..2]` on a
+   two-element array: nlohmann's CONST `operator[](size_type)` is not `at()`,
+   has no bounds check, and returns a reference to nothing. Five sites had it.
+   It was only reachable once (1) stopped throwing first.
+3. **Non-finite values were accepted.** JSON has no NaN literal, but `1e999`
+   parses to +inf, and an infinite scale or fov propagates into every world
+   matrix downstream — corrupting a frame nowhere near the load that caused it.
+
+`readFloats`/`readFloat` are the result: every float read keeps its default for
+a missing, wrong-typed, short, or non-finite value.
 
 ## Purpose
 World (de)serialization — the single component serde path that scene save/

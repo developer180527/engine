@@ -16,6 +16,7 @@
 #include <functional>
 #include <filesystem>
 #include <cctype>
+#include <cmath>
 
 #include "core/transform.h"
 #include "core/handle.h"
@@ -92,7 +93,55 @@ struct ComponentSerde {
     void (*load)(flecs::entity, const nlohmann::json&, SerdeContext&);  // reads its sub-object
 };
 
-// ── Transform ────────────────────────────────────────────────────────────────
+// ── Reading a float array out of JSON, safely ────────────────────────────────
+// nlohmann's CONST `operator[](size_type)` is UNDEFINED BEHAVIOUR out of range.
+// It is not `at()`: there is no exception, no bounds check — it indexes the
+// underlying std::vector directly and returns a reference to nothing. Every
+// vector-valued component read here used to do `j["position"][0..2]` straight,
+// so a `.scene` with `"position": [1, 2]` — one dropped element from a merge
+// conflict or a hand edit — segfaulted the loader on a null json.
+//
+// Found by tests/fuzz_entity_serde_test.cpp. It surfaced only AFTER the
+// type-tolerance fix below: until then a wrong-typed field threw first and the
+// short-array case was never reached, which is exactly why the two fixes belong
+// in one change.
+//
+// Missing elements keep the caller's default rather than zeroing: a scale of
+// {1,1,0} from a two-element array collapses the object to a plane, which is
+// far harder to recognise than the value simply not having been overridden.
+// Non-finite values are rejected in both helpers. This is not theoretical:
+// JSON text has no NaN literal, but `1e999` parses to +inf through strtod, and
+// an infinite scale or fov propagates into every world matrix and projection
+// downstream. The frame it ruins is nowhere near the load that caused it, so
+// the value is dropped at the boundary where the file is still nameable.
+inline bool finiteNumber(const nlohmann::json& v, float& out) {
+    if (!v.is_number()) return false;
+    const float f = v.get<float>();
+    if (!std::isfinite(f)) return false;
+    out = f;
+    return true;
+}
+
+inline void readFloats(const nlohmann::json& j, const char* key,
+                       float* out, int count) {
+    if (!j.contains(key)) return;
+    const auto& a = j[key];
+    if (!a.is_array()) return;
+    const int n = (int)a.size() < count ? (int)a.size() : count;
+    for (int i = 0; i < n; ++i) {
+        float f;
+        if (finiteNumber(a[(size_t)i], f)) out[i] = f;
+    }
+}
+
+// Scalar counterpart: keeps the default for a missing, wrong-typed, or
+// non-finite value instead of throwing or propagating an infinity.
+inline float readFloat(const nlohmann::json& j, const char* key, float dflt) {
+    if (!j.contains(key)) return dflt;
+    float f;
+    return finiteNumber(j[key], f) ? f : dflt;
+}
+
 inline bool hasTransform(flecs::entity e) { return e.try_get<Transform>() != nullptr; }
 inline void saveTransform(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
     const Transform* t = e.try_get<Transform>(); if (!t) return;
@@ -102,9 +151,9 @@ inline void saveTransform(flecs::entity e, nlohmann::json& j, const SerdeContext
 }
 inline void loadTransform(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
     Transform t;
-    if (j.contains("position")) t.position = {j["position"][0], j["position"][1], j["position"][2]};
-    if (j.contains("rotation")) t.rotation = {j["rotation"][0], j["rotation"][1], j["rotation"][2], j["rotation"][3]};
-    if (j.contains("scale"))    t.scale    = {j["scale"][0], j["scale"][1], j["scale"][2]};
+    readFloats(j, "position", &t.position.x, 3);
+    readFloats(j, "rotation", &t.rotation.x, 4);
+    readFloats(j, "scale",    &t.scale.x,    3);
     e.set<Transform>(t);
 }
 
@@ -133,14 +182,11 @@ inline void loadCamera(flecs::entity e, const nlohmann::json& j, SerdeContext&) 
     Camera c;
     c.isPrimary  = j.value("isPrimary", true);
     c.projection = (ProjectionType)j.value("projection", 0);
-    c.fov        = j.value("fov", 60.0f);
-    c.orthoSize  = j.value("orthoSize", 10.0f);
-    c.nearPlane  = j.value("nearPlane", 0.1f);
-    c.farPlane   = j.value("farPlane", 1000.0f);
-    if (j.contains("clearColor")) {
-        const auto& cc = j["clearColor"];
-        c.clearColor[0]=cc[0]; c.clearColor[1]=cc[1]; c.clearColor[2]=cc[2]; c.clearColor[3]=cc[3];
-    }
+    c.fov        = readFloat(j, "fov", 60.0f);
+    c.orthoSize  = readFloat(j, "orthoSize", 10.0f);
+    c.nearPlane  = readFloat(j, "nearPlane", 0.1f);
+    c.farPlane   = readFloat(j, "farPlane", 1000.0f);
+    readFloats(j, "clearColor", c.clearColor, 4);
     e.set<Camera>(c);
 }
 
@@ -162,13 +208,13 @@ inline void loadRigidBody(flecs::entity e, const nlohmann::json& j, SerdeContext
     RigidBody rb;
     rb.bodyType    = (PhysicsBodyType)j.value("bodyType", 1);
     rb.shape       = (PhysicsShape)   j.value("shape", 0);
-    rb.mass        = j.value("mass", 1.0f);
-    rb.restitution = j.value("restitution", 0.3f);
-    rb.friction    = j.value("friction", 0.6f);
+    rb.mass        = readFloat(j, "mass", 1.0f);
+    rb.restitution = readFloat(j, "restitution", 0.3f);
+    rb.friction    = readFloat(j, "friction", 0.6f);
     rb.useGravity  = j.value("useGravity", true);
-    if (j.contains("halfExtent")) { const auto& he = j["halfExtent"]; rb.halfExtent = {he[0], he[1], he[2]}; }
-    rb.radius     = j.value("radius", 0.5f);
-    rb.halfHeight = j.value("halfHeight", 0.5f);
+    readFloats(j, "halfExtent", &rb.halfExtent.x, 3);
+    rb.radius     = readFloat(j, "radius", 0.5f);
+    rb.halfHeight = readFloat(j, "halfHeight", 0.5f);
     e.set<RigidBody>(rb);
 }
 
@@ -406,12 +452,12 @@ inline void saveCharacterController(flecs::entity e, nlohmann::json& j, const Se
 }
 inline void loadCharacterController(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
     CharacterController cc;
-    cc.radius       = j.value("radius", 0.3f);
-    cc.height       = j.value("height", 1.8f);
-    cc.maxSlopeDeg  = j.value("maxSlopeDeg", 45.0f);
-    cc.stepHeight   = j.value("stepHeight", 0.3f);
-    cc.mass         = j.value("mass", 70.0f);
-    cc.gravityScale = j.value("gravityScale", 1.0f);
+    cc.radius       = readFloat(j, "radius", 0.3f);
+    cc.height       = readFloat(j, "height", 1.8f);
+    cc.maxSlopeDeg  = readFloat(j, "maxSlopeDeg", 45.0f);
+    cc.stepHeight   = readFloat(j, "stepHeight", 0.3f);
+    cc.mass         = readFloat(j, "mass", 70.0f);
+    cc.gravityScale = readFloat(j, "gravityScale", 1.0f);
     e.set<CharacterController>(cc);
 }
 
@@ -432,14 +478,14 @@ inline void saveLight(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
 inline void loadLight(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
     Light l;
     l.type        = (LightType)j.value("type", 0);
-    if (j.contains("color")) { const auto& c = j["color"]; l.color = {c[0], c[1], c[2]}; }
-    l.intensity   = j.value("intensity", 3.0f);
-    l.range       = j.value("range", 15.0f);
-    l.spotInner   = j.value("spotInner", 25.0f);
-    l.spotOuter   = j.value("spotOuter", 35.0f);
+    readFloats(j, "color", &l.color.x, 3);
+    l.intensity   = readFloat(j, "intensity", 3.0f);
+    l.range       = readFloat(j, "range", 15.0f);
+    l.spotInner   = readFloat(j, "spotInner", 25.0f);
+    l.spotOuter   = readFloat(j, "spotOuter", 35.0f);
     l.castShadows = j.value("castShadows", false);
     l.useTemperature = j.value("useTemperature", false);
-    l.temperatureK   = j.value("temperatureK", 6500.0f);
+    l.temperatureK   = readFloat(j, "temperatureK", 6500.0f);
     e.set<Light>(l);
 }
 
@@ -502,9 +548,9 @@ inline void loadAnimator(flecs::entity e, const nlohmann::json& j, SerdeContext&
             a.clipPath = assetref::resolve(ref, ctx.projectRoot, ctx.assetLib);
     }
     a.clipIndex = j.value("clipIndex", 0);
-    a.fade    = j.value("fade", 0.2f);
-    a.time    = j.value("time", 0.0f);
-    a.speed   = j.value("speed", 1.0f);
+    a.fade    = readFloat(j, "fade", 0.2f);
+    a.time    = readFloat(j, "time", 0.0f);
+    a.speed   = readFloat(j, "speed", 1.0f);
     a.playing = j.value("playing", false);
     a.looping = j.value("looping", true);
     e.set<Animator>(a);
@@ -552,7 +598,31 @@ inline nlohmann::json saveEntity(flecs::entity e, const SerdeContext& ctx) {
 inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
                                   SerdeContext& ctx, IdPolicy policy) {
     flecs::entity e = w.entity();                       // anonymous
-    uint64_t id = (policy == IdPolicy::Preserve) ? je.value("id", (uint64_t)0) : 0;
+    // ── Every read below is TYPE-TOLERANT, and it has to be ─────────────────
+    // nlohmann's `value()` does NOT fall back to the default when the key
+    // exists with the wrong type — it THROWS `type_error`. A `.scene` is a text
+    // file that gets hand-edited, merged, and conflict-resolved, so wrong types
+    // are the normal failure, not the adversarial one. `scene_serializer.h`
+    // wraps only `json::parse` in try/catch, which means one `"fov": "60"`
+    // propagated an exception out of scene load and took the editor or the
+    // player down with it. Found by tests/fuzz_entity_serde_test.cpp, which
+    // reported it on roughly one case in twenty.
+    //
+    // The granularity is the point: a malformed COMPONENT is skipped and
+    // reported, and the rest of the entity still loads. Wrapping the whole
+    // function would turn one bad field into a missing entity; wrapping the
+    // whole load — the obvious fix — would turn it into a missing scene.
+    auto tolerant = [&](const char* what, auto&& fn) {
+        try { fn(); }
+        catch (const std::exception& ex) {
+            LOG_WARN("Scene", "entity %s: malformed \"%s\" — skipped (%s)",
+                     "load", what, ex.what());
+        }
+    };
+
+    uint64_t id = 0;
+    if (policy == IdPolicy::Preserve)
+        tolerant("id", [&] { id = je.value("id", (uint64_t)0); });
     // Dedupe: never silently alias an id that is already live. Through the index
     // when the caller supplied one (O(1)); otherwise the O(n) scan, which is only
     // acceptable for one-off callers — see EntityIdIndex.
@@ -570,10 +640,14 @@ inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
     }
     e.set<EntityId>({id});
     for (const auto& d : table())
-        if (je.contains(d.key)) d.load(e, je[d.key], ctx);
+        if (je.contains(d.key))
+            tolerant(d.key, [&] { d.load(e, je[d.key], ctx); });
     // Generic path: apply reflected components that resolve now; stash the
-    // rest in ReflectedPending until their kit registers the type.
-    if (je.contains("reflected")) reflected::load(e, je["reflected"]);
+    // rest in ReflectedPending until their kit registers the type. Kit-authored
+    // components are the LEAST trustworthy shape in the file — the engine has
+    // never seen their schema — so this one is not optional.
+    if (je.contains("reflected"))
+        tolerant("reflected", [&] { reflected::load(e, je["reflected"]); });
     return e;
 }
 
