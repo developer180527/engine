@@ -106,6 +106,8 @@ public:
     struct LodCensus {
         uint32_t level[rworld::kMaxLodLevels] = {};
         uint32_t broken = 0;
+        uint64_t trisDrawn = 0;    // triangles the chosen levels submitted
+        uint64_t trisFull  = 0;    // triangles level 0 everywhere would submit
         bool empty() const {
             for (uint32_t n : level) if (n) return false;
             return broken == 0;
@@ -226,6 +228,13 @@ private:
     // a diagnostic — the honest trade is the simpler code until it measures.
     std::atomic<uint32_t> m_lodCount[rworld::kMaxLodLevels] = {};
     std::atomic<uint32_t> m_lodBroken = 0;
+    // Entities per level says LOD is RUNNING. Triangles say whether it is worth
+    // running — which is the exact question R20 could not answer, because
+    // nothing could decimate and every level had the parent's triangle count.
+    // Both are accumulated at extraction, where the level is chosen, so the
+    // saving is the real one and not an estimate from cooked file sizes.
+    std::atomic<uint64_t> m_lodTrisDrawn = 0;   // what the chosen levels cost
+    std::atomic<uint64_t> m_lodTrisFull  = 0;   // what level 0 would have cost
     // Latched, like every other renderer log site (see render/info.md): a broken
     // chain is per-item and per-frame, so an unlatched warning would fire tens of
     // thousands of times and cost more than the thing it reports. The count above

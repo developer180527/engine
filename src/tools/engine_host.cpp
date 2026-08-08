@@ -226,6 +226,12 @@ int main(int argc, char** argv) {
                 std::printf("[LOD] engine_host — levels");
                 for (uint32_t i = 0; i < rworld::kMaxLodLevels; ++i)
                     std::printf("  L%u %u", i, lod.level[i]);
+                if (lod.trisFull)
+                    std::printf("   tris %llu of %llu (%.1f%% saved)",
+                                (unsigned long long)lod.trisDrawn,
+                                (unsigned long long)lod.trisFull,
+                                100.0 * (1.0 - (double)lod.trisDrawn
+                                                / (double)lod.trisFull));
                 if (lod.broken)
                     std::printf("   BROKEN %u (fell back to a finer level)",
                                 lod.broken);

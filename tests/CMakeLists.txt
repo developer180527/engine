@@ -127,6 +127,9 @@ engine_test(shader_cooker_test LIB engine_core)
 # interface, and uniform blocks proven COMPLETE (an unset parameter must read
 # its default, not the previous draw's register).
 engine_test(material_cooker_test LIB engine_core)
+# The half of LOD that was missing: R20 measured selection at zero benefit
+# because nothing could produce a cheaper mesh. This asserts levels ARE cheaper.
+engine_test(decimate_test LIB engine_core)
 # Which cooked shader variant this machine wants. Guards two silent failures: a
 # package cooked for the wrong backend (no program -> nothing renders) and a
 # feature mask with no cooked variant (the nearest variant is confidently wrong).

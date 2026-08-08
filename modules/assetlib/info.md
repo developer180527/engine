@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-03
+verified: 2026-08-08
 parses-external-input: true
 covers:
   - modules/assetlib/
@@ -39,6 +39,14 @@ SHARED DDC, so "another machine wrote this" is the threat model, not a
 hypothetical. String lengths are capped before allocating, and offsets into a
 payload are bounds-checked against it — a `.cshader` variant slice pointing past
 its blob is rejected rather than handed to a GPU driver.
+
+`MeshAsset` carries an optional chain of coarser **LOD levels** (v4). The level
+count leads the LOD *section* rather than sitting in `MeshHeader`: the header is a
+fixed-size block the reader maps directly, and `static_assert(sizeof(MeshHeader)
+== 80)` exists to catch exactly the growth that would silently invalidate every
+cooked mesh on disk. A level carries its own vertex and index payload, because a
+level that shared the parent's buffers would be cheaper to draw and no cheaper to
+store — and VRAM is the tighter budget.
 
 ### The cook layer — one concern per TU
 Design doc: **`docs/architecture/asset-cook-architecture.md`** — the key recipe, the

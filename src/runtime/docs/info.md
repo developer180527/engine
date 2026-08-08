@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-05
+verified: 2026-08-08
 parses-external-input: true
 covers:
   - src/runtime/
@@ -88,6 +88,13 @@ required.
   5 000 times — past bgfx's 4 096 pool — so it reproduces the original failure instead
   of merely checking that a handle is reused: with the dedup removed it reports 907
   invalid handles, 4 096 buffers and 4 093 registry meshes.
+  The residency entry also carries the mesh's **LOD chain**. It has to: a cache
+  HIT that returned without handing back the levels gave exactly the first entity
+  per mesh a chain and every subsequent one none, so 20 000 objects sharing 176
+  meshes produced 176 LOD'd entities — indistinguishable, at scene scale, from LOD
+  not working. Each level is a real `Mesh` with its own buffers, since the entire
+  point is that it carries fewer triangles, and levels inherit level 0's bounds so
+  the cull sphere that chose the level is not altered by the choice.
 - **`AsyncLoader`** (`async_loader.h/.cpp`) — legacy import path used by the
   editor for source-format assets (FBX via Assimp etc.).
 - **Input** (`input_system.h`, `input_map.h`) — polled GLFW state with

@@ -65,15 +65,36 @@ bool saveMesh(const MeshAsset& mesh, const std::filesystem::path& outPath) {
             f.write(reinterpret_cast<const char*>(c.blob.data()), blobSize);
         }
     }
+
+    // v4: coarser LOD levels, each self-contained. The count leads the section
+    // rather than living in the fixed-size header — see the note there.
+    if (mesh.header.version >= 4) {
+        const uint32_t lodCount = (uint32_t)mesh.lods.size();
+        f.write(reinterpret_cast<const char*>(&lodCount), 4);
+    }
+    for (const auto& l : mesh.lods) {
+        const uint32_t vcount = l.vertexCount;
+        const uint32_t vbytes = (uint32_t)l.vertexData.size();
+        const uint32_t icount = l.indexCount;
+        const uint32_t ibytes = (uint32_t)l.indexData.size();
+        f.write(reinterpret_cast<const char*>(&vcount), 4);
+        f.write(reinterpret_cast<const char*>(&vbytes), 4);
+        f.write(reinterpret_cast<const char*>(&icount), 4);
+        f.write(reinterpret_cast<const char*>(&ibytes), 4);
+        f.write(reinterpret_cast<const char*>(l.vertexData.data()), vbytes);
+        f.write(reinterpret_cast<const char*>(l.indexData.data()), ibytes);
+    }
+
     if (!f) {
         std::fprintf(stderr, "[MeshAsset] Write error: %s\n",
                      outPath.string().c_str());
         return false;
     }
-    std::printf("[MeshAsset] Saved %s  verts=%u idx=%u submeshes=%u mats=%u\n",
+    std::printf("[MeshAsset] Saved %s  verts=%u idx=%u submeshes=%u mats=%u lods=%u\n",
         outPath.filename().string().c_str(),
         mesh.header.vertexCount, mesh.header.indexCount,
-        mesh.header.submeshCount, mesh.header.materialCount);
+        mesh.header.submeshCount, mesh.header.materialCount,
+        (uint32_t)mesh.lods.size());
     return true;
 }
 
@@ -121,7 +142,7 @@ bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
                      inPath.string().c_str());
         return false;
     }
-    if (out.header.version != 2 && out.header.version != 3) {
+    if (out.header.version < 2 || out.header.version > 4) {
         std::fprintf(stderr, "[MeshAsset] Unsupported version %u: %s\n",
                      out.header.version, inPath.string().c_str());
         return false;
@@ -246,6 +267,35 @@ bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
             if (!claim(blobSize, 1, "clip blob")) return false;
             c.blob.resize(blobSize);
             f.read(reinterpret_cast<char*>(c.blob.data()), blobSize);
+        }
+    }
+
+    // ── v4: coarser LOD levels ──────────────────────────────────────────────
+    // Same claim() budget as everything else: a corrupt lodCount must not
+    // allocate before a single byte has been read. Cooked meshes travel through
+    // a shared DDC, so these bytes are another machine's.
+    if (out.header.version >= 4) {
+        uint32_t lodCount = 0;
+        if (!claim(1, 4, "lod count")) return false;
+        f.read(reinterpret_cast<char*>(&lodCount), 4);
+        if (!claim(lodCount, 16, "lod headers")) return false;
+        offset -= (size_t)lodCount * 16;             // re-counted precisely below
+        out.lods.resize(lodCount);
+        for (auto& l : out.lods) {
+            if (!claim(4, 4, "lod header")) return false;
+            uint32_t vcount = 0, vbytes = 0, icount = 0, ibytes = 0;
+            f.read(reinterpret_cast<char*>(&vcount), 4);
+            f.read(reinterpret_cast<char*>(&vbytes), 4);
+            f.read(reinterpret_cast<char*>(&icount), 4);
+            f.read(reinterpret_cast<char*>(&ibytes), 4);
+            if (!claim(vbytes, 1, "lod vertices")) return false;
+            l.vertexData.resize(vbytes);
+            f.read(reinterpret_cast<char*>(l.vertexData.data()), vbytes);
+            if (!claim(ibytes, 1, "lod indices")) return false;
+            l.indexData.resize(ibytes);
+            f.read(reinterpret_cast<char*>(l.indexData.data()), ibytes);
+            l.vertexCount = vcount;
+            l.indexCount  = icount;
         }
     }
 

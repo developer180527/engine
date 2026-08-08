@@ -1,4 +1,5 @@
 #include "assets/cookers/mesh/mesh_cooker.h"
+#include "assets/cookers/mesh/decimate.h"
 #include "assets/cookers/texture/texture_encode.h"   // BC7/BC5 + mips for .ctex
 #include <assetlib/ddc.h>                    // blake3Bytes — sibling dedup
 #include <assimp/Importer.hpp>
@@ -215,6 +216,93 @@ static std::vector<uint8_t> drainOzzStream(ozz::io::MemoryStream& ms) {
 //
 // Keyed by the ENCODED bytes (post BC compression + mips), so two source images
 // that compress identically also collapse.
+
+// ── LOD levels ──────────────────────────────────────────────────────────────
+// R20 shipped LOD selection that bought nothing measurable, because nothing
+// could produce a cheaper mesh. This is that missing half: each level is
+// decimated toward a triangle ratio and only KEPT if it is meaningfully
+// cheaper than its parent — a level that is not cheaper costs memory and a
+// swap for no benefit, which is exactly the state that was measured.
+static void appendLodLevels(assetlib::MeshAsset& asset) {
+    // Ratios, not grid resolutions: a fixed grid reduces a dense mesh by 96%
+    // and a low-poly prop by 0%, so it cannot define a level across mixed
+    // content. See decimate.h for the measurements.
+    static constexpr float kLevelRatios[] = { 0.40f, 0.15f, 0.05f };
+
+    // Nothing to gain below this: the per-level vertex/index buffers and the
+    // swap cost more than the triangles saved.
+    static constexpr uint32_t kMinTrianglesForLod = 2000;
+
+    asset.lods.clear();
+    // Skinned meshes are excluded. Clustering carries whole vertices, so joints
+    // and weights would survive — but the renderer does not expand skinned items
+    // for LOD (R18), so a level would never be selected. Revisit together.
+    if (asset.header.boneCount > 0) return;
+    if (asset.header.indexCount / 3 < kMinTrianglesForLod) return;
+    if (asset.header.indexStride != 2 && asset.header.indexStride != 4) return;
+
+    // MOST PROPS USE 16-BIT INDICES — the first real content this ran on was
+    // skipped entirely by a 32-bit-only path. Widen here rather than in the
+    // decimator, which stays single-format: expand to 32-bit, decimate, and
+    // narrow again below if the level still fits.
+    std::vector<uint32_t> idx32;
+    const uint32_t* indices = nullptr;
+    if (asset.header.indexStride == 2) {
+        const auto* src = reinterpret_cast<const uint16_t*>(asset.indexData.data());
+        idx32.assign(src, src + asset.header.indexCount);
+        indices = idx32.data();
+    } else {
+        indices = reinterpret_cast<const uint32_t*>(asset.indexData.data());
+    }
+
+    meshcook::DecimateInput in;
+    in.vertices    = asset.vertexData.data();
+    in.vertexCount = asset.header.vertexCount;
+    in.stride      = asset.header.vertexStride;
+    in.posOffset   = assetlib::vertexAttributeOffset(asset.header.vertexFlags,
+                                                     assetlib::VF_POSITION);
+    in.indices     = indices;
+    in.indexCount  = asset.header.indexCount;
+
+    uint32_t parentTris = asset.header.indexCount / 3;
+    for (float ratio : kLevelRatios) {
+        const auto r = meshcook::decimateToRatio(in, ratio);
+        if (!r.ok || r.triangles == 0) break;
+        // Each level must beat its PARENT, not the original: once the search
+        // stops making progress, further levels are pure cost.
+        if ((float)r.triangles > meshcook::kMinReductionRatio * (float)parentTris)
+            break;
+
+        assetlib::MeshAsset::LodLevel lvl;
+        lvl.vertexCount = r.vertexCount(in.stride);
+        lvl.indexCount  = (uint32_t)r.indices.size();
+        lvl.vertexData  = r.vertices;
+        // Levels inherit the parent's index width. A level always has FEWER
+        // vertices than its parent, so a 16-bit parent's level always fits —
+        // but it is checked rather than assumed.
+        if (asset.header.indexStride == 2 && lvl.vertexCount <= 0xFFFFu) {
+            lvl.indexData.resize(r.indices.size() * 2);
+            auto* dst = reinterpret_cast<uint16_t*>(lvl.indexData.data());
+            for (size_t k = 0; k < r.indices.size(); ++k)
+                dst[k] = (uint16_t)r.indices[k];
+        } else if (asset.header.indexStride == 2) {
+            break;      // cannot narrow: stop the chain rather than mis-encode
+        } else {
+            lvl.indexData.resize(r.indices.size() * 4);
+            std::memcpy(lvl.indexData.data(), r.indices.data(), lvl.indexData.size());
+        }
+        asset.lods.push_back(std::move(lvl));
+        parentTris = r.triangles;
+    }
+    if (!asset.lods.empty()) {
+        asset.header.version = 4;
+        std::printf("[MeshCooker]   lods: %u tris ->", asset.header.indexCount / 3);
+        for (const auto& l : asset.lods) std::printf(" %u", l.indexCount / 3);
+        std::printf("\n");
+    }
+}
+
+
 namespace {
 // Per-cook, per-thread: cleared at the start of every MeshCooker::cook(). It
 // MUST NOT persist across assets — sibling names are qualified by the mesh's
@@ -490,6 +578,7 @@ static CookResult cookSkinned(const CookContext& ctx) {
         asset.clips.push_back(std::move(blob));
     }
 
+    appendLodLevels(asset);
     if (!saveMesh(asset, ctx.outputPath))
         return {.success = false, .error = "saveMesh failed"};
     std::printf("[MeshCooker] %s -> SKINNED verts=%u idx=%u bones=%u clips=%zu\n",
@@ -777,6 +866,7 @@ static CookResult cookGltf(const CookContext& ctx) {
     if (asset.materials.empty()) asset.materials.push_back(CookedMaterial{});
     asset.header.materialCount = (uint32_t)asset.materials.size();
 
+    appendLodLevels(asset);
     if (!saveMesh(asset, ctx.outputPath))
         return {.success = false, .error = "saveMesh failed"};
     std::printf("[MeshCooker] %s -> GLTF verts=%u idx=%u submeshes=%zu mats=%zu\n",
@@ -942,6 +1032,7 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
     }
     asset.header.materialCount = (uint32_t)asset.materials.size();
 
+    appendLodLevels(asset);
     if (!saveMesh(asset, ctx.outputPath))
         return {.success = false, .error = "saveMesh failed"};
 
@@ -951,3 +1042,4 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
         asset.header.submeshCount, asset.header.materialCount);
     return {.success = true};
 }
+

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-03
+verified: 2026-08-08
 parses-external-input: true
 covers:
   - src/assets/
@@ -9,6 +9,7 @@ tests:
   - tests/cooker_test.cpp
   - tests/cook_infra_test.cpp
   - tests/import_test.cpp
+  - tests/decimate_test.cpp           # a level must be genuinely cheaper
   - tests/residency_test.cpp
   - tests/fuzz_mesh_loader_test.cpp   # cooked-binary parse the loaders depend on
   - tests/stress_assets.cpp           # garbage-in importer fuzz
@@ -65,9 +66,10 @@ model binds rigidly to bone 0 so it can't collapse. Verified headless by
 orchestrator needs the pipeline. See `modules/assetlib/info.md` for how the
 cook layer is split (orchestration / keying / dispatch / store / record
 format / scheduling).
-- `MeshCooker` — imports via Assimp directly, writes vertex/index buffers +
-  submeshes + bounds. Returns `skipped` for skinned meshes (no cooked format
-  for bone data yet).
+- `MeshCooker` — imports via Assimp (or cgltf for `.gltf`/`.glb`), writes
+  vertex/index buffers + submeshes + bounds. Skinned meshes cook too: a
+  re-import extracts the skeleton and embedded clips into the same binary.
+  Also emits an **LOD chain** — see below.
 - `TextureCooker` — stb decode → block-compressed texels + mips via
   `texture_encode` (vendored rgbcx/bc7enc: ~200ms per 4K BC1, BC7 final
   bake seconds not minutes; encoder TUs pinned to -O2 even in Debug).
@@ -80,6 +82,30 @@ format / scheduling).
   it references (`collectSceneRefs`), so it cooks the moment its own assets
   land — the old flow cooked every scene sequentially after ALL assets.
   Scene tasks run on the worker pool with their own WAL read connections.
+
+#### LOD chains (`cookers/mesh/decimate.{h,cpp}`)
+A static mesh above `kMinTrianglesForLod` gets three coarser levels, cooked at
+40% / 15% / 5% of its triangle count. A level ships only if it is at least 20%
+cheaper than its parent (`kMinReductionRatio`) — a level that is not meaningfully
+cheaper costs memory and a swap for nothing, which is precisely the state the R20
+audit measured when nothing could decimate at all.
+
+The algorithm is **vertex clustering**, chosen over quadric error metrics
+deliberately: it cannot produce non-manifold output (there is no topology to get
+wrong, and this runs unattended over content nobody inspects), it is O(n), and it
+is deterministic — two machines must cook byte-identical levels or the shared DDC
+stops being a cache. The cell representative is the cell's first vertex in index
+order, never a centroid: a centroid drifts off the surface on thin geometry, and
+averaging normals/UVs across a cell produces values belonging to no real vertex.
+
+Authors specify a triangle *ratio*, not a grid resolution: grid resolution is
+absolute, so one value gives 96% reduction on a dense mesh and 0% on a low-poly
+prop. `decimateToRatio` bisects the resolution and returns the closest result it
+found rather than failing — a level slightly off target is fine, a cook that
+fails because a search did not converge is not.
+
+Skinned meshes are skipped: clustering merges vertices across the mesh and would
+have to reconcile bone indices and weights, which is a different algorithm.
 
 ### Out-of-process cook workers
 Every cook runs in a spawned `engine_cook_worker` child (one asset per
@@ -171,5 +197,7 @@ source asset ── scan → registry.db (UUID, hash, state)
 ```
 
 ## Future Work
-- Skinned-mesh cooking (bone data + skeleton + clips in one binary).
+- Quadric-error decimation (`meshoptimizer`) if a measurement ever says
+  silhouette error is what hurts. Clustering trades quality for the guarantees
+  above; it is the right default, not the endpoint.
 - Custom asset type registration (cooker + loader pairs from plugins).

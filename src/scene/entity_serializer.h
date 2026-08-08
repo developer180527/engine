@@ -257,9 +257,20 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
 
     const std::string cookedPath = j.value("cookedPath", std::string{});
     if (!cookedPath.empty() && ctx.assetService) {
-        MeshHandle h = ctx.assetService->loadMesh(cookedPath.c_str());
+        // Request the cooked LOD chain too. Without this the editor's load path
+        // silently produced no levels while scene_service's did — the same
+        // asset rendering with LOD in the player and without it in the editor.
+        AssetService::MeshLods lods;
+        MeshHandle h = ctx.assetService->loadMesh(cookedPath.c_str(), nullptr, &lods);
         if (h.valid()) {
             e.set<MeshRenderer>({h, matOverride});
+            if (!lods.levels.empty()) {
+                LodMesh lm;
+                lm.count = (uint8_t)std::min(lods.levels.size(),
+                                             (size_t)(rworld::kMaxLodLevels - 1));
+                for (uint8_t i = 0; i < lm.count; ++i) lm.mesh[i] = lods.levels[i];
+                e.set<LodMesh>(lm);
+            }
             return;
         }
         LOG_WARN("Scene", "Cooked mesh load failed, falling back to source: %s",

@@ -31,6 +31,11 @@ struct MeshHeader {
     float    boundsMax[3]  = {};
     uint32_t materialCount = 0;            // was _pad[0..3]
     uint32_t boneCount     = 0;            // v3: >0 = skinned payload follows
+    // NOTE: v4's LOD count is NOT here. The header is a fixed-size block read
+    // with one sizeof(), so growing it by 4 bytes would shift the payload of
+    // every v2/v3 file already on disk and in the DDC — the static_assert below
+    // exists to catch exactly that, and it did. The count leads the LOD section
+    // instead, which costs nothing and keeps old files readable.
 };
 static_assert(sizeof(MeshHeader) == 80, "MeshHeader size changed");
 
@@ -94,6 +99,25 @@ struct MeshAsset {
     std::vector<CookedBone>     bones;
     std::vector<uint8_t>        skeletonBlob;   // ozz skeleton archive
     std::vector<CookedClipBlob> clips;          // embedded takes
+
+    // ── v4: coarser LOD levels ──────────────────────────────────────────────
+    // Level 0 is this mesh; these are 1..lodCount, each a COMPLETE and
+    // independent (vertices, indices) pair rather than an index range over the
+    // parent's vertex buffer.
+    //
+    // Independent on purpose. Sharing a vertex buffer would make a level
+    // cheaper to DRAW but not cheaper to STORE, and VRAM is the tighter budget
+    // on the target hardware — a level that keeps 89 245 vertices to draw 670
+    // triangles saves nothing where it matters. It also avoids a lifetime
+    // hazard: bgfx handles are refcounted per resource, and two Mesh objects
+    // sharing one vertex buffer means destroying either frees it for both.
+    struct LodLevel {
+        std::vector<uint8_t> vertexData;
+        std::vector<uint8_t> indexData;
+        uint32_t             vertexCount = 0;
+        uint32_t             indexCount  = 0;
+    };
+    std::vector<LodLevel> lods;
 };
 
 bool     saveMesh(const MeshAsset& mesh, const std::filesystem::path& outPath);

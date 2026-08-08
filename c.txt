@@ -1,49 +1,39 @@
-scene: materials by NAME, and matOverrideId was persisting a slot index
+render: decimation gives LOD something to select, 62.2% of triangles
 
-Authoring a .material and running the game silently gave you the mesh's baked
-material. Two gaps, both quiet:
+R20 built LOD selection, mutation-tested it, and measured it at exactly zero
+benefit. The reason was never selection: `MeshCooker` could not decimate, so a
+"level" was another kit mesh with the same triangle count. Selection was correct
+and had nothing to select. This is the missing half.
 
-  - no scene referenced a material, so the scene-scoped cook (the DEFAULT)
-    never produced a .cmat. It only appeared under --all.
-  - applying one required C++ in the game module.
+`decimate.{h,cpp}`, vertex clustering, chosen over quadric error metrics on
+purpose: it cannot produce non-manifold output, it is O(n), and it is
+deterministic, which the shared DDC requires. The cell representative is the
+cell's first vertex in index order, never a centroid, so every attribute on a
+surviving vertex belongs to a real one. Authors steer by triangle RATIO, because
+grid resolution is absolute and the same value gives 96% reduction on a dense
+mesh and 0% on a prop.
 
-A MeshRenderer now names a material the way it names a mesh:
+The cooker emits three levels (40/15/5%) for static meshes above 2 000
+triangles, and ships a level only if it is 20% cheaper than its parent, a level
+that is not meaningfully cheaper is worse than no level, which is the state R20
+measured. `lodCount` did NOT go into `MeshHeader`: it is a fixed-size block and
+`static_assert(sizeof(MeshHeader) == 80)` caught the growth, so the count leads
+the LOD section instead.
 
-    "meshRenderer": { "cookedPath": "...", "material": "rust" }
+Three bugs found wiring it up, all of the same shape, LOD looking inert at
+scene scale for reasons that were not LOD:
 
-That name flows through: the scene closure resolves it (so the default cook
-produces it), the cooker interns it, the runtime reads it back and calls
-loadMaterialAsset. Verified end to end, tagging one entity in fps_shooter's
-scene took the closure 15 -> 16 assets, produced the .cmat under the plain
-scene-scoped cook, and the pipeline logged a data-driven bind. No game code.
+  - `AssetService`'s mesh dedup cache returned on a HIT without handing back the
+    chain, so exactly one entity per mesh got levels. 20 000 objects over 176
+    meshes meant 176 LOD'd entities. The chain now lives in `MeshResidency`.
+  - only `SceneService` set `LodMesh`; `entity_serializer` did not. The same
+    asset rendered with LOD in the player and without it in the editor.
+  - `gen_fuzz_scene.py` selected `ASSET_STATE_COOKED = 1`, which is `Registered`,
+    not `Ready`. The 20 000-entity fuzz scene was drawing 2 objects. Every LOD
+    measurement taken on it was taken on an empty scene.
 
-AND IT REPLACES A BROKEN FIELD. `matOverrideId` wrote a session-local
-MaterialHandle slot index into the scene, on disk, in both JSON and binary. A
-handle is an index over a free list with NO generation counter, so a reloaded
-scene restored an override pointing at whatever occupied that slot this run,
-usually nothing, occasionally the wrong material. Same 4 bytes now hold
-materialNameOffset, a real reference.
-
-No length field, because there is no room: SceneEntity is exactly 256 bytes
-with ZERO tail (verified with offsetof). stringTableAppend already writes a
-terminator, so stringTableReadZ reads by offset alone, bounded by the table
-size so a corrupt offset yields empty rather than running off the end.
-kSceneVersion 2 -> 3.
-
-Saving needs handle -> name, which AssetService already had internally
-(m_materialByHandle, added for the unload-eviction fix); exposed as
-materialNameOf and wired through SerdeContext.
-
-Materials resolve by name and not by path, so the closure walker cannot use the
-mesh path machinery, resolveMaterialByName reads each registered .material once
-and compares its DECLARED name, because assuming name == filename breaks the
-moment an author sets "name".
-
-A missing material warns and falls back to the mesh's own material rather than
-failing the load: a scene that references something not yet cooked should still
-open.
-
-Verified: build clean, ctest unit 38/38, engine_doctor 66 docs / 0 errors,
-fps_shooter unchanged with no reference (closure back to 15, zero material
-lines, 5 textures).
-
+And the census now counts TRIANGLES, not just entities per level. Entities per
+level says LOD is running; triangles say whether it is worth running, which is
+the question R20 could not answer. Measured on the fuzz scene: L0 475, L1 710,
+L2 795, L3 541, 0 broken, 3 719 383 triangles submitted against 9 828 860 at full
+detail, 62.2% saved.

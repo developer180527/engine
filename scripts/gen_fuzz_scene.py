@@ -42,7 +42,12 @@ Usage:
 import argparse, json, math, os, random, shutil, sqlite3, sys
 
 ASSET_TYPE_MESH = 1
-ASSET_STATE_COOKED = 1
+# AssetState::Ready. Was 1 = Registered — i.e. "the registry knows about this
+# file", NOT "it has cooked output". The generator therefore selected uncooked
+# assets, whose cookedPath is empty, and every one of them failed to load at
+# runtime: a 20 000-object scene that drew 2 things. Any measurement taken with
+# the old value counted objects that were never in the frame.
+ASSET_STATE_COOKED = 3
 
 
 def load_meshes(src, fmt, subdir_filter):

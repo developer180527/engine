@@ -205,6 +205,10 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     auto applyLod = [&](const MeshRenderer& mr, const LodMesh& lod,
                         const CullSphere& sp, RenderItem& it, uint64_t& keyBase) {
         if (lod.count == 0) return;                  // inert chain
+        // Level 0's cost, banked BEFORE a level is chosen — this is the
+        // counterfactual the saving is measured against.
+        const uint32_t fullTris = it.mesh ? it.mesh->indexCount / 3 : 0;
+        m_lodTrisFull.fetch_add(fullTris, std::memory_order_relaxed);
         // Sentinel radii are not sizes: a missing mesh (< 0) or an unbounded one
         // (infinity) has no screen height to threshold against, so it stays at
         // full detail. Unbounded already means "missing data" to the cull, and
@@ -244,6 +248,8 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
             --level;
         }
         m_lodCount[level].fetch_add(1, std::memory_order_relaxed);
+        m_lodTrisDrawn.fetch_add(it.mesh ? it.mesh->indexCount / 3 : 0,
+                                 std::memory_order_relaxed);
     };
 
     // Parentless: the local matrix IS the world matrix. Zero component lookups —
@@ -364,6 +370,8 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     // cameras and legitimately pick different levels.
     for (auto& c : m_lodCount) c.store(0, std::memory_order_relaxed);
     m_lodBroken.store(0, std::memory_order_relaxed);
+    m_lodTrisDrawn.store(0, std::memory_order_relaxed);
+    m_lodTrisFull.store(0, std::memory_order_relaxed);
 
     ItemQuery* flatQ  = nullptr;
     ItemQuery* childQ = nullptr;
@@ -444,6 +452,8 @@ Renderer::LodCensus Renderer::lodCensus() const {
     LodCensus c;
     for (std::size_t i = 0; i < rworld::kMaxLodLevels; ++i)
         c.level[i] = m_lodCount[i].load(std::memory_order_relaxed);
-    c.broken = m_lodBroken.load(std::memory_order_relaxed);
+    c.broken    = m_lodBroken.load(std::memory_order_relaxed);
+    c.trisDrawn = m_lodTrisDrawn.load(std::memory_order_relaxed);
+    c.trisFull  = m_lodTrisFull.load(std::memory_order_relaxed);
     return c;
 }

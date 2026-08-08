@@ -60,6 +60,14 @@ public:
         std::vector<AnimClipHandle> clips;
     };
 
+    // Coarser levels of a cooked mesh (v4), already uploaded. Level 0 is the
+    // returned MeshHandle itself; these are 1..n, cheapest last. Empty is the
+    // normal case — a mesh below the cooker's triangle threshold, a skinned
+    // mesh, or content cooked before v4.
+    struct MeshLods {
+        std::vector<MeshHandle> levels;
+    };
+
     explicit AssetService(Config cfg);
     ~AssetService();   // stops worker thread
 
@@ -74,7 +82,8 @@ public:
     // archives) register their skeleton/clips when Config registries are
     // wired; outSkin (optional) receives the handles for component wiring.
     // Returns a valid MeshHandle on success, invalid (id=0) on failure.
-    MeshHandle    loadMesh(const char* cookedPath, MeshSkin* outSkin = nullptr);
+    MeshHandle    loadMesh(const char* cookedPath, MeshSkin* outSkin = nullptr,
+                           MeshLods* outLods = nullptr);
 
     // Load a cooked texture binary (.cooked). Relative paths are resolved
     // against the project's .cache directory.
@@ -214,6 +223,11 @@ private:
         MeshHandle h;
         uint64_t   bytes   = 0;
         uint64_t   lastUse = 0;
+        // The cooked LOD chain, cached WITH the mesh. A shared mesh must hand
+        // its levels to every caller, not just the one that happened to load it
+        // first — otherwise exactly one entity per mesh gets a chain and LOD
+        // looks inert at scene scale, which is how it presented.
+        std::vector<MeshHandle> lods;
     };
     mutable std::mutex                             m_loadedMtx;
     // `mutable` alongside m_useClock: queryMesh() is const and must still

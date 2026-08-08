@@ -235,7 +235,8 @@ static TexGPU resolveTextureGPU(const char* texPath,
 // Sync loadMesh
 // ═══════════════════════════════════════════════════════════════════════════
 
-MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin) {
+MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
+                                  MeshLods* outLods) {
     if (!cookedPath || cookedPath[0] == '\0') return {};
 
     // ── Dedup by cooked path, and it is not an optimisation ─────────────────
@@ -262,6 +263,11 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin) {
         auto it = m_loadedMeshes.find(key);
         if (it != m_loadedMeshes.end() && it->second.h.valid()) {
             it->second.lastUse = ++m_useClock;   // keep LRU honest
+            // The chain travels with the cache entry. A cache HIT that returned
+            // without filling this gave exactly the first entity per mesh an LOD
+            // chain and every subsequent one none — 20 000 objects sharing 176
+            // meshes would have produced 176 LOD'd entities and looked inert.
+            if (outLods) outLods->levels = it->second.lods;
             if (outSkin) {
                 // A cached skinned mesh cannot hand back its skeleton/clip
                 // handles from here, so fall through to a full load rather than
@@ -369,11 +375,56 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin) {
     // these buffers. Residency bytes match what the async drain records, so
     // evictOverBudget accounts for sync-loaded meshes too instead of treating
     // them as free.
+    // ── The cooked LOD chain ────────────────────────────────────────────────
+    // Each level is a real Mesh with its own buffers: the whole point is that a
+    // coarser level costs FEWER triangles, so it cannot share level 0's index
+    // buffer. Levels inherit level 0's material and submesh-free layout —
+    // decimation merges vertices across the mesh and does not preserve submesh
+    // ranges, so a level draws as one range with the base material.
+    std::vector<MeshHandle> lodHandles;
+    uint64_t lodBytes = 0;
+    if (result.valid() && !asset.lods.empty() && !skinned) {
+        for (const auto& lvl : asset.lods) {
+            if (lvl.indexCount == 0 || lvl.vertexData.empty()) continue;
+            auto* lv = bgfx::copy(lvl.vertexData.data(),
+                                  (uint32_t)lvl.vertexData.size());
+            auto* li = bgfx::copy(lvl.indexData.data(),
+                                  (uint32_t)lvl.indexData.size());
+            bgfx::VertexBufferHandle lvb =
+                bgfx::createVertexBuffer(lv, Vertex::layout());
+            bgfx::IndexBufferHandle lib = (hdr.indexStride == 4)
+                ? bgfx::createIndexBuffer(li, BGFX_BUFFER_INDEX32)
+                : bgfx::createIndexBuffer(li);
+            if (!bgfx::isValid(lvb) || !bgfx::isValid(lib)) {
+                if (bgfx::isValid(lvb)) bgfx::destroy(lvb);
+                if (bgfx::isValid(lib)) bgfx::destroy(lib);
+                // A level that fails to allocate is not fatal: extraction walks
+                // back toward finer levels and counts the fallback. Losing
+                // detail budget beats losing the object.
+                LOG_WARN("AssetService", "LOD level buffer creation failed: %s",
+                         cookedPath);
+                break;
+            }
+            Mesh lm(lvb, lib, lvl.indexCount);
+            // Level 0's bounds, deliberately — extraction culls and picks the
+            // level from ONE sphere, so a level must not carry a different one.
+            lm.boundsMin  = { hdr.boundsMin[0], hdr.boundsMin[1], hdr.boundsMin[2] };
+            lm.boundsMax  = { hdr.boundsMax[0], hdr.boundsMax[1], hdr.boundsMax[2] };
+            lm.material   = matHandles.empty() ? MaterialHandle{} : matHandles[0];
+            lm.sourcePath = absPath.string();
+            const MeshHandle lh = m_meshes.addMesh(std::move(lm));
+            if (!lh.valid()) break;
+            lodHandles.push_back(lh);
+            lodBytes += (uint64_t)lvl.vertexData.size() + (uint64_t)lvl.indexData.size();
+        }
+        if (outLods) outLods->levels = lodHandles;
+    }
+
     if (result.valid()) {
         const uint64_t bytes = (uint64_t)asset.vertexData.size()
-                             + (uint64_t)asset.indexData.size();
+                             + (uint64_t)asset.indexData.size() + lodBytes;
         std::lock_guard<std::mutex> lk(m_loadedMtx);
-        m_loadedMeshes[key] = { result, bytes, ++m_useClock };
+        m_loadedMeshes[key] = { result, bytes, ++m_useClock, lodHandles };
     }
 
     // Skinned payload: decode + register the skeleton and embedded clips

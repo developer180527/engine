@@ -19,6 +19,8 @@
 #include "components/entity_id.h"
 #include "components/light.h"
 #include "components/skinned_mesh.h"
+#include "components/lod_mesh.h"      // cooked LOD chain -> LodMesh
+#include "render/world/lod.h"          // kMaxLodLevels
 #include "components/animator.h"
 #include "animation/clip_library.h"        // standalone clipPath binding
 #include "animation/skeleton_registry.h"
@@ -133,12 +135,13 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
         if (se.componentMask & assetlib::kComp_MeshRenderer) {
             MeshHandle mh{};
             AssetService::MeshSkin skin;
+            AssetService::MeshLods lods;
 
             // Try cooked path first (fast runtime path)
             std::string meshCooked = assetlib::stringTableRead(
                 st, se.meshCookedOffset, se.meshCookedLength);
             if (!meshCooked.empty()) {
-                mh = m_assets.loadMesh(meshCooked.c_str(), &skin);
+                mh = m_assets.loadMesh(meshCooked.c_str(), &skin, &lods);
             }
 
             // Fallback: primitive
@@ -168,6 +171,21 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
                 }
                 e.set<MeshRenderer>(mr);
                 loaded.meshHandles.push_back(mh);
+
+                // The cooked chain, if this mesh has one. LodMesh is an optional
+                // query term, so an entity without it costs nothing per frame —
+                // and a mesh the cooker declined to decimate simply never gets
+                // the component, which is exactly "always full detail".
+                if (!lods.levels.empty()) {
+                    LodMesh lm;
+                    lm.count = (uint8_t)std::min(lods.levels.size(),
+                                                 (size_t)(rworld::kMaxLodLevels - 1));
+                    for (uint8_t i = 0; i < lm.count; ++i) {
+                        lm.mesh[i] = lods.levels[i];
+                        loaded.meshHandles.push_back(lods.levels[i]);
+                    }
+                    e.set<LodMesh>(lm);
+                }
 
                 // Skinned wiring (mirrors the editor's async-load callback in
                 // scene_serializer.h): SkinnedMesh gets the fresh skeleton

@@ -6,7 +6,7 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 13; // 13: sibling .ctex content dedup
+    static constexpr uint32_t kVersion = 15; // 15: LOD levels, incl. 16-bit index meshes
                                              // (materials sharing an image now
                                              // write ONE file, not one each).
                                              // 10: glTF/GLB cook (cgltf).
