@@ -1,0 +1,23 @@
+# scene_service — COVERAGE ANCHORS, not bug repros.
+#
+# This target found no bugs in SceneService: 6 000 explore cases passed clean.
+# That is a result, not an absence of one — but it means the corpus cannot be
+# "every bug ever found" the way the other lanes' corpora are. These seeds are
+# pinned because they exercise the paths the properties depend on: multi-entity
+# scenes, real cooked meshes resolving through AssetService, EntityId collision
+# reassignment, deep parent chains, and the truncated-file rejection path.
+#
+# What proves they BITE is mutation, re-runnable at any time:
+#   - remove the destruct() in unloadScene  -> "load/unload LEAKED" on seed 1
+#   - swap safeReparent for a raw child_of  -> SIGABRT inside flecs'
+#     childof-depth recursion, which the lane reports as a failed test
+#
+# The second is worth stating precisely: the cycle is caught by flecs aborting
+# before the ancestor-walk assertion is ever reached. The walk still earns its
+# place — it covers a cycle that flecs tolerates — but it is not what fired.
+2277151743773813066
+16861278626067538202
+6965110661002779539
+12348081055662259564
+5813135465557942230
+1363229889033388563

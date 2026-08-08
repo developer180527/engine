@@ -1,6 +1,6 @@
 ---
 status: as-built
-tier: working
+tier: hardened
 verified: 2026-08-08
 parses-external-input: true
 covers:
@@ -12,7 +12,8 @@ tests:
   - tests/script_host_test.cpp
   - tests/kit_lifecycle_test.cpp
   - tests/residency_test.cpp
-  - tests/fuzz_scene_loader_test.cpp  # the cooked scene SceneService consumes
+  - tests/fuzz_scene_loader_test.cpp   # the cooked scene SceneService consumes
+  - tests/fuzz_scene_service_test.cpp  # SceneService itself, over hostile scenes
   - tests/mesh_dedup_test.cpp
   - tests/material_name_test.cpp
   - tests/input_test.cpp
@@ -96,6 +97,29 @@ required.
   not working. Each level is a real `Mesh` with its own buffers, since the entire
   point is that it carries fewer triangles, and levels inherit level 0's bounds so
   the cull sphere that chose the level is not altered by the choice.
+  `tests/fuzz_scene_service_test.cpp` drives `SceneService::loadScene` itself
+  over hostile cooked scenes — real `AssetService`, real flecs world, real
+  cooked meshes, bgfx on the **Noop** backend so every handle path runs without
+  a GPU. The parse fuzzer (`fuzz_scene_loader_test`) cannot see any of what this
+  asserts, because these are the CONSUMER's own failures:
+
+    - a REJECTED load must leave nothing behind. Spawning half a scene and then
+      returning 0 is a leak no parse test can detect.
+    - load → unload must be exactly balanced against the world's entity count.
+      This is the property that makes level streaming possible at all.
+    - parent links must terminate. `parentId` is attacker-controlled, so
+      self-parent, duplicate ids and 40-deep chains all arrive here.
+    - handle hygiene: an unissued or already-unloaded handle is `false`, never
+      a crash, and `sceneEntityCount` must agree with what the world gained —
+      unload destroys from that list, so a disagreement is a leak or a
+      double-destroy waiting to happen.
+
+  6 000 explore cases pass clean; SceneService held up. Since a passing fuzzer
+  proves nothing on its own, the properties are mutation-verified: removing the
+  `destruct()` in `unloadScene` reports the leak, and swapping `safeReparent`
+  for a raw `child_of` aborts inside flecs' childof-depth recursion. The second
+  is worth stating precisely — the cycle is caught by flecs dying, not by the
+  ancestor-walk assertion, which only covers a cycle flecs would tolerate.
 - **`AsyncLoader`** (`async_loader.h/.cpp`) — legacy import path used by the
   editor for source-format assets (FBX via Assimp etc.).
 - **Input** (`input_system.h`, `input_map.h`) — polled GLFW state with

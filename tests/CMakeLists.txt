@@ -210,6 +210,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     engine_fuzz_target(fuzz_mesh_loader_test  mesh_loader)
     engine_fuzz_target(fuzz_scene_loader_test scene_loader)
     engine_fuzz_target(fuzz_entity_serde_test entity_serde LIB engine_runtime)
+    engine_fuzz_target(fuzz_scene_service_test scene_service LIB engine_runtime)
     engine_test(import_test)
     engine_test(residency_test)
 # One cooked mesh must cost ONE pair of GPU buffers. Pins the fix for a bug that
