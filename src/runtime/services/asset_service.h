@@ -95,6 +95,12 @@ public:
     // something plausible and hides the problem.
     MaterialHandle loadMaterialAsset(const char* name);
 
+    // The authored NAME a MaterialHandle was loaded under, or "" for a
+    // material that did not come from a .cmat (mesh-embedded ones). Saving a
+    // scene needs this: a handle is a session-local slot index and means
+    // nothing on disk.
+    std::string materialNameOf(MaterialHandle h) const;
+
     // Every cooked material name available, sorted. For the editor's material
     // picker, and for telling an author what they could have typed.
     std::vector<std::string> materialNames();

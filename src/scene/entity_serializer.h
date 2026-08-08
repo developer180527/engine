@@ -68,6 +68,11 @@ struct SerdeContext {
     // When non-null and cookedPath is present, skips Assimp/glTF entirely.
     AssetService*             assetService = nullptr;
 
+    // Save (disk): MaterialHandle -> the material's AUTHORED NAME. A handle is
+    // a session-local slot index; writing one to disk is meaningless, which is
+    // what the old `matOverrideId` field did. Null when no AssetService.
+    std::function<std::string(MaterialHandle)> materialNameLookup;
+
     ImporterRegistry*         importers   = nullptr;     // disk load: glTF (sync)
 
     // Load: id-collision index. Optional, but a loader creating many entities
@@ -206,7 +211,12 @@ inline void saveMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx
                     j["cookedPath"] = cooked;
             }
         }
-        if (mr->materialOverride.valid()) j["matOverrideId"] = mr->materialOverride.id;
+        // Disk: the material's NAME. Never the handle id — see
+        // SerdeContext::materialNameLookup.
+        if (mr->materialOverride.valid() && ctx.materialNameLookup) {
+            const std::string name = ctx.materialNameLookup(mr->materialOverride);
+            if (!name.empty()) j["material"] = name;
+        }
     }
 }
 inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
@@ -232,11 +242,24 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
     // fell through to the Assimp source importer below, which is why nothing
     // looked broken: scenes still rendered, just via the slow path, and a shipped
     // dist with no source assets would have failed outright.
+    // The authored material name, resolved to a handle. Empty is normal — most
+    // entities use the material baked into their mesh.
+    MaterialHandle matOverride;
+    if (ctx.assetService) {
+        const std::string matName = j.value("material", std::string{});
+        if (!matName.empty()) {
+            matOverride = ctx.assetService->loadMaterialAsset(matName.c_str());
+            if (!matOverride.valid())
+                LOG_WARN("Scene", "material \"%s\" not found — the mesh's own "
+                         "material is used instead", matName.c_str());
+        }
+    }
+
     const std::string cookedPath = j.value("cookedPath", std::string{});
     if (!cookedPath.empty() && ctx.assetService) {
         MeshHandle h = ctx.assetService->loadMesh(cookedPath.c_str());
         if (h.valid()) {
-            e.set<MeshRenderer>({h});
+            e.set<MeshRenderer>({h, matOverride});
             return;
         }
         LOG_WARN("Scene", "Cooked mesh load failed, falling back to source: %s",
@@ -261,7 +284,7 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
     if (isPrimitive && ctx.primitives && ctx.primitives->ready()) {
         std::string primName = srcPath.substr(srcPath.rfind('/') + 1);
         MeshHandle h = ctx.primitives->byName(primName);
-        if (h.valid()) { e.set<MeshRenderer>({h}); return; }
+        if (h.valid()) { e.set<MeshRenderer>({h, matOverride}); return; }
     }
 
     std::string ext = std::filesystem::path(srcPath).extension().string();
@@ -272,7 +295,7 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
         if (result.success) {
             if (Mesh* m = const_cast<Mesh*>(ctx.storage->meshes.getMesh(result.mesh)))
                 m->sourcePath = srcPath;
-            e.set<MeshRenderer>({result.mesh});
+            e.set<MeshRenderer>({result.mesh, matOverride});
         } else {
             LOG_ERROR("Scene", "glTF load failed: %s", result.error.c_str());
         }

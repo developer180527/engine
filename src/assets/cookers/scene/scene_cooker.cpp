@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -58,6 +59,27 @@ std::unordered_set<std::string> collectSceneRefs(
     return out;
 }
 
+// name -> the .material asset declaring it. The name lives INSIDE the file
+// (falling back to the stem), so this reads each registered .material once.
+// Cheap by construction: materials are few, and the alternative — assuming
+// name == filename — silently breaks the moment an author sets "name".
+static std::optional<assetlib::AssetRecord> resolveMaterialByName(
+        const std::string& name, assetlib::AssetRegistry* assetLib,
+        const std::filesystem::path& projectRoot) {
+    for (const auto& rec : assetLib->all()) {
+        if (std::filesystem::path(rec.sourcePath).extension() != ".material")
+            continue;
+        std::ifstream f(projectRoot / rec.sourcePath);
+        if (!f) continue;
+        nlohmann::json j;
+        try { j = nlohmann::json::parse(f); } catch (...) { continue; }
+        const std::string declared = j.value(
+            "name", std::filesystem::path(rec.sourcePath).stem().string());
+        if (declared == name) return rec;
+    }
+    return std::nullopt;
+}
+
 std::unordered_set<std::string> collectSceneAssetClosure(
         const std::vector<std::filesystem::path>& sceneDirs,
         assetlib::AssetRegistry* assetLib,
@@ -77,8 +99,20 @@ std::unordered_set<std::string> collectSceneAssetClosure(
             catch (...) { continue; }   // a broken scene mustn't abort the walk
             for (const auto& je : scene.value("entities", nlohmann::json::array())) {
                 if (!je.contains("meshRenderer")) continue;
-                if (auto rec = resolveMeshRecord(je["meshRenderer"], assetLib, projectRoot))
+                const auto& mr = je["meshRenderer"];
+                if (auto rec = resolveMeshRecord(mr, assetLib, projectRoot))
                     out.insert(rec->uuid.toString());
+
+                // Materials are referenced by AUTHORED NAME, not by path, so
+                // they cannot be resolved the way meshes are. Without this a
+                // scene-scoped cook produced no .cmat at all and the material
+                // silently did not exist at runtime — authoring one and running
+                // the game gave you the mesh's baked material with no
+                // indication anything was missing.
+                const std::string matName = mr.value("material", std::string{});
+                if (!matName.empty())
+                    if (auto rec = resolveMaterialByName(matName, assetLib, projectRoot))
+                        out.insert(rec->uuid.toString());
             }
         }
     }
@@ -214,7 +248,15 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
             ent.meshSourceOffset = soff;
             ent.meshSourceLength = slen;
             ent.meshSourceType   = (srcType == "primitive") ? 1 : 0;
-            ent.matOverrideId    = mr.value("matOverrideId", 0u);
+            // The material by AUTHORED NAME. Interned like every other string;
+            // null-terminated, so no length field is needed (SceneEntity has no
+            // spare bytes — see materialNameOffset).
+            const std::string matName = mr.value("material", std::string{});
+            if (!matName.empty()) {
+                auto [moff, mlen] = intern(matName);
+                (void)mlen;
+                ent.materialNameOffset = moff;
+            }
         }
 
         // Camera

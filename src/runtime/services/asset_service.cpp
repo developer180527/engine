@@ -447,6 +447,11 @@ void AssetService::buildMaterialIndex() {
              m_materialByName.size());
 }
 
+std::string AssetService::materialNameOf(MaterialHandle h) const {
+    const auto it = m_materialByHandle.find(h.id);
+    return it == m_materialByHandle.end() ? std::string{} : it->second;
+}
+
 std::vector<std::string> AssetService::materialNames() {
     buildMaterialIndex();
     std::vector<std::string> out;

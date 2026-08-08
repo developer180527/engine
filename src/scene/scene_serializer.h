@@ -74,6 +74,13 @@ inline bool save(const std::filesystem::path& path,
     ctx.projectRoot = projectRoot;
     ctx.assetLib    = assetLib;
 
+    // Handle -> authored material name, so a saved scene carries a reference
+    // that survives the process. Without this the old code wrote a slot index.
+    if (ctx.assetService) {
+        AssetService* as = ctx.assetService;
+        ctx.materialNameLookup = [as](MaterialHandle h) { return as->materialNameOf(h); };
+    }
+
     // When the assetlib DB is available, resolve source paths → cooked paths
     // so runtime loading can skip Assimp and load straight from cooked binaries.
     if (assetLib && !projectRoot.empty()) {

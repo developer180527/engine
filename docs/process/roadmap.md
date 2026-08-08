@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-06
+verified: 2026-08-08
 covers:
   - docs/
 ---

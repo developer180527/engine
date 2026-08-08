@@ -153,7 +153,19 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
 
             if (mh.valid()) {
                 MeshRenderer mr{mh};
-                if (se.matOverrideId > 0) mr.materialOverride.id = se.matOverrideId;
+                // The material by AUTHORED NAME (v3). The old field held a
+                // session-local slot index, so a cooked scene "restored" a
+                // material override that pointed at whatever occupied that slot
+                // this run — usually nothing, occasionally the wrong material.
+                const std::string matName =
+                    assetlib::stringTableReadZ(scene.stringTable,
+                                               se.materialNameOffset);
+                if (!matName.empty()) {
+                    mr.materialOverride = m_assets.loadMaterialAsset(matName.c_str());
+                    if (!mr.materialOverride.valid())
+                        LOG_WARN("Scene", "material \"%s\" not found — using the "
+                                 "mesh's own material", matName.c_str());
+                }
                 e.set<MeshRenderer>(mr);
                 loaded.meshHandles.push_back(mh);
 

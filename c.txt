@@ -1,0 +1,49 @@
+scene: materials by NAME, and matOverrideId was persisting a slot index
+
+Authoring a .material and running the game silently gave you the mesh's baked
+material. Two gaps, both quiet:
+
+  - no scene referenced a material, so the scene-scoped cook (the DEFAULT)
+    never produced a .cmat. It only appeared under --all.
+  - applying one required C++ in the game module.
+
+A MeshRenderer now names a material the way it names a mesh:
+
+    "meshRenderer": { "cookedPath": "...", "material": "rust" }
+
+That name flows through: the scene closure resolves it (so the default cook
+produces it), the cooker interns it, the runtime reads it back and calls
+loadMaterialAsset. Verified end to end, tagging one entity in fps_shooter's
+scene took the closure 15 -> 16 assets, produced the .cmat under the plain
+scene-scoped cook, and the pipeline logged a data-driven bind. No game code.
+
+AND IT REPLACES A BROKEN FIELD. `matOverrideId` wrote a session-local
+MaterialHandle slot index into the scene, on disk, in both JSON and binary. A
+handle is an index over a free list with NO generation counter, so a reloaded
+scene restored an override pointing at whatever occupied that slot this run,
+usually nothing, occasionally the wrong material. Same 4 bytes now hold
+materialNameOffset, a real reference.
+
+No length field, because there is no room: SceneEntity is exactly 256 bytes
+with ZERO tail (verified with offsetof). stringTableAppend already writes a
+terminator, so stringTableReadZ reads by offset alone, bounded by the table
+size so a corrupt offset yields empty rather than running off the end.
+kSceneVersion 2 -> 3.
+
+Saving needs handle -> name, which AssetService already had internally
+(m_materialByHandle, added for the unload-eviction fix); exposed as
+materialNameOf and wired through SerdeContext.
+
+Materials resolve by name and not by path, so the closure walker cannot use the
+mesh path machinery, resolveMaterialByName reads each registered .material once
+and compares its DECLARED name, because assuming name == filename breaks the
+moment an author sets "name".
+
+A missing material warns and falls back to the mesh's own material rather than
+failing the load: a scene that references something not yet cooked should still
+open.
+
+Verified: build clean, ctest unit 38/38, engine_doctor 66 docs / 0 errors,
+fps_shooter unchanged with no reference (closure back to 15, zero material
+lines, 5 textures).
+

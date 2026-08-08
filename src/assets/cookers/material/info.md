@@ -84,11 +84,29 @@ The shader reference is resolved against, in order: the material's own
 directory, the project root, then `<project>/assets`. All three are listed in
 the error when it isn't found.
 
+## How a scene names one
+`MeshRenderer` carries a material by its **authored name**:
+
+```json
+"meshRenderer": { "cookedPath": "meshs/<uuid>.cooked", "material": "rust" }
+```
+
+That name is what the scene closure resolves, so a scene-scoped cook (the
+default) produces the `.cmat` — previously a material only cooked under `--all`,
+and authoring one then running the game silently gave you the mesh's baked
+material with nothing reporting a problem.
+
+It replaces `matOverrideId`, which persisted a **session-local MaterialHandle
+slot index** to disk. Handles are indices over a free list with no generation
+counter, so a reloaded scene restored an override pointing at whatever occupied
+that slot — usually nothing, occasionally the wrong material.
+
 ## Known limitations
-- **Nothing loads `.cmat` yet.** `MaterialRegistry` still holds the fixed
-  `Material` struct and `ForwardPipeline` still binds from it. The shader half
-  of Phase 5 is live (`src/render/shader/info.md`); this is the remaining half,
-  and it is what finally deletes the hardcoded fields.
+- **Mesh-EMBEDDED materials still use the fixed struct.** Authored `.material`
+  assets load and bind data-driven end to end (scene -> cook -> runtime); the
+  `CookedMaterial` records inside cooked geometry do not, and that is what most
+  surfaces still render through. Migrating those is what finally deletes the
+  hardcoded fields — Phase 5 step 4 in `docs/process/roadmap.md`.
 - **Texture paths are not resolved to UUIDs.** `CookContext` exposes
   `addDependency(UUID)` but no registry lookup, so the cooked material carries
   the authored path and the runtime resolves it through `AssetService`. This

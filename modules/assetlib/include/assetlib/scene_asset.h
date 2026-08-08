@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cstring>
 #include <vector>
 #include <string>
 #include <filesystem>
@@ -24,7 +25,7 @@ namespace assetlib {
 // ═══════════════════════════════════════════════════════════════════════════
 
 static constexpr uint32_t kSceneMagic   = 0x53434E45;  // "SCNE"
-static constexpr uint32_t kSceneVersion = 2;           // v2: Animator block
+static constexpr uint32_t kSceneVersion = 3;           // v3: material BY NAME
 
 // Component presence flags (bitfield for SceneEntity::componentMask)
 enum SceneComponentBit : uint32_t {
@@ -71,7 +72,14 @@ struct SceneEntity {
     uint32_t meshCookedLength  = 0;
     uint32_t meshSourceOffset  = 0xFFFFFFFF;  // editor fallback
     uint32_t meshSourceLength  = 0;
-    uint32_t matOverrideId     = 0;
+    // v3: the material asset's AUTHORED NAME, into the string table
+    // (0xFFFFFFFF = none). Was `matOverrideId`, a session-local MaterialHandle
+    // slot index — persisting that to disk was meaningless: handles are indices
+    // over a free list with no generation, so a reloaded scene got whichever
+    // material happened to occupy the slot. Same width, real reference.
+    // Null-terminated in the table, so no length field is needed (there is no
+    // room: SceneEntity is exactly 256 bytes with zero tail).
+    uint32_t materialNameOffset = 0xFFFFFFFF;
     uint8_t  meshSourceType    = 0;  // 0=normal, 1=primitive
     uint8_t  _padMesh[3]       = {};
 
@@ -159,6 +167,18 @@ inline std::pair<uint32_t, uint32_t> stringTableAppend(
     table.insert(table.end(), s.begin(), s.end());
     table.push_back('\0');  // null terminator for safety
     return {off, len};
+}
+
+// Read a NULL-TERMINATED string by offset alone. stringTableAppend always
+// writes a terminator, so a field with no room for a length (see
+// SceneEntity::materialNameOffset) can still carry a string. Bounded by the
+// table size, so a corrupt offset yields empty rather than running off the end.
+inline std::string stringTableReadZ(const std::vector<char>& table,
+                                    uint32_t offset) {
+    if (offset == 0xFFFFFFFF || offset >= table.size()) return {};
+    const char* b = table.data() + offset;
+    const char* e = (const char*)memchr(b, '\0', table.size() - offset);
+    return e ? std::string(b, (size_t)(e - b)) : std::string{};
 }
 
 // Read a string from the table by (offset, length). Returns empty if sentinel.
