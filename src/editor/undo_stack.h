@@ -225,9 +225,13 @@ private:
                  {"rotation", {t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w}},
                  {"scale",    {t.scale.x,    t.scale.y,    t.scale.z}} };
     }
+    // Through the shared checked reads. Latent rather than live — this JSON is
+    // built in-process by serTf, never read from disk — but it is the same
+    // undefined behaviour as the other three sites and one hand-authored undo
+    // command away from mattering. core/json_read.h explains the defect.
     static void desTf(const nlohmann::json& j, Transform& t) {
-        if (j.contains("position")) t.position = {j["position"][0], j["position"][1], j["position"][2]};
-        if (j.contains("rotation")) t.rotation = {j["rotation"][0], j["rotation"][1], j["rotation"][2], j["rotation"][3]};
-        if (j.contains("scale"))    t.scale    = {j["scale"][0], j["scale"][1], j["scale"][2]};
+        jsonread::readFloats(j, "position", &t.position.x, 3);
+        jsonread::readFloats(j, "rotation", &t.rotation.x, 4);
+        jsonread::readFloats(j, "scale",    &t.scale.x,    3);
     }
 };

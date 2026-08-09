@@ -8,6 +8,7 @@ covers:
 tests:
   - tests/kit_lifecycle_test.cpp
   - tests/fuzz_entity_serde_test.cpp  # the JSON deserializer, hostile input
+  - tests/scene_parents_test.cpp      # the hierarchy post-pass, hostile input
 ---
 # Scene
 
@@ -35,7 +36,27 @@ bugs, and the order matters — each was hidden behind the one before it:
    matrix downstream — corrupting a frame nowhere near the load that caused it.
 
 `readFloats`/`readFloat` are the result: every float read keeps its default for
-a missing, wrong-typed, short, or non-finite value.
+a missing, wrong-typed, short, or non-finite value. They now live in
+`core/json_read.h`, shared — the identical defect turned up in `editor_prefs.h`
+(a live segfault on the project-open path) and `undo_stack.h`, so the helper is
+shared rather than copied a fourth time.
+
+Entity creation is only HALF of a scene load. Parent links cannot be restored
+during the entity pass — a child may appear before its parent — so
+`SceneSerializer::restoreParents` runs afterwards over the SAME untrusted JSON,
+and in `loadAsync` it sits OUTSIDE the try/catch that covers only
+`json::parse`. It read `id`/`parentId` with `value()`, so `"id": "abc"` in a
+hand-edited scene threw straight out of scene load: the editor died on
+File→Open, `engine_host` died on boot. Eight distinct shapes reproduced it.
+`readEntityId` now accepts any non-negative integer and refuses everything
+else, and one malformed record costs ONE link rather than the whole hierarchy —
+a scene that opens with everything silently unparented is worse than one that
+reports a problem.
+
+One subtlety worth keeping: the check is NOT `is_number_unsigned()` alone.
+nlohmann stores a positive literal built in-process from an `int` as SIGNED, so
+that spelling rejected valid ids depending only on how the JSON was
+constructed — parsed-from-disk and built-in-memory disagreed.
 
 ## Purpose
 World (de)serialization — the single component serde path that scene save/

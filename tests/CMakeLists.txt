@@ -213,6 +213,25 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     engine_fuzz_target(fuzz_scene_service_test scene_service LIB engine_runtime)
     engine_test(import_test)
     engine_test(residency_test)
+# ── The editor's first automated coverage ────────────────────────────────────
+# UndoStack is header-only with no ImGui in its include graph, and it is the
+# editor's most consequential logic: a wrong undo destroys authored work and
+# the only symptom is a scene that is subtly wrong later. src/editor/info.md's
+# argument for staying untested covers the mouse-driven PANELS, not this.
+# The hierarchy post-pass. createEntity is fuzzed, but parent links are
+# restored AFTERWARDS from the same untrusted JSON, and in loadAsync that pass
+# sits outside the try/catch that only covers json::parse.
+engine_test(scene_parents_test)
+engine_test(editor_undo_test)
+# editor.json comes back FROM DISK, which makes EditorPrefs::load untrusted
+# input on the project-open path — a crash there means the project cannot be
+# opened at all. Needs imgui only because EditorCamera's header includes it.
+engine_test(editor_prefs_test)
+# imgui only because EditorCamera's header includes it; no ImGui context is
+# ever created and none of its window-ops calls are referenced, so this links
+# headless. engine_test's LIB is a single-value keyword, hence the explicit
+# second library here rather than a list.
+target_link_libraries(editor_prefs_test PRIVATE imgui)
 # One cooked mesh must cost ONE pair of GPU buffers. Pins the fix for a bug that
 # rendered 8% of a 50 000-entity scene: loadMesh created buffers per CALL, and bgfx's
 # pool is 4096, so the rest failed with "bgfx buffer creation failed" and nothing

@@ -4,15 +4,51 @@ tier: prototype
 verified: 2026-07-31
 covers:
   - src/editor/
-# Zero automated tests — an ImGui application whose behavior is mouse-driven
-# is genuinely hard to test, and the engine deliberately keeps the editor OUT
+tests:
+  - tests/editor_undo_test.cpp    # UndoStack: the editor's most consequential logic
+  - tests/editor_prefs_test.cpp   # editor.json, untrusted on the project-open path
+# The PANELS remain untested — an ImGui application whose behavior is
+# mouse-driven is genuinely hard to test, and the engine keeps the editor OUT
 # of the runtime (nothing else depends on it), so the blast radius of an
-# editor bug is the editor. That is the argument for leaving it here rather
-# than a claim it is solid: known-untested, contained on purpose.
-# Cheapest real coverage if wanted: headless construction of EditorApp +
-# panel state round-trips, which needs no window.
+# editor bug is the editor. Still `prototype` for that reason, and honestly so.
+# What IS covered now is the part that argument never justified: the two
+# headless, ImGui-free pieces where a bug destroys the user's authored work
+# rather than mis-drawing a widget. See "Tested surface" below.
 ---
 # Editor
+
+## Tested surface
+Two lanes, both headless — no window, no ImGui context, no GPU.
+
+**`editor_undo_test`** — `UndoStack`. The most consequential logic in the
+editor: a wrong undo silently destroys authored work, and the user's only
+signal is a scene that is subtly wrong later. 34 assertions over index
+bookkeeping, redo-tail truncation, `kMaxDepth` eviction (the front-eviction /
+back-index arithmetic is right until it is off by one), delete/undo preserving
+the ORIGINAL EntityId — the guarantee that keeps earlier commands in the stack
+resolving — parent links surviving a delete, reparent refusing to build a
+cycle, component toggle round-trips, and commands whose target has since been
+destroyed degrading to a logged no-op. It passed all of them on the first run;
+the value is that it now cannot regress silently.
+
+One assertion is deliberately indirect: a delete/undo of an entity with a
+`Camera` must restore the camera, even though `UndoStack` never names that
+component. That is proof the snapshot really does go through the shared
+`EntitySerde` table rather than a private copy — the design guarantee the
+header claims.
+
+**`editor_prefs_test`** — `editor.json`. The one piece of editor state that
+comes back FROM DISK, which puts it in the same category as the scene
+deserializers. It found a live crash: `{"camera":{"position":[]}}` **segfaulted**
+`EditorPrefs::load`. The `try { ... } catch (...) {}` around it reads as total
+safety and is not — nlohmann's const `operator[](size_type)` is undefined
+behaviour out of range, not an exception, so nothing was there to catch. This
+is on the project-OPEN path, so a corrupt `editor.json` made the project
+impossible to open.
+
+That was the fourth instance of one defect (five sites in
+`scene/entity_serializer.h`, `UndoStack::desTf`, and this), so the fix is a
+shared `core/json_read.h` rather than a fourth copy of the same three lines.
 
 ## Purpose
 The ImGui editor application on top of the `engine_runtime` SDK. This is the

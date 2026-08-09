@@ -43,13 +43,42 @@ using EntitySerde::IdPolicy;
 using EntitySerde::PendingMesh;
 
 // Restore ChildOf links by stable id, after all entities exist. Cycle-guarded.
+// Reading an entity id out of untrusted JSON. `je.value("id", 0ull)` does NOT
+// fall back to the default when the key exists with the wrong type — it THROWS
+// — and this pass runs OUTSIDE the try/catch in loadAsync, which covers only
+// json::parse. So `"id": "abc"` in a hand-edited .scene propagated out of scene
+// load: the editor died on File->Open, engine_host died on boot. Pinned by
+// tests/scene_parents_test.cpp.
+inline uint64_t readEntityId(const nlohmann::json& je, const char* key) {
+    if (!je.is_object() || !je.contains(key)) return 0;
+    const auto& v = je[key];
+    // Any NON-NEGATIVE integer. Deliberately not `is_number_unsigned()` alone:
+    // nlohmann stores a positive literal built in-process from an `int` as
+    // SIGNED, so that check rejected perfectly valid ids depending only on how
+    // the json was constructed. A negative or fractional id is still refused —
+    // it is not an id, and converting one silently would alias a real entity.
+    if (v.is_number_unsigned()) return v.get<uint64_t>();
+    if (v.is_number_integer()) {
+        const int64_t sv = v.get<int64_t>();
+        return sv >= 0 ? (uint64_t)sv : 0;
+    }
+    return 0;
+}
+
 inline void restoreParents(flecs::world& w, const nlohmann::json& scene) {
+    if (!scene.is_object() || !scene.contains("entities")) return;
+    const auto& entities = scene["entities"];
+    if (!entities.is_array()) return;
+
     std::unordered_map<uint64_t, flecs::entity> byId;
     w.query_builder<const EntityId>().build()
         .each([&](flecs::entity e, const EntityId& id) { byId[id.value] = e; });
-    for (const auto& je : scene.value("entities", nlohmann::json::array())) {
-        uint64_t cid = je.value("id", (uint64_t)0);
-        uint64_t pid = je.value("parentId", (uint64_t)0);
+    for (const auto& je : entities) {
+        // One malformed record costs ONE link, never the rest of the
+        // hierarchy: a scene that opens with everything silently unparented is
+        // worse than one that reports a problem.
+        uint64_t cid = readEntityId(je, "id");
+        uint64_t pid = readEntityId(je, "parentId");
         if (!cid || !pid) continue;
         auto ci = byId.find(cid);
         auto pi = byId.find(pid);

@@ -40,6 +40,7 @@
 #include "runtime/services/asset_service.h"
 #include "scene/reflected_serde.h"
 #include "core/logger.h"
+#include "core/json_read.h"
 
 namespace EntitySerde {
 
@@ -93,54 +94,12 @@ struct ComponentSerde {
     void (*load)(flecs::entity, const nlohmann::json&, SerdeContext&);  // reads its sub-object
 };
 
-// ── Reading a float array out of JSON, safely ────────────────────────────────
-// nlohmann's CONST `operator[](size_type)` is UNDEFINED BEHAVIOUR out of range.
-// It is not `at()`: there is no exception, no bounds check — it indexes the
-// underlying std::vector directly and returns a reference to nothing. Every
-// vector-valued component read here used to do `j["position"][0..2]` straight,
-// so a `.scene` with `"position": [1, 2]` — one dropped element from a merge
-// conflict or a hand edit — segfaulted the loader on a null json.
-//
-// Found by tests/fuzz_entity_serde_test.cpp. It surfaced only AFTER the
-// type-tolerance fix below: until then a wrong-typed field threw first and the
-// short-array case was never reached, which is exactly why the two fixes belong
-// in one change.
-//
-// Missing elements keep the caller's default rather than zeroing: a scale of
-// {1,1,0} from a two-element array collapses the object to a plane, which is
-// far harder to recognise than the value simply not having been overridden.
-// Non-finite values are rejected in both helpers. This is not theoretical:
-// JSON text has no NaN literal, but `1e999` parses to +inf through strtod, and
-// an infinite scale or fov propagates into every world matrix and projection
-// downstream. The frame it ruins is nowhere near the load that caused it, so
-// the value is dropped at the boundary where the file is still nameable.
-inline bool finiteNumber(const nlohmann::json& v, float& out) {
-    if (!v.is_number()) return false;
-    const float f = v.get<float>();
-    if (!std::isfinite(f)) return false;
-    out = f;
-    return true;
-}
-
-inline void readFloats(const nlohmann::json& j, const char* key,
-                       float* out, int count) {
-    if (!j.contains(key)) return;
-    const auto& a = j[key];
-    if (!a.is_array()) return;
-    const int n = (int)a.size() < count ? (int)a.size() : count;
-    for (int i = 0; i < n; ++i) {
-        float f;
-        if (finiteNumber(a[(size_t)i], f)) out[i] = f;
-    }
-}
-
-// Scalar counterpart: keeps the default for a missing, wrong-typed, or
-// non-finite value instead of throwing or propagating an infinity.
-inline float readFloat(const nlohmann::json& j, const char* key, float dflt) {
-    if (!j.contains(key)) return dflt;
-    float f;
-    return finiteNumber(j[key], f) ? f : dflt;
-}
+// Bounds- and type-safe JSON reads live in core/json_read.h — the same defect
+// was found in four files, so the helper is shared rather than copied a fifth
+// time. See that header for what nlohmann's const operator[] actually does.
+using jsonread::finiteNumber;
+using jsonread::readFloat;
+using jsonread::readFloats;
 
 inline bool hasTransform(flecs::entity e) { return e.try_get<Transform>() != nullptr; }
 inline void saveTransform(flecs::entity e, nlohmann::json& j, const SerdeContext&) {

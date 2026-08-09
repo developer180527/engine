@@ -48,7 +48,7 @@ out-of-process crash isolation, GC. It is genuinely studio-shaped.
 |---|---|
 | `src/render` | The pipeline itself has no test that can fail; a GPU is required to instantiate it |
 | `src/render/shader` | Decision logic is tested, but **no running code path executes it yet** |
-| `src/editor` | No tests at all |
+| `src/editor` | Panels untested; undo + prefs covered |
 | `modules/net` | The Rust FFI seam exists; there is no networking |
 
 ---
@@ -142,7 +142,7 @@ tier-1 (material + shader) is proven.
 | Gap | Cost of leaving it |
 |---|---|
 | **Windows build** | The stated target (i3-10105 / UHD 630 / 4 GB) cannot run anything yet. Also: shader cooking has no `CreateProcess` path, and D3D bytecode needs a Windows runner. |
-| **`src/editor` has no tests** | Largest untested surface in the tree |
+| **`src/editor` panels have no tests** | The mouse-driven ImGui surface is still untested; `UndoStack` and `EditorPrefs` now are (`editor_undo_test`, `editor_prefs_test`), which is where a bug destroys authored work rather than mis-drawing a widget. The prefs lane found a live segfault on the project-open path. |
 | **Networking** | `modules/net` is an FFI seam with nothing behind it. Transport scope undecided. |
 | **Texture UUIDs in `.cmat`** | Materials declare no dependency edge on their textures |
 | **Shader hot-reload** | Cook pipeline already watches files; the runtime ignores the result |

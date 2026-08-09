@@ -305,10 +305,14 @@ add_library(imgui STATIC
     third_party/imgui/imgui_demo.cpp
     third_party/ImGuizmo/ImGuizmo.cpp
 )
+# ABSOLUTE, and it has to be: a relative path in an INTERFACE include
+# directory is resolved against the CONSUMING target's source dir, not this
+# one. That worked by luck for `editor` and broke the moment anything outside
+# src/editor linked imgui (tests/editor_prefs_test.cpp: "imgui.h not found").
 target_include_directories(
     imgui PUBLIC
-    third_party/imgui
-    third_party/ImGuizmo
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ImGuizmo
 )
 
 # ── Engine targets ──────────────────────────────────────────────────────────
