@@ -1,4 +1,5 @@
 #pragma once
+#include "editor/window_chrome.h"   // shared title-bar chrome
 #include <imgui.h>
 #include <functional>
 #include <string>
@@ -53,61 +54,6 @@ struct MenuBarCallbacks {
     // non-client area, so the window has no way to be closed without these.
     bool needsWindowButtons = false;
 };
-
-// The three window buttons, drawn rather than fonted: glyphs from a font would
-// need Segoe MDL2 Assets (Windows-only, and absent on the machines this is
-// developed on), so they are primitives. Sized to the Windows convention —
-// 46x32 logical, glyph 10x10 centred — because that is what users' muscle
-// memory and every other window on their desktop agree on.
-inline void drawWindowButtons(const MenuBarCallbacks& cb, float barHeight) {
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float w = 46.0f;
-    const ImU32 fg = ImGui::GetColorU32(ImGuiCol_Text);
-
-    struct Btn { const char* id; int kind; };   // 0=min 1=max 2=close
-    const Btn btns[] = { {"##win_min",0}, {"##win_max",1}, {"##win_close",2} };
-
-    for (const Btn& b : btns) {
-        const ImVec2 p0 = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton(b.id, ImVec2(w, barHeight));
-        const bool hovered = ImGui::IsItemHovered();
-        const bool held    = ImGui::IsItemActive();
-
-        if (hovered) {
-            // Close goes red on hover, the other two grey — the convention on
-            // every Windows window, and the affordance that stops someone
-            // closing the editor when they meant to maximise it.
-            const ImU32 bg = b.kind == 2
-                ? IM_COL32(196, 43, 28, held ? 200 : 255)
-                : ImGui::GetColorU32(held ? ImGuiCol_ButtonActive
-                                          : ImGuiCol_ButtonHovered);
-            dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + barHeight), bg);
-        }
-
-        const ImVec2 c(p0.x + w * 0.5f, p0.y + barHeight * 0.5f);
-        const float  h = 5.0f;                  // half the 10px glyph
-        switch (b.kind) {
-        case 0:                                  // minimise: a single rule
-            dl->AddLine(ImVec2(c.x - h, c.y), ImVec2(c.x + h, c.y), fg, 1.0f);
-            break;
-        case 1:                                  // maximise: a hollow square
-            dl->AddRect(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h),
-                        fg, 0.0f, 0, 1.0f);
-            break;
-        default:                                 // close: an X
-            dl->AddLine(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h), fg, 1.0f);
-            dl->AddLine(ImVec2(c.x + h, c.y - h), ImVec2(c.x - h, c.y + h), fg, 1.0f);
-            break;
-        }
-
-        if (ImGui::IsItemDeactivated() && hovered) {
-            if      (b.kind == 0 && cb.minimizeWindow)   cb.minimizeWindow();
-            else if (b.kind == 1 && cb.toggleWindowZoom) cb.toggleWindowZoom();
-            else if (b.kind == 2 && cb.quit)             cb.quit();
-        }
-        ImGui::SameLine(0.0f, 0.0f);            // buttons abut, no gap
-    }
-}
 
 inline void drawMenuBar(const MenuBarCallbacks& cb) {
     // Grow the bar to the native band height by padding the FRAME, which is
@@ -310,7 +256,7 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
         const float barH = ImGui::GetFrameHeight();
         // Reserve the buttons' width first so the drag strip stops short of
         // them; otherwise the strip would sit on top and eat their clicks.
-        const float reserved = cb.needsWindowButtons ? 3.0f * 46.0f : 0.0f;
+        const float reserved = edchrome::windowButtonsWidth();
         const float avail = ImGui::GetContentRegionAvail().x - reserved;
         if (avail > 1.0f) {
             ImGui::InvisibleButton("##titlebar_drag", ImVec2(avail, barH));
@@ -330,7 +276,9 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
             ImGui::SameLine(0.0f, 0.0f);
         }
         if (cb.needsWindowButtons)
-            drawWindowButtons(cb, ImGui::GetFrameHeight());
+            edchrome::drawWindowButtons(ImGui::GetFrameHeight(),
+                                        cb.minimizeWindow, cb.toggleWindowZoom,
+                                        cb.quit);
     }
 
     ImGui::EndMainMenuBar();

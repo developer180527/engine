@@ -1,4 +1,5 @@
 #pragma once
+#include "editor/window_chrome.h"   // shared title-bar band
 #include <imgui.h>
 #include <cstring>
 #include <filesystem>
@@ -37,7 +38,7 @@ public:
         float dt = 0.0f;
         while (picked.empty() && !m_quit && rt.frameBegin(dt)) {
             imguiNewFrame();
-            picked = drawHub();
+            picked = drawHub(rt.platform().nativeWindowHandle());
             imguiRender();
             imguiRenderViewports();
             rt.frameEnd();
@@ -66,7 +67,7 @@ private:
     }
 
     // Returns the picked project root, or empty while still browsing.
-    std::filesystem::path drawHub() {
+    std::filesystem::path drawHub(void* nativeWindow) {
         std::filesystem::path picked;
 
         // Fullscreen page — covers the whole window, no chrome behind it.
@@ -78,12 +79,51 @@ private:
             ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoCollapse |
             ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        ImGui::Dummy({0, 8});
-        ImGui::Text(ICON_FA_CUBES "  Projects");
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 130);
+        // ── Title band ───────────────────────────────────────────────────
+        // The hub is a different PAGE of the same window, so it needs the same
+        // band as the editor's menu bar: the window has no title bar here
+        // either. Without this the header sat jammed under the traffic lights
+        // and there was nowhere left to grab the window — the hub could not be
+        // moved at all.
+        const float inset = platwin::titleBarInset(nativeWindow);
+        const float band  = platwin::titleBarHeight(nativeWindow);
+        const float rowH  = band > 0.0f ? band : ImGui::GetFrameHeight() + 8.0f;
+        const float winBtns = edchrome::windowButtonsWidth();
+        const float newBtnW = 130.0f;
+        const float pad     = ImGui::GetStyle().WindowPadding.x;
+
+        const float y0 = ImGui::GetCursorPosY();
+        const char* title = ICON_FA_CUBES "  Projects";
+        const float titleW = ImGui::CalcTextSize(title).x;
+
+        // Label, inset past the window buttons and vertically centred in the
+        // band rather than pinned to its top edge.
+        ImGui::SetCursorPos({ inset + pad,
+                              y0 + (rowH - ImGui::GetTextLineHeight()) * 0.5f });
+        ImGui::TextUnformatted(title);
+
+        // Drag strip: everything between the label and the New Project button.
+        const float stripX = inset + pad + titleW + 8.0f;
+        const float stripW = ImGui::GetWindowWidth() - stripX - newBtnW
+                           - winBtns - pad * 2.0f;
+        ImGui::SetCursorPos({ stripX, y0 });
+        edchrome::dragStrip("##hub_titlebar_drag", stripW, rowH, nativeWindow);
+
+        ImGui::SetCursorPos({ ImGui::GetWindowWidth() - newBtnW - winBtns - pad,
+                              y0 + (rowH - ImGui::GetFrameHeight()) * 0.5f });
         if (ImGui::Button(m_creating ? "Back to list" : ICON_FA_PLUS " New Project",
-                          {130, 0}))
+                          {newBtnW, 0}))
             { m_creating = !m_creating; m_error.clear(); }
+
+        if (winBtns > 0.0f) {
+            ImGui::SetCursorPos({ ImGui::GetWindowWidth() - winBtns, y0 });
+            edchrome::drawWindowButtons(rowH,
+                [nativeWindow]{ platwin::minimizeWindow(nativeWindow); },
+                [nativeWindow]{ platwin::toggleWindowZoom(nativeWindow); },
+                [this]{ m_quit = true; });
+        }
+
+        ImGui::SetCursorPosY(y0 + rowH);
         ImGui::Separator();
         ImGui::Dummy({0, 6});
 

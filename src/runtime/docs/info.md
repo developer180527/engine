@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-08
+verified: 2026-08-09
 parses-external-input: true
 covers:
   - src/runtime/
@@ -50,6 +50,15 @@ required.
   `GlfwPlatform` is the default (stock OS window); `HeadlessPlatform` returns
   a null native handle, which makes the runtime skip bgfx entirely (servers,
   CLI tools, tests). Custom platforms embed the engine in existing windows.
+  `PlatformConfig::hideTitleBar` suppresses the OS title bar's DRAWING while
+  keeping a fully decorated window — resize, snap, minimise, maximise and the
+  window buttons all keep working. It is deliberately NOT an undecorated
+  window; `platform/title_bar.h` carries the reasoning and the per-platform
+  state (macOS implemented, Windows written-but-unverified, Linux falls back to
+  a real bar). Only the editor sets it: a shipped game window keeps its title
+  bar. Title-bar suppression reaches past GLFW/SDL to the native window, so
+  CMake selects the implementation by OS rather than by window backend — which
+  is why adding it did not fork the two window backends.
 - **`Renderer`** (`renderer.h/.cpp`) — owns the GPU device lifecycle,
   framebuffers, and the swappable `IRenderPipeline`. Borrows the ECS world and
   registries from `EngineRuntime`. See `src/render/info.md` for the pipeline.

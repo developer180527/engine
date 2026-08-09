@@ -51,6 +51,12 @@ reimplementation loses snapping, drag-to-another-display and the release
 animation, and fights the compositor for every pixel. Double-click reads the
 system's own `AppleActionOnDoubleClick` preference rather than assuming zoom.
 
+The band is shared (`editor/window_chrome.h`), not menu-bar-specific: "the
+window has no title bar" is a property of the WINDOW, not of whichever page is
+up. The project hub is a different page and needs the identical band. It
+originally had none, so its header sat jammed under the traffic lights and the
+hub window could not be moved at all.
+
 **Games keep their title bar.** `hideTitleBar` defaults to false and only the
 editor sets it; `engine_host` and `engine_player` come up with normal system
 chrome. A shipped game window is a normal window.
