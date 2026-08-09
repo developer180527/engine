@@ -1,4 +1,5 @@
 #include "runtime/platform/sdl3_platform.h"
+#include "runtime/platform/title_bar.h"
 
 #include <SDL3/SDL.h>
 
@@ -27,6 +28,12 @@ bool Sdl3Platform::init(const PlatformConfig& cfg) {
         if (m_ownsSdl) { SDL_Quit(); m_ownsSdl = false; }
         return false;
     }
+    // Same seam as the GLFW backend, and for the same reason: the window stays
+    // decorated (no SDL_WINDOW_BORDERLESS), only the bar's drawing is
+    // suppressed. See runtime/platform/title_bar.h.
+    if (cfg.hideTitleBar && !platwin::hideTitleBar(nativeWindowHandle()))
+        std::printf("[Platform] title bar hiding not implemented on this "
+                    "platform - using the system title bar\n");
     m_shouldClose = false;
     return true;
 }

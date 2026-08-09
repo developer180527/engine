@@ -19,6 +19,7 @@
 #endif
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
+#include "runtime/platform/title_bar.h"
 
 bool GlfwPlatform::init(const PlatformConfig& cfg) {
     if (!glfwInit()) {
@@ -32,6 +33,12 @@ bool GlfwPlatform::init(const PlatformConfig& cfg) {
         std::printf("[Platform] Window creation failed\n");
         return false;
     }
+    // AFTER creation, not a window hint: the point is to keep the window fully
+    // decorated and only stop the title bar being drawn. A GLFW_DECORATED hint
+    // would do the opposite and cost resize/snap/minimise/maximise.
+    if (cfg.hideTitleBar && !platwin::hideTitleBar(nativeWindowHandle()))
+        std::printf("[Platform] title bar hiding not implemented on this "
+                    "platform - using the system title bar\n");
     return true;
 }
 

@@ -16,6 +16,11 @@ int main(int argc, char** argv) {
     //   editor                → projectless boot, show the project hub first
     EngineConfig cfg;
     cfg.autoDetectProject = false; // the hub decides, not the cwd
+    // The editor draws over the title bar: the menu bar takes those pixels and
+    // the window stays a real OS window (resize, snap, minimise, maximise and
+    // the window buttons all keep working). See runtime/platform/title_bar.h —
+    // this is deliberately NOT an undecorated window.
+    cfg.hideTitleBar = true;
     if (argc > 1 && std::filesystem::is_directory(argv[1])) {
         cfg.projectRoot = argv[1];
         LOG_INFO("Project", "Opening from argument: %s", argv[1]);

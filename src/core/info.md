@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-05
+verified: 2026-08-09
 covers:
   - src/core/
 tests:
@@ -60,6 +60,19 @@ include renderer, ECS, or editor headers.
   intercepts nothing). Lifetime: valid only within the frame; trivial
   destruction only; one arena per thread. EngineRuntime owns one (4 MB),
   reset each frameBegin; reach it via `engine.frameArena()`.
+- **`json_read.h`** — bounds- and type-safe reads out of `nlohmann::json`.
+  Exists because the SAME bug was written four times: nlohmann's CONST
+  `operator[](size_type)` is UNDEFINED BEHAVIOUR out of range (it is not
+  `at()` — no check, no exception), and `value(key, default)` THROWS rather
+  than falling back when the key exists with the wrong type. The two hide each
+  other: the throw gets there first, so the UB only surfaces once the throw is
+  fixed. Found in `scene/entity_serializer.h` (five sites), `scene_serializer`'s
+  parent pass, `editor/editor_prefs.h` (a live segfault on the project-open
+  path) and `editor/undo_stack.h`. Non-finite values are refused too — JSON has
+  no NaN literal but `1e999` parses to +inf, and an infinite scale corrupts a
+  frame far from the load that caused it. The contract is uniform: a missing,
+  wrong-typed, short, or non-finite value leaves the destination ALONE, so
+  callers never get a zero they did not ask for.
 
 ## Rules
 - Keep this layer header-only and free of engine state; it should compile in

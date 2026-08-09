@@ -42,6 +42,9 @@ class ClipLibrary;   // standalone animation clips (animation/clip_library.h) â€
 struct EngineConfig {
     // Empty title => use the project name from project.json.
     std::string title;
+    // Draw over the title bar instead of under it (the editor does; a game
+    // window does not). Keeps a real OS window â€” see platform/title_bar.h.
+    bool        hideTitleBar = false;
     int         width  = 1280;
     int         height = 720;
     float       fov    = 60.0f;

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-08
+verified: 2026-08-09
 parses-external-input: true
 covers:
   - src/scene/

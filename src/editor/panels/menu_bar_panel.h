@@ -30,10 +30,105 @@ struct MenuBarCallbacks {
     bool* focusPlugins = nullptr;        // set true to bring the panel to front
     PanelVisibility*      panels = nullptr;  // View > Panels toggles
     std::function<void()> resetLayout;       // View > Reset Layout
+    // Leading padding, in points, that the first menu must leave clear. With
+    // the OS title bar hidden the menu bar occupies those pixels, and on macOS
+    // the window buttons still float over them — so without this, "engine"
+    // renders underneath the traffic lights and neither is clickable.
+    // Zero on platforms that keep a normal title bar, so it costs nothing.
+    float titleBarInset = 0.0f;
+    // Height the bar should occupy — the band the OS title bar would have used.
+    // The window buttons are vertically centred in a band of this height, so a
+    // menu bar shorter than it leaves them looking cramped against the top
+    // edge. 0 = use the theme's own frame height.
+    float titleBarHeight = 0.0f;
+    // Hiding the title bar takes the window's drag strip with it, because the
+    // app's content now covers it. These hand the two gestures back to the OS.
+    // Null when the platform kept a real title bar and still handles them.
+    std::function<void()> beginWindowDrag;
+    std::function<void()> toggleWindowZoom;
+    std::function<void()> minimizeWindow;
+    // Draw our OWN minimise/maximise/close? True where hiding the title bar
+    // took the OS buttons with it (Windows), false where they survive (macOS
+    // traffic lights). Not a style choice: on Windows the caption buttons are
+    // non-client area, so the window has no way to be closed without these.
+    bool needsWindowButtons = false;
 };
 
+// The three window buttons, drawn rather than fonted: glyphs from a font would
+// need Segoe MDL2 Assets (Windows-only, and absent on the machines this is
+// developed on), so they are primitives. Sized to the Windows convention —
+// 46x32 logical, glyph 10x10 centred — because that is what users' muscle
+// memory and every other window on their desktop agree on.
+inline void drawWindowButtons(const MenuBarCallbacks& cb, float barHeight) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float w = 46.0f;
+    const ImU32 fg = ImGui::GetColorU32(ImGuiCol_Text);
+
+    struct Btn { const char* id; int kind; };   // 0=min 1=max 2=close
+    const Btn btns[] = { {"##win_min",0}, {"##win_max",1}, {"##win_close",2} };
+
+    for (const Btn& b : btns) {
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton(b.id, ImVec2(w, barHeight));
+        const bool hovered = ImGui::IsItemHovered();
+        const bool held    = ImGui::IsItemActive();
+
+        if (hovered) {
+            // Close goes red on hover, the other two grey — the convention on
+            // every Windows window, and the affordance that stops someone
+            // closing the editor when they meant to maximise it.
+            const ImU32 bg = b.kind == 2
+                ? IM_COL32(196, 43, 28, held ? 200 : 255)
+                : ImGui::GetColorU32(held ? ImGuiCol_ButtonActive
+                                          : ImGuiCol_ButtonHovered);
+            dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + barHeight), bg);
+        }
+
+        const ImVec2 c(p0.x + w * 0.5f, p0.y + barHeight * 0.5f);
+        const float  h = 5.0f;                  // half the 10px glyph
+        switch (b.kind) {
+        case 0:                                  // minimise: a single rule
+            dl->AddLine(ImVec2(c.x - h, c.y), ImVec2(c.x + h, c.y), fg, 1.0f);
+            break;
+        case 1:                                  // maximise: a hollow square
+            dl->AddRect(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h),
+                        fg, 0.0f, 0, 1.0f);
+            break;
+        default:                                 // close: an X
+            dl->AddLine(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h), fg, 1.0f);
+            dl->AddLine(ImVec2(c.x + h, c.y - h), ImVec2(c.x - h, c.y + h), fg, 1.0f);
+            break;
+        }
+
+        if (ImGui::IsItemDeactivated() && hovered) {
+            if      (b.kind == 0 && cb.minimizeWindow)   cb.minimizeWindow();
+            else if (b.kind == 1 && cb.toggleWindowZoom) cb.toggleWindowZoom();
+            else if (b.kind == 2 && cb.quit)             cb.quit();
+        }
+        ImGui::SameLine(0.0f, 0.0f);            // buttons abut, no gap
+    }
+}
+
 inline void drawMenuBar(const MenuBarCallbacks& cb) {
-    if (!ImGui::BeginMainMenuBar()) return;
+    // Grow the bar to the native band height by padding the FRAME, which is
+    // what ImGui derives the menu-bar height from. Pushed before Begin (the
+    // height is computed there) and popped straight after, so dropdown items
+    // keep the theme's normal padding rather than inheriting a tall bar's.
+    const float barPadY = cb.titleBarHeight > 0.0f
+        ? (cb.titleBarHeight - ImGui::GetFontSize()) * 0.5f : 0.0f;
+    const bool  padBar  = barPadY > ImGui::GetStyle().FramePadding.y;
+    if (padBar)
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(ImGui::GetStyle().FramePadding.x, barPadY));
+    const bool barOpen = ImGui::BeginMainMenuBar();
+    if (padBar) ImGui::PopStyleVar();
+    if (!barOpen) return;
+
+    // Push the first menu clear of the window buttons. SetCursorPosX rather
+    // than a Dummy+SameLine: a dummy item would still be part of the menu
+    // bar's item layout and would take focus on keyboard navigation.
+    if (cb.titleBarInset > 0.0f)
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + cb.titleBarInset);
 
     // ── engine ───────────────────────────────────────────────────────
     if (ImGui::BeginMenu("engine")) {
@@ -202,13 +297,40 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
     }
 
     // ── Project name ─────────────────────────────────────────────────
-    if (!cb.projectName.empty()) {
-        ImGui::SetNextItemWidth(0);
-        // Right-align by pushing spacing
-        float menuWidth = ImGui::GetCursorPosX();
-        float barWidth  = ImGui::GetContentRegionAvail().x;
-        (void)menuWidth; (void)barWidth;
+    if (!cb.projectName.empty())
         ImGui::TextDisabled(" |  %s", cb.projectName.c_str());
+
+    // ── Drag strip ───────────────────────────────────────────────────
+    // Everything to the right of the last item stands in for the title bar the
+    // window no longer draws. An InvisibleButton rather than a bare
+    // IsMouseHoveringRect: the button takes ownership of the press, so a drag
+    // that starts here keeps being ours even after the pointer leaves the bar,
+    // and it cannot be confused with a click that started in a panel below.
+    if (cb.beginWindowDrag || cb.toggleWindowZoom) {
+        const float barH = ImGui::GetFrameHeight();
+        // Reserve the buttons' width first so the drag strip stops short of
+        // them; otherwise the strip would sit on top and eat their clicks.
+        const float reserved = cb.needsWindowButtons ? 3.0f * 46.0f : 0.0f;
+        const float avail = ImGui::GetContentRegionAvail().x - reserved;
+        if (avail > 1.0f) {
+            ImGui::InvisibleButton("##titlebar_drag", ImVec2(avail, barH));
+            // Zoom first: a double-click also reports as active+dragging on the
+            // second press, so testing drag first would move the window a pixel
+            // and swallow the gesture.
+            if (cb.toggleWindowZoom && ImGui::IsItemHovered()
+                && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                cb.toggleWindowZoom();
+            } else if (cb.beginWindowDrag && ImGui::IsItemActive()
+                       && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                // The OS runs the move loop from here, so this fires ONCE per
+                // gesture; ImGui's item stays active until the button is
+                // released, which is exactly the guard against re-entering.
+                cb.beginWindowDrag();
+            }
+            ImGui::SameLine(0.0f, 0.0f);
+        }
+        if (cb.needsWindowButtons)
+            drawWindowButtons(cb, ImGui::GetFrameHeight());
     }
 
     ImGui::EndMainMenuBar();

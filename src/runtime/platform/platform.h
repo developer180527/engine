@@ -7,6 +7,13 @@ struct PlatformConfig {
     std::string title  = "Engine";
     int         width  = 1280;
     int         height = 720;
+    // Suppress the OS title bar's DRAWING while keeping the window a normal,
+    // fully decorated OS window — resize, snap, minimise, maximise and the
+    // window buttons all keep working. This is NOT an undecorated window; see
+    // runtime/platform/title_bar.h for why that distinction is the whole
+    // point. Where the platform has no implementation yet the flag is ignored
+    // and a normal title bar is drawn.
+    bool        hideTitleBar = false;
 };
 
 // ── IPlatform ───────────────────────────────────────────────────────────────

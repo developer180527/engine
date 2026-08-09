@@ -93,7 +93,8 @@ bool EngineRuntime::init(const EngineConfig& cfg,
         : (hasProject() ? m_project.name : std::string("Engine"));
     m_platform = std::move(platform);
     { ENGINE_PROFILE_SCOPE("boot.platform");
-      if (!m_platform->init({title, cfg.width, cfg.height})) return false; }
+      if (!m_platform->init({title, cfg.width, cfg.height,
+                            cfg.hideTitleBar})) return false; }
     { ENGINE_PROFILE_SCOPE("boot.renderer");
       if (!initRenderer(cfg))  return false; }
     { ENGINE_PROFILE_SCOPE("boot.systems");

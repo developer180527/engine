@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: prototype
-verified: 2026-07-31
+verified: 2026-08-09
 covers:
   - src/editor/
 tests:
@@ -16,6 +16,75 @@ tests:
 # rather than mis-drawing a widget. See "Tested surface" below.
 ---
 # Editor
+
+## Window chrome — no title bar
+The editor draws to the top edge: the main menu bar occupies the row where the
+title bar used to be.
+
+It is **not** an undecorated window, and that is the whole design. Setting
+`GLFW_DECORATED=false` / `SDL_WINDOW_BORDERLESS` is the obvious way to get the
+look and it throws away move, resize, minimise, maximise, close, snapping,
+double-click-to-zoom and the window-manager animations — every one of which
+then has to be re-implemented by hand, per platform. That is how editors end up
+with a window you cannot resize from the top edge.
+
+Instead the window stays a fully decorated OS window and only the title bar's
+DRAWING is suppressed (`runtime/platform/title_bar.h`). On macOS that is
+`NSWindowStyleMaskFullSizeContentView` + `titlebarAppearsTransparent` +
+`NSWindowTitleHidden`. Traffic lights keep working, the top edge still resizes,
+the window still zooms on a double click.
+
+The cost, stated plainly: the window buttons now float over the editor's own
+content, so the menu bar insets its first item past them and matches the band's
+height. Both numbers are **measured** from the live window every frame, never
+hardcoded — the traffic lights move with the system's appearance and
+accessibility settings, their spacing has changed across macOS releases, and
+the band height differs by OS version.
+
+Hiding the bar also takes away what it did for free. The content view swallows
+the events the window manager used to get, so **drag** and
+**double-click-to-zoom** stop working. Both are handed back explicitly: the
+empty strip to the right of the menus is a drag region that calls
+`platwin::beginWindowDrag()`, which asks the OS to run its own move loop.
+Deliberately not "track the mouse and set the window origin each frame" — that
+reimplementation loses snapping, drag-to-another-display and the release
+animation, and fights the compositor for every pixel. Double-click reads the
+system's own `AppleActionOnDoubleClick` preference rather than assuming zoom.
+
+**Games keep their title bar.** `hideTitleBar` defaults to false and only the
+editor sets it; `engine_host` and `engine_player` come up with normal system
+chrome. A shipped game window is a normal window.
+
+### Windows and Linux
+**Windows is written but UNVERIFIED** (`title_bar_windows.cpp`) — authored
+without a Windows toolchain to compile it against, and no CI builds a Windows
+target yet. Treat it as a reviewed proposal. It is a Windows-only TU, so it
+cannot affect the macOS or Linux builds either way.
+
+Windows is genuinely not the same job, and the difference is not cosmetic: its
+minimise/maximise/close buttons are part of the NON-CLIENT area that
+`WM_NCCALCSIZE` removes, so hiding the bar DELETES them. macOS's traffic lights
+survive because they belong to the window's own chrome. Hence
+`titleBarNeedsCustomButtons()` — true on Windows, false on macOS. A UI written
+to the macOS shape would ship on Windows with no way to close the window.
+
+The editor therefore draws its own minimise / maximise / close on the trailing
+edge whenever that flag is set. They are ImDrawList PRIMITIVES, not font
+glyphs: the Windows convention is Segoe MDL2 Assets, which is Windows-only and
+absent from the machines this is developed on. Sized 46x32 logical with a 10px
+glyph — the Windows metric, because it is what every other window on the user's
+desktop already agrees on — and close goes red on hover while the others go
+grey, which is the affordance that stops someone closing the editor when they
+meant to maximise it.
+
+The DRAWING is verified: the macOS build was temporarily forced into the
+Windows shape to screenshot it, confirming placement, sizing and spacing. What
+remains unverified is only the Win32 side that the buttons call into.
+
+Linux has no implementation and falls back to a real title bar. Whether one
+exists at all is the COMPOSITOR's call (server- vs client-side decorations) and
+it differs across GNOME, KDE and the wlroots compositors — there is no portable
+call to make.
 
 ## Tested surface
 Two lanes, both headless — no window, no ImGui context, no GPU.

@@ -1,6 +1,7 @@
 #include <filesystem>
 #pragma once
 #include "editor/window_ops.h"
+#include "runtime/platform/title_bar.h"  // traffic-light inset for the menu bar
 #include "runtime/runtime.h"
 #include "scene/scene_serializer.h"
 #include <imgui.h>
@@ -508,7 +509,16 @@ private:
             &m_showPlugins,
             &m_focusPlugins,
             &m_panels,
-            [this]{ m_resetLayout = true; }
+            [this]{ m_resetLayout = true; },
+            // MEASURED each frame, not cached: the traffic lights move with
+            // the system appearance and accessibility settings, and the user
+            // can change those while the editor is running.
+            platwin::titleBarInset(m_rt.platform().nativeWindowHandle()),
+            platwin::titleBarHeight(m_rt.platform().nativeWindowHandle()),
+            [this]{ platwin::beginWindowDrag(m_rt.platform().nativeWindowHandle()); },
+            [this]{ platwin::toggleWindowZoom(m_rt.platform().nativeWindowHandle()); },
+            [this]{ platwin::minimizeWindow(m_rt.platform().nativeWindowHandle()); },
+            platwin::titleBarNeedsCustomButtons()
         });
 
         // Cmd+S: save  |  Cmd+P: play/pause  |  Escape: stop

@@ -238,6 +238,25 @@ else()
     set(ENGINE_PLATFORM_SOURCES runtime/platform/glfw_platform.cpp)
 endif()
 
+# Title-bar suppression is a WINDOW-SYSTEM concern, not a windowing-LIBRARY
+# one: it reaches past GLFW/SDL to the native window, so it is selected by OS
+# rather than by backend. Unimplemented platforms link the stub and keep a
+# normal title bar (title_bar.h explains why that beats a borderless window).
+if(APPLE)
+    list(APPEND ENGINE_PLATFORM_SOURCES runtime/platform/title_bar_macos.mm)
+elseif(WIN32)
+    # UNVERIFIED — written without a Windows toolchain to compile it against.
+    # See the header of that file and docs/process/roadmap.md.
+    list(APPEND ENGINE_PLATFORM_SOURCES runtime/platform/title_bar_windows.cpp)
+else()
+    # Linux/BSD: no implementation. Whether a title bar exists at all is the
+    # COMPOSITOR's decision there (server- vs client-side decorations), and it
+    # differs between GNOME, KDE and the wlroots compositors — there is no
+    # portable "hide the title bar but keep the window" call to make. Falls
+    # back to a normal title bar rather than guessing.
+    list(APPEND ENGINE_PLATFORM_SOURCES runtime/platform/title_bar_stub.cpp)
+endif()
+
 add_library(engine_runtime STATIC
     # Runtime core — platform, frame loop, renderer, services
     runtime/runtime.cpp
@@ -349,6 +368,7 @@ elseif(WIN32)
         shell32
         user32
         winmm          # timeGetTime — used by GLFW + miniaudio
+        dwmapi         # DwmExtendFrameIntoClientArea — custom title bar
     )
 elseif(UNIX)
     # X11 + Wayland display servers; PulseAudio or ALSA for miniaudio.
