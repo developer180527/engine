@@ -106,6 +106,17 @@ static bool writeMaterial(const fs::path& p, const std::string& name,
     return assetlib::saveMaterial(m, p);
 }
 
+// A material that names a texture by SOURCE path — the only thing a .material
+// author writes, and the thing a dist cannot resolve on its own.
+static bool writeTexturedMaterial(const fs::path& p, const std::string& name,
+                                  const std::string& texSourcePath) {
+    assetlib::MaterialAsset m;
+    m.name = name;
+    m.shaderName = "standard";
+    m.textures.push_back({ "s_baseColor", 0, texSourcePath, "white", "" });
+    return assetlib::saveMaterial(m, p);
+}
+
 static bool listed(const std::vector<std::string>& v, const std::string& s) {
     return std::find(v.begin(), v.end(), s) != v.end();
 }
@@ -444,6 +455,72 @@ int main() {
         const auto none = pkg::materialFiles(dir / "no_materials");
         CHECK(none.files.empty() && !none.provides("rust"),
               "an absent material directory provides nothing, and does not throw");
+    }
+
+    // ═══ material textures resolved for a registry-free runtime ═════════════
+    // A .material names its textures by SOURCE path. A dist has no registry.db,
+    // so that path resolves to NOTHING there and every textured material binds
+    // its white fallback — a game that ships looking untextured while every log
+    // line says success. The packager resolves them while it still can.
+    {
+        const fs::path texDir = dir / "textures";
+        const fs::path outDir = dir / "pkgout";
+        fs::create_directories(texDir, ec);
+
+        const std::string texUuid = "11111111-2222-3333-4444-555555555555";
+        const std::string cookedRel = "textures/" + texUuid + ".cooked";
+        { std::ofstream f(dir / cookedRel, std::ios::binary); f << "not-a-real-ctex"; }
+
+        assetlib::AssetRegistry reg;
+        CHECK(reg.open(dir / "reg.db"), "opened a registry for the resolve test");
+
+        assetlib::AssetRecord rec;
+        rec.uuid       = assetlib::UUID::fromString(texUuid);
+        rec.type       = assetlib::AssetType::Texture;
+        rec.sourcePath = "assets/tex/brick.png";
+        rec.cookedPath = cookedRel;
+        rec.state      = assetlib::AssetState::Ready;
+        CHECK(reg.insert(rec), "registered the texture record");
+
+        const fs::path mdir = dir / "mats_tex";
+        fs::create_directories(mdir, ec);
+        writeTexturedMaterial(mdir / "m-uuid.cooked", "brickwall",
+                              "assets/tex/brick.png");
+        writeTexturedMaterial(mdir / "n-uuid.cooked", "ghost",
+                              "assets/tex/does_not_exist.png");
+
+        const auto set = pkg::materialFiles(mdir);
+        const auto res = pkg::resolveMaterialTextures(set, reg, dir, outDir);
+
+        CHECK(listed(res.cookedRel, cookedRel),
+              "the resolvable texture is reported for shipping");
+        CHECK(res.cookedRel.size() == 1,
+              "and only once, deduplicated across materials (%zu)",
+              res.cookedRel.size());
+        CHECK(!res.unresolved.empty(),
+              "a texture with no registry record is REPORTED, not silently "
+              "dropped — silence is exactly how a dist ships untextured");
+
+        // The rewritten material must land in the PACKAGE carrying a
+        // cache-relative cooked path the runtime can use with no registry.
+        assetlib::MaterialAsset back;
+        CHECK(assetlib::loadMaterial(back, outDir / "m-uuid.cooked"),
+              "the rewritten material was written to the package");
+        CHECK(back.textures.size() == 1 && back.textures[0].cooked == cookedRel,
+              "...with the cooked reference filled in (\"%s\")",
+              back.textures.empty() ? "" : back.textures[0].cooked.c_str());
+        CHECK(back.textures.size() == 1
+              && back.textures[0].path == "assets/tex/brick.png",
+              "...and the source path kept, so the editor still round-trips");
+
+        // The CACHE copy must be untouched: cooked outputs are read-only
+        // hardlinks into the content-addressed store, shared with other
+        // projects. Rewriting one in place would corrupt a shared entry.
+        assetlib::MaterialAsset cached;
+        CHECK(assetlib::loadMaterial(cached, mdir / "m-uuid.cooked")
+              && cached.textures.size() == 1
+              && cached.textures[0].cooked.empty(),
+              "the cache copy is NOT rewritten — it is a hardlink into the DDC");
     }
 
     fs::remove_all(dir, ec);

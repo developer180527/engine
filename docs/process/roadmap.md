@@ -144,7 +144,7 @@ tier-1 (material + shader) is proven.
 | **Windows build** | The stated target (i3-10105 / UHD 630 / 4 GB) cannot run anything yet. Also: shader cooking has no `CreateProcess` path, and D3D bytecode needs a Windows runner. |
 | **`src/editor` panels have no tests** | The mouse-driven ImGui surface is still untested; `UndoStack` and `EditorPrefs` now are (`editor_undo_test`, `editor_prefs_test`), which is where a bug destroys authored work rather than mis-drawing a widget. The prefs lane found a live segfault on the project-open path. |
 | **Networking** | `modules/net` is an FFI seam with nothing behind it. Transport scope undecided. |
-| **Texture UUIDs in `.cmat`** | Materials declare no dependency edge on their textures |
+| ~~**Texture UUIDs in `.cmat`**~~ | Done, and the entry was imprecise: cache invalidation was never the problem (the texture cooks independently and the material stores only a path). The real one was that a dist has no registry, so material textures resolved to nothing and shipped untextured. Fixed by `MaterialTexture::cooked` + `engine_build` resolving it. |
 | **Shader hot-reload** | Cook pipeline already watches files; the runtime ignores the result |
 
 ### Explicitly not being built

@@ -18,6 +18,7 @@
 //
 // Dev-posture tool: lives in the dev tree, shells out to cmake.
 #include "tools/packaging/package_closure.h"
+#include <assetlib/asset_registry.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -320,8 +321,35 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "[engine_build] WARNING: two cooked materials both "
                      "declare \"%s\" — one shadows the other (stale cook?)\n",
                      dup.c_str());
-    for (const fs::path& f : materials.files)
-        if (!copyFile(f, dist / ".cache" / "materials" / f.filename())) return 1;
+    // Resolve each material's textures BEFORE copying: the resolver rewrites
+    // the .cmat in the cache with a cache-relative cooked path, and the dist
+    // must receive the rewritten file. A dist has no registry.db, so a source
+    // path is unresolvable there — without this every textured material in the
+    // shipped game binds its white fallback.
+    {
+        assetlib::AssetRegistry reg;
+        if (reg.open(cache / "registry.db")) {
+            const auto texSet = pkg::resolveMaterialTextures(
+                materials, reg, cache, dist / ".cache" / "materials");
+            for (const std::string& rel : texSet.cookedRel)
+                if (!copyFile(cache / rel, dist / ".cache" / rel)) return 1;
+            for (const std::string& bad : texSet.unresolved)
+                std::fprintf(stderr, "[engine_build] WARNING: material texture "
+                             "%s has no cooked output — it will ship UNTEXTURED\n",
+                             bad.c_str());
+            if (!texSet.cookedRel.empty())
+                std::printf("[engine_build] material textures: %zu file(s)\n",
+                            texSet.cookedRel.size());
+        } else {
+            std::fprintf(stderr, "[engine_build] WARNING: no registry at %s — "
+                         "material textures cannot be resolved and will ship "
+                         "UNTEXTURED\n", (cache / "registry.db").string().c_str());
+        }
+    }
+
+    // NOT copied here: resolveMaterialTextures above already placed each .cmat
+    // in the package with its cooked texture references filled in. Copying
+    // again would overwrite them with the unresolved originals.
     if (!materials.files.empty())
         std::printf("[engine_build] cooked materials: %zu file(s) providing "
                     "%zu name(s)\n", materials.files.size(),

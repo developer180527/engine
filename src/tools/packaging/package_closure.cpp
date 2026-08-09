@@ -150,4 +150,56 @@ MaterialSet materialFiles(const fs::path& materialsDir) {
     return out;
 }
 
+// ── Material textures, resolved for a runtime with no registry ──────────────
+MaterialTextureSet resolveMaterialTextures(const MaterialSet& materials,
+                                           assetlib::AssetRegistry& registry,
+                                           const fs::path& cacheRoot,
+                                           const fs::path& outDir) {
+    MaterialTextureSet out;
+    std::set<std::string> shipped;
+    std::set<std::string> missing;
+
+    for (const fs::path& file : materials.files) {
+        assetlib::MaterialAsset ma;
+        if (!assetlib::loadMaterial(ma, file)) continue;   // already reported
+
+        for (auto& t : ma.textures) {
+            if (t.path.empty()) continue;          // fallback-only slot, fine
+
+            // Source paths are stored the way an author typed them, relative to
+            // the project root — which is exactly the key the registry indexes.
+            auto rec = registry.findBySourcePath(t.path);
+            if (!rec || rec->cookedPath.empty()
+                || rec->state != assetlib::AssetState::Ready) {
+                missing.insert(t.path);
+                continue;
+            }
+            // Only ship what actually exists: a registry row can outlive its
+            // cooked output (a cleared cache, a partial sync), and shipping a
+            // reference to a file that is not there just moves the failure.
+            std::error_code ec;
+            if (!fs::exists(cacheRoot / rec->cookedPath, ec)) {
+                missing.insert(t.path);
+                continue;
+            }
+            t.cooked = rec->cookedPath;
+            shipped.insert(rec->cookedPath);
+        }
+
+        // Written to the DIST, never back into the cache. Cooked outputs are
+        // materialized from the DDC as READ-ONLY HARDLINKS — the file in
+        // .cache is the same inode as the content-addressed blob, so rewriting
+        // it in place would either fail (as it did) or, worse, corrupt a store
+        // entry that other projects and other machines share.
+        std::error_code mec;
+        fs::create_directories(outDir, mec);
+        if (!assetlib::saveMaterial(ma, outDir / file.filename()))
+            missing.insert(file.filename().string() + " (could not write to the package)");
+    }
+
+    out.cookedRel.assign(shipped.begin(), shipped.end());
+    out.unresolved.assign(missing.begin(), missing.end());
+    return out;
+}
+
 } // namespace pkg

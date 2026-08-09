@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-08
+verified: 2026-08-09
 parses-external-input: true
 covers:
   - src/assets/
@@ -106,6 +106,25 @@ fails because a search did not converge is not.
 
 Skinned meshes are skipped: clustering merges vertices across the mesh and would
 have to reconcile bone indices and weights, which is a different algorithm.
+
+#### Material textures reach a shipped game
+A `.material` names its textures by SOURCE path — the way an author types it —
+and that path resolves through the registry. A **dist has no registry**, so the
+same path resolves to nothing there: every textured material bound its white
+fallback while every log line reported success. Exactly the failure meshes had
+before their sibling `.ctex` files shipped.
+
+`MaterialTexture::cooked` (`.cmat` v3) carries a CACHE-RELATIVE cooked path the
+runtime can use with no registry at all. It is filled by **engine_build**, not
+by the cooker, and that split is forced: a cooker can run in a worker PROCESS
+that receives only source/output/uuid on argv, so it has no registry to resolve
+against. The packager runs on the dev machine with the cache in front of it.
+
+The rewritten `.cmat` is written into the PACKAGE, never back into the cache.
+Cooked outputs are materialized from the DDC as read-only hardlinks, so the file
+in `.cache` is the same inode as the content-addressed blob — rewriting it in
+place fails, and would corrupt an entry shared with other projects and machines
+if it did not. Pinned by `tests/package_closure_test.cpp`.
 
 ### Out-of-process cook workers
 Every cook runs in a spawned `engine_cook_worker` child (one asset per

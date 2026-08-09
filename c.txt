@@ -1,15 +1,36 @@
-assets: every textured material bound white, the sibling shortcut ate the lookup
+assets: material textures never reached a shipped game
 
-resolveTexture returned the sibling-.ctex step's result unconditionally once the
-file existed. A .material names a SOURCE asset relative to the project root, so
-that path exists, it is the source image, not a cooked .ctex. Parsing it as one
-fails, and returning that failure short-circuited the registry lookup below that
-would have found the real cooked output.
+A .material names its textures by SOURCE path, and that resolves through the
+registry. A dist has NO registry, so the same path resolved to nothing there:
+every textured material bound its white fallback while every log line reported
+success. The identical failure meshes had before their sibling .ctex shipped.
 
-The async twin (resolveTextureGPU) always had this right; only the sync path was
-wrong. Nothing caught it because the one sample .material in the tree has no
-textures, the path was entirely unexercised. Adding one reproduces it instantly.
+MaterialTexture::cooked (.cmat v3) carries a cache-relative cooked path the
+runtime can use with no registry at all. Resolved first, with the old path
+lookup kept as the dev-project fallback.
 
-Verified: a 2.67 MB cooked texture is now resident where the white fallback used
-to be.
+WHO fills it is forced, not a preference. A cooker can run in a worker PROCESS
+that receives only source/output/uuid on argv, it has no registry to resolve
+against, so a callback on CookContext would have silently done nothing in
+worker mode. engine_build runs on the dev machine with the cache in front of
+it, so the packager resolves. It now opens registry.db read-only for this;
+shipping the registry is still forbidden, reading it at package time is not.
+
+The rewritten .cmat goes into the PACKAGE, never back into the cache. That was
+not the first design, the first attempt rewrote in place and failed, because
+cooked outputs are materialized from the DDC as READ-ONLY HARDLINKS: the file
+in .cache is the same inode as the content-addressed blob. Had it succeeded it
+would have corrupted a store entry shared with other projects and machines.
+
+MaterialCooker::kVersion 1 -> 2. The format bump alone is not enough:
+loadMaterial rejects a version it does not know, so every previously cooked
+.cmat would have become unreadable while the DDC served it as up to date.
+
+Unresolvable textures are now a loud per-texture warning at package time.
+Silence is precisely how a dist ships untextured.
+
+Verified end to end: dist run loads the 2048x2048 2.7 MB cooked texture where
+the white fallback used to be. tests/package_closure_test.cpp pins the resolve,
+the dedup, the unresolved report, the source path surviving for the editor, and
+the cache copy staying untouched.
 

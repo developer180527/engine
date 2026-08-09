@@ -17,7 +17,12 @@
 
 class MaterialCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 1;
+    // v2: the .cmat format gained MaterialTexture::cooked (material_asset.h
+    // kVersion 3). The FORMAT version alone is not enough — loadMaterial
+    // rejects a version it does not know, so every previously cooked .cmat
+    // would become unreadable while the DDC happily served it as up to date.
+    // Bumping the COOKER version is what invalidates those entries.
+    static constexpr uint32_t kVersion = 2;
 
     std::vector<std::string> extensions() const override { return { ".material" }; }
     assetlib::CookResult     cook(const assetlib::CookContext& ctx) override;

@@ -34,8 +34,20 @@ struct MaterialUniform {
 struct MaterialTexture {
     std::string uniform;    // "s_baseColor"
     uint32_t    stage = 0;
-    std::string path;       // project-relative source path, "" = use fallback
+    std::string path;       // project-relative SOURCE path, "" = use fallback
     std::string fallback;   // "white" | "flatNormal" — what to bind when unset
+    // v3: the COOKED texture, relative to the cache root
+    // ("textures/<uuid>.cooked"). Empty in a dev project, where `path` resolves
+    // through the registry; filled by engine_build when packaging, because a
+    // shipped dist has NO registry and a source path is unresolvable there.
+    // Without it every textured material in a dist bound its white fallback —
+    // the same failure meshes had before their sibling .ctex files shipped.
+    //
+    // The packager fills this rather than the cooker on purpose: the cooker can
+    // run in a WORKER PROCESS, which receives only source/output/uuid on argv,
+    // so it has no registry to resolve a path against. engine_build runs on the
+    // dev machine with the cache in front of it.
+    std::string cooked;
 };
 
 struct MaterialAsset {

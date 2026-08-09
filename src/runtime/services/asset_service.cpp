@@ -579,7 +579,22 @@ MaterialHandle AssetService::loadMaterialAsset(const char* name) {
         bind.uniform  = t.uniform;
         bind.stage    = t.stage;
         bind.fallback = t.fallback;
-        if (!t.path.empty()) {
+        // The COOKED reference first, and it is the only one that works in a
+        // shipped dist: there is no registry there, so `path` — a project
+        // source path — resolves to nothing. engine_build fills this in when
+        // packaging. Empty in a dev project, where the registry lookup below
+        // is both available and authoritative.
+        if (!t.cooked.empty() && !m_cacheRoot.empty()) {
+            const auto abs = m_cacheRoot / t.cooked;
+            std::error_code ec;
+            if (std::filesystem::exists(abs, ec))
+                bind.texture = loadTextureFromCooked(abs);
+            if (!bind.texture.valid())
+                LOG_WARN("AssetService", "material %s: cooked texture %s is "
+                         "missing or unreadable — the package is incomplete",
+                         ma.name.c_str(), t.cooked.c_str());
+        }
+        if (!bind.texture.valid() && !t.path.empty()) {
             bind.texture = resolveTexture(t.path.c_str(), m_projectRoot);
             if (!bind.texture.valid())
                 LOG_WARN("AssetService", "material %s: texture %s did not "

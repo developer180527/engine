@@ -20,6 +20,7 @@
 // asset REFERENCES, never what its filename suggests.** A reference cannot
 // drift from what the runtime resolves, because it is the same string.
 #include <filesystem>
+#include <assetlib/asset_registry.h>
 #include <string>
 #include <vector>
 
@@ -99,5 +100,43 @@ struct MaterialSet {
 };
 
 MaterialSet materialFiles(const std::filesystem::path& materialsDir);
+
+// ── The textures a material needs, resolved for a registry-free runtime ─────
+// A .material names its textures by SOURCE path ("assets/tex/brick.png"). A
+// dist has no registry.db, so that path resolves to nothing there and every
+// textured material binds its white fallback — the same failure meshes had
+// before their sibling .ctex files shipped.
+//
+// So the packager resolves each source path through the registry it CAN see
+// (the dev machine's), reports the cooked files to copy, and rewrites the
+// material's `cooked` field to a cache-relative path the runtime can use with
+// no registry at all.
+//
+// Done here rather than in the cooker because a cooker may run in a WORKER
+// PROCESS that receives only source/output/uuid on argv — it has no registry to
+// resolve against. See MaterialTexture::cooked.
+struct MaterialTextureSet {
+    // Cache-relative cooked textures to ship ("textures/<uuid>.cooked"), sorted
+    // and de-duplicated: several materials commonly share one image.
+    std::vector<std::string> cookedRel;
+    // Source paths no registry record could resolve. These ship WITHOUT a
+    // texture and are worth a loud warning — it is precisely the silent
+    // untextured-dist failure this exists to prevent.
+    std::vector<std::string> unresolved;
+};
+
+// Resolves every texture of every material and writes the material, with its
+// `cooked` fields filled, into `outDir` — the package's material directory.
+//
+// It writes to the PACKAGE, never back into the cache: cooked outputs are
+// materialized from the DDC as read-only hardlinks, so the file in .cache is
+// the same inode as the content-addressed blob. Rewriting it in place fails,
+// and would corrupt a store entry shared with other projects if it did not.
+// Callers therefore do NOT copy the .cmat separately — this call places it.
+MaterialTextureSet resolveMaterialTextures(
+        const MaterialSet& materials,
+        assetlib::AssetRegistry& registry,
+        const std::filesystem::path& cacheRoot,
+        const std::filesystem::path& outDir);
 
 } // namespace pkg

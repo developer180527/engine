@@ -7,7 +7,7 @@ namespace assetlib {
 namespace {
 
 constexpr uint32_t kMagic   = 0x54414D43;   // 'CMAT'
-constexpr uint32_t kVersion = 2;   // v2: shaderName
+constexpr uint32_t kVersion = 3;   // v3: MaterialTexture::cooked
 
 void wr(FILE* f, const void* p, size_t n) { std::fwrite(p, 1, n, f); }
 void wrU32(FILE* f, uint32_t v)           { wr(f, &v, 4); }
@@ -65,6 +65,7 @@ bool saveMaterial(const MaterialAsset& m, const std::filesystem::path& outPath) 
         wrU32(f, t.stage);
         wrStr(f, t.path);
         wrStr(f, t.fallback);
+        wrStr(f, t.cooked);
     }
 
     const bool ok = std::ferror(f) == 0;
@@ -105,7 +106,7 @@ bool loadMaterial(MaterialAsset& out, const std::filesystem::path& inPath) {
     out.textures.resize(n);
     for (auto& t : out.textures) {
         if (!rdStr(f, t.uniform) || !rdU32(f, t.stage) || !rdStr(f, t.path)
-            || !rdStr(f, t.fallback))
+            || !rdStr(f, t.fallback) || !rdStr(f, t.cooked))
             return fail();
     }
 
