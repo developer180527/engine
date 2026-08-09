@@ -695,8 +695,23 @@ TextureHandle AssetService::resolveTexture(
     {
         std::error_code sec;
         const auto direct = sourceDir / texPath;
-        if (std::filesystem::exists(direct, sec))
-            return loadTextureFromCooked(direct);
+        if (std::filesystem::exists(direct, sec)) {
+            // Existing is not the same as PARSING. This step used to return
+            // whatever the load produced, failure included, and that made every
+            // .material texture unresolvable: a material names a SOURCE asset
+            // ("assets/tex/brick.jpeg") relative to the project root, so the
+            // file at that path exists — it is the source image, not a cooked
+            // .ctex. Parsing it as one fails, and returning that failure
+            // short-circuited the registry lookup below that would have found
+            // the real cooked output. Every textured material silently bound
+            // its white fallback.
+            //
+            // The async twin (resolveTextureGPU) always had this right; only
+            // the sync path was wrong, which is why nothing caught it — and
+            // why the one sample .material in the tree has no textures.
+            if (TextureHandle h = loadTextureFromCooked(direct); h.valid())
+                return h;
+        }
     }
 
     if (m_assetLib && !m_projectRoot.empty()) {

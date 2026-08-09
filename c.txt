@@ -1,0 +1,15 @@
+assets: every textured material bound white, the sibling shortcut ate the lookup
+
+resolveTexture returned the sibling-.ctex step's result unconditionally once the
+file existed. A .material names a SOURCE asset relative to the project root, so
+that path exists, it is the source image, not a cooked .ctex. Parsing it as one
+fails, and returning that failure short-circuited the registry lookup below that
+would have found the real cooked output.
+
+The async twin (resolveTextureGPU) always had this right; only the sync path was
+wrong. Nothing caught it because the one sample .material in the tree has no
+textures, the path was entirely unexercised. Adding one reproduces it instantly.
+
+Verified: a 2.67 MB cooked texture is now resident where the white fallback used
+to be.
+
