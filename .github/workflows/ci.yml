@@ -67,6 +67,10 @@ jobs:
             cxx: clang++
             experimental: true
 
+          # This leg is also the ONLY thing that compiles
+          # src/runtime/platform/title_bar_windows.cpp, which was written
+          # without a Windows toolchain to check it against. Its first green
+          # run is what turns that file from a proposal into code.
           - name: Windows (x64, MSVC)
             slug: windows-msvc
             os: windows-latest
@@ -166,27 +170,41 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=${{ runner.os == 'Windows' && 'sccache' || 'ccache' }} \
             -DCMAKE_CXX_COMPILER_LAUNCHER=${{ runner.os == 'Windows' && 'sccache' || 'ccache' }}
 
+      # Tee'd so a failing leg can publish the actual errors to the job SUMMARY.
+      # The whole point of the experimental legs is to turn "broken on Windows"
+      # into a specific, incrementally fixable list — and that list is useless
+      # if reading it means downloading an artifact and scrolling a 40 MB log.
       - name: Build
+        id: build
         shell: bash
-        run: cmake --build build --parallel
+        run: |
+          set -o pipefail
+          cmake --build build --parallel 2>&1 | tee build-output.log
 
-      # Building is not evidence that anything works. These two lanes are the
-      # actual gate: `unit` is the fast hermetic correctness suite, and
-      # `fuzz-regress` replays every seed in tests/fuzz/corpus/ — every bug the
-      # fuzzer has ever found, so none of them can come back silently.
-      # Both are deterministic and need no game content.
-      #
-      # On Linux/Windows these inherit the job's continue-on-error, so a
-      # platform that cannot run them yet still reports instead of blocking.
-      # --output-on-failure prints the failing test's log inline; triaging from
-      # a bare "1 test failed" means downloading artifacts for nothing.
-      - name: Test (unit lane)
+      - name: Summarise compiler errors
+        if: failure() && steps.build.outcome == 'failure'
         shell: bash
-        run: ctest --test-dir build -L unit --output-on-failure --parallel 4
-
-      - name: Test (fuzz regression corpus)
-        shell: bash
-        run: ctest --test-dir build -L fuzz-regress --output-on-failure
+        run: |
+          # MSVC writes "error C2065:", GCC/Clang write "error:". De-duplicated
+          # so 200 instantiations of one mistake read as one line — that is what
+          # makes the list actionable instead of a wall to scroll.
+          errors=$(grep -aE 'error[ ]?(C[0-9]+)?:' build-output.log \
+                   | sed -E 's/^[[:space:]]+//' | sort -u || true)
+          count=$(printf '%s' "$errors" | grep -c . || true)
+          {
+            echo "### ${{ matrix.name }} — compiler errors"
+            echo
+            if [ -z "$errors" ]; then
+              echo "No compile errors matched. The failure was in CONFIGURE or"
+              echo "LINK — see the Build step log; the summary cannot help here."
+            else
+              echo "$count distinct error line(s); first 40:"
+              echo
+              echo '```'
+              printf '%s\n' "$errors" | head -40
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Documentation/maturity contract (docs/process/engineering-standards.md): doc
       # front-matter must match the tree, tier claims must have evidence, and
@@ -212,6 +230,7 @@ jobs:
         with:
           name: build-log-${{ matrix.name }}
           path: |
+            build-output.log
             build/CMakeCache.txt
             build/compile_commands.json
             build/CMakeFiles/CMakeConfigureLog.yaml

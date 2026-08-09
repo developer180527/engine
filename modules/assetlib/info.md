@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-08
+verified: 2026-08-09
 parses-external-input: true
 covers:
   - modules/assetlib/
@@ -43,6 +43,16 @@ both verbatim, which is the lesson worth keeping: a hardening that lands in one
 deserializer and not its sibling is a coincidence, not a policy. A third was
 unique to it — `stringTableRead` computed `offset + length` in 32-bit, so the
 bound wrapped and the read ran off the heap.
+
+`material_asset` v3 added `MaterialTexture::cooked`: a CACHE-RELATIVE path to
+the cooked texture, beside the source path the author wrote. It exists because a
+shipped dist has no `registry.db`, so a source path resolves to nothing there
+and every textured material bound its white fallback. The field is filled by
+`engine_build`, never by the cooker — a cooker can run in a worker PROCESS that
+receives only source/output/uuid on argv, so it has no registry to resolve
+against. Bumping the format version alone would NOT have been enough:
+`loadMaterial` rejects an unknown version, so `MaterialCooker::kVersion` was
+bumped too, or the DDC would have served unreadable v2 files as up to date.
 
 Every loader treats its input as **untrusted**: cooked blobs travel through a
 SHARED DDC, so "another machine wrote this" is the threat model, not a

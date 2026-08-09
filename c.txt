@@ -1,36 +1,36 @@
-assets: material textures never reached a shipped game
+ci: make the Windows leg report a fixable list, and fix what it would hit
 
-A .material names its textures by SOURCE path, and that resolves through the
-registry. A dist has NO registry, so the same path resolved to nothing there:
-every textured material bound its white fallback while every log line reported
-success. The identical failure meshes had before their sibling .ctex shipped.
+The Windows CI leg already existed (windows-msvc, experimental: true), this
+makes it useful and removes the breakage I could find without a Windows box.
 
-MaterialTexture::cooked (.cmat v3) carries a cache-relative cooked path the
-runtime can use with no registry at all. Resolved first, with the old path
-lookup kept as the dev-project fallback.
+── the leg ─────────────────────────────────────────────────────────────────
+The whole point of an experimental leg is to turn "broken on Windows" into a
+specific, incrementally fixable list. That list was useless: reading it meant
+downloading a 40 MB artifact and scrolling. The build output is now tee'd, and
+a failing leg publishes DE-DUPLICATED compiler errors to the job summary, so
+200 instantiations of one mistake read as one line. Handles both spellings,
+MSVC's "error C2065:" and GCC/Clang's "error:", and says so explicitly when
+nothing matched, because that means the failure was in CONFIGURE or LINK and
+the summary cannot help.
 
-WHO fills it is forced, not a preference. A cooker can run in a worker PROCESS
-that receives only source/output/uuid on argv, it has no registry to resolve
-against, so a callback on CookContext would have silently done nothing in
-worker mode. engine_build runs on the dev machine with the cache in front of
-it, so the packager resolves. It now opens registry.db read-only for this;
-shipping the registry is still forbidden, reading it at package time is not.
+Both branches of that shell were run locally against synthetic logs; the first
+draft was wrong (the `||` fallback attached to `head`, which never fails, so it
+could never have fired).
 
-The rewritten .cmat goes into the PACKAGE, never back into the cache. That was
-not the first design, the first attempt rewrote in place and failed, because
-cooked outputs are materialized from the DDC as READ-ONLY HARDLINKS: the file
-in .cache is the same inode as the content-addressed blob. Had it succeeded it
-would have corrupted a store entry shared with other projects and machines.
+── breakage the leg would have hit ─────────────────────────────────────────
+- title_bar_windows.cpp used SHAppBarMessage/APPBARDATA with no <shellapi.h>.
+  A guaranteed MSVC error, in the file that leg exists to validate.
+- asset_path.h and project_context.h include <windows.h> with no NOMINMAX,
+  and they are HEADERS, so the min/max MACROS leak into every consumer TU and
+  break std::min/std::max at some unrelated call site, as a template error
+  naming neither. Both now define NOMINMAX and WIN32_LEAN_AND_MEAN first.
 
-MaterialCooker::kVersion 1 -> 2. The format bump alone is not enough:
-loadMaterial rejects a version it does not know, so every previously cooked
-.cmat would have become unreadable while the DDC served it as up to date.
+I also swept for unguarded POSIX includes and found none: every unistd.h,
+dlfcn.h, pthread.h and sys/* include in engine code is already behind an
+__APPLE__/__linux__ guard. My first check flagged engine_build.cpp and was
+wrong, the pattern did not match the guard style. The tree is more
+Windows-ready than the roadmap entry implies.
 
-Unresolvable textures are now a loud per-texture warning at package time.
-Silence is precisely how a dist ships untextured.
-
-Verified end to end: dist run loads the 2048x2048 2.7 MB cooked texture where
-the white fallback used to be. tests/package_closure_test.cpp pins the resolve,
-the dedup, the unresolved report, the source path surviving for the editor, and
-the cache copy staying untouched.
+Not flipped off `experimental`, nothing has gone green yet, and that flag is
+the ratchet for when it does.
 

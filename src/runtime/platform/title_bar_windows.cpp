@@ -25,9 +25,17 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+// windows.h defines min/max as MACROS, which then break any std::min/std::max
+// later in the same translation unit — and the breakage reads as a baffling
+// template error, not as a macro collision. Every TU here that pulls in
+// windows.h defines this; the cook dispatcher already did.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <windowsx.h>
 #include <dwmapi.h>
+#include <shellapi.h>   // SHAppBarMessage / APPBARDATA (auto-hide taskbar)
 
 namespace platwin {
 namespace {

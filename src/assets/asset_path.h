@@ -6,6 +6,18 @@
 #if defined(__APPLE__)
     #include <mach-o/dyld.h>     // _NSGetExecutablePath
 #elif defined(_WIN32)
+    // These two MUST precede windows.h, and this is a HEADER — so the macros
+    // it would otherwise leak land in every consumer TU, not just this file.
+    // NOMINMAX stops windows.h defining min/max as macros (which then break
+    // std::min/std::max at some unrelated call site, as a template error that
+    // names neither); WIN32_LEAN_AND_MEAN keeps the rest of the Win32 surface
+    // out of everyone's translation unit.
+    #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+    #endif
+    #ifndef NOMINMAX
+    #define NOMINMAX
+    #endif
     #include <windows.h>          // GetModuleFileNameA
 #endif
 // Linux uses /proc/self/exe via std::filesystem::canonical, no extra include.
