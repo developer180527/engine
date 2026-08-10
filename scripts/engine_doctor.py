@@ -85,6 +85,37 @@ EXCLUDE_ROOTS = {"build", "build-asan", "build-ship", "dist"}
 EXCLUDE_DIRS  = {".git", "node_modules", ".cache", ".kitbuild", "third_party"}
 
 
+def _tracked_docs() -> set[str] | None:
+    """Repo-relative *.md paths that git actually TRACKS (None if not a repo).
+
+    The doctor must see the same tree a fresh clone does, or its output is not
+    reproducible — and `status --check` compares generated output. Two ways
+    that broke:
+
+      * `Kits/` and `fps_shooter/` are gitignored on purpose (they are separate
+        repos). Their READMEs exist on a developer machine and nowhere else, so
+        a locally generated ENGINE_STATUS.md listed docs CI could not see.
+      * A submodule's docs are present or absent depending on whether the
+        checkout used `submodules: recursive`. CI's doc lane deliberately does
+        not.
+
+    Either way `status --check` failed on every commit no matter what was
+    written, which makes the gate noise rather than signal. Tracked-only makes
+    the answer identical everywhere by construction.
+    """
+    try:
+        out = subprocess.run(["git", "-C", str(REPO), "ls-files", "*.md"],
+                             capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    if out.returncode != 0:
+        return None                      # not a git checkout — count everything
+    return {line for line in out.stdout.splitlines() if line}
+
+
+TRACKED_DOCS = _tracked_docs()
+
+
 # ── Front-matter parsing ─────────────────────────────────────────────────────
 @dataclass
 class Doc:
@@ -177,6 +208,11 @@ def find_docs() -> list[Doc]:
         parts = p.relative_to(REPO).parts
         if parts and parts[0] in EXCLUDE_ROOTS:
             continue
+        rel_str = str(p.relative_to(REPO))
+        # Untracked/ignored (Kits/, fps_shooter/) and submodule-owned docs are
+        # invisible to a fresh clone — see _tracked_docs().
+        if TRACKED_DOCS is not None and rel_str not in TRACKED_DOCS:
+            continue
         if any(part in EXCLUDE_DIRS for part in parts):
             continue
         if any(rel == s or rel.startswith(s + "/") for s in subs):
@@ -197,6 +233,18 @@ def git(*args: str) -> str:
         return ""
 
 
+def is_shallow() -> bool:
+    """A shallow clone cannot answer 'when did this last change?'.
+
+    Every file's last commit collapses to the tip, so EVERY doc reads as
+    changed today and the whole tree looks stale. CI hit exactly this: a
+    `fetch-depth: 1` checkout turned the staleness check into a machine that
+    fails the gating leg for reasons that do not exist. Detecting it and
+    refusing to make the claim beats emitting confident nonsense.
+    """
+    return git("rev-parse", "--is-shallow-repository") == "true"
+
+
 def last_change(paths: list[str]) -> str:
     """ISO date of the most recent commit touching any of `paths` ('' if none)."""
     existing = [p for p in paths if (REPO / p.rstrip("/*")).exists()
@@ -205,6 +253,11 @@ def last_change(paths: list[str]) -> str:
         return ""
     out = git("log", "-1", "--format=%cs", "--", *existing)
     return out.splitlines()[0] if out else ""
+
+
+# Evaluated once: every doc asks the same question, and `git rev-parse` per doc
+# would be 60+ subprocesses for one constant.
+SHALLOW = is_shallow()
 
 
 def expand(pattern: str) -> list[Path]:
@@ -279,7 +332,8 @@ def check_docs(docs: list[Doc], strict_missing: bool) -> list[Finding]:
                 f.append(Finding("error", d.rel,
                                  "status `as-built` requires `verified:`"))
             else:
-                changed = last_change(covers)
+                # Shallow clones cannot answer this — see is_shallow().
+                changed = "" if SHALLOW else last_change(covers)
                 if changed and changed > verified:
                     f.append(Finding("warn", d.rel,
                                      f"STALE: covered code changed {changed}, "
@@ -308,7 +362,7 @@ def check_docs(docs: list[Doc], strict_missing: bool) -> list[Finding]:
                                          f"tier `{tier}` + parses-external-input "
                                          "requires a FUZZ test in `tests:` (untrusted "
                                          "bytes need a fuzzer, not just stress)"))
-                if status == "as-built" and verified:
+                if status == "as-built" and verified and not SHALLOW:
                     changed = last_change(d.get_list("covers"))
                     if changed and changed > verified:
                         f.append(Finding("error", d.rel,

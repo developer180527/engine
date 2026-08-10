@@ -157,8 +157,16 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # NO `shell: bash` here, and that is the fix rather than a style choice.
+      # Git-for-Windows' bash puts C:\Program Files\Git\usr\bin ahead of the
+      # MSVC toolchain, and that directory contains a `link.exe` — coreutils'
+      # hardlink tool, not the linker. rustc found it first and every Windows
+      # run died with "linking with `link.exe` failed: exit code: 1" BEFORE
+      # reaching Configure, which is why the C++ has never compiled on Windows
+      # and title_bar_windows.cpp is still unvalidated.
+      # Letting each runner use its default shell (bash on Unix, pwsh on
+      # Windows) keeps MSVC's link.exe first. The command is identical in both.
       - name: Rust unit tests (engine_net)
-        shell: bash
         run: cargo test --manifest-path modules/net/Cargo.toml
 
       - name: Configure
