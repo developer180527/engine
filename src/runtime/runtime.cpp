@@ -165,6 +165,10 @@ void EngineRuntime::shutdown() {
     stopSimulation();      // broadcasts onSimulationStop if still running
     engineApiBindHost(nullptr);
     engineInputBindManager(nullptr);
+    // Unbind before the owners die: a kit ticking during shutdown would
+    // otherwise submit into a destroyed renderer or a freed arena.
+    engineMemBindFrameArena(nullptr);
+    engineDrawSubmitBindRenderer(nullptr);
     m_input.shutdown();
     m_plugins.detachAll(); // plugins may hold services — detach before teardown
     jobs::shutdown();      // after plugins: Jolt's adapter schedules here

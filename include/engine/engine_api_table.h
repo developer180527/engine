@@ -44,6 +44,15 @@ extern "C" {
 #define ENGINE_API_UI_V      1  /* editor-UI WIDGETS (negotiated; 0 headless)*/
 #define ENGINE_API_NAV_V     1  /* navmesh path queries (Recast/Detour)    */
 #define ENGINE_API_DRAW_V    1  /* immediate-mode debug draw (any renderer)*/
+/* ── The PRIMITIVE tier ──────────────────────────────────────────────────────
+ * The groups above expose the engine's SUBSYSTEMS — finished opinions about
+ * physics, animation, navigation. These three expose what those subsystems are
+ * BUILT ON, so a developer who wants their own system is not forced to adopt
+ * ours or to fork. Without them, "extend the engine" means "use our animator";
+ * with them, our animator is merely the default implementation. */
+#define ENGINE_API_JOBS_V    1  /* worker pool: parallelFor, main-thread defer */
+#define ENGINE_API_MEMORY_V  1  /* tagged heaps + the per-frame arena          */
+#define ENGINE_API_DRAWSUB_V 1  /* submit geometry with no entity/component    */
 
 typedef struct EngineApiCoreV1 {
     uint32_t version;
@@ -173,6 +182,44 @@ typedef struct EngineApiNavV1 {
     bool (*ready)(void);
 } EngineApiNavV1;
 
+/* Jobs — the engine's own worker pool. A kit that spawns its own threads is
+ * competing with the pool already saturating the machine, which is why this is
+ * a primitive rather than something each module solves privately. See
+ * engine_api.h for why v1 has no job handles. */
+typedef struct EngineApiJobsV1 {
+    uint32_t version;
+    uint32_t (*workerCount)(void);
+    void (*parallelFor)(const char* name, uint32_t count, uint32_t grain,
+                        void (*fn)(void* user, uint32_t begin, uint32_t end),
+                        void* user);
+    void (*onMain)(void (*fn)(void* user), void* user);
+} EngineApiJobsV1;
+
+/* Memory — the tagged heaps the engine budgets against, plus the frame arena.
+ * A kit on plain malloc is invisible to the budget telemetry and fragments a
+ * heap that was tuned. `tag` is mem::Tag's underlying value; an unknown tag is
+ * charged to the general tag rather than refused, so a kit built against a
+ * newer tag list still runs on an older host. */
+typedef struct EngineApiMemoryV1 {
+    uint32_t version;
+    void*    (*alloc)(size_t size, size_t align, uint8_t tag);
+    void     (*free)(void* p);
+    size_t   (*allocSize)(void* p);
+    void*    (*frameAlloc)(size_t size, size_t align);   /* null when exhausted */
+    uint64_t (*taggedBytes)(uint8_t tag);
+} EngineApiMemoryV1;
+
+/* Draw submission — geometry that exists for one frame and owns no entity.
+ * The engine draws MeshRenderer components; this is how a system the engine
+ * never anticipated gets pixels on screen without adopting that
+ * representation. Submissions are cleared at the frame flip. */
+typedef struct EngineApiDrawSubmitV1 {
+    uint32_t version;
+    void     (*submitMesh)(uint32_t meshHandle, uint32_t materialHandle,
+                           const float model[16]);
+    uint32_t (*submittedCount)(void);
+} EngineApiDrawSubmitV1;
+
 typedef struct EngineApiTableV1 {
     uint32_t structSize;   /* = sizeof(EngineApiTableV1) — hard gate */
     EngineApiCoreV1    core;
@@ -184,6 +231,11 @@ typedef struct EngineApiTableV1 {
     EngineApiUiV1      ui;
     EngineApiNavV1     nav;   /* appended — bumps structSize; modules rebuild */
     EngineApiDrawV1    draw;  /* debug draw, split out of ui (renderer capability) */
+    /* The primitive tier — appended, so every field above keeps its offset and
+     * only structSize moves. Modules rebuild; the rule is unchanged. */
+    EngineApiJobsV1       jobs;
+    EngineApiMemoryV1     memory;
+    EngineApiDrawSubmitV1 drawSubmit;
 } EngineApiTableV1;
 
 /* Host-side: the filled table (engine_api_table.cpp). */

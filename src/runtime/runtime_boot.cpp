@@ -189,6 +189,10 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     engineInputBindManager(&m_input);
     m_renderer.setDebugDraw(&m_debugDraw);          // collector -> line pass
     engineApiBindHost(m_scriptHost.get());
+    // The primitive tier: jobs and memory bind to process-wide facades and need
+    // nothing here, but frameAlloc and draw submission are runtime-owned.
+    engineMemBindFrameArena(&m_frameArena);
+    engineDrawSubmitBindRenderer(&m_renderer);
 
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
         m_ecs, m_assets, m_textures,

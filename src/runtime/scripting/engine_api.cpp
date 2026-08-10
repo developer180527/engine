@@ -7,6 +7,10 @@
 #include "runtime/scripting/engine_api_binding.h"
 #include "runtime/input/input_manager.h"
 #include "runtime/scripting/script_host.h"
+#include "render/renderer.h"
+#include "runtime/jobs/jobs.h"
+#include "core/memory/mem.h"
+#include "core/frame_arena.h"
 #include <cstdarg>
 #include <cstdio>
 
@@ -287,3 +291,79 @@ uint32_t engineSceneLoad(const char* p)    { return (g_host && p) ? g_host->scen
 bool     engineSceneUnload(uint32_t h)     { return g_host ? g_host->sceneUnload(h) : false; }
 void     engineScenePreload(const char* p) { if (g_host && p) g_host->scenePreload(p); }
 bool     engineSceneIsReady(const char* p) { return (g_host && p) ? g_host->sceneIsReady(p) : false; }
+
+// ── Jobs ─────────────────────────────────────────────────────────────────────
+// Straight onto the engine's own pool. No handle types cross the boundary; see
+// engine_api.h for why v1 is blocking-only.
+uint32_t engineJobsWorkerCount(void) {
+    return jobs::initialized() ? jobs::workerCount() : 0;
+}
+
+void engineJobsParallelFor(const char* name, uint32_t count, uint32_t grain,
+                           void (*fn)(void* user, uint32_t begin, uint32_t end),
+                           void* user) {
+    if (!fn || count == 0) return;
+    // Run INLINE when the pool is down (headless tools, shutdown) rather than
+    // dropping the work — a kit must never silently skip a pass because the
+    // host happens to have no workers.
+    if (!jobs::initialized()) { fn(user, 0u, count); return; }
+    jobs::parallelFor(name ? name : "kit", count, grain ? grain : 1u,
+                      [fn, user](uint32_t b, uint32_t e) { fn(user, b, e); });
+}
+
+void engineJobsOnMain(void (*fn)(void* user), void* user) {
+    if (!fn) return;
+    if (!jobs::initialized()) { fn(user); return; }
+    jobs::onMain([fn, user] { fn(user); });
+}
+
+// ── Memory ───────────────────────────────────────────────────────────────────
+static mem::FrameArena* g_frameArena = nullptr;
+void engineMemBindFrameArena(mem::FrameArena* a) { g_frameArena = a; }
+
+void* engineMemAlloc(size_t size, size_t align, uint8_t tag) {
+    // An unknown tag is CHARGED to Core, not refused: a kit compiled against
+    // a newer tag list must still run on an older host, and losing telemetry
+    // resolution is a far better failure than a null allocation.
+    const mem::Tag t = (tag < (uint8_t)mem::Tag::Count) ? (mem::Tag)tag
+                                                        : mem::Tag::Core;
+    return mem::alloc(size, align ? align : alignof(max_align_t), t);
+}
+void   engineMemFree(void* p)            { mem::free(p); }
+size_t engineMemAllocSize(void* p)       { return mem::allocSize(p); }
+
+void* engineMemFrameAlloc(size_t size, size_t align) {
+    if (!g_frameArena || size == 0) return nullptr;
+    // REFUSE what the arena cannot serve, rather than letting it spill.
+    // FrameArena::alloc falls back to a heap allocation on overflow — good for
+    // engine code that momentarily overshoots its budget, wrong across a module
+    // boundary: a kit passing a bogus size (its own integer overflow, an
+    // uninitialised local) would make the HOST attempt that allocation. Asking
+    // for a terabyte should cost a null, not the machine. Found by doing
+    // exactly that in tests/api_primitives_test.cpp.
+    if (size > g_frameArena->capacity()) return nullptr;
+    return g_frameArena->alloc(size, align ? align : alignof(max_align_t));
+}
+
+uint64_t engineMemTaggedBytes(uint8_t tag) {
+    if (tag >= (uint8_t)mem::Tag::Count) return 0;
+    return mem::stats((mem::Tag)tag).currentBytes;
+}
+
+// ── Draw submission ──────────────────────────────────────────────────────────
+static Renderer* g_drawRenderer = nullptr;
+void engineDrawSubmitBindRenderer(Renderer* r) { g_drawRenderer = r; }
+
+void engineDrawSubmitMesh(uint32_t meshHandle, uint32_t materialHandle,
+                          const float model[16]) {
+    // No renderer means headless, and headless must be a NO-OP rather than an
+    // error: the same kit code runs on a dedicated server, and a system that
+    // draws should simply draw nothing there.
+    if (!g_drawRenderer || !model) return;
+    g_drawRenderer->submitDraw(MeshHandle{meshHandle}, MaterialHandle{materialHandle},
+                               model);
+}
+
+uint32_t engineDrawSubmittedCount(void) {
+    return g_drawRenderer ? g_drawRenderer->submittedDrawCount() : 0u;
+}

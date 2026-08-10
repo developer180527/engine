@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-09
+verified: 2026-08-10
 parses-external-input: true
 covers:
   - src/runtime/
@@ -12,6 +12,7 @@ tests:
   - tests/script_host_test.cpp
   - tests/kit_lifecycle_test.cpp
   - tests/residency_test.cpp
+  - tests/api_primitives_test.cpp     # the jobs/memory/drawSubmit contract
   - tests/fuzz_scene_loader_test.cpp   # the cooked scene SceneService consumes
   - tests/fuzz_scene_service_test.cpp  # SceneService itself, over hostile scenes
   - tests/mesh_dedup_test.cpp
@@ -129,6 +130,31 @@ required.
   for a raw `child_of` aborts inside flecs' childof-depth recursion. The second
   is worth stating precisely — the cycle is caught by flecs dying, not by the
   ancestor-walk assertion, which only covers a cycle flecs would tolerate.
+- **The engine API's PRIMITIVE tier** (`engine_api.cpp`, bound in
+  `runtime_boot.cpp`). The table long exposed the engine's SUBSYSTEMS —
+  physics, animation, nav, audio — which are finished opinions: a developer who
+  wants their own animation system cannot build one out of them, only adopt
+  ours or fork. `jobs`, `memory` and `drawSubmit` expose what those subsystems
+  are built ON, so the engine's animator becomes the DEFAULT rather than the
+  only option.
+    - `jobs` — the engine's own pool. A kit spawning private threads competes
+      with the pool already saturating the machine. Blocking `parallelFor`
+      only: a job handle crossing a module boundary means the module owns a
+      lifetime the host allocated, and a kit unloaded mid-job takes the process
+      with it. Async can be appended in v2, which is what per-group versioning
+      is for.
+    - `memory` — tagged heaps plus the frame arena, so kit allocations are
+      visible to the budget telemetry instead of hiding in malloc. `frameAlloc`
+      REFUSES anything larger than the arena rather than passing it through:
+      `FrameArena` spills to the heap on overflow, which suits engine code that
+      overshoots slightly and is wrong for a module that can ask for anything.
+    - `drawSubmit` — geometry with no entity and no component, cleared at the
+      frame flip. The primitive for a renderer-facing system the engine never
+      modelled. Bound to the renderer at boot and UNBOUND at shutdown, or a kit
+      ticking late would submit into a destroyed one.
+  All three are published unconditionally, including headless: `drawSubmit`
+  no-ops without a renderer rather than going absent, so a kit that draws runs
+  unchanged on a dedicated server instead of branching on capability.
 - **`AsyncLoader`** (`async_loader.h/.cpp`) — legacy import path used by the
   editor for source-format assets (FBX via Assimp etc.).
 - **Input** (`input_system.h`, `input_map.h`) — polled GLFW state with

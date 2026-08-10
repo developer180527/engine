@@ -195,6 +195,70 @@ void engineDrawBox   (float cx, float cy, float cz, float hx, float hy, float hz
 void engineDrawDisk  (float cx, float cy, float cz, float nx, float ny, float nz,
                       float radius, float r, float g, float b);
 
+/* ── Jobs — the engine's worker pool, not a thread library ────────────────────
+ * The PRIMITIVE beneath every parallel system the engine ships. A kit that
+ * wants its own animation or AI system needs the same pool the engine uses, or
+ * it spawns threads that fight the ones already running.
+ *
+ * parallelFor is BLOCKING and splits [0,count) into grain-sized chunks; `fn`
+ * receives a half-open [begin,end) range and the caller's user pointer. Ranges
+ * within one call may run concurrently on any worker, so `fn` must be safe to
+ * call from several threads at once.
+ *
+ * Deliberately NO job handles in v1. A handle crossing a module boundary means
+ * the module owns a lifetime the host allocated, and a kit unloaded mid-job
+ * takes the process with it (the engine already fixed one JobHandle
+ * use-after-free of its own). Blocking parallelFor covers the data-parallel
+ * work kits actually have; async handles can be appended in v2 when something
+ * needs them, which is exactly what per-group versioning is for. */
+uint32_t engineJobsWorkerCount(void);
+void engineJobsParallelFor(const char* name, uint32_t count, uint32_t grain,
+                           void (*fn)(void* user, uint32_t begin, uint32_t end),
+                           void* user);
+/* Defer to the main thread, run at the next pump. For work that must not run
+ * off-thread (window/GPU/UI calls). Fire-and-forget: no completion signal. */
+void engineJobsOnMain(void (*fn)(void* user), void* user);
+
+/* ── Memory — the engine's tagged heaps and frame arena ───────────────────────
+ * A kit allocating with plain malloc is invisible to the budget telemetry and
+ * to the leak accounting, and it fragments a heap the engine tuned. `tag`
+ * matches mem::Tag; anything out of range is charged to the general tag rather
+ * than rejected, because a kit built against a newer tag list must still run.
+ *
+ * frameAlloc hands out FRAME-SCOPED memory: valid until the end of the current
+ * frame, freed wholesale by a pointer reset, never individually. Trivially
+ * destructible data only — nothing is destructed.
+ *
+ * Returns null when unbound, when size is 0, or when the request EXCEEDS THE
+ * ARENA'S CAPACITY. That last one is a deliberate boundary check rather than a
+ * pass-through: the arena itself spills to the heap when it overflows, which
+ * suits engine code that overshoots by a little and is wrong for a module that
+ * can ask for anything. A null return is a normal outcome to handle, not an
+ * error to assert on. */
+void*    engineMemAlloc(size_t size, size_t align, uint8_t tag);
+void     engineMemFree(void* p);
+size_t   engineMemAllocSize(void* p);
+void*    engineMemFrameAlloc(size_t size, size_t align);
+uint64_t engineMemTaggedBytes(uint8_t tag);
+
+/* ── Draw submission — geometry without the engine's opinions ────────────────
+ * The engine draws what carries a MeshRenderer component. This is the escape
+ * hatch: submit a mesh + material + transform for THIS frame directly, with no
+ * entity, no component and no scene-graph involvement.
+ *
+ * It is the primitive a developer needs to build a renderer-facing system the
+ * engine did not anticipate — their own particle system, impostors, a custom
+ * culling scheme — without adopting the ECS representation. Submissions last
+ * one frame and are cleared at the flip, so a system re-submits every frame,
+ * which is also what makes it safe: nothing outlives the frame that made it.
+ *
+ * `model` is 16 floats, row-major, matching EngineTransform's convention.
+ * Bounds come from the mesh, so submitted geometry is culled like anything
+ * else. No-ops headless. */
+void     engineDrawSubmitMesh(uint32_t meshHandle, uint32_t materialHandle,
+                              const float model[16]);
+uint32_t engineDrawSubmittedCount(void);
+
 #ifdef __cplusplus
 }
 #endif

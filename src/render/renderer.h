@@ -82,6 +82,24 @@ public:
     void renderToBackbuffer(const float view[16], const float proj[16],
                             const float clearColor[4], flecs::world* world = nullptr);
 
+    // ── Bring-your-own-system draw submission ───────────────────────────────
+    // Draw a mesh THIS frame with no entity and no component behind it. The
+    // engine renders MeshRenderer components; this is the primitive for a
+    // system it never anticipated — a kit's particle system, impostors, a
+    // custom culler — so that "the engine did not model my thing" stops
+    // meaning "fork the engine".
+    //
+    // Submissions live exactly one frame: buildView appends them to every view
+    // it builds (so they appear in the scene AND game views, like anything
+    // else) and frame() clears them at the flip. A system therefore re-submits
+    // every frame, which is also what makes it safe — nothing outlives the
+    // frame that created it, so there is no lifetime to get wrong.
+    void submitDraw(MeshHandle mesh, MaterialHandle material,
+                    const float model[16]);
+    uint32_t submittedDrawCount() const {
+        return (uint32_t)m_externalDraws.size();
+    }
+
     // Drop cached queries against the play-mode world — the runtime calls
     // this when that world is destroyed (sim stop).
     void resetWorldCaches();
@@ -185,6 +203,9 @@ private:
                     const SkinnedMesh*, const LodMesh*> m_gameChildItemQuery;
     WorldQueryCache<const Transform, const Light> m_gameLightQuery;  // sim world
     std::vector<RenderItem> m_items;
+    // Externally submitted geometry for this frame — see submitDraw().
+    struct ExternalDraw { MeshHandle mesh; MaterialHandle material; Mat4 model; };
+    std::vector<ExternalDraw> m_externalDraws;
     std::vector<LightItem>  m_lights;
 
     // ── Parallel extraction scratch ─────────────────────────────────────────

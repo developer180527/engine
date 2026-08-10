@@ -28,10 +28,19 @@
 
 /* Module-local state — one per dylib, invisible outside it. */
 static const EngineApiTableV1* g_eapi = nullptr;
-static bool g_eapiOk[9] = {};         /* core,input,physics,audio,assets,anim,ui,nav,draw */
-
 enum { EAPI_CORE, EAPI_INPUT, EAPI_PHYSICS, EAPI_AUDIO,
-       EAPI_ASSETS, EAPI_ANIM, EAPI_UI, EAPI_NAV, EAPI_DRAW, EAPI_COUNT };
+       EAPI_ASSETS, EAPI_ANIM, EAPI_UI, EAPI_NAV, EAPI_DRAW,
+       EAPI_JOBS, EAPI_MEMORY, EAPI_DRAWSUB, EAPI_COUNT };
+
+/* Sized from the enum, never a literal. It was `bool g_eapiOk[9]` beside a
+ * hand-counted comment, which is the shape of bug that appears the day someone
+ * appends a group and updates one of the two. */
+static bool g_eapiOk[EAPI_COUNT] = {};
+/* Why the bind failed, so the per-call error can point at the right thing.
+ * Appending a group changes structSize and rejects every module built against
+ * the old table — the common case by far, and the one that used to report
+ * "module was never bound (old host?)" while the host was the NEW half. */
+static bool g_eapiSizeMismatch = false;
 
 /* Capability query — true when the group is bound AND version-compatible.
  * Groups published with version 0 are ABSENT by convention. */
@@ -41,14 +50,22 @@ static inline bool engineApiHas(int group) {
 
 static bool eapiGuard(int group, const char* name) {
     if (g_eapi && g_eapiOk[group]) return true;
-    static bool warned[7] = {};
+    /* WAS `warned[7]` with nine groups: nav and draw wrote past the end on
+     * their first failure. Sized from the enum so appending a group cannot
+     * reintroduce it. */
+    static bool warned[EAPI_COUNT] = {};
     if (!warned[group]) {
         warned[group] = true;
         char buf[160];
         snprintf(buf, sizeof(buf),
                  "engine API group unavailable for '%s' — %s",
-                 name, g_eapi ? "version mismatch at bind (see load log)"
-                              : "module was never bound (old host?)");
+                 name,
+                 g_eapi            ? "version mismatch at bind (see load log)"
+                 : g_eapiSizeMismatch
+                     ? "this module was built against a DIFFERENT engine API "
+                       "table (structSize mismatch) — rebuild the module"
+                     : "the host never called engineModuleBindApiV1 "
+                       "(host predates the API table?)");
         if (g_eapi && g_eapi->core.logError) g_eapi->core.logError(buf);
         else fprintf(stderr, "[EngineApi] %s\n", buf);
     }
@@ -58,9 +75,14 @@ static bool eapiGuard(int group, const char* name) {
 extern "C" __attribute__((visibility("default")))
 void engineModuleBindApiV1(const EngineApiTableV1* t) {
     if (!t || t->structSize != sizeof(EngineApiTableV1)) {
-        fprintf(stderr, "[EngineApi] table size mismatch — rebuild module\n");
+        g_eapiSizeMismatch = (t != nullptr);
+        fprintf(stderr,
+                "[EngineApi] table size mismatch (host %u, module %u) — "
+                "rebuild this module against the host's headers\n",
+                t ? t->structSize : 0u, (unsigned)sizeof(EngineApiTableV1));
         return;
     }
+    g_eapiSizeMismatch = false;
     g_eapi = t;
     struct { int idx; uint32_t have, want; const char* name; } checks[] = {
         { EAPI_CORE,    t->core.version,    ENGINE_API_CORE_V,    "core"    },
@@ -72,6 +94,9 @@ void engineModuleBindApiV1(const EngineApiTableV1* t) {
         { EAPI_UI,      t->ui.version,      ENGINE_API_UI_V,      "ui"      },
         { EAPI_NAV,     t->nav.version,     ENGINE_API_NAV_V,     "nav"     },
         { EAPI_DRAW,    t->draw.version,    ENGINE_API_DRAW_V,    "draw"    },
+        { EAPI_JOBS,    t->jobs.version,       ENGINE_API_JOBS_V,    "jobs"    },
+        { EAPI_MEMORY,  t->memory.version,     ENGINE_API_MEMORY_V,  "memory"  },
+        { EAPI_DRAWSUB, t->drawSubmit.version, ENGINE_API_DRAWSUB_V, "drawSubmit" },
     };
     for (auto& c : checks) {
         g_eapiOk[c.idx] = (c.have == c.want);
@@ -227,6 +252,56 @@ void engineDrawBox(float cx, float cy, float cz, float hx, float hy, float hz,
 void engineDrawDisk(float cx, float cy, float cz, float nx, float ny, float nz,
                     float rad, float r, float g, float b) {
     if (eapiGuard(EAPI_DRAW,"drawDisk")) g_eapi->draw.drawDisk(cx, cy, cz, nx, ny, nz, rad, r, g, b);
+}
+
+
+/* ── jobs ─────────────────────────────────────────────────────────────────── */
+uint32_t engineJobsWorkerCount(void) {
+    return eapiGuard(EAPI_JOBS,"jobsWorkerCount") ? g_eapi->jobs.workerCount() : 0;
+}
+void engineJobsParallelFor(const char* name, uint32_t count, uint32_t grain,
+                           void (*fn)(void*, uint32_t, uint32_t), void* user) {
+    if (eapiGuard(EAPI_JOBS,"jobsParallelFor")) {
+        g_eapi->jobs.parallelFor(name, count, grain, fn, user);
+    } else if (fn && count) {
+        /* Degrade to running it INLINE rather than silently doing nothing. A
+         * disabled jobs group must cost throughput, never correctness — a kit
+         * whose parallelFor no-ops would skip the work entirely and look like a
+         * logic bug somewhere else entirely. */
+        fn(user, 0u, count);
+    }
+}
+void engineJobsOnMain(void (*fn)(void* user), void* user) {
+    if (eapiGuard(EAPI_JOBS,"jobsOnMain")) g_eapi->jobs.onMain(fn, user);
+}
+
+/* ── memory ───────────────────────────────────────────────────────────────── */
+void* engineMemAlloc(size_t size, size_t align, uint8_t tag) {
+    return eapiGuard(EAPI_MEMORY,"memAlloc") ? g_eapi->memory.alloc(size, align, tag)
+                                             : nullptr;
+}
+void engineMemFree(void* p) {
+    if (eapiGuard(EAPI_MEMORY,"memFree")) g_eapi->memory.free(p);
+}
+size_t engineMemAllocSize(void* p) {
+    return eapiGuard(EAPI_MEMORY,"memAllocSize") ? g_eapi->memory.allocSize(p) : 0;
+}
+void* engineMemFrameAlloc(size_t size, size_t align) {
+    return eapiGuard(EAPI_MEMORY,"memFrameAlloc")
+               ? g_eapi->memory.frameAlloc(size, align) : nullptr;
+}
+uint64_t engineMemTaggedBytes(uint8_t tag) {
+    return eapiGuard(EAPI_MEMORY,"memTaggedBytes") ? g_eapi->memory.taggedBytes(tag) : 0;
+}
+
+/* ── draw submission ──────────────────────────────────────────────────────── */
+void engineDrawSubmitMesh(uint32_t mesh, uint32_t material, const float model[16]) {
+    if (eapiGuard(EAPI_DRAWSUB,"drawSubmitMesh"))
+        g_eapi->drawSubmit.submitMesh(mesh, material, model);
+}
+uint32_t engineDrawSubmittedCount(void) {
+    return eapiGuard(EAPI_DRAWSUB,"drawSubmittedCount")
+               ? g_eapi->drawSubmit.submittedCount() : 0;
 }
 
 } /* extern "C" */

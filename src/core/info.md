@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-09
+verified: 2026-08-10
 covers:
   - src/core/
 tests:
@@ -73,6 +73,11 @@ include renderer, ECS, or editor headers.
   frame far from the load that caused it. The contract is uniform: a missing,
   wrong-typed, short, or non-finite value leaves the destination ALONE, so
   callers never get a zero they did not ask for.
+  The same treatment now covers INTEGERS and STRINGS (`readU64`, `readU32`,
+  `readString`): `j.value(key, 0u)` throws on a wrong-typed key exactly as the
+  float form did, and an `"id": "3"` in a hand-edited scene must not become an
+  exception escaping a cook thread. `readU32` additionally refuses a value that
+  does not fit rather than truncating it into a different id.
 
 ## Rules
 - Keep this layer header-only and free of engine state; it should compile in

@@ -1,59 +1,72 @@
+api: expose the primitive tier: jobs, memory, draw submission
 
-bug fixes: eleven defects in the LOD/decimation work, three memory-unsafe
+The table exposed the engine's SUBSYSTEMS: physics, animation, nav, audio.
+Those are finished opinions. A developer who wants their own animation system
+cannot build one out of them, they can only adopt ours or fork the engine.
 
-MEMORY SAFETY
-* Cooked v4's LOD section stored counts INDEPENDENTLY of payload bytes and
-  validated neither, the only place in the format where the two can disagree,
-  since everywhere else the bytes are derived from the count. AssetService feeds
-  lvl.indexCount to bgfx as a draw range, so a level claiming a billion indices
-  over twelve bytes was a GPU read off the end. Now count*stride == bytes exactly,
-  and every level range is clamped to the level's own indices.
-  The section also shipped UNFUZZED. The harness now generates v4/v5 levels and
-  carries InflateLod* corruptions, needed, because the generic corruptions only
-  damage header fields: deleting the validation left the explore lane GREEN until
-  those existed. Four regression seeds.
-* (int32_t)floor(NaN) in the cell index: INT_MIN on x86-64, 0 on arm64, making the
-  cook architecture-dependent and breaking the determinism the DDC rests on.
-* CellHash multiplied int32_t by 73856093, signed overflow at cell index 30, so
-  every real mesh, and a UBSan trip on an ordinary asset.
+These three are the layer underneath, so our animator becomes the DEFAULT
+implementation rather than the only one:
 
-LEAKS AND LIFETIME
-* Palette slots leaked one 8 KB palette per animated entity per PLAY SESSION: the
-  remove hook was registered on the editor world, and hooks are world state, so the
-  snapshot world, where entities are actually created and destroyed, never had
-  one. "Bounded" was wrong: bounded per session, unbounded across them. Installed
-  per ticked world; skin_palette_test pins that flecs fires on_remove during world
-  TEARDOWN, and asserts the hookless case leaks, so the pass means something.
-  release() is idempotent too, a double release aliased one palette to two
-  entities, presenting as an animation bug elsewhere.
-* Eviction freed level 0 while counting the LEVELS' bytes as reclaimed, so the
-  budget never came down and the buffers stayed for the process's life. Fixed with
-  its other half: runtime_frame collected in-use handles from MeshRenderer only,
-  never LodMesh, and freeing levels without that is a use-after-free.
-* unloadMesh left the dedup cache pointing at a freed slot. Handle::valid() is just
-  id != 0, so once anything reused the slot, loadMesh(samePath) returned A DIFFERENT
-  MESH. Reachable from unloadScene and from Lua.
+  jobs       the engine's own worker pool. A kit spawning private threads
+             competes with the pool already saturating the machine.
+  memory     tagged heaps + the frame arena, so kit allocations are visible to
+             the budget telemetry instead of hiding inside malloc.
+  drawSubmit geometry with no entity and no component, cleared at the flip,
+             pixels for a system the engine never modelled.
 
-CORRECTNESS
-* Every LOD level drew with material[0]: decimation dropped the submesh ranges, so
-  a multi-material prop CHANGED COLOUR at its first threshold, 96 of the kit's 176
-  meshes. Clustering stays global, the index rebuild is partitioned by group, and
-  format v5 carries the table (v4 still loads: no table reads as one range, which
-  is what v4 meant). Ranges tile from zero, so submeshesTile() holds and the shadow
-  pass keeps R19's one-draw path. Cooker kVersion 15 -> 16.
-* The triangle census overstated the saving: trisFull was banked before the
-  sentinel-radius early return, trisDrawn only after it, so an item that kept full
-  detail counted its triangles in the counterfactual and zero in the actual. A
-  counter that exists to justify a feature must not be able to flatter it.
-* scene_cooker held a FIFTH copy of the JSON UB core/json_read.h was written to
-  remove, on the same hand-editable .scene, plus ~45 value() calls that throw on a
-  wrong-typed key, and the only try/catch wrapped the parse, so "id": "3" escaped
-  onto a cook thread.
-* Dead unreachable branch in decimateToRatio.
+── decisions that are not arbitrary ────────────────────────────────────────
+NO JOB HANDLES in v1. A handle crossing a module boundary means the module
+owns a lifetime the host allocated, and a kit unloaded mid-job takes the
+process with it, the engine already fixed one JobHandle use-after-free of its
+own (C.5). Blocking parallelFor covers the data-parallel work kits actually
+have; async appends in v2, which is what per-group versioning is for.
 
-cooker_test now covers cooker -> decimate -> save -> load end to end. 64/64 ctest.
-Not re-measured on the kit: engine_cook is scene-scoped, so those meshes are still
-v4 on disk until re-cooked. Six doc-staleness warnings predate this commit and were
-left rather than rubber-stamped. issues.md R21 (render), plus the assets and runtime
-issue files.
+A DISABLED jobs group runs the work INLINE rather than dropping it. A kit whose
+parallelFor silently no-ops would skip a whole pass and present as a logic bug
+somewhere else entirely. Degradation costs throughput, never correctness.
+
+drawSubmit is published UNCONDITIONALLY and no-ops without a renderer, instead
+of going absent like ui does. A kit that draws must run unchanged on a
+dedicated server; making the group disappear would force every such kit to
+branch on capability. Submissions take bounds from the mesh, so they are
+frustum-culled like anything else, bypassing the cull would mean lying about
+bounds, which is the right amount of hard.
+
+Submitted draws are appended per VIEW and cleared in frame(), not at
+extraction: every view built this frame must see the same submissions, and
+clearing at extraction would hand the game view an empty list whenever the
+scene view extracted first.
+
+── three bugs found while doing it ─────────────────────────────────────────
+eapiGuard had `static bool warned[7]` against nine groups: nav and draw wrote
+PAST THE END on their first failure. Now sized from the enum, so appending a
+group cannot reintroduce it.
+
+engineMemFrameAlloc had no boundary check. FrameArena::alloc SPILLS TO THE HEAP
+on overflow, right for engine code that overshoots by a little, wrong across a
+module boundary where a kit's bogus size (its own integer overflow, an
+uninitialised local) makes the HOST attempt the allocation. Asking for a
+terabyte now costs a null. Found by writing exactly that test and watching the
+machine try to serve it.
+
+A structSize mismatch reported "module was never bound (old host?)", blaming
+the host when the MODULE is the stale half. It now names the mismatch, prints
+both sizes, and says to rebuild the module. Hit this myself the moment the
+table grew; every kit author will hit it on every append.
+
+── consequence to plan for ─────────────────────────────────────────────────
+Appending bumps structSize, which rejects every module built against the old
+table: all three Kits and the game module needed a rebuild. That is the
+documented contract working, but it makes table growth a coordinated release
+across repos that share no build. Batch API additions into deliberate versions
+rather than appending ad hoc.
+
+tests/api_primitives_test.cpp pins the contract a kit depends on: parallelFor
+covers [0,count) exactly once at awkward counts and grains, is safe under
+concurrent entry, tagged allocation is visible to the telemetry, frameAlloc
+refuses over-capacity, and submitting with no renderer is a no-op. Sized for
+edges rather than magnitude, the first draft swept to 65 536 across 12 grain
+combinations and turned a unit test into a stress run.
+
+65 tests pass. fps_shooter runs with every group bound.
 

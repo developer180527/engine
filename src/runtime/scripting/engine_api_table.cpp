@@ -60,6 +60,18 @@ const EngineApiTableV1* engineApiHostTable(void) {
           engineNavFindPath, engineNavProject, engineNavReady },
         { ENGINE_API_DRAW_V,
           engineDrawLine, engineDrawSphere, engineDrawBox, engineDrawDisk },
+        // ── The primitive tier ──────────────────────────────────────────────
+        // Unconditional: jobs and memory exist in every host including a
+        // headless one, and drawSubmit no-ops without a renderer rather than
+        // going absent — a kit that draws must run unchanged on a server, and
+        // making the GROUP disappear would force every such kit to branch.
+        { ENGINE_API_JOBS_V,
+          engineJobsWorkerCount, engineJobsParallelFor, engineJobsOnMain },
+        { ENGINE_API_MEMORY_V,
+          engineMemAlloc, engineMemFree, engineMemAllocSize,
+          engineMemFrameAlloc, engineMemTaggedBytes },
+        { ENGINE_API_DRAWSUB_V,
+          engineDrawSubmitMesh, engineDrawSubmittedCount },
     };
     // Re-published on every call: absent (0) until a UI backend registers.
     t.ui.version = engineUiHasBackend() ? ENGINE_API_UI_V : 0;

@@ -175,7 +175,24 @@ void Renderer::resize(int w, int h) {
     bgfx::reset((uint32_t)w, (uint32_t)h, BGFX_RESET_VSYNC);
 }
 
-void Renderer::frame() { bgfx::frame(); }
+void Renderer::submitDraw(MeshHandle mesh, MaterialHandle material,
+                          const float model[16]) {
+    if (!mesh.valid() || !model) return;
+    ExternalDraw ed;
+    ed.mesh     = mesh;
+    ed.material = material;
+    std::memcpy(&ed.model, model, sizeof(float) * 16);
+    m_externalDraws.push_back(ed);
+}
+
+void Renderer::frame() {
+    bgfx::frame();
+    // Cleared AFTER the flip, not before extraction: every view built this
+    // frame must see the same submissions, and the caller submits before the
+    // frame is drawn. Clearing at extraction would give the game view an empty
+    // list whenever the scene view extracted first.
+    m_externalDraws.clear();
+}
 
 bool Renderer::homogeneousDepth() const {
     return bgfx::getCaps()->homogeneousDepth;

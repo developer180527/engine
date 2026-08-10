@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-09
+verified: 2026-08-10
 parses-external-input: true
 covers:
   - modules/assetlib/

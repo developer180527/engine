@@ -165,6 +165,9 @@ engine_test(material_name_test)   # by-name addressing + the slot-reuse alias
 engine_test(sim_world_test)
 engine_test(keymap_test)
 engine_test(nav_test)
+# The PRIMITIVE tier of the engine API table (jobs / memory / drawSubmit) — the
+# layer that lets a developer build their own system instead of adopting ours.
+engine_test(api_primitives_test)
 engine_test(providers_test)
 # Importer-dependent tests — dev posture only (the shipping build compiles
 # the source-import stack out; these have nothing to exercise there).

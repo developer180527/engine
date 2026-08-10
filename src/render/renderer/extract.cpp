@@ -459,6 +459,34 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     if (&world == m_editorWorld) m_lightQuery.each(extractLight);
     else                        m_gameLightQuery.get(world).each(extractLight);
 
+    // ── Externally submitted geometry (Renderer::submitDraw) ────────────────
+    // Appended per VIEW, not per frame: the same submission belongs in the
+    // scene view and the game view alike, exactly as an entity's mesh does.
+    // frame() clears the list, so a system re-submits each frame.
+    for (const auto& ed : m_externalDraws) {
+        const Mesh* mesh = m_assets ? m_assets->getMesh(ed.mesh) : nullptr;
+        if (!mesh) continue;              // stale handle: drop, never draw junk
+        RenderItem it;
+        it.model    = ed.model;
+        it.mesh     = mesh;
+        it.material = ed.material.valid() ? ed.material : mesh->material;
+        it.meshKey  = ed.mesh.id;
+        it.matKey   = it.material.id;
+        // Bounds come from the MESH, so submitted geometry is frustum-culled
+        // like everything else. A system that wanted to bypass culling would
+        // have to lie about its bounds, and that is the right amount of hard.
+        it.boundsCenter = mesh->boundsCenter();
+        it.boundsSize   = mesh->boundsSize();
+        it.hasBounds    = true;
+        // Same one-call append as the entity paths, so the item and its cull
+        // stream entry cannot drift apart.
+        CullSphere sp; uint64_t kb;
+        rworld::writeCullEntry(it, sp, kb);
+        m_items.push_back(it);
+        m_cull.sphere.push_back(sp);
+        m_cull.keyBase.push_back(kb);
+    }
+
     rv.items   = { m_items.data(),  m_items.size() };
     rv.cull    = m_cull.view();
     rv.lights  = { m_lights.data(), m_lights.size() };
