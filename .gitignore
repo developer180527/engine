@@ -34,7 +34,11 @@ project.json
 .svn/
 .swiftpm/
 .claude/
-.github/
+# NOT .github/ — workflows must be IN the repo to run. The rule used to be
+# here, and it was a trap of the same kind as the unanchored `build/` that
+# once ate src/tools/build/: ci.yml and docs.yml survive only because they
+# predate it, and any NEW workflow file would have been silently untracked —
+# added, apparently committed, and never executed by anything.
 
 # Kits (separate repos) + example game projects which not part of the engine repo
 Kits/
