@@ -1,72 +1,56 @@
-api: expose the primitive tier: jobs, memory, draw submission
+api: a kit built for v1 must run on v5, and it could not
 
-The table exposed the engine's SUBSYSTEMS: physics, animation, nav, audio.
-Those are finished opinions. A developer who wants their own animation system
-cannot build one out of them, they can only adopt ours or fork the engine.
+The table's whole purpose is binary compatibility across engine versions, and
+the client shim gated on exact equality:
 
-These three are the layer underneath, so our animator becomes the DEFAULT
-implementation rather than the only one:
+    structSize != sizeof(EngineApiTableV1)   -> reject the ENTIRE table
+    have == want                             -> reject the group
 
-  jobs       the engine's own worker pool. A kit spawning private threads
-             competes with the pool already saturating the machine.
-  memory     tagged heaps + the frame arena, so kit allocations are visible to
-             the budget telemetry instead of hiding inside malloc.
-  drawSubmit geometry with no entity and no component, cleared at the flip,
-             pixels for a system the engine never modelled.
+So every append invalidated every module built before it, wholesale. Adding
+jobs/memory/drawSubmit this week forced a rebuild of all three Kits and the
+game module. That is the opposite of the promise.
 
-── decisions that are not arbitrary ────────────────────────────────────────
-NO JOB HANDLES in v1. A handle crossing a module boundary means the module
-owns a lifetime the host allocated, and a kit unloaded mid-job takes the
-process with it, the engine already fixed one JobHandle use-after-free of its
-own (C.5). Blocking parallelFor covers the data-parallel work kits actually
-have; async appends in v2, which is what per-group versioning is for.
+Both are now ">=": a NEWER host satisfies an older module; only an older host
+is refused, which is correct because its table really is too short to read.
 
-A DISABLED jobs group runs the work INLINE rather than dropping it. A kit whose
-parallelFor silently no-ops would skip a whole pass and present as a logic bug
-somewhere else entirely. Degradation costs throughput, never correctness.
+── ">=" ALONE WOULD HAVE BEEN DANGEROUS ────────────────────────────────────
+Found while implementing it, and it changes the contract.
 
-drawSubmit is published UNCONDITIONALLY and no-ops without a renderer, instead
-of going absent like ui does. A kit that draws must run unchanged on a
-dedicated server; making the group disappear would force every such kit to
-branch on capability. Submissions take bounds from the mesh, so they are
-frustum-culled like anything else, bypassing the cull would mean lying about
-bounds, which is the right amount of hard.
+Groups are stored INLINE, so a group's size determines every later group's
+OFFSET. Appending a field to `core` moves input, assets and draw, and an
+older module, computing those offsets from its own smaller headers, would read
+the WRONG FUNCTION POINTERS. Silently. The old "!=" gate was accidentally
+protecting against exactly that by rejecting everything.
 
-Submitted draws are appended per VIEW and cleared in frame(), not at
-extraction: every view built this frame must see the same submissions, and
-clearing at extraction would hand the game view an empty list whenever the
-scene view extracted first.
+So the rule is stricter than "append and bump":
 
-── three bugs found while doing it ─────────────────────────────────────────
-eapiGuard had `static bool warned[7]` against nine groups: nav and draw wrote
-PAST THE END on their first failure. Now sized from the enum, so appending a
-group cannot reintroduce it.
+    A SHIPPED GROUP IS FROZEN. New functionality goes in a NEW GROUP at the
+    end of the table.
 
-engineMemFrameAlloc had no boundary check. FrameArena::alloc SPILLS TO THE HEAP
-on overflow, right for engine code that overshoots by a little, wrong across a
-module boundary where a kit's bogus size (its own integer overflow, an
-uninitialised local) makes the HOST attempt the allocation. Asking for a
-terabyte now costs a null. Found by writing exactly that test and watching the
-machine try to serve it.
+That moves only structSize, which is precisely what old modules may ignore.
+ENGINE_API_FROZEN static_asserts every group's size, so growing one fails the
+BUILD with the remedy in the message rather than corrupting a kit at runtime.
+Verified by appending a probe field to EngineApiJobsV1 and watching it fire.
 
-A structSize mismatch reported "module was never bound (old host?)", blaming
-the host when the MODULE is the stale half. It now names the mismatch, prints
-both sizes, and says to rebuild the module. Hit this myself the moment the
-table grew; every kit author will hit it on every append.
+input and assets sit at v2 because they grew IN PLACE before this rule existed.
+Their layouts are frozen from here; a version bump now means the semantics were
+clarified, never that the struct grew.
 
-── consequence to plan for ─────────────────────────────────────────────────
-Appending bumps structSize, which rejects every module built against the old
-table: all three Kits and the game module needed a rebuild. That is the
-documented contract working, but it makes table growth a coordinated release
-across repos that share no build. Batch API additions into deliberate versions
-rather than appending ad hoc.
+── the test is the promise, executed ───────────────────────────────────────
+api_abi_compat_test declares the table's pre-jobs shape (656 bytes) and views
+the live 760-byte table through it, literally a kit built last week meeting
+today's engine. core.logInfo, assets.loadMesh, nav.findPath and draw.drawLine
+all resolve identically.
 
-tests/api_primitives_test.cpp pins the contract a kit depends on: parallelFor
-covers [0,count) exactly once at awkward counts and grains, is safe under
-concurrent entry, tagged allocation is visible to the telemetry, frameAlloc
-refuses over-capacity, and submitting with no renderer is a no-op. Sized for
-edges rather than magnitude, the first draft swept to 65 536 across 12 grain
-combinations and turned a unit test into a stress run.
+It also pins every group's OFFSET, not just its size: a reorder keeps every
+size intact and still breaks every kit, so the build-time asserts cannot catch
+it alone.
 
-65 tests pass. fps_shooter runs with every group bound.
+── what this does not do ───────────────────────────────────────────────────
+It does not retroactively save existing kits. The ">=" logic lives in the
+MODULE's copy of the shim, so a kit gains the protection only once rebuilt
+against this header. One last mandatory rebuild, which is the argument for
+landing it before any third party ships a kit, not after.
+
+66 tests pass.
 

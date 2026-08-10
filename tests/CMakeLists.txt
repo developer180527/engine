@@ -167,6 +167,10 @@ engine_test(keymap_test)
 engine_test(nav_test)
 # The PRIMITIVE tier of the engine API table (jobs / memory / drawSubmit) — the
 # layer that lets a developer build their own system instead of adopting ours.
+# The compatibility promise itself: a kit built for v1 must bind on a v5 host.
+# Guards the frozen group OFFSETS (sizes are static_asserted in the header) and
+# the ">=" gating that replaced the "==" which rejected every older module.
+engine_test(api_abi_compat_test)
 engine_test(api_primitives_test)
 engine_test(providers_test)
 # Importer-dependent tests — dev posture only (the shipping build compiles

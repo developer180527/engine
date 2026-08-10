@@ -74,11 +74,24 @@ static bool eapiGuard(int group, const char* name) {
 
 extern "C" __attribute__((visibility("default")))
 void engineModuleBindApiV1(const EngineApiTableV1* t) {
-    if (!t || t->structSize != sizeof(EngineApiTableV1)) {
+    /* ── ">=", not "==": this is the v1-kit-on-v5-host promise ──────────────
+     * A NEWER host is fine. Its table appends groups after the ones this
+     * module knows, so every group this module reads sits at the same offset
+     * (the frozen-layout asserts in engine_api_table.h are what make that
+     * true), and the trailing groups are simply ignored.
+     *
+     * An OLDER host is refused: its table is SHORTER than this module's view,
+     * so reading a group the host does not have would run off the end.
+     *
+     * It used to be "!=", which rejected a v1 module on any newer host —
+     * every table append invalidated every existing kit, wholesale. That is
+     * the exact opposite of the compatibility this table exists to provide. */
+    if (!t || t->structSize < sizeof(EngineApiTableV1)) {
         g_eapiSizeMismatch = (t != nullptr);
         fprintf(stderr,
-                "[EngineApi] table size mismatch (host %u, module %u) — "
-                "rebuild this module against the host's headers\n",
+                "[EngineApi] host table is OLDER than this module expects "
+                "(host %u bytes, module needs %u) — this module requires a "
+                "newer engine\n",
                 t ? t->structSize : 0u, (unsigned)sizeof(EngineApiTableV1));
         return;
     }
@@ -99,15 +112,21 @@ void engineModuleBindApiV1(const EngineApiTableV1* t) {
         { EAPI_DRAWSUB, t->drawSubmit.version, ENGINE_API_DRAWSUB_V, "drawSubmit" },
     };
     for (auto& c : checks) {
-        g_eapiOk[c.idx] = (c.have == c.want);
+        /* ">=" for the same reason as the table gate: a group whose version
+         * has moved on is still usable by a module that only knows the older
+         * one, because a shipped group's LAYOUT is frozen (see the contract).
+         * A version bump now means the semantics were clarified, not that the
+         * struct grew — so an older module's reads stay valid. */
+        g_eapiOk[c.idx] = (c.have >= c.want);
         /* v0 is the ABSENT convention — the host doesn't offer this group at
          * all (a headless host has no ui, etc.). That's negotiated capability,
          * not breakage, so stay silent; the kit adapts via engineApiHas(). Only
          * a NONZERO version that disagrees is a genuine skew worth warning on. */
         if (!g_eapiOk[c.idx] && c.have != 0 && t->core.logWarn) {
-            char buf[128];
+            char buf[160];
             snprintf(buf, sizeof(buf),
-                     "API group '%s' v%u != module's v%u — group disabled",
+                     "API group '%s' is v%u but this module needs v%u — the "
+                     "HOST is older; group disabled",
                      c.name, c.have, c.want);
             t->core.logWarn(buf);
         }

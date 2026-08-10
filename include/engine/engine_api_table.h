@@ -19,10 +19,32 @@
  * it as a mismatch and disables that group; modules query
  * engineApiHas(group) to adapt instead of assuming every service exists.
  *
- * Evolution rules:
- *  - Append fields to the END of a group and bump that group's version.
- *  - Never reorder or remove fields within V1 structs; breaking changes make
- *    an EngineApiTableV2 with a new bind symbol, V1 keeps working.
+ * ── COMPATIBILITY CONTRACT: a kit built for v1 MUST run on v5 ───────────────
+ * This is the promise the whole table exists to make, and it constrains
+ * evolution more tightly than "append and bump" does.
+ *
+ * The groups are INLINE, so a group's size determines every later group's
+ * OFFSET. Appending a field to `core` moves `input`, `assets` and everything
+ * after it — and an older module, which computes those offsets from its own
+ * smaller headers, would then read the wrong pointers and call the wrong
+ * functions. Silently. So:
+ *
+ *   1. A SHIPPED GROUP IS FROZEN. Never append to it, never reorder, never
+ *      remove, never repurpose a field. The static_asserts at the bottom of
+ *      this header enforce it: growing a group fails the BUILD.
+ *   2. NEW FUNCTIONALITY GOES IN A NEW GROUP, appended to the end of the
+ *      table. That only moves structSize, which is exactly what old modules
+ *      are allowed to ignore.
+ *   3. VERSIONS MEAN "AT LEAST". The client accepts host_version >=
+ *      module_version and host structSize >= the module's. A newer host always
+ *      satisfies an older module; the reverse is refused.
+ *   4. A genuine break makes an EngineApiTableV2 with a new bind symbol, and
+ *      V1 KEEPS BEING FILLED — indefinitely, not "for a release or two".
+ *
+ * Rule 1 is why input and assets sit at v2 with no room to grow: those bumps
+ * predate this contract. From here, a group's version changes only when its
+ * MEANING is clarified, never its layout.
+ *
  *  - engineUiSetBackend is deliberately absent: it is host-only.
  *
  * The dynamic_lookup path still works for modules that don't include the
@@ -237,6 +259,37 @@ typedef struct EngineApiTableV1 {
     EngineApiMemoryV1     memory;
     EngineApiDrawSubmitV1 drawSubmit;
 } EngineApiTableV1;
+
+/* ── Frozen layout ───────────────────────────────────────────────────────────
+ * Every shipped group's size, and therefore every group's offset, is nailed
+ * down here. These are not documentation: they are the mechanism behind the
+ * compatibility contract above. If you appended a field to a group, one of
+ * these fails and the message tells you what to do instead — add a NEW group.
+ *
+ * Bumping a number here is a decision to break every module built before it.
+ * There is exactly one case where that is legitimate: this table is pre-1.0
+ * and no third party has shipped a kit yet. After that, the answer is a new
+ * group or an EngineApiTableV2. */
+#define ENGINE_API_FROZEN(group, bytes)                                        \
+    static_assert(sizeof(group) == (bytes),                                    \
+        #group " changed size. A shipped group is FROZEN: growing it shifts "  \
+        "every later group's offset and makes older modules read the wrong "   \
+        "function pointers, silently. Add a NEW group at the end of "          \
+        "EngineApiTableV1 instead — see the compatibility contract at the "    \
+        "top of this header.")
+
+ENGINE_API_FROZEN(EngineApiCoreV1,       120);
+ENGINE_API_FROZEN(EngineApiInputV1,      120);
+ENGINE_API_FROZEN(EngineApiPhysicsV1,     64);
+ENGINE_API_FROZEN(EngineApiAudioV1,       32);
+ENGINE_API_FROZEN(EngineApiAssetsV1,     128);
+ENGINE_API_FROZEN(EngineApiAnimV1,        64);
+ENGINE_API_FROZEN(EngineApiUiV1,          48);
+ENGINE_API_FROZEN(EngineApiNavV1,         32);
+ENGINE_API_FROZEN(EngineApiDrawV1,        40);
+ENGINE_API_FROZEN(EngineApiJobsV1,        32);
+ENGINE_API_FROZEN(EngineApiMemoryV1,      48);
+ENGINE_API_FROZEN(EngineApiDrawSubmitV1,  24);
 
 /* Host-side: the filled table (engine_api_table.cpp). */
 const EngineApiTableV1* engineApiHostTable(void);
