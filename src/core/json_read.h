@@ -34,6 +34,8 @@
 // to recognise than a value that simply was not overridden.
 #include <nlohmann/json.hpp>
 #include <cmath>
+#include <cstdint>
+#include <string>
 
 namespace jsonread {
 
@@ -67,6 +69,37 @@ inline float readFloat(const nlohmann::json& j, const char* key, float dflt) {
     if (!j.is_object() || !j.contains(key)) return dflt;
     float f;
     return finiteNumber(j[key], f) ? f : dflt;
+}
+
+// Integer counterparts, for the same reason `readFloat` exists: `j.value(key,
+// 0u)` throws when the key is present with the wrong type, and a `"id": "3"` in
+// a hand-edited scene should not be an exception escaping a cook thread.
+inline uint64_t readU64(const nlohmann::json& j, const char* key, uint64_t dflt) {
+    if (!j.is_object() || !j.contains(key)) return dflt;
+    const auto& v = j[key];
+    return v.is_number_unsigned() || v.is_number_integer() ? v.get<uint64_t>() : dflt;
+}
+
+inline uint32_t readU32(const nlohmann::json& j, const char* key, uint32_t dflt) {
+    const uint64_t v = readU64(j, key, dflt);
+    return v > 0xFFFFFFFFull ? dflt : (uint32_t)v;
+}
+
+// A string, or the default. `j.value(key, std::string{})` has the same throwing
+// behaviour on a wrong-typed key.
+inline std::string readString(const nlohmann::json& j, const char* key,
+                             const std::string& dflt = {}) {
+    if (!j.is_object() || !j.contains(key)) return dflt;
+    const auto& v = j[key];
+    return v.is_string() ? v.get<std::string>() : dflt;
+}
+
+// True/false, or the default — `is_boolean()` only, so `"true"` and `1` are
+// rejected rather than silently reinterpreted.
+inline bool readBool(const nlohmann::json& j, const char* key, bool dflt) {
+    if (!j.is_object() || !j.contains(key)) return dflt;
+    const auto& v = j[key];
+    return v.is_boolean() ? v.get<bool>() : dflt;
 }
 
 } // namespace jsonread

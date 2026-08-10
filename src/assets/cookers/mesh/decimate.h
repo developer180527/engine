@@ -30,6 +30,15 @@
 
 namespace meshcook {
 
+// One material group, as an index range. Mirrors assetlib::MeshSubmesh without
+// depending on it — this file is deliberately free of the asset format so it can
+// be tested against hand-built buffers.
+struct SubRange {
+    uint32_t indexOffset   = 0;
+    uint32_t indexCount    = 0;
+    uint32_t materialIndex = 0;
+};
+
 struct DecimateInput {
     const uint8_t* vertices     = nullptr;
     uint32_t       vertexCount  = 0;
@@ -37,11 +46,22 @@ struct DecimateInput {
     uint32_t       posOffset    = 0;   // byte offset of float3 position
     const uint32_t* indices     = nullptr;
     uint32_t       indexCount   = 0;   // must be a multiple of 3
+    // Material groups. Null/zero means the whole index buffer is one group,
+    // which is what a single-material mesh is.
+    const SubRange* ranges      = nullptr;
+    uint32_t        rangeCount  = 0;
 };
 
 struct DecimateResult {
     std::vector<uint8_t>  vertices;    // compacted: only surviving vertices
     std::vector<uint32_t> indices;
+    // Rebuilt group by group, so a level keeps its materials. Ranges come out
+    // CONTIGUOUS from zero and summing to indices.size(), which is what
+    // `Mesh::submeshesTile()` checks — that is the property the shadow pass
+    // needs to draw a whole buffer in one call instead of range by range.
+    // A group whose triangles all collapsed is dropped rather than emitted
+    // empty: a zero-index draw is a wasted bind.
+    std::vector<SubRange> ranges;
     uint32_t triangles = 0;
     bool ok = false;
     const char* error = "";

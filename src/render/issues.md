@@ -553,6 +553,42 @@ performance benefit, because nothing in the tree can yet produce a cheaper level
 - **Max draw distance.** Selection can never return "invisible"; culling by distance is
   a separate feature, and conflating the two is how objects vanish unaccountably.
 
+## R21. Review of the LOD/decimation work — nine defects, three memory-unsafe ✅ FIXED
+A read of everything between the LOD commit (`b2a64ae`) and `9b36bb1`. Eleven findings;
+the ones that belong to `src/render` are here, the cook-side ones in
+`src/assets/issues.md` and the service-side ones in `src/runtime/docs/issues.md`.
+
+**The census overstated the saving.** `trisFull` was banked BEFORE the sentinel-radius
+early return while `trisDrawn` was added only after it, so an item that kept full detail
+(no bounds, or unbounded) contributed its triangles to the counterfactual and ZERO to
+the actual — while drawing every one of them. It was also missing from `lodCount[0]`, so
+the per-level counts stopped summing to the number of chains. A counter whose job is to
+justify a feature must not be able to flatter it. Both totals now include the opt-out
+path, and it is recorded as the level-0 decision it is.
+
+**Every level drew with `material[0]`.** Decimation rebuilt one flat index buffer and
+dropped the submesh ranges, so a prop with more than one material group changed colour
+the instant it crossed a threshold — 96 of the MegaKit's 176 meshes qualify. Clustering
+is global but the index rebuild is now partitioned by group, which costs nothing and
+emits ranges that tile from zero, so `submeshesTile()` stays true and the shadow pass
+keeps its one-draw path (R19). Cooked format v5 carries the table; v4 files still load
+and correctly read as one range.
+
+**LOD levels leaked, and the residency budget lied about it.** `MeshResidency::bytes`
+included the levels, but eviction destroyed only level 0 — so the cache credited itself
+with reclaiming memory that stayed resident, the total never came down, and the level
+buffers lived for the life of the process. Eviction now frees the chain.
+
+**And the fix could not land alone.** `EngineRuntime::frame` built the in-use set from
+`MeshRenderer::mesh` only, never `LodMesh::mesh[]` — but after selection the
+`RenderItem` the pipeline dereferences is a LEVEL. Freeing levels without teaching that
+collector about them would have evicted a buffer the next frame draws from. Both halves
+are in `runtime_frame.cpp` and `asset_service.cpp` and must stay together.
+
+Verified by `tests/cooker_test.cpp` (cooker → decimate → save → load: three levels, both
+material groups on each, ranges tiling, each strictly cheaper), plus the decimator and
+loader tests listed in the other two issue files.
+
 ## Not a defect, but the thing to know before touching the pipeline
 Per-draw uniform bytes are a hard budget, not a soft cost: bgfx's Metal backend
 commits them into a fixed 8 MB buffer with no bounds check, so ~8192 draws

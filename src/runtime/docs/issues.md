@@ -701,3 +701,51 @@ Fine under today's single-threaded frame orchestration; `info.md` itself names t
 7. **H.4** — crash-on-malformed-config; cheap to guard, high nuisance value if left.
 8. **M.1–M.7** — good candidates for the test suite build-out in parallel with fixes, even before code changes land.
 9. **L.1–L.8** — track, revisit at the documented trigger points (job system landing, multi-week server sessions, etc.) rather than fixing preemptively.
+
+## Review of the palette pool and the mesh cache (2026-08-10) ✅ FIXED
+
+From the same read as `src/render/issues.md` R21 and the cook-side entries in
+`src/assets/issues.md`.
+
+**Bone-palette slots leaked once per play session, forever.** Moving the palette out of
+`SkinnedMesh` into `anim::skinPalettes()` turned a component field into an ALLOCATION,
+released from a `SkinnedMesh` remove hook — registered in `AnimatorSystem::init`, on the
+EDITOR world. Component hooks are world state, and the world that creates, animates and
+destroys entities is the **play snapshot world**, which `tick(world, dt)` animates and
+which never had the hook. Every play→stop cycle leaked one 8 KB palette per animated
+entity. The old comment called that "bounded and never unsafe": the second half was
+right, the first was not — it is bounded per session and unbounded across them.
+
+The hook is now installed for any world the animator ticks, and `resetWorldCache()`
+forgets which world carried it, because a new snapshot world can land on the same
+address as the dead one (the call site says so) and a stale match would resume leaking.
+`tests/skin_palette_test.cpp` pins the flecs behaviour the whole fix depends on — that
+`on_remove` fires during WORLD TEARDOWN, not just on an explicit remove — and asserts
+the negative case in the same shape, a hookless world that leaks all 40 slots.
+
+**`release()` was not idempotent.** A double release put a slot in the free list twice
+and handed one palette to two entities: two skeletons writing one buffer, presenting as
+an animation bug in a system nowhere near the cause. Cheaper to make impossible than to
+debug, so membership is tracked and a repeat release is a no-op.
+
+**`at()` took the pool mutex, inside the parallel extraction loop.** `Renderer::buildView`
+calls it once per skinned item from `jobs::parallelFor`, so every worker serialized on one
+lock — on the exact path the whole refactor existed to speed up. `stress_skinned` could
+not see it: its READ pass comments that it consumes "the ADDRESS of the palette" but only
+reads `paletteSlot` and never calls `at()`, so the one newly added per-item cost was
+absent from the measurement certifying the change. Chunk pointers now live in a
+fixed-capacity array of atomics published release/acquire; the `unique_ptr` vector stays
+behind the mutex for ownership and is never touched on the hot path.
+
+**`unloadMesh` left the dedup cache pointing at a recycled slot.**
+`AssetRegistry::removeMesh` pushes the slot onto a free list and the next `addMesh` pops
+it, while `m_loadedMeshes` maps a cooked path to a HANDLE — and `Handle::valid()` is just
+`id != 0`, never a question to the registry. So the entry was not merely stale: once
+anything else loaded into that slot, `loadMesh(samePath)` hit the cache, believed the
+handle, and returned **a different mesh**. Wrong geometry, no crash, nothing in the log.
+Reachable from `SceneService::unloadScene` and from Lua's `assets.unloadMesh`. Unloading
+now forgets any entry naming that handle, as level 0 or as a level; destruction does not
+cascade, because every path that receives a chain unloads the levels it was given and
+cascading would free level 0 under a second scene sharing it. Pinned by case 4 of
+`tests/mesh_dedup_test.cpp`, which forces the slot to be recycled first so the assertion
+is about the dangerous case rather than the merely untidy one.

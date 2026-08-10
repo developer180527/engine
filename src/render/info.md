@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-06
+verified: 2026-08-10
 covers:
   - src/render/
 tests:
@@ -153,7 +153,7 @@ The metric is **screen height, not distance**: `h = r * projYScale / d`, with
 viewport is also resolution independent. Selection itself is a pure function in
 `world/lod.h` and is the only part with a test that can fail.
 
-Three properties that are load-bearing rather than incidental:
+Four properties that are load-bearing rather than incidental:
 
 - **Selection repairs the sort key.** It runs after `writeCullEntry`, so `keyBase`
   already has level 0's mesh/material ids packed in. Leaving it stale would let the
@@ -163,16 +163,33 @@ Three properties that are load-bearing rather than incidental:
   threshold, and the screen height that chose a level is not altered by the choice.
 - **A broken chain degrades to MORE detail.** An unresolved level falls back toward
   level 0 and is counted (`Renderer::lodCensus().broken`, plus one latched `LOG_WARN`).
+- **A level keeps its parent's MATERIAL GROUPS** (cooked v5). Levels used to be one
+  range drawn with `material[0]`, so a prop with two groups changed colour the moment
+  it crossed a threshold — 96 of the MegaKit's 176 meshes have more than one.
+  Decimation rebuilds the index buffer group by group, and the output ranges tile
+  from zero, which is what keeps `submeshesTile()` true and the shadow pass on its
+  one-draw path.
 
-`lodCensus()` reports how many items landed on each level for the last view extracted —
+`lodCensus()` reports how many items landed on each level for the last view extracted,
+plus the triangles those levels cost against what level 0 everywhere would have cost.
 LOD's whole job is to be invisible, so per-level counts are the only way to tell a
 working chain from an inert one. `engine_host` prints it every 300 frames, and stays
 silent when the scene has no chains.
 
-**Not built, and known:** LOD *generation* (decimation in MeshCooker), an inspector for
-authoring chains, async level loads, cross-fading, and max draw distance. Because
-nothing yet produces a cheaper level, **no performance benefit has been measured** —
-only correctness. See `issues.md` R20 for what that measurement did and did not cover.
+**The census counts what is DRAWN, including the items that opt out.** An item whose
+sphere carries a sentinel radius (no bounds, or unbounded) keeps full detail, and it is
+recorded as a level-0 decision with its triangles in BOTH totals. It used to bank them
+into the counterfactual only, which reported a saving that had not happened — the one
+thing a counter justifying a feature must never do.
+
+**LEVELS COME FROM THE COOKER, and only the cooker.** They resolve synchronously from
+cooked meshes: `loadMesh`'s last resort is an Assimp import on a worker that completes
+by setting a `MeshRenderer`, which cannot fill slot 2 of an `LodMesh`. An unresolved
+level shortens the chain.
+
+**Not built, and known:** an inspector for authoring chains, async level loads,
+cross-fading (switching is a hard pop), and max draw distance. Skinned meshes get no
+chain — R18 does not expand skinned items, so a level would never be selected.
 
 ## Diagnostics
 

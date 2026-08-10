@@ -255,6 +255,14 @@ static void appendLodLevels(assetlib::MeshAsset& asset) {
         indices = reinterpret_cast<const uint32_t*>(asset.indexData.data());
     }
 
+    // Material groups go IN, so they come back out (mesh_asset.h LodLevel). A
+    // level without them draws entirely with material[0], which made every
+    // multi-material prop change colour at its first LOD threshold.
+    std::vector<meshcook::SubRange> srcRanges;
+    srcRanges.reserve(asset.submeshes.size());
+    for (const auto& s : asset.submeshes)
+        srcRanges.push_back({ s.indexOffset, s.indexCount, s.materialIndex });
+
     meshcook::DecimateInput in;
     in.vertices    = asset.vertexData.data();
     in.vertexCount = asset.header.vertexCount;
@@ -263,6 +271,8 @@ static void appendLodLevels(assetlib::MeshAsset& asset) {
                                                      assetlib::VF_POSITION);
     in.indices     = indices;
     in.indexCount  = asset.header.indexCount;
+    in.ranges      = srcRanges.empty() ? nullptr : srcRanges.data();
+    in.rangeCount  = (uint32_t)srcRanges.size();
 
     uint32_t parentTris = asset.header.indexCount / 3;
     for (float ratio : kLevelRatios) {
@@ -277,6 +287,16 @@ static void appendLodLevels(assetlib::MeshAsset& asset) {
         lvl.vertexCount = r.vertexCount(in.stride);
         lvl.indexCount  = (uint32_t)r.indices.size();
         lvl.vertexData  = r.vertices;
+        // Field by field: MeshSubmesh carries a reserved materialUUID between
+        // indexCount and materialIndex, so brace-init would land the material
+        // index in the UUID bytes.
+        for (const auto& rr : r.ranges) {
+            assetlib::MeshSubmesh ms;
+            ms.indexOffset   = rr.indexOffset;
+            ms.indexCount    = rr.indexCount;
+            ms.materialIndex = rr.materialIndex;
+            lvl.submeshes.push_back(ms);
+        }
         // Levels inherit the parent's index width. A level always has FEWER
         // vertices than its parent, so a 16-bit parent's level always fits —
         // but it is checked rather than assumed.
@@ -295,7 +315,7 @@ static void appendLodLevels(assetlib::MeshAsset& asset) {
         parentTris = r.triangles;
     }
     if (!asset.lods.empty()) {
-        asset.header.version = 4;
+        asset.header.version = 5;   // v5: per-level submesh ranges
         std::printf("[MeshCooker]   lods: %u tris ->", asset.header.indexCount / 3);
         for (const auto& l : asset.lods) std::printf(" %u", l.indexCount / 3);
         std::printf("\n");

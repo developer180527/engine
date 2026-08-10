@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-08-06
+verified: 2026-08-10
 covers:
   - src/render/
 ---
@@ -72,7 +72,7 @@ Worth stating plainly, because the gaps below are not a verdict on the whole:
 | **R6** ✅ | **Render-target memory is ~5× the naive figure.** 1280×720 colour+depth for the scene and game framebuffers should be ≈14 MB; bgfx reports **71 MB**. Unexplained — candidates are Retina drawable scaling, D24S8 storage on Metal, and the 2-deep swap chain. | `RenderStatsChannel`, `[Renderer] Scene FB: 1280x720` | High |
 | **R7** ✅ | **Redundant material binds.** `bindMaterial` re-set every uniform and texture per submesh with no comparison against current state. **IMPLEMENTED AND MEASURED AT ZERO** (issues.md R17): binds were already 1:1 with draws, so the dedup saved nothing. Kept anyway — it is what makes submesh expansion (R18) safe. | `pipeline/opaque_pass.cpp` | Medium |
 | **R8** ⚠️ dev path only | **Textures are outside the residency system.** `AssetService` gained a mesh residency budget with LRU eviction; textures — the 76 MB — have none. | `asset_service.cpp` residency covers meshes only | **Reassessed 2026-08-04: not a shipping problem.** The shipped path is 40.7 MB against a 60 MB budget, and its textures DO go through `GpuResourceCache` (identity + refcount), so a budget could be applied when one is needed. The 76/100 MB figures were the DEV path, where the importers call `addTexture` directly and nothing dedups or evicts. Worth fixing for editor sessions on large projects; NOT worth fixing to hit a budget the shipped game already passes with 19 MB spare. |
-| **R9** ◐ | No LOD, no cascaded shadows (one map, one caster), no occlusion culling, no texture streaming. **LOD BUILT** (issues.md R20) — screen-height selection, correct and mutation-tested, but it bought nothing measurable because `MeshCooker` cannot decimate, so no level is cheaper than the one above. Cascades / occlusion / streaming remain open. | `world/lod.h` | Medium (deferred) |
+| **R9** ◐ | No LOD, no cascaded shadows (one map, one caster), no occlusion culling, no texture streaming. **LOD BUILT AND FED** (issues.md R20/R21) — screen-height selection plus cooker-side vertex-clustering decimation, so levels are genuinely cheaper (62.2% of triangles on the kit) and carry their parent's material groups. Cascades / occlusion / streaming remain open. | `world/lod.h` | Medium (deferred) |
 
 ### 1.5 The root cause
 

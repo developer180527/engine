@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-07-31
+verified: 2026-08-10
 covers:
   - src/systems/
 tests:
@@ -24,7 +24,13 @@ Per-frame ECS systems that are part of the engine core (not plugins).
 - **`AnimatorSystem`** (`animator_system.h`) — queries `Animator +
   SkinnedMesh`, advances clip time (looping/clamping, speed scale), samples
   the clip into a `Pose`, computes world + skin matrices into
-  `SkinnedMesh::skinMatrices` for the renderer to upload. Falls back to the
+  the entity's slot in `anim::skinPalettes()` for the renderer to upload — the
+  palette left the component (it was 8 200 bytes of stride the extraction query
+  paid for and never read), so the component keeps a `paletteSlot` and the
+  animator takes one lazily on first write. The slot comes back through a
+  `SkinnedMesh` remove hook that `init()` and `tick(world, dt)` install on EVERY
+  world the animator touches, because hooks are world state and the play snapshot
+  world is where entities actually die (`src/runtime/docs/issues.md`). Falls back to the
   lossless bind-pose path when no clip is assigned (see
   `src/animation/info.md` for why that path avoids SQT).
 

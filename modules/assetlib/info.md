@@ -60,13 +60,30 @@ hypothetical. String lengths are capped before allocating, and offsets into a
 payload are bounds-checked against it — a `.cshader` variant slice pointing past
 its blob is rejected rather than handed to a GPU driver.
 
-`MeshAsset` carries an optional chain of coarser **LOD levels** (v4). The level
-count leads the LOD *section* rather than sitting in `MeshHeader`: the header is a
-fixed-size block the reader maps directly, and `static_assert(sizeof(MeshHeader)
-== 80)` exists to catch exactly the growth that would silently invalidate every
-cooked mesh on disk. A level carries its own vertex and index payload, because a
-level that shared the parent's buffers would be cheaper to draw and no cheaper to
-store — and VRAM is the tighter budget.
+`MeshAsset` carries an optional chain of coarser **LOD levels** (v4; v5 added a
+per-level submesh range table). The level count leads the LOD *section* rather than
+sitting in `MeshHeader`: the header is a fixed-size block the reader maps directly,
+and `static_assert(sizeof(MeshHeader) == 80)` exists to catch exactly the growth that
+would silently invalidate every cooked mesh on disk. A level carries its own vertex
+and index payload, because a level that shared the parent's buffers would be cheaper
+to draw and no cheaper to store — and VRAM is the tighter budget.
+
+**v4 STAYS READABLE.** v5's extra field is written and read behind a version check
+rather than sniffed, and a v4 level simply has no range table — which reads as one
+range over the whole buffer, exactly what v4 meant. Rejecting those files would break
+every project with a populated cache until a full re-cook, for nothing.
+
+**THE LOD SECTION IS THE ONE PLACE A COUNT AND ITS BYTE SIZE ARE STORED SEPARATELY.**
+Everywhere else the bytes are derived from the count
+(`vertexData.resize(vertexCount * vertexStride)`), so the two cannot disagree; a level
+stores `vcount`/`vbytes` and `icount`/`ibytes` as four independent fields. That
+shipped unvalidated and unfuzzed, and it mattered because `AssetService` builds
+`Mesh lm(lvb, lib, lvl.indexCount)` — handing the count to bgfx as a draw range, so a
+level claiming a billion indices over twelve bytes of buffer was a GPU read off the
+end. The loader now requires `count * stride == bytes` exactly and clamps every level
+range to the level's own index count; `fuzz_mesh_loader_test` generates v4/v5 levels
+and has `InflateLod*` corruptions aimed at these fields, because the generic
+header-field corruptions cannot reach them.
 
 ### The cook layer — one concern per TU
 Design doc: **`docs/architecture/asset-cook-architecture.md`** — the key recipe, the

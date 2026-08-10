@@ -18,8 +18,15 @@ struct CellHash {
     size_t operator()(const Cell& c) const {
         // Three odd primes: cheap, and good enough for a per-cook map that is
         // never adversarial. Not a security hash.
-        return (size_t)(c.x * 73856093) ^ (size_t)(c.y * 19349663)
-             ^ (size_t)(c.z * 83492791);
+        //
+        // MULTIPLIED AS UNSIGNED, deliberately. On int32_t this overflows at a
+        // cell index of just 30 (30 * 73856093 > INT32_MAX) — which is every
+        // real mesh, since the resolution search goes to 1024 — and signed
+        // overflow is undefined behaviour, so the UBSan build (-D
+        // ENGINE_SANITIZE=undefined) trips on the hash of an ordinary asset.
+        // Unsigned wrap is defined and gives the identical bit pattern.
+        return (size_t)((uint32_t)c.x * 73856093u) ^ (size_t)((uint32_t)c.y * 19349663u)
+             ^ (size_t)((uint32_t)c.z * 83492791u);
     }
 };
 
@@ -69,6 +76,11 @@ DecimateResult decimate(const DecimateInput& in, uint32_t gridResolution) {
     if (!(longest > 0.0f)) {
         out.vertices.assign(in.vertices, in.vertices + (size_t)in.vertexCount * in.stride);
         out.indices.assign(in.indices, in.indices + in.indexCount);
+        // Indices are copied verbatim, so the parent's ranges still describe
+        // them exactly — carry them through or this one path would silently
+        // return a level that draws with material[0].
+        if (in.rangeCount && in.ranges)
+            out.ranges.assign(in.ranges, in.ranges + in.rangeCount);
         out.triangles = in.indexCount / 3;
         out.ok = true;
         return out;
@@ -82,9 +94,22 @@ DecimateResult decimate(const DecimateInput& in, uint32_t gridResolution) {
 
     for (uint32_t v = 0; v < in.vertexCount; ++v) {
         const float* p = positionOf(v);
-        Cell c{ (int32_t)std::floor((p[0] - mn[0]) / cellSize),
-                (int32_t)std::floor((p[1] - mn[1]) / cellSize),
-                (int32_t)std::floor((p[2] - mn[2]) / cellSize) };
+        // NON-FINITE POSITIONS GET NO CELL. The bounds pass already skips them
+        // (NaN fails both comparisons), but the cell index was still computed
+        // from them, and `(int32_t)std::floor(NaN)` is undefined — it yields
+        // INT_MIN on x86-64 and 0 on arm64. That would make the cook
+        // ARCHITECTURE-DEPENDENT, which breaks the one property the whole
+        // algorithm choice rests on: two machines cooking byte-identical levels
+        // so the DDC stays a cache rather than a coin flip. Left as UINT32_MAX,
+        // and the triangle pass below drops anything referencing it.
+        const float fx = (p[0] - mn[0]) / cellSize;
+        const float fy = (p[1] - mn[1]) / cellSize;
+        const float fz = (p[2] - mn[2]) / cellSize;
+        if (!std::isfinite(fx) || !std::isfinite(fy) || !std::isfinite(fz))
+            continue;
+        Cell c{ (int32_t)std::floor(fx),
+                (int32_t)std::floor(fy),
+                (int32_t)std::floor(fz) };
         // First vertex in index order wins — see the header for why not a
         // centroid. Also makes the result independent of map iteration order.
         const auto [it, inserted] = repOfCell.emplace(c, v);
@@ -110,19 +135,58 @@ DecimateResult decimate(const DecimateInput& in, uint32_t gridResolution) {
         return ni;
     };
 
-    for (uint32_t i = 0; i + 2 < in.indexCount; i += 3) {
-        const uint32_t a = in.indices[i], b = in.indices[i + 1], c = in.indices[i + 2];
-        // An out-of-range index is corrupt input, not a triangle. Cooked meshes
-        // come through a shared DDC, so this is reachable.
-        if (a >= in.vertexCount || b >= in.vertexCount || c >= in.vertexCount) continue;
-        const uint32_t ra = remap[a], rb = remap[b], rc = remap[c];
-        // Two corners in one cell means zero area. This is where the reduction
-        // actually comes from.
-        if (ra == rb || rb == rc || ra == rc) continue;
-        out.indices.push_back(emit(ra));
-        out.indices.push_back(emit(rb));
-        out.indices.push_back(emit(rc));
+    // ── Rebuilt GROUP BY GROUP, so a level keeps its materials ──────────────
+    // The first version rebuilt one flat index buffer and dropped the ranges,
+    // which meant every level drew with material[0]: a prop with two material
+    // groups CHANGED COLOUR as it crossed an LOD threshold, and 96 of the
+    // MegaKit's 176 meshes have more than one group. Clustering is still
+    // global (a vertex belongs to one cell whatever group references it), only
+    // the index rebuild is partitioned — so this costs nothing and the output
+    // ranges come out contiguous from zero, which keeps `submeshesTile()` true
+    // and the shadow pass on its one-draw path.
+    const SubRange whole{ 0, in.indexCount, 0 };
+    const SubRange* ranges    = in.rangeCount ? in.ranges : &whole;
+    const uint32_t  rangeCount = in.rangeCount ? in.rangeCount : 1u;
+    if (in.rangeCount && !in.ranges) { out.error = "range count without ranges"; return out; }
+
+    for (uint32_t r = 0; r < rangeCount; ++r) {
+        const SubRange& src = ranges[r];
+        // A range outside the index buffer is corrupt input, like an
+        // out-of-range index: skip the group rather than reading past the end.
+        if (src.indexCount > in.indexCount ||
+            src.indexOffset > in.indexCount - src.indexCount) continue;
+
+        const uint32_t firstOut = (uint32_t)out.indices.size();
+        const uint32_t end = src.indexOffset + src.indexCount;
+        for (uint32_t i = src.indexOffset; i + 2 < end; i += 3) {
+            const uint32_t a = in.indices[i], b = in.indices[i + 1], c = in.indices[i + 2];
+            // An out-of-range index is corrupt input, not a triangle. Cooked
+            // meshes come through a shared DDC, so this is reachable.
+            if (a >= in.vertexCount || b >= in.vertexCount || c >= in.vertexCount) continue;
+            const uint32_t ra = remap[a], rb = remap[b], rc = remap[c];
+            // A vertex with no cell (non-finite position) has no representative.
+            if (ra == UINT32_MAX || rb == UINT32_MAX || rc == UINT32_MAX) continue;
+            // Two corners in one cell means zero area. This is where the
+            // reduction actually comes from.
+            if (ra == rb || rb == rc || ra == rc) continue;
+            out.indices.push_back(emit(ra));
+            out.indices.push_back(emit(rb));
+            out.indices.push_back(emit(rc));
+        }
+
+        const uint32_t emitted = (uint32_t)out.indices.size() - firstOut;
+        // A group whose every triangle collapsed is dropped, not emitted empty:
+        // a zero-index draw still costs a material bind and a submit.
+        if (emitted) out.ranges.push_back(SubRange{ firstOut, emitted, src.materialIndex });
     }
+
+    // One group covering everything is not information — it is what an absent
+    // table already means, and storing it would make every single-material
+    // level carry a range table for nothing.
+    if (out.ranges.size() == 1 && out.ranges[0].indexOffset == 0 &&
+        out.ranges[0].indexCount == out.indices.size() &&
+        out.ranges[0].materialIndex == 0)
+        out.ranges.clear();
 
     out.triangles = (uint32_t)(out.indices.size() / 3);
     out.ok = true;
@@ -156,7 +220,9 @@ DecimateResult decimateToRatio(const DecimateInput& in, float targetRatio,
         const uint32_t tris = r.triangles;          // read BEFORE any move
         const uint32_t err  = tris > want ? tris - want : want - tris;
         if (err < bestErr) { bestErr = err; best = std::move(r); }
-        if (tris > want) { if (mid == 0) break; hi = mid - 1; } else lo = mid + 1;
+        // `mid >= 1` always, since lo starts at 1 and only grows — the old
+        // `if (mid == 0) break` here was unreachable.
+        if (tris > want) hi = mid - 1; else lo = mid + 1;
     }
     return best;
 }

@@ -6,9 +6,10 @@
 // select. This asserts the property that makes LOD worth having at all —
 // **a level is genuinely cheaper** — plus the robustness a cooker needs when it
 // runs unattended over content nobody inspects.
-#include <cstdio>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 #include "assets/cookers/mesh/decimate.h"
@@ -196,6 +197,123 @@ int main() {
         CHECK(!decimateToRatio(inputOf(verts, idx), 0.0f).ok, "ratio 0 rejected");
         CHECK(!decimateToRatio(inputOf(verts, idx), 1.0f).ok, "ratio 1 rejected");
         CHECK(!decimateToRatio(inputOf(verts, idx), -1.0f).ok, "negative ratio rejected");
+    }
+
+    // ── MATERIAL GROUPS SURVIVE ─────────────────────────────────────────────
+    // The first version rebuilt one flat index buffer and dropped the ranges, so
+    // every level drew with material[0] — a two-material prop CHANGED COLOUR the
+    // moment it crossed an LOD threshold, and 96 of the MegaKit's 176 meshes have
+    // more than one group. These assertions are the reason that cannot come back.
+    {
+        // Split the grid's triangles into three groups with distinct materials.
+        const uint32_t third = (uint32_t)(idx.size() / 3 / 3) * 3;
+        std::vector<SubRange> ranges = {
+            { 0,          third,                              7 },
+            { third,      third,                              2 },
+            { third * 2,  (uint32_t)idx.size() - third * 2,    5 },
+        };
+        DecimateInput in = inputOf(verts, idx);
+        in.ranges     = ranges.data();
+        in.rangeCount = (uint32_t)ranges.size();
+
+        const auto r = decimate(in, 8);
+        CHECK(r.ok, "decimating a multi-group mesh succeeds (%s)", r.error);
+        CHECK(!r.ranges.empty(), "the level keeps its material groups (%zu)",
+              r.ranges.size());
+
+        // Materials must be the AUTHORED ones, not 0, 1, 2 — the whole bug was
+        // that a level lost which material a group belonged to.
+        bool matsKept = true;
+        for (const auto& rr : r.ranges) {
+            bool found = false;
+            for (const auto& src : ranges)
+                if (src.materialIndex == rr.materialIndex) found = true;
+            if (!found) matsKept = false;
+        }
+        CHECK(matsKept, "every surviving group carries an authored material index");
+
+        // CONTIGUOUS FROM ZERO AND SUMMING TO THE INDEX COUNT. This is exactly
+        // what Mesh::submeshesTile() checks, and it is what keeps the shadow pass
+        // on its one-draw-per-caster path (issues.md R19) instead of falling back
+        // to per-range draws for every LOD'd caster in the scene.
+        uint32_t walk = 0;
+        bool tiles = true;
+        for (const auto& rr : r.ranges) {
+            if (rr.indexOffset != walk) tiles = false;
+            walk += rr.indexCount;
+        }
+        CHECK(tiles && walk == r.indices.size(),
+              "ranges tile the level's index buffer (%u of %zu)", walk,
+              r.indices.size());
+
+        // Ranges must address the level's OWN compacted vertices, not the
+        // parent's — an off-by-one here is an out-of-range draw.
+        bool inRange = true;
+        const uint32_t levelVerts = r.vertexCount(kStride);
+        for (uint32_t i : r.indices) if (i >= levelVerts) inRange = false;
+        CHECK(inRange, "every index addresses one of the level's %u vertices",
+              levelVerts);
+
+        // A single group covering everything is what an ABSENT table already
+        // means, so it must not be stored — otherwise every single-material
+        // level carries a range table for nothing.
+        DecimateInput one = inputOf(verts, idx);
+        SubRange whole{ 0, (uint32_t)idx.size(), 0 };
+        one.ranges = &whole; one.rangeCount = 1;
+        CHECK(decimate(one, 8).ranges.empty(),
+              "one group over the whole buffer stores no table");
+
+        // A range reaching past the index buffer is corrupt input: skip the
+        // group, do not read past the end.
+        DecimateInput bad = inputOf(verts, idx);
+        SubRange over{ 0, (uint32_t)idx.size() + 300, 0 };
+        bad.ranges = &over; bad.rangeCount = 1;
+        const auto rb = decimate(bad, 8);
+        CHECK(rb.ok && rb.triangles == 0,
+              "an out-of-bounds range is skipped, not read (%u tris)", rb.triangles);
+
+        // rangeCount without ranges is a caller bug, not something to deref.
+        DecimateInput nullRanges = inputOf(verts, idx);
+        nullRanges.rangeCount = 3;      // ranges stays null
+        CHECK(!decimate(nullRanges, 8).ok, "a range count with no ranges is rejected");
+    }
+
+    // ── NON-FINITE POSITIONS ────────────────────────────────────────────────
+    // The bounds pass always skipped NaN, but the CELL pass did not, and
+    // `(int32_t)std::floor(NaN)` is undefined — INT_MIN on x86-64, 0 on arm64.
+    // That made the cook architecture-dependent, which breaks the one property
+    // the whole algorithm choice rests on: two machines producing byte-identical
+    // levels so the DDC stays a cache rather than a coin flip.
+    {
+        std::vector<V> bad = verts;
+        bad[10].px = std::numeric_limits<float>::quiet_NaN();
+        bad[11].py = std::numeric_limits<float>::infinity();
+        bad[12].pz = -std::numeric_limits<float>::infinity();
+
+        const auto r = decimate(inputOf(bad, idx), 8);
+        CHECK(r.ok, "a mesh with non-finite positions still cooks (%s)", r.error);
+
+        // Every emitted index must address a real compacted vertex, and no
+        // triangle may reference a vertex that never got a cell.
+        bool inRange = true;
+        const uint32_t n = r.vertexCount(kStride);
+        for (uint32_t i : r.indices) if (i >= n) inRange = false;
+        CHECK(inRange, "no index escapes the compacted buffer");
+        CHECK(r.indices.size() % 3 == 0, "output is still whole triangles");
+
+        // Every surviving position is finite: a NaN vertex must be DROPPED, not
+        // carried into the level as a representative.
+        bool finite = true;
+        for (uint32_t v = 0; v < n; ++v) {
+            const V* p = (const V*)(r.vertices.data() + (size_t)v * kStride);
+            if (!std::isfinite(p->px) || !std::isfinite(p->py) ||
+                !std::isfinite(p->pz)) finite = false;
+        }
+        CHECK(finite, "no non-finite position survives into the level");
+
+        const auto again = decimate(inputOf(bad, idx), 8);
+        CHECK(again.indices == r.indices && again.vertices == r.vertices,
+              "and the result is still deterministic");
     }
 
     if (g_failures) {

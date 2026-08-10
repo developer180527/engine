@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-07-31
+verified: 2026-08-10
 parses-external-input: true
 covers:
   - src/animation/
@@ -15,6 +15,13 @@ tests:
 ## Purpose
 Skeletal animation: skeleton extraction from FBX (via Assimp), clip sampling,
 pose blending, and bone-palette computation for GPU linear-blend skinning.
+
+`skin_palette.h` owns the palettes themselves — 8 KB each, out of the ECS
+component and into a slot pool with chunked, never-reallocated storage, because a
+pointer handed to the renderer must stay valid while the GPU upload reads it.
+`at()` is deliberately LOCK-FREE (an atomic chunk-pointer table): extraction calls
+it once per skinned item from inside `jobs::parallelFor`, and the mutex it used to
+take serialized every worker thread on the one path the pool exists to speed up.
 
 ## The ozz Backbone
 Sampling/blending machinery is **ozz-animation** (third_party/ozz-animation,
@@ -67,7 +74,7 @@ FBX → Assimp (PRESERVE_PIVOTS=false) → extractSkeleton → buildOzzSkeleton
                                      → buildOzzClip (per animation)
   → AnimatorSystem.tick: ozz SamplingJob → ozz LocalToModelJob
   → remap ozz joints → our bones; skin[i] = IBM[i] * model[ozzJointOf[i]]
-  → SkinnedMesh::skinMatrices → vec4 uniform array → vs_skinned.sc (mul(v,M))
+  → anim::skinPalettes()[slot] → vec4 uniform array → vs_skinned.sc (mul(v,M))
 ```
 
 ## The Quaternion Convention (critical — root cause of exploded meshes)

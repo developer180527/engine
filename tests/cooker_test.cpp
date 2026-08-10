@@ -272,6 +272,87 @@ int main() {
               "missing scene -> no forced recook");
     }
 
+    // ── LOD levels keep the parent's material groups ─────────────────────────
+    // End to end: MeshCooker -> decimate -> saveMesh -> loadMesh. decimate_test
+    // proves the decimator preserves ranges and fuzz_mesh_loader_test proves the
+    // FORMAT round-trips them; the plumbing between the two is a copy loop in
+    // appendLodLevels, and this is what catches it being dropped or mis-mapped.
+    //
+    // Without it, a level draws as one range with material[0] — so a prop with two
+    // material groups CHANGED COLOUR the instant it crossed an LOD threshold, and
+    // 96 of the MegaKit's 176 meshes have more than one group.
+    {
+        // A dense two-material mesh: dense enough to clear the cooker's 2 000
+        // triangle floor for LOD, and split across two materials.
+        const fs::path obj = dir / "lodmat.obj";
+        const fs::path mtl = dir / "lodmat.mtl";
+        {
+            std::ofstream m(mtl);
+            m << "newmtl matA\nKd 1 0 0\nnewmtl matB\nKd 0 1 0\n";
+        }
+        {
+            std::ofstream f(obj);
+            f << "mtllib lodmat.mtl\n";
+            constexpr int kN = 60;                    // 60x60 quads = 7 200 tris
+            for (int z = 0; z <= kN; ++z)
+                for (int x = 0; x <= kN; ++x)
+                    f << "v " << x << " 0 " << z << "\n";
+            auto at = [&](int x, int z) { return z * (kN + 1) + x + 1; };  // OBJ is 1-based
+            for (int half = 0; half < 2; ++half) {
+                f << "usemtl " << (half ? "matB" : "matA") << "\n";
+                for (int z = half * kN / 2; z < (half + 1) * kN / 2; ++z)
+                    for (int x = 0; x < kN; ++x) {
+                        f << "f " << at(x, z) << " " << at(x + 1, z) << " " << at(x, z + 1) << "\n";
+                        f << "f " << at(x + 1, z) << " " << at(x + 1, z + 1) << " " << at(x, z + 1) << "\n";
+                    }
+            }
+        }
+
+        const fs::path out = dir / "lodmat.cooked";
+        CHECK(cookMesh(obj, out), "a dense two-material mesh cooks");
+
+        assetlib::MeshAsset ma;
+        CHECK(assetlib::loadMesh(ma, out), "and loads back");
+        CHECK(ma.header.submeshCount >= 2,
+              "the parent has %u material group(s)", ma.header.submeshCount);
+        CHECK(!ma.lods.empty(), "the cooker emitted LOD levels (%zu)", ma.lods.size());
+        CHECK(ma.header.version >= 5,
+              "written as v%u — the version that encodes level ranges",
+              ma.header.version);
+
+        if (!ma.lods.empty() && ma.header.submeshCount >= 2) {
+            bool everyLevelKeepsGroups = true, everyLevelCheaper = true,
+                 rangesTile = true, materialsPreserved = true;
+            uint32_t parentTris = ma.header.indexCount / 3;
+            for (const auto& l : ma.lods) {
+                if (l.submeshes.size() < 2) everyLevelKeepsGroups = false;
+                const uint32_t tris = l.indexCount / 3;
+                if (tris == 0 || tris >= parentTris) everyLevelCheaper = false;
+                parentTris = tris;
+
+                uint32_t walk = 0;
+                for (const auto& s : l.submeshes) {
+                    if (s.indexOffset != walk) rangesTile = false;
+                    walk += s.indexCount;
+                    // The material index must address the mesh's embedded
+                    // material list, or AssetService falls back to material[0]
+                    // and the whole fix is undone one layer down.
+                    if (s.materialIndex >= ma.materials.size()) materialsPreserved = false;
+                }
+                if (walk != l.indexCount) rangesTile = false;
+            }
+            CHECK(everyLevelKeepsGroups,
+                  "every level keeps BOTH material groups, not just material[0]");
+            CHECK(everyLevelCheaper,
+                  "and every level is strictly cheaper than the one above it");
+            CHECK(rangesTile,
+                  "level ranges tile the level's index buffer — what "
+                  "Mesh::submeshesTile() needs for the shadow pass's one-draw path");
+            CHECK(materialsPreserved,
+                  "and every range's materialIndex addresses a real material");
+        }
+    }
+
     fs::remove_all(dir);
 
     if (g_failures) { std::printf("cooker_test: %d FAILURE(S)\n", g_failures); return 1; }

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-06
+verified: 2026-08-10
 covers:
   - src/components/
 tests:
@@ -18,8 +18,13 @@ No logic beyond trivial helpers — systems and plugins own behavior.
 ## Contents
 - `name.h` — display/lookup name.
 - `mesh_renderer.h` — `MeshHandle` + material override.
-- `skinned_mesh.h` — skeleton handle + bone palette
-  (`skinMatrices[128*16]`, `hasSkinMatrices`).
+- `skinned_mesh.h` — skeleton handle + a palette SLOT (`paletteSlot`,
+  `hasSkinMatrices`). The `mat4[128]` palette itself lives in
+  `anim::skinPalettes()`, not the component: inline it made the component
+  8 200 bytes, and the renderer's extraction query reads five of those bytes per
+  entity while paying the whole thing as stride. Resolve with
+  `skinPalettes().at(paletteSlot)`, which returns null for `kNoSlot` so an
+  unanimated entity needs no special case.
 - `lod_mesh.h` — the COARSER levels of a mesh plus their screen-height
   thresholds. Level 0 is `mesh_renderer.h`'s own mesh, so no chain (or
   `count == 0`) means full detail; the renderer selects a level at extraction

@@ -80,6 +80,8 @@ int main() {
         ctx.outputPath = cache / "shared.cooked";
         if (!cooker.cook(ctx).success) { std::printf("FAIL cook\n"); return 1; }
         fs::copy_file(cache / "shared.cooked", cache / "other.cooked");
+        // A third name, for the unload/slot-recycle case below.
+        fs::copy_file(cache / "shared.cooked", cache / "other2.cooked");
     }
 
     {
@@ -144,6 +146,35 @@ int main() {
               afterMissing.ib);
         CHECK(svc.loadMesh("meshs/shared.cooked") == first,
               "a good path still resolves after a failed one");
+
+        // ── 4. UNLOADING must not leave the cache holding a recycled slot ───
+        // AssetRegistry::removeMesh pushes the slot onto a free list and the next
+        // addMesh pops it. The dedup map keys a path to a HANDLE, and
+        // Handle::valid() is just `id != 0` — it never asks the registry whether
+        // the slot is still that mesh. So an entry left behind after an unload is
+        // not merely stale: once anything else loads into that slot,
+        // `loadMesh(samePath)` hits the cache, believes the handle, and returns A
+        // DIFFERENT MESH. Wrong geometry, no crash, nothing in the log.
+        //
+        // The sequence below is exactly that, and it is reachable from
+        // SceneService::unloadScene and from Lua's assets.unloadMesh.
+        const uint32_t recycled = first.id;
+        CHECK(svc.unloadMesh(first), "unloading the shared mesh succeeds");
+        MeshHandle taken = svc.loadMesh("meshs/other2.cooked");
+        CHECK(taken.valid(), "another mesh loads afterwards (handle %u)", taken.id);
+        CHECK(taken.id == recycled,
+              "...and lands in the freed slot %u, which is what makes a stale "
+              "cache entry dangerous rather than merely wrong", recycled);
+
+        MeshHandle reloaded = svc.loadMesh("meshs/shared.cooked");
+        CHECK(reloaded.valid(), "the unloaded path reloads (handle %u)", reloaded.id);
+        CHECK(reloaded != taken,
+              "and does NOT hand back the mesh now occupying its old slot "
+              "(reloaded %u vs the other mesh's %u)", reloaded.id, taken.id);
+        const Mesh* rm = meshes.getMesh(reloaded);
+        CHECK(rm && rm->sourcePath.find("shared.cooked") != std::string::npos,
+              "the reloaded handle really is shared.cooked (%s)",
+              rm ? rm->sourcePath.c_str() : "null");
     }
 
     // The registries went out of scope; their destructors release the meshes,

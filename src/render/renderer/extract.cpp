@@ -210,15 +210,28 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     auto applyLod = [&](const MeshRenderer& mr, const LodMesh& lod,
                         const CullSphere& sp, RenderItem& it, uint64_t& keyBase) {
         if (lod.count == 0) return;                  // inert chain
-        // Level 0's cost, banked BEFORE a level is chosen — this is the
-        // counterfactual the saving is measured against.
+        // Level 0's cost — the counterfactual the saving is measured against.
         const uint32_t fullTris = it.mesh ? it.mesh->indexCount / 3 : 0;
-        m_lodTrisFull.fetch_add(fullTris, std::memory_order_relaxed);
+
         // Sentinel radii are not sizes: a missing mesh (< 0) or an unbounded one
         // (infinity) has no screen height to threshold against, so it stays at
         // full detail. Unbounded already means "missing data" to the cull, and
         // guessing a level for it would hide that.
-        if (!(sp.r > 0.0f) || sp.r == std::numeric_limits<float>::infinity()) return;
+        //
+        // AND IT STILL COUNTS AS DRAWN. `trisFull` used to be banked above this
+        // return while `trisDrawn` was added only at the bottom, so an item that
+        // bailed out here contributed its triangles to the counterfactual and
+        // ZERO to the actual — while really drawing every one of them at level 0.
+        // The census reported a saving that had not happened, which is the one
+        // thing a counter justifying a feature must never do. Same for the level
+        // tally: bailing out is a level-0 decision and is recorded as one.
+        if (!(sp.r > 0.0f) || sp.r == std::numeric_limits<float>::infinity()) {
+            m_lodCount[0].fetch_add(1, std::memory_order_relaxed);
+            m_lodTrisFull.fetch_add(fullTris, std::memory_order_relaxed);
+            m_lodTrisDrawn.fetch_add(fullTris, std::memory_order_relaxed);
+            return;
+        }
+        m_lodTrisFull.fetch_add(fullTris, std::memory_order_relaxed);
 
         // Same view-space depth as the cull computes (visibility.cpp): row-vector
         // convention, magnitude so handedness cannot collapse it to zero.

@@ -48,3 +48,56 @@ All six re-checked against source and **fixed**. Note: `mesh_loader.cpp` (`MeshB
 
 
 
+
+
+## Review of the decimator and the cook path (2026-08-10) ✅ FIXED
+
+Found reading everything between `b2a64ae` and `9b36bb1`. See `src/render/issues.md`
+R21 for the renderer-side half and `src/runtime/docs/issues.md` for the services.
+
+**`(int32_t)std::floor(NaN)` in the cell index.** The bounds pass skipped non-finite
+positions deliberately (NaN fails both comparisons, commented), but the cell pass
+computed an index from them anyway — and that conversion is undefined: `INT_MIN` on
+x86-64, `0` on arm64. It made the cook ARCHITECTURE-DEPENDENT, which breaks the single
+property the algorithm choice rests on (`decimate.h`: two machines cook byte-identical
+levels, so the DDC stays a cache rather than a coin flip). Non-finite positions now get
+no cell and the triangle pass drops anything referencing them, so a bad vertex costs its
+own triangles and nothing else.
+
+**Signed overflow in `CellHash`.** `c.x * 73856093` on `int32_t` overflows at a cell
+index of **30** — `30 * 73856093 = 2 215 682 790 > INT32_MAX` — and the resolution
+search goes to 1024, so essentially every real mesh hit it. Undefined behaviour that
+wrapped harmlessly in practice and would trip the UBSan build
+(`-DENGINE_SANITIZE=undefined`) on an ordinary asset. Multiplied as `uint32_t` now:
+defined, identical bits.
+
+**Submesh ranges were dropped, so every LOD level drew with `material[0]`.** The
+user-visible half of this is in R21; the decimator half is that clustering is global
+(a vertex belongs to one cell whichever group references it) while the index rebuild is
+not, so partitioning the rebuild by group costs nothing. Output ranges tile from zero,
+which keeps `Mesh::submeshesTile()` true and the shadow pass on its one-draw path.
+
+**The zero-extent path dropped them too** — it copies indices verbatim, so the parent's
+ranges still describe them exactly and are now carried through. One code path silently
+producing single-material levels is exactly the kind of hole that outlives the fix.
+
+**`if (mid == 0) break;` in `decimateToRatio` was unreachable** (`lo` starts at 1 and
+only grows). Removed rather than left to imply a case that cannot happen.
+
+**The scene cooker held a FIFTH copy of the JSON UB `core/json_read.h` was written to
+remove.** That header lists four sites (entity_serializer, editor_prefs, undo_stack) and
+missed the cooker, which reads the same hand-editable `.scene`:
+`t["position"][0]` on `"position": []` indexes an empty vector through nlohmann's
+unchecked const `operator[](size_type)`. The same pass also fixed ~45 `value()` calls,
+which THROW on a key present with the wrong type — and the only `try`/`catch` here wraps
+the parse, so `"id": "3"` escaped `cookSceneFile` on CookService's background thread.
+Now every read goes through `jsonread::`, `entitiesOf()` tolerates a non-array
+`"entities"`, and a non-object entity element is skipped instead of being indexed.
+
+**Cooked mesh v4's LOD section stored counts independently of payload size and validated
+neither** — see `modules/assetlib/info.md`. It was also unfuzzed: `buildPlausible` only
+emitted v2, so no case reached it. `fuzz_mesh_loader_test` now generates v4/v5 levels,
+carries `InflateLod*` corruptions (the generic ones only damage HEADER fields, so the
+level checks were unreachable without them — confirmed by deleting the validation and
+watching the lane pass anyway), round-trips levels including their range tables, and has
+four regression seeds.

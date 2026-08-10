@@ -97,6 +97,14 @@ engine_test(render_world_test)
 # one real bug (the material name cache in fd08408) — so the aliasing contract is
 # asserted rather than assumed. bgfx Noop: Texture/Mesh own real bgfx handles.
 engine_test(render_registry_test)
+# Bone palettes moved out of the SkinnedMesh component into a slot pool, which
+# turns a component field into an ALLOCATION — so the two ways an allocator fails
+# are asserted: a slot never returned (8 KB a time, invisible for a thousand
+# spawns) and a slot returned twice (two skeletons writing one palette, which
+# presents as an animation bug somewhere else entirely). It also pins the flecs
+# behaviour the whole fix depends on — that on_remove fires during WORLD TEARDOWN
+# — including the negative case, a hookless world that leaks every slot.
+engine_test(skin_palette_test)
 # SUBMISSION — the last uncovered part of src/render, and the part that changes
 # every week. Possible only because SubmitStats counts on our side of the API:
 # bgfx's Noop backend never sets numDraw, so draw counts cannot be read back from

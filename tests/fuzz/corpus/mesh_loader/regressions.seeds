@@ -29,3 +29,20 @@
 701
 809
 907
+
+# ── v4/v5 LOD levels: the count/bytes split (generator version 2) ────────────
+# The LOD section was the ONLY place in the format storing a count and its byte
+# size as INDEPENDENT fields — everywhere else the bytes are derived from the
+# count, so the two cannot disagree. AssetService builds
+# `Mesh lm(lvb, lib, lvl.indexCount)`, handing that count to bgfx as a draw
+# range, so a level declaring more indices than it ships is a GPU read off the
+# end of the buffer. The section also shipped entirely unfuzzed: buildPlausible
+# only ever emitted v2, so no case reached it.
+#
+# These seeds were produced by the InflateLod* corruptions and each one FAILED
+# before the loader cross-checked count*stride == bytes and clamped every level
+# range to the level's own index count.
+8569843240039361327
+17765176276096395763
+3249353508597342299
+4921074984323450252

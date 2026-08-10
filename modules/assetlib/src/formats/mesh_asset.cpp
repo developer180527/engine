@@ -77,12 +77,21 @@ bool saveMesh(const MeshAsset& mesh, const std::filesystem::path& outPath) {
         const uint32_t vbytes = (uint32_t)l.vertexData.size();
         const uint32_t icount = l.indexCount;
         const uint32_t ibytes = (uint32_t)l.indexData.size();
+        const uint32_t rcount = (uint32_t)l.submeshes.size();
         f.write(reinterpret_cast<const char*>(&vcount), 4);
         f.write(reinterpret_cast<const char*>(&vbytes), 4);
         f.write(reinterpret_cast<const char*>(&icount), 4);
         f.write(reinterpret_cast<const char*>(&ibytes), 4);
-        f.write(reinterpret_cast<const char*>(l.vertexData.data()), vbytes);
-        f.write(reinterpret_cast<const char*>(l.indexData.data()), ibytes);
+        // v5 only, and the reader keys off the version rather than sniffing:
+        // a v4 file that grew a fifth field would be indistinguishable from a
+        // corrupt one.
+        if (mesh.header.version >= 5)
+            f.write(reinterpret_cast<const char*>(&rcount), 4);
+        if (vbytes) f.write(reinterpret_cast<const char*>(l.vertexData.data()), vbytes);
+        if (ibytes) f.write(reinterpret_cast<const char*>(l.indexData.data()), ibytes);
+        if (mesh.header.version >= 5 && rcount)
+            f.write(reinterpret_cast<const char*>(l.submeshes.data()),
+                    (std::streamsize)(rcount * sizeof(MeshSubmesh)));
     }
 
     if (!f) {
@@ -142,7 +151,7 @@ bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
                      inPath.string().c_str());
         return false;
     }
-    if (out.header.version < 2 || out.header.version > 4) {
+    if (out.header.version < 2 || out.header.version > 5) {
         std::fprintf(stderr, "[MeshAsset] Unsupported version %u: %s\n",
                      out.header.version, inPath.string().c_str());
         return false;
@@ -275,25 +284,83 @@ bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
     // allocate before a single byte has been read. Cooked meshes travel through
     // a shared DDC, so these bytes are another machine's.
     if (out.header.version >= 4) {
+        // v5 added a per-level submesh range table. v4 files are still out
+        // there in project caches and in the DDC, and they are perfectly good
+        // geometry — they simply have no ranges, which reads as "one range, the
+        // whole buffer", exactly what they meant. Rejecting them would break
+        // every project until a full re-cook for no gain.
+        const bool hasRanges = out.header.version >= 5;
+        const size_t levelHeaderBytes = hasRanges ? 20 : 16;
+
         uint32_t lodCount = 0;
         if (!claim(1, 4, "lod count")) return false;
         f.read(reinterpret_cast<char*>(&lodCount), 4);
-        if (!claim(lodCount, 16, "lod headers")) return false;
-        offset -= (size_t)lodCount * 16;             // re-counted precisely below
+        if (!claim(lodCount, levelHeaderBytes, "lod headers")) return false;
+        offset -= (size_t)lodCount * levelHeaderBytes;   // re-counted precisely below
         out.lods.resize(lodCount);
         for (auto& l : out.lods) {
-            if (!claim(4, 4, "lod header")) return false;
-            uint32_t vcount = 0, vbytes = 0, icount = 0, ibytes = 0;
+            if (!claim(hasRanges ? 5 : 4, 4, "lod header")) return false;
+            uint32_t vcount = 0, vbytes = 0, icount = 0, ibytes = 0, rcount = 0;
             f.read(reinterpret_cast<char*>(&vcount), 4);
             f.read(reinterpret_cast<char*>(&vbytes), 4);
             f.read(reinterpret_cast<char*>(&icount), 4);
             f.read(reinterpret_cast<char*>(&ibytes), 4);
+            if (hasRanges) f.read(reinterpret_cast<char*>(&rcount), 4);
+
+            // ── The COUNT must agree with the BYTES ─────────────────────────
+            // For every other section in this file the two cannot disagree,
+            // because the byte size is DERIVED from the count
+            // (vertexData.resize(vertexCount * vertexStride)). The LOD section
+            // stores both independently, so it needs the cross-check the others
+            // get for free — and it is not a nicety: `Mesh lm(lvb, lib,
+            // lvl.indexCount)` in AssetService hands indexCount straight to
+            // bgfx as a draw range, so `icount = 0x40000000` with twelve bytes
+            // of index data is a GPU read off the end of the buffer.
+            const uint32_t vs = out.header.vertexStride;
+            const uint32_t is = out.header.indexStride;
+            auto exactly = [](uint32_t count, uint32_t stride, uint32_t bytes) {
+                if (count == 0) return bytes == 0;
+                if (stride == 0) return false;               // no valid width
+                if (count > UINT32_MAX / stride) return false;   // would overflow
+                return count * stride == bytes;
+            };
+            if (!exactly(vcount, vs, vbytes) || !exactly(icount, is, ibytes)) {
+                std::fprintf(stderr, "[MeshAsset] LOD level declares %u verts /"
+                             " %u B (stride %u) and %u indices / %u B (stride %u)"
+                             " — counts do not match the payload: %s\n",
+                             vcount, vbytes, vs, icount, ibytes, is,
+                             inPath.string().c_str());
+                return false;
+            }
+
             if (!claim(vbytes, 1, "lod vertices")) return false;
             l.vertexData.resize(vbytes);
             f.read(reinterpret_cast<char*>(l.vertexData.data()), vbytes);
             if (!claim(ibytes, 1, "lod indices")) return false;
             l.indexData.resize(ibytes);
             f.read(reinterpret_cast<char*>(l.indexData.data()), ibytes);
+
+            // Submesh ranges, so a level keeps its material groups (see the
+            // LodLevel note in mesh_asset.h). Every range must address the
+            // level's OWN index buffer — a range reaching past it is the same
+            // out-of-bounds draw as a bad indexCount, one indirection along.
+            if (!claim(rcount, sizeof(MeshSubmesh), "lod submeshes")) return false;
+            l.submeshes.resize(rcount);
+            if (rcount) {
+                f.read(reinterpret_cast<char*>(l.submeshes.data()),
+                       (std::streamsize)(rcount * sizeof(MeshSubmesh)));
+                for (const auto& s : l.submeshes) {
+                    if (s.indexCount > icount ||
+                        s.indexOffset > icount - s.indexCount) {
+                        std::fprintf(stderr, "[MeshAsset] LOD submesh range "
+                                     "[%u,+%u) is outside the level's %u indices:"
+                                     " %s\n", s.indexOffset, s.indexCount, icount,
+                                     inPath.string().c_str());
+                        return false;
+                    }
+                }
+            }
+
             l.vertexCount = vcount;
             l.indexCount  = icount;
         }

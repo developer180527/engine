@@ -30,7 +30,9 @@
 
 namespace fs = std::filesystem;
 
-static constexpr uint32_t kGeneratorVersion = 1;
+// Bumped when the generator's shape changes: a stored repro seed only means
+// something against the generator that produced it. 2 = LOD levels (v4/v5).
+static constexpr uint32_t kGeneratorVersion = 2;
 
 namespace {
 
@@ -71,6 +73,37 @@ assetlib::MeshAsset buildPlausible(fuzz::Rng& rng) {
     }
     m.header.submeshCount = (uint32_t)m.submeshes.size();
 
+    // ── v4/v5 LOD levels ────────────────────────────────────────────────────
+    // This section shipped UNFUZZED, and it was the one place in the format
+    // where a count and its byte size were stored INDEPENDENTLY — everywhere
+    // else the bytes are derived from the count, so the two cannot disagree.
+    // AssetService hands lvl.indexCount straight to bgfx as a draw range, so an
+    // accepted mismatch is a GPU read off the end of the buffer.
+    if (rng.chance(30)) {
+        m.header.version = rng.chance(50) ? 4u : 5u;
+        const uint32_t levels = rng.range(1, 3);
+        for (uint32_t li = 0; li < levels; ++li) {
+            MeshAsset::LodLevel l;
+            l.vertexCount = rng.range(0, 200);
+            l.indexCount  = rng.range(0, 300);
+            l.vertexData.resize((size_t)l.vertexCount * m.header.vertexStride);
+            l.indexData.resize((size_t)l.indexCount * m.header.indexStride);
+            for (auto& b : l.vertexData) b = rng.byte();
+            for (auto& b : l.indexData)  b = rng.byte();
+            if (m.header.version >= 5 && rng.chance(50)) {
+                const uint32_t rs = rng.range(1, 3);
+                for (uint32_t ri = 0; ri < rs; ++ri) {
+                    MeshSubmesh s{};
+                    s.indexOffset   = rng.below(l.indexCount ? l.indexCount : 1);
+                    s.indexCount    = rng.below(l.indexCount ? l.indexCount : 1);
+                    s.materialIndex = rng.below(4);
+                    l.submeshes.push_back(s);
+                }
+            }
+            m.lods.push_back(std::move(l));
+        }
+    }
+
     const uint32_t mats = rng.chance(50) ? rng.range(0, 3) : 0;
     for (uint32_t i = 0; i < mats; ++i) {
         CookedMaterial c{};
@@ -91,7 +124,13 @@ assetlib::MeshAsset buildPlausible(fuzz::Rng& rng) {
 enum class Corruption {
     None, Truncate, InflateVertexCount, InflateIndexCount, BadIndexStride,
     BadVertexStride, InflateSubmeshCount, InflateMaterialCount, BadMagic,
-    HugeCounts, BitFlips, Empty, HeaderOnly, COUNT
+    HugeCounts, BitFlips, Empty, HeaderOnly,
+    // LOD-LEVEL counts, which the generic corruptions cannot reach: they only
+    // damage HEADER fields, and BitFlips over a whole file lands on one specific
+    // four-byte count about never. Without these the level count/bytes check
+    // below is UNREACHABLE — verified by deleting the validation and watching the
+    // explore lane pass anyway.
+    InflateLodVertexCount, InflateLodIndexCount, InflateLodRangeCount, COUNT
 };
 
 void writeCorrupted(const fs::path& p, const assetlib::MeshAsset& src,
@@ -118,6 +157,32 @@ void writeCorrupted(const fs::path& p, const assetlib::MeshAsset& src,
             m.header.vertexCount = 0xFFFFFFFFu;
             m.header.indexCount  = 0xFFFFFFFFu;
             m.header.vertexStride = 0xFFFFFFFFu; break;
+        // saveMesh derives the BYTE sizes from the vectors but writes the COUNTS
+        // from these fields, so changing one here produces exactly the real
+        // hazard: a level declaring more indices than it ships. That is the file
+        // AssetService turns into `Mesh lm(lvb, lib, lvl.indexCount)`.
+        case Corruption::InflateLodVertexCount:
+            if (!m.lods.empty())
+                m.lods[rng.below((uint32_t)m.lods.size())].vertexCount
+                    = rng.interestingU32();
+            break;
+        case Corruption::InflateLodIndexCount:
+            if (!m.lods.empty())
+                m.lods[rng.below((uint32_t)m.lods.size())].indexCount
+                    = rng.interestingU32();
+            break;
+        case Corruption::InflateLodRangeCount:
+            // A range reaching past the level's indices — the second way a level
+            // becomes an out-of-bounds draw, one indirection along.
+            if (!m.lods.empty()) {
+                auto& l = m.lods[rng.below((uint32_t)m.lods.size())];
+                MeshSubmesh s{};
+                s.indexOffset = rng.chance(50) ? l.indexCount : rng.interestingU32();
+                s.indexCount  = rng.interestingU32();
+                l.submeshes.push_back(s);
+                if (m.header.version < 5) m.header.version = 5;   // else not written
+            }
+            break;
         default: break;
     }
 
@@ -212,6 +277,52 @@ void oneCase(uint64_t masterSeed, fuzz::Report& rep) {
                 break;
             }
         }
+        // ── The same invariants, one level down ─────────────────────────────
+        // A LOD level is a whole (vertices, indices, ranges) triple, and it is
+        // the ONLY place the format stores a count and a byte size as separate
+        // fields — so it is the only place they can disagree. AssetService
+        // builds `Mesh lm(lvb, lib, lvl.indexCount)` from them: a level saying
+        // "a billion indices" over twelve bytes of buffer is a GPU-side
+        // out-of-bounds draw, and nothing downstream re-derives the truth.
+        for (size_t i = 0; i < loaded.lods.size(); ++i) {
+            const auto& l = loaded.lods[i];
+            const size_t wantV = (size_t)l.vertexCount * loaded.header.vertexStride;
+            const size_t wantI = (size_t)l.indexCount  * loaded.header.indexStride;
+            if (l.vertexData.size() != wantV) {
+                rep.fail(key, "accepted LOD level " + std::to_string(i)
+                         + " whose vertexData (" + std::to_string(l.vertexData.size())
+                         + " B) != vertexCount*stride (" + std::to_string(wantV) + " B)");
+                break;
+            }
+            if (l.indexData.size() != wantI) {
+                rep.fail(key, "accepted LOD level " + std::to_string(i)
+                         + " whose indexData (" + std::to_string(l.indexData.size())
+                         + " B) != indexCount*stride (" + std::to_string(wantI)
+                         + " B) — AssetService draws indexCount of them");
+                break;
+            }
+            bool bad = false;
+            for (const auto& s : l.submeshes) {
+                const uint64_t end = (uint64_t)s.indexOffset + s.indexCount;
+                if (end > l.indexCount) {
+                    rep.fail(key, "accepted a LOD submesh range ["
+                             + std::to_string(s.indexOffset) + ","
+                             + std::to_string(end) + ") outside the level's "
+                             + std::to_string(l.indexCount) + " indices");
+                    bad = true;
+                    break;
+                }
+            }
+            if (bad) break;
+            // v4 has no range table at all; a loader inventing one would mean it
+            // read the next level's bytes as ranges.
+            if (loaded.header.version < 5 && !l.submeshes.empty()) {
+                rep.fail(key, "a v" + std::to_string(loaded.header.version)
+                         + " file produced LOD submesh ranges, which that version "
+                           "does not encode — the reader is off by a section");
+                break;
+            }
+        }
     }
 }
 
@@ -230,7 +341,14 @@ void roundTripCase(uint64_t masterSeed, fuzz::Report& rep) {
     const fs::path file = scratch.path() / "rt.cooked";
 
     MeshAsset m = buildPlausible(rng);
-    m.header.version = 2;                       // a current, valid file
+    // A current, valid file — but KEEP a generated v4/v5 so the LOD section is
+    // round-tripped too. Forcing v2 here meant `lods` was written by saveMesh
+    // (the loop is unconditional) and never read back, so nothing checked that
+    // levels survive a save/load at all, let alone their range tables.
+    if (m.header.version < 4 || m.lods.empty()) {
+        m.header.version = 2;
+        m.lods.clear();
+    }
     if (m.header.indexStride != 2 && m.header.indexStride != 4)
         m.header.indexStride = 4;
     // Keep submesh ranges legal — we are testing the format, not the cooker.
@@ -241,6 +359,17 @@ void roundTripCase(uint64_t masterSeed, fuzz::Report& rep) {
     }
     m.vertexData.resize((size_t)m.header.vertexCount * m.header.vertexStride);
     m.indexData.resize((size_t)m.header.indexCount * m.header.indexStride);
+    // Same for each level: counts must agree with the payload (the loader now
+    // enforces exactly this), and ranges must lie inside the level.
+    for (auto& l : m.lods) {
+        l.vertexData.resize((size_t)l.vertexCount * m.header.vertexStride);
+        l.indexData.resize((size_t)l.indexCount * m.header.indexStride);
+        for (auto& s : l.submeshes) {
+            if (l.indexCount == 0) { s.indexOffset = 0; s.indexCount = 0; continue; }
+            s.indexOffset = s.indexOffset % l.indexCount;
+            s.indexCount  = l.indexCount - s.indexOffset;
+        }
+    }
 
     if (!saveMesh(m, file)) { rep.fail(key, "saveMesh failed on valid input"); return; }
 
@@ -256,6 +385,46 @@ void roundTripCase(uint64_t masterSeed, fuzz::Report& rep) {
              back.header.indexCount  != m.header.indexCount  ||
              back.header.vertexFlags != m.header.vertexFlags)
         rep.fail(key, "round-trip changed the header");
+    else if (back.lods.size() != m.lods.size())
+        rep.fail(key, "round-trip lost LOD levels ("
+                 + std::to_string(back.lods.size()) + " of "
+                 + std::to_string(m.lods.size()) + ")");
+    else {
+        for (size_t i = 0; i < m.lods.size(); ++i) {
+            const auto& a = m.lods[i];
+            const auto& b = back.lods[i];
+            if (b.vertexData != a.vertexData || b.indexData != a.indexData) {
+                rep.fail(key, "LOD level " + std::to_string(i)
+                         + " payload changed across a round-trip");
+                break;
+            }
+            if (b.vertexCount != a.vertexCount || b.indexCount != a.indexCount) {
+                rep.fail(key, "LOD level " + std::to_string(i)
+                         + " counts changed across a round-trip");
+                break;
+            }
+            // The MATERIAL GROUPS. A level that loses these draws entirely with
+            // material[0], which is how a two-material prop came to change
+            // colour the moment it crossed an LOD threshold.
+            if (b.submeshes.size() != a.submeshes.size()) {
+                rep.fail(key, "LOD level " + std::to_string(i) + " lost its "
+                         "material groups (" + std::to_string(b.submeshes.size())
+                         + " of " + std::to_string(a.submeshes.size()) + ")");
+                break;
+            }
+            bool mismatch = false;
+            for (size_t k = 0; k < a.submeshes.size(); ++k)
+                if (b.submeshes[k].indexOffset   != a.submeshes[k].indexOffset ||
+                    b.submeshes[k].indexCount    != a.submeshes[k].indexCount  ||
+                    b.submeshes[k].materialIndex != a.submeshes[k].materialIndex)
+                    mismatch = true;
+            if (mismatch) {
+                rep.fail(key, "LOD level " + std::to_string(i)
+                         + " material group changed across a round-trip");
+                break;
+            }
+        }
+    }
 }
 
 } // namespace

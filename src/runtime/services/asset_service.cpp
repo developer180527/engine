@@ -378,14 +378,22 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
     // ── The cooked LOD chain ────────────────────────────────────────────────
     // Each level is a real Mesh with its own buffers: the whole point is that a
     // coarser level costs FEWER triangles, so it cannot share level 0's index
-    // buffer. Levels inherit level 0's material and submesh-free layout —
-    // decimation merges vertices across the mesh and does not preserve submesh
-    // ranges, so a level draws as one range with the base material.
+    // buffer.
+    //
+    // Levels carry their PARENT'S MATERIAL GROUPS (cooked v5). They used to be
+    // one range drawn with material[0], which meant a prop with two material
+    // groups changed colour the moment it crossed a threshold — half the
+    // MegaKit. Decimation rebuilds the index buffer group by group so the ranges
+    // survive; a v4 file (or a genuinely single-material mesh) has no table,
+    // which correctly reads as one range over the whole buffer.
     std::vector<MeshHandle> lodHandles;
     uint64_t lodBytes = 0;
     if (result.valid() && !asset.lods.empty() && !skinned) {
         for (const auto& lvl : asset.lods) {
-            if (lvl.indexCount == 0 || lvl.vertexData.empty()) continue;
+            // indexData, not indexCount: the count is what gets handed to bgfx
+            // as a draw range, and the loader now guarantees the two agree — but
+            // the buffers are what bgfx::copy reads, so test those.
+            if (lvl.indexData.empty() || lvl.vertexData.empty()) continue;
             auto* lv = bgfx::copy(lvl.vertexData.data(),
                                   (uint32_t)lvl.vertexData.size());
             auto* li = bgfx::copy(lvl.indexData.data(),
@@ -412,6 +420,17 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
             lm.boundsMax  = { hdr.boundsMax[0], hdr.boundsMax[1], hdr.boundsMax[2] };
             lm.material   = matHandles.empty() ? MaterialHandle{} : matHandles[0];
             lm.sourcePath = absPath.string();
+            // The level's own material groups, resolved against the SAME
+            // material handles as level 0 — the cooker stores an index into the
+            // mesh's embedded material list, which is what matHandles is.
+            for (const auto& sub : lvl.submeshes) {
+                SubmeshRange range;
+                range.indexOffset = sub.indexOffset;
+                range.indexCount  = sub.indexCount;
+                range.material    = (sub.materialIndex < matHandles.size())
+                    ? matHandles[sub.materialIndex] : lm.material;
+                lm.submeshes.push_back(range);
+            }
             const MeshHandle lh = m_meshes.addMesh(std::move(lm));
             if (!lh.valid()) break;
             lodHandles.push_back(lh);
@@ -622,7 +641,34 @@ MaterialHandle AssetService::loadMaterialAsset(const char* name) {
 // Unload / Query
 // ═══════════════════════════════════════════════════════════════════════════
 
-bool AssetService::unloadMesh(MeshHandle h)       { return m_meshes.removeMesh(h); }
+bool AssetService::unloadMesh(MeshHandle h) {
+    // ── FORGET THE CACHE ENTRY, or the next load returns a recycled slot ─────
+    // AssetRegistry::removeMesh pushes the slot onto its free list, and the next
+    // addMesh pops it. The dedup map keys a cooked path to a HANDLE, and
+    // Handle::valid() is just `id != 0` — it never consults the registry. So an
+    // entry left behind here is not merely stale: after any other mesh loads
+    // into that slot, `loadMesh(samePath)` hits the cache, believes the handle
+    // is live, and hands back A DIFFERENT MESH. Wrong geometry, no crash, and
+    // nothing in the log.
+    //
+    // Levels are matched too, so unloading one does not leave the entry offering
+    // a destroyed level to the next caller. Destruction does NOT cascade: every
+    // path that receives a chain (SceneService) unloads the levels it was given,
+    // and cascading here would free level 0 out from under a second scene that
+    // shares it.
+    {
+        std::lock_guard<std::mutex> lk(m_loadedMtx);
+        for (auto it = m_loadedMeshes.begin(); it != m_loadedMeshes.end(); ) {
+            const bool isLevel0 = it->second.h.id == h.id;
+            const bool isLevel  = std::find_if(it->second.lods.begin(),
+                                               it->second.lods.end(),
+                                               [&](MeshHandle l) { return l.id == h.id; })
+                                  != it->second.lods.end();
+            it = (isLevel0 || isLevel) ? m_loadedMeshes.erase(it) : std::next(it);
+        }
+    }
+    return m_meshes.removeMesh(h);
+}
 bool AssetService::unloadTexture(TextureHandle h)  { return m_textures.removeTexture(h); }
 bool AssetService::unloadMaterial(MaterialHandle h) {
     if (!m_materials.removeMaterial(h)) return false;
@@ -965,7 +1011,12 @@ size_t AssetService::evictOverBudget(const std::unordered_set<uint32_t>& inUse) 
 
     // Collect eviction candidates under the lock; destroy registry entries
     // OUTSIDE it (Mesh dtors issue bgfx::destroy — keep lock scopes tight).
-    struct Victim { std::string key; MeshHandle h; uint64_t bytes; };
+    // The LOD levels ride along, and they have to: `bytes` INCLUDES them, so an
+    // eviction that freed only level 0 credited itself with reclaiming memory it
+    // left resident — the budget total never came down and the level buffers
+    // leaked for the life of the process.
+    struct Victim { std::string key; MeshHandle h; uint64_t bytes;
+                    std::vector<MeshHandle> lods; };
     std::vector<Victim> victims;
     {
         std::lock_guard<std::mutex> lk(m_loadedMtx);
@@ -988,8 +1039,18 @@ size_t AssetService::evictOverBudget(const std::unordered_set<uint32_t>& inUse) 
             // A live MeshRenderer still points at this handle — evicting
             // would yank the mesh out from under the renderer. Skip; it
             // ages out naturally once nothing references it.
+            // A live MeshRenderer OR a live LodMesh level still points at this
+            // entry. The caller collects both (EngineRuntime::frame) — and it
+            // must, because after LOD selection the RenderItem the pipeline
+            // dereferences is a LEVEL, not level 0. Evicting a level whose
+            // parent is idle-but-referenced would hand bgfx a destroyed buffer.
             if (inUse.count(kv->second.h.id)) continue;
-            victims.push_back({kv->first, kv->second.h, kv->second.bytes});
+            bool levelInUse = false;
+            for (MeshHandle lh : kv->second.lods)
+                if (inUse.count(lh.id)) { levelInUse = true; break; }
+            if (levelInUse) continue;
+            victims.push_back({kv->first, kv->second.h, kv->second.bytes,
+                               kv->second.lods});
             total -= kv->second.bytes;
         }
         for (const auto& v : victims) m_loadedMeshes.erase(v.key);
@@ -997,9 +1058,10 @@ size_t AssetService::evictOverBudget(const std::unordered_set<uint32_t>& inUse) 
 
     for (const auto& v : victims) {
         m_meshes.removeMesh(v.h);           // frees GPU buffers (Mesh dtor)
-        LOG_INFO("AssetService", "Evicted LRU mesh: %s (%.2f MB) — reloads "
-                 "on next request", v.key.c_str(),
-                 v.bytes / (1024.0 * 1024.0));
+        for (MeshHandle lh : v.lods) m_meshes.removeMesh(lh);
+        LOG_INFO("AssetService", "Evicted LRU mesh: %s (%.2f MB, %zu LOD level(s))"
+                 " — reloads on next request", v.key.c_str(),
+                 v.bytes / (1024.0 * 1024.0), v.lods.size());
     }
     return victims.size();
 }

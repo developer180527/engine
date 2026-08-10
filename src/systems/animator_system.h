@@ -52,17 +52,7 @@ public:
         m_clips     = &clips;
 
         m_query = ecs.query_builder<Animator, SkinnedMesh>().build();
-
-        // Give the slot back when the component goes away. Without this a
-        // destroyed entity leaks its palette — bounded and never unsafe (the
-        // pool never reuses a live slot), but 8 KB a time adds up in a world
-        // that spawns and kills constantly, which is precisely what a horde
-        // shooter does.
-        ecs.component<SkinnedMesh>().on_remove(
-            [](flecs::entity, SkinnedMesh& s) {
-                anim::skinPalettes().release(s.paletteSlot);
-                s.paletteSlot = SkinnedMesh::kNoSlot;
-            });
+        installReleaseHook(ecs);
     }
 
     // Tick the world the system was init()ed with (cached query).
@@ -77,6 +67,17 @@ public:
     // snapshot world is destroyed (sim stop).
     void tick(flecs::world& world, float dt) {
         if (!m_skeletons || !m_clips) return;
+        // ── The hook is PER WORLD, and this world is not the one init() saw ──
+        // Component hooks are world state, so registering on the editor world in
+        // init() did nothing for the play snapshot world — which is precisely
+        // where entities are created, animated, and destroyed. Every play→stop
+        // cycle leaked one 8 KB palette per animated entity, for the life of the
+        // process. The old comment called that "bounded"; it is bounded per
+        // session and unbounded across them.
+        if (m_hookedWorld != world.c_ptr()) {
+            installReleaseHook(world);
+            m_hookedWorld = world.c_ptr();
+        }
         collect(m_worldQuery.get(world));
         stepAll(dt);
     }
@@ -84,9 +85,24 @@ public:
     void resetWorldCache() {
         m_worldQuery.reset();
         m_contexts.clear();   // sim-world entity ids die with the world
+        // Forget which world carries the hook. A new snapshot world can land on
+        // the SAME ADDRESS as the dead one (the note at the call site says so),
+        // and a stale match here would skip registration and resume leaking.
+        m_hookedWorld = nullptr;
     }
 
 private:
+    // Give the slot back when the component goes away — on entity destruction,
+    // on an explicit remove, and on world teardown. Without it a destroyed
+    // entity leaks 8 KB, which a horde shooter does thousands of times a match.
+    static void installReleaseHook(flecs::world& w) {
+        w.component<SkinnedMesh>().on_remove(
+            [](flecs::entity, SkinnedMesh& s) {
+                anim::skinPalettes().release(s.paletteSlot);
+                s.paletteSlot = SkinnedMesh::kNoSlot;
+            });
+    }
+
     static constexpr int kMaxBones2 = kMaxBones;   // palette budget (skeleton.h)
 
     // Per-entity ozz runtime buffers. Sized to the skeleton on first use;
@@ -308,4 +324,8 @@ private:
     WorldQueryCache<Animator, SkinnedMesh> m_worldQuery; // sim/snapshot world
     std::unordered_map<uint64_t, AnimContext> m_contexts; // per-entity ozz state
     std::vector<WorkItem> m_work;   // this frame's entities (collect -> stepAll)
+    // Which world currently carries the palette-release hook. Only ever the most
+    // recent snapshot world: the editor world's registration happens in init()
+    // and, being world state, never needs renewing.
+    const ecs_world_t* m_hookedWorld = nullptr;
 };

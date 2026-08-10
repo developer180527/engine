@@ -8,6 +8,7 @@
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
 #include "components/mesh_renderer.h"
+#include "components/lod_mesh.h"     // LOD levels are in-use handles too
 
 #include <chrono>
 #include <unordered_set>
@@ -65,6 +66,14 @@ bool EngineRuntime::frameBegin(float& dt) {
         auto collect = [&](flecs::world& w) {
             w.each([&](flecs::entity, const MeshRenderer& mr) {
                 if (mr.mesh.valid()) used.insert(mr.mesh.id);
+            });
+            // LOD LEVELS COUNT AS IN USE. After selection the RenderItem the
+            // pipeline dereferences is a level, not MeshRenderer::mesh — so a
+            // set built from MeshRenderer alone would let eviction destroy a
+            // buffer the very next frame draws from.
+            w.each([&](flecs::entity, const LodMesh& lm) {
+                for (uint8_t i = 0; i < lm.count && i < rworld::kMaxLodLevels - 1; ++i)
+                    if (lm.mesh[i].valid()) used.insert(lm.mesh[i].id);
             });
         };
         collect(m_ecs);

@@ -2,12 +2,25 @@
 #include <assetlib/scene_asset.h>
 #include <assetlib/asset_registry.h>
 #include "core/logger.h"
+#include "core/json_read.h"   // every read out of a hand-editable .scene
 
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <optional>
 #include <string>
 #include <unordered_map>
+
+// `scene.value("entities", array())` THROWS when the key exists with a
+// non-array type, and every caller below reads it — so a scene whose "entities"
+// is a number took the cooker down instead of being reported. Returns an empty
+// array for anything that is not one, which then cooks to an empty scene: an
+// honest, inspectable result for a file that declares no usable entities.
+static const nlohmann::json& entitiesOf(const nlohmann::json& scene) {
+    static const nlohmann::json kEmpty = nlohmann::json::array();
+    if (!scene.is_object()) return kEmpty;
+    const auto it = scene.find("entities");
+    return (it != scene.end() && it->is_array()) ? *it : kEmpty;
+}
 
 // Resolve a meshRenderer JSON record to its asset-DB record: UUID first
 // (survives renames), then project-relative source path. Shared by the cook
@@ -17,10 +30,10 @@ static std::optional<assetlib::AssetRecord> resolveMeshRecord(
         assetlib::AssetRegistry* assetLib,
         const std::filesystem::path& projectRoot) {
     if (!assetLib) return std::nullopt;
-    std::string srcUuid = mr.value("asset", std::string{});
-    std::string srcPath = mr.value("path", std::string{});
+    std::string srcUuid = jsonread::readString(mr, "asset");
+    std::string srcPath = jsonread::readString(mr, "path");
     if (srcPath.empty())
-        srcPath = mr.value("sourcePath", std::string{});
+        srcPath = jsonread::readString(mr, "sourcePath");
     if (srcPath.rfind("engine://", 0) == 0) return std::nullopt;
 
     std::optional<assetlib::AssetRecord> rec;
@@ -51,8 +64,8 @@ std::unordered_set<std::string> collectSceneRefs(
     nlohmann::json scene;
     try { scene = nlohmann::json::parse(f); }
     catch (...) { return out; }         // broken scene — no refs, no edges
-    for (const auto& je : scene.value("entities", nlohmann::json::array())) {
-        if (!je.contains("meshRenderer")) continue;
+    for (const auto& je : entitiesOf(scene)) {
+        if (!je.is_object() || !je.contains("meshRenderer")) continue;
         if (auto rec = resolveMeshRecord(je["meshRenderer"], assetLib, projectRoot))
             out.insert(rec->uuid.toString());
     }
@@ -73,8 +86,8 @@ static std::optional<assetlib::AssetRecord> resolveMaterialByName(
         if (!f) continue;
         nlohmann::json j;
         try { j = nlohmann::json::parse(f); } catch (...) { continue; }
-        const std::string declared = j.value(
-            "name", std::filesystem::path(rec.sourcePath).stem().string());
+        const std::string declared = jsonread::readString(
+            j, "name", std::filesystem::path(rec.sourcePath).stem().string());
         if (declared == name) return rec;
     }
     return std::nullopt;
@@ -97,8 +110,8 @@ std::unordered_set<std::string> collectSceneAssetClosure(
             nlohmann::json scene;
             try { scene = nlohmann::json::parse(f); }
             catch (...) { continue; }   // a broken scene mustn't abort the walk
-            for (const auto& je : scene.value("entities", nlohmann::json::array())) {
-                if (!je.contains("meshRenderer")) continue;
+            for (const auto& je : entitiesOf(scene)) {
+                if (!je.is_object() || !je.contains("meshRenderer")) continue;
                 const auto& mr = je["meshRenderer"];
                 if (auto rec = resolveMeshRecord(mr, assetLib, projectRoot))
                     out.insert(rec->uuid.toString());
@@ -109,7 +122,7 @@ std::unordered_set<std::string> collectSceneAssetClosure(
                 // silently did not exist at runtime — authoring one and running
                 // the game gave you the mesh's baked material with no
                 // indication anything was missing.
-                const std::string matName = mr.value("material", std::string{});
+                const std::string matName = jsonread::readString(mr, "material");
                 if (!matName.empty())
                     if (auto rec = resolveMaterialByName(matName, assetLib, projectRoot))
                         out.insert(rec->uuid.toString());
@@ -147,7 +160,7 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
     }
 
     assetlib::SceneAsset cooked;
-    const auto entities = scene.value("entities", nlohmann::json::array());
+    const auto entities = entitiesOf(scene);
 
     // Deduplicating string interner. stringTableAppend is pure append —
     // without this, N entities sharing one mesh path stored the path N
@@ -165,30 +178,29 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
     };
 
     for (const auto& je : entities) {
+        if (!je.is_object()) continue;      // an array of numbers is not entities
         assetlib::SceneEntity ent{};
-        ent.entityId = je.value("id", (uint64_t)0);
-        ent.parentId = je.value("parentId", (uint64_t)0);
+        // jsonread::u64, not j.value(): `value()` THROWS on a key that exists
+        // with the wrong type, and the only try/catch here wraps the parse — so
+        // `"id": "3"` escaped this function, on CookService's background thread.
+        ent.entityId = jsonread::readU64(je, "id", 0);
+        ent.parentId = jsonread::readU64(je, "parentId", 0);
 
         // Transform
         if (je.contains("transform")) {
             ent.componentMask |= assetlib::kComp_Transform;
             const auto& t = je["transform"];
-            if (t.contains("position")) {
-                ent.position[0] = t["position"][0];
-                ent.position[1] = t["position"][1];
-                ent.position[2] = t["position"][2];
-            }
-            if (t.contains("rotation")) {
-                ent.rotation[0] = t["rotation"][0];
-                ent.rotation[1] = t["rotation"][1];
-                ent.rotation[2] = t["rotation"][2];
-                ent.rotation[3] = t["rotation"][3];
-            }
-            if (t.contains("scale")) {
-                ent.scale[0] = t["scale"][0];
-                ent.scale[1] = t["scale"][1];
-                ent.scale[2] = t["scale"][2];
-            }
+            // ── The fifth copy of the same UB ───────────────────────────────
+            // nlohmann's CONST operator[](size_type) is unchecked: `"position":
+            // []` indexed straight into an empty vector. core/json_read.h swept
+            // four of these (entity_serializer, editor_prefs, undo_stack) — and
+            // missed the cooker, which reads the SAME .scene file a human edits.
+            // readFloats bounds-checks, type-checks, rejects non-finite, and
+            // leaves the destination alone otherwise, so a short array keeps the
+            // identity default instead of a partly-zeroed transform.
+            jsonread::readFloats(t, "position", ent.position, 3);
+            jsonread::readFloats(t, "rotation", ent.rotation, 4);
+            jsonread::readFloats(t, "scale",    ent.scale,    3);
         }
 
         // Name
@@ -208,11 +220,11 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
             // New format: "asset" (uuid) + "path" (project-relative).
             // Legacy: "sourcePath" (absolute). The cooked binary stores an
             // absolute-or-relative source path string for the runtime loader.
-            std::string srcPath    = mr.value("path", std::string{});
+            std::string srcPath    = jsonread::readString(mr, "path");
             if (srcPath.empty())
-                srcPath = mr.value("sourcePath", std::string{});
-            std::string srcType    = mr.value("sourceType", std::string{});
-            std::string cookedPath = mr.value("cookedPath", std::string{});
+                srcPath = jsonread::readString(mr, "sourcePath");
+            std::string srcType    = jsonread::readString(mr, "sourceType");
+            std::string cookedPath = jsonread::readString(mr, "cookedPath");
 
             // Resolve cookedPath via the asset DB (shared resolver — same
             // logic drives the dependency staleness check).
@@ -251,7 +263,7 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
             // The material by AUTHORED NAME. Interned like every other string;
             // null-terminated, so no length field is needed (SceneEntity has no
             // spare bytes — see materialNameOffset).
-            const std::string matName = mr.value("material", std::string{});
+            const std::string matName = jsonread::readString(mr, "material");
             if (!matName.empty()) {
                 auto [moff, mlen] = intern(matName);
                 (void)mlen;
@@ -263,41 +275,34 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
         if (je.contains("camera")) {
             ent.componentMask |= assetlib::kComp_Camera;
             const auto& c = je["camera"];
-            ent.cameraIsPrimary  = c.value("isPrimary", true) ? 1 : 0;
-            ent.cameraProjection = static_cast<uint8_t>(c.value("projection", 0));
-            ent.cameraFov        = c.value("fov", 60.0f);
-            ent.cameraOrthoSize  = c.value("orthoSize", 10.0f);
-            ent.cameraNearPlane  = c.value("nearPlane", 0.1f);
-            ent.cameraFarPlane   = c.value("farPlane", 1000.0f);
-            if (c.contains("clearColor")) {
-                const auto& cc = c["clearColor"];
-                ent.cameraClearColor[0] = cc[0]; ent.cameraClearColor[1] = cc[1];
-                ent.cameraClearColor[2] = cc[2]; ent.cameraClearColor[3] = cc[3];
-            }
+            ent.cameraIsPrimary  = jsonread::readBool(c, "isPrimary", true) ? 1 : 0;
+            ent.cameraProjection = static_cast<uint8_t>(jsonread::readU32(c, "projection", 0));
+            ent.cameraFov        = jsonread::readFloat(c, "fov", 60.0f);
+            ent.cameraOrthoSize  = jsonread::readFloat(c, "orthoSize", 10.0f);
+            ent.cameraNearPlane  = jsonread::readFloat(c, "nearPlane", 0.1f);
+            ent.cameraFarPlane   = jsonread::readFloat(c, "farPlane", 1000.0f);
+            jsonread::readFloats(c, "clearColor", ent.cameraClearColor, 4);
         }
 
         // RigidBody
         if (je.contains("rigidBody")) {
             ent.componentMask |= assetlib::kComp_RigidBody;
             const auto& rb = je["rigidBody"];
-            ent.rbBodyType    = static_cast<uint8_t>(rb.value("bodyType", 1));
-            ent.rbShape       = static_cast<uint8_t>(rb.value("shape", 0));
-            ent.rbMass        = rb.value("mass", 1.0f);
-            ent.rbRestitution = rb.value("restitution", 0.3f);
-            ent.rbFriction    = rb.value("friction", 0.6f);
-            ent.rbUseGravity  = rb.value("useGravity", true) ? 1 : 0;
-            if (rb.contains("halfExtent")) {
-                const auto& he = rb["halfExtent"];
-                ent.rbHalfExtent[0] = he[0]; ent.rbHalfExtent[1] = he[1]; ent.rbHalfExtent[2] = he[2];
-            }
-            ent.rbRadius     = rb.value("radius", 0.5f);
-            ent.rbHalfHeight = rb.value("halfHeight", 0.5f);
+            ent.rbBodyType    = static_cast<uint8_t>(jsonread::readU32(rb, "bodyType", 1));
+            ent.rbShape       = static_cast<uint8_t>(jsonread::readU32(rb, "shape", 0));
+            ent.rbMass        = jsonread::readFloat(rb, "mass", 1.0f);
+            ent.rbRestitution = jsonread::readFloat(rb, "restitution", 0.3f);
+            ent.rbFriction    = jsonread::readFloat(rb, "friction", 0.6f);
+            ent.rbUseGravity  = jsonread::readBool(rb, "useGravity", true) ? 1 : 0;
+            jsonread::readFloats(rb, "halfExtent", ent.rbHalfExtent, 3);
+            ent.rbRadius     = jsonread::readFloat(rb, "radius", 0.5f);
+            ent.rbHalfHeight = jsonread::readFloat(rb, "halfHeight", 0.5f);
         }
 
         // Script
         if (je.contains("script")) {
             ent.componentMask |= assetlib::kComp_Script;
-            std::string path = je["script"].value("path", std::string{});
+            std::string path = jsonread::readString(je["script"], "path");
             auto [off, len] = intern(path);
             ent.scriptPathOffset = off;
             ent.scriptPathLength = len;
@@ -309,12 +314,12 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
         if (je.contains("animator")) {
             ent.componentMask |= assetlib::kComp_Animator;
             const auto& a = je["animator"];
-            ent.animClipIndex = (int16_t)a.value("clipIndex", 0);
-            ent.animSpeed     = a.value("speed", 1.0f);
-            ent.animFade      = a.value("fade", 0.2f);
-            ent.animPlaying   = a.value("playing", false) ? 1 : 0;
-            ent.animLooping   = a.value("looping", true) ? 1 : 0;
-            std::string clipPath = a.value("path", std::string{});
+            ent.animClipIndex = (int16_t)jsonread::readU32(a, "clipIndex", 0);
+            ent.animSpeed     = jsonread::readFloat(a, "speed", 1.0f);
+            ent.animFade      = jsonread::readFloat(a, "fade", 0.2f);
+            ent.animPlaying   = jsonread::readBool(a, "playing", false) ? 1 : 0;
+            ent.animLooping   = jsonread::readBool(a, "looping", true) ? 1 : 0;
+            std::string clipPath = jsonread::readString(a, "path");
             auto [off, len] = intern(clipPath);
             ent.animClipPathOffset = off;
             ent.animClipPathLength = len;
@@ -324,30 +329,27 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
         if (je.contains("characterController")) {
             ent.componentMask |= assetlib::kComp_CharacterController;
             const auto& cc = je["characterController"];
-            ent.ccRadius       = cc.value("radius", 0.3f);
-            ent.ccHeight       = cc.value("height", 1.8f);
-            ent.ccMaxSlopeDeg  = cc.value("maxSlopeDeg", 45.0f);
-            ent.ccStepHeight   = cc.value("stepHeight", 0.3f);
-            ent.ccMass         = cc.value("mass", 70.0f);
-            ent.ccGravityScale = cc.value("gravityScale", 1.0f);
+            ent.ccRadius       = jsonread::readFloat(cc, "radius", 0.3f);
+            ent.ccHeight       = jsonread::readFloat(cc, "height", 1.8f);
+            ent.ccMaxSlopeDeg  = jsonread::readFloat(cc, "maxSlopeDeg", 45.0f);
+            ent.ccStepHeight   = jsonread::readFloat(cc, "stepHeight", 0.3f);
+            ent.ccMass         = jsonread::readFloat(cc, "mass", 70.0f);
+            ent.ccGravityScale = jsonread::readFloat(cc, "gravityScale", 1.0f);
         }
 
         // Light
         if (je.contains("light")) {
             ent.componentMask |= assetlib::kComp_Light;
             const auto& l = je["light"];
-            ent.lightType        = static_cast<uint8_t>(l.value("type", 0));
-            if (l.contains("color")) {
-                const auto& c = l["color"];
-                ent.lightColor[0] = c[0]; ent.lightColor[1] = c[1]; ent.lightColor[2] = c[2];
-            }
-            ent.lightIntensity    = l.value("intensity", 3.0f);
-            ent.lightRange        = l.value("range", 15.0f);
-            ent.lightSpotInner    = l.value("spotInner", 25.0f);
-            ent.lightSpotOuter    = l.value("spotOuter", 35.0f);
-            ent.lightCastShadows  = l.value("castShadows", false) ? 1 : 0;
-            ent.lightUseTemp      = l.value("useTemperature", false) ? 1 : 0;
-            ent.lightTemperatureK = l.value("temperatureK", 6500.0f);
+            ent.lightType        = static_cast<uint8_t>(jsonread::readU32(l, "type", 0));
+            jsonread::readFloats(l, "color", ent.lightColor, 3);
+            ent.lightIntensity    = jsonread::readFloat(l, "intensity", 3.0f);
+            ent.lightRange        = jsonread::readFloat(l, "range", 15.0f);
+            ent.lightSpotInner    = jsonread::readFloat(l, "spotInner", 25.0f);
+            ent.lightSpotOuter    = jsonread::readFloat(l, "spotOuter", 35.0f);
+            ent.lightCastShadows  = jsonread::readBool(l, "castShadows", false) ? 1 : 0;
+            ent.lightUseTemp      = jsonread::readBool(l, "useTemperature", false) ? 1 : 0;
+            ent.lightTemperatureK = jsonread::readFloat(l, "temperatureK", 6500.0f);
         }
 
         cooked.entities.push_back(ent);
@@ -381,8 +383,8 @@ bool sceneDependsOnNewerAssets(const std::filesystem::path& jsonPath,
         return false;   // broken scene: surfaced by the cook itself, not here
     }
 
-    for (const auto& je : scene.value("entities", nlohmann::json::array())) {
-        if (!je.contains("meshRenderer")) continue;
+    for (const auto& je : entitiesOf(scene)) {
+        if (!je.is_object() || !je.contains("meshRenderer")) continue;
         auto rec = resolveMeshRecord(je["meshRenderer"], assetLib, projectRoot);
         if (!rec || rec->cookedPath.empty()) continue;
 

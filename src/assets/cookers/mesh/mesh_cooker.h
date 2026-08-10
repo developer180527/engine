@@ -6,7 +6,10 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 15; // 15: LOD levels, incl. 16-bit index meshes
+    static constexpr uint32_t kVersion = 16; // 16: LOD levels keep their submesh
+                                             // ranges, so a level draws with the
+                                             // same materials as its parent
+                                             // (15: LOD levels, 16-bit indices too)
                                              // (materials sharing an image now
                                              // write ONE file, not one each).
                                              // 10: glTF/GLB cook (cgltf).

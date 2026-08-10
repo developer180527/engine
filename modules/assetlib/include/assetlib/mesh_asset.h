@@ -111,11 +111,22 @@ struct MeshAsset {
     // triangles saves nothing where it matters. It also avoids a lifetime
     // hazard: bgfx handles are refcounted per resource, and two Mesh objects
     // sharing one vertex buffer means destroying either frees it for both.
+    // SUBMESH RANGES TRAVEL WITH THE LEVEL (v5). Without them a level is one
+    // range drawn with material[0], so a prop with more than one material group
+    // CHANGED COLOUR the moment it crossed an LOD threshold — and 96 of the
+    // MegaKit's 176 meshes have more than one, so about half the kit visibly
+    // popped. Decimation clusters vertices globally but rebuilds the index
+    // buffer group by group, so the ranges survive and a level draws with the
+    // same materials as its parent.
+    //
+    // A v4 level has no table; that reads as one implicit range over the whole
+    // buffer, which is what v4 meant.
     struct LodLevel {
-        std::vector<uint8_t> vertexData;
-        std::vector<uint8_t> indexData;
-        uint32_t             vertexCount = 0;
-        uint32_t             indexCount  = 0;
+        std::vector<uint8_t>     vertexData;
+        std::vector<uint8_t>     indexData;
+        std::vector<MeshSubmesh> submeshes;   // v5; empty = the whole buffer
+        uint32_t                 vertexCount = 0;
+        uint32_t                 indexCount  = 0;
     };
     std::vector<LodLevel> lods;
 };
