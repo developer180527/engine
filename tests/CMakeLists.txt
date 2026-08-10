@@ -280,6 +280,10 @@ engine_test(soak_engine LABEL soak TIMEOUT 300 ARGS 1)
 engine_test(stress_deep_tree LABEL stress TIMEOUT 600)
 engine_test(stress_swarm     LABEL stress TIMEOUT 600)
 engine_test(stress_churn     LABEL stress TIMEOUT 600)
+# The skinned path had no load coverage at all: every other stress test uses
+# static meshes, so the one component measured in KILOBYTES per entity was
+# never exercised at scale. Measures what extraction pays to WALK it.
+engine_test(stress_skinned   LABEL stress TIMEOUT 600)
 engine_test(stress_physics   LABEL stress TIMEOUT 600)
 if(ENGINE_WITH_SOURCE_IMPORTERS)
     engine_test(stress_assets LABEL stress TIMEOUT 600)   # importer fuzz

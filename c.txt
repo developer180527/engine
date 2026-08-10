@@ -1,36 +1,49 @@
-ci: make the Windows leg report a fixable list, and fix what it would hit
+runtime: bone palettes out of the ECS component, 125 MB to 0.2 MB
 
-The Windows CI leg already existed (windows-msvc, experimental: true), this
-makes it useful and removes the breakage I could find without a Windows box.
+SkinnedMesh held `float skinMatrices[128*16]` inline, making the component
+8 200 bytes: 64 cache lines, larger than a page. The palette now lives in
+anim::skinPalettes() and the component keeps a 4-byte slot, 8 200 B -> 12 B.
 
-── the leg ─────────────────────────────────────────────────────────────────
-The whole point of an experimental leg is to turn "broken on Windows" into a
-specific, incrementally fixable list. That list was useless: reading it meant
-downloading a 40 MB artifact and scrolling. The build output is now tee'd, and
-a failing leg publishes DE-DUPLICATED compiler errors to the job summary, so
-200 instantiations of one mistake read as one line. Handles both spellings,
-MSVC's "error C2065:" and GCC/Clang's "error:", and says so explicitly when
-nothing matched, because that means the failure was in CONFIGURE or LINK and
-the summary cannot help.
+At horde scale that is 125.1 MB -> 0.2 MB for 16 000 skinned entities, which
+is the whole justification. On a stated 4 GB target, 8 KB per zombie is not a
+rounding error.
 
-Both branches of that shell were run locally against synthetic logs; the first
-draft was wrong (the `||` fallback attached to `head`, which never fails, so it
-could never have fired).
+── the speed claim I made was WRONG, and the harness caught it ─────────────
+I predicted a large extraction win from a microbenchmark that measured a
+SINGLE-component query, where the 8 KB stride was the only cost. The real
+extraction query is <Transform, MeshRenderer, SkinnedMesh>, flecs columns each
+component separately, and the per-entity callback overhead (~19 ns) swamps the
+stride entirely. Measured on the real component and the real query shape:
 
-── breakage the leg would have hit ─────────────────────────────────────────
-- title_bar_windows.cpp used SHAppBarMessage/APPBARDATA with no <shellapi.h>.
-  A guaranteed MSVC error, in the file that leg exists to validate.
-- asset_path.h and project_context.h include <windows.h> with no NOMINMAX,
-  and they are HEADERS, so the min/max MACROS leak into every consumer TU and
-  break std::min/std::max at some unrelated call site, as a template error
-  naming neither. Both now define NOMINMAX and WIN32_LEAN_AND_MEAN first.
+    N=4 000    read 18.9 -> 18.8 ns/entity
+    N=16 000   read 21.0 -> 19.2 ns/entity
+    write      ~1030 ns/entity, unchanged (same bytes either way)
 
-I also swept for unguarded POSIX includes and found none: every unistd.h,
-dlfcn.h, pthread.h and sys/* include in engine code is already behind an
-__APPLE__/__linux__ guard. My first check flagged engine_build.cpp and was
-wrong, the pattern did not match the guard style. The tree is more
-Windows-ready than the roadmap entry implies.
+Flat whether the component is 8 200 bytes or 12. The 15.8x does not transfer,
+and the alignment effect I attributed to the write path did not reproduce
+either. Recorded here so nobody re-derives that number from the microbenchmark
+later and wonders why the frame never got faster.
 
-Not flipped off `experimental`, nothing has gone green yet, and that flag is
-the ratchet for when it does.
+This is the entire reason for measuring on a real scene rather than a
+microbenchmark, and the harness falsified the headline claim on its first run.
 
+── stress_skinned, a gap that existed independently ────────────────────────
+The skinned path had NO load coverage: stress_swarm, stress_churn and
+stress_physics all use static meshes, so the one component measured in
+kilobytes per entity was never exercised at scale. It drives both real access
+patterns, extraction's five-byte read and the animator's full-palette write,
+hermetically, no assets, no ozz, no GPU.
+
+── pool details that are not incidental ────────────────────────────────────
+Storage is CHUNKED and never reallocated: extraction hands the raw palette
+pointer to the render item and the GPU upload reads it later in the frame, so a
+growing std::vector would invalidate live pointers at the worst moment. Slots
+recycle through a free list, are acquired lazily on first animation, and are
+released by a SkinnedMesh on_remove hook, without which a spawn-and-kill horde
+leaks 8 KB a time. A world that never registers the hook leaks slots: bounded,
+never unsafe, memory rather than correctness, and said so in the header.
+
+animator_system_test now resolves palettes the way the renderer does, so it
+still asserts on real contents rather than on a field that moved.
+
+64 tests pass. fps_shooter renders identically.

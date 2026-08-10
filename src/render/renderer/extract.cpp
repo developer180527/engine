@@ -94,6 +94,7 @@
 //     runtime must drop when that world dies (resetWorldCaches) — a query that
 //     outlives its world is a crash, not a leak.
 #include "render/renderer.h"
+#include "animation/skin_palette.h"
 
 #include <cassert>
 #include <cmath>
@@ -172,8 +173,12 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         // archetypes and the query already knows which is which.
         if (skin && skin->hasSkinMatrices && m_skeletons) {
             const Skeleton* skel = m_skeletons->get(skin->skeleton);
-            if (skel) {
-                it.boneMatrices = skin->skinMatrices;
+            // The palette is pool-owned and its address is stable for the
+            // life of the slot, so handing the raw pointer to the render item
+            // is still safe — the GPU upload reads it later in the frame.
+            const float* palette = anim::skinPalettes().at(skin->paletteSlot);
+            if (skel && palette) {
+                it.boneMatrices = palette;
                 it.boneCount    = skel->boneCount();
             }
         }

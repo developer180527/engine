@@ -1,4 +1,5 @@
 #pragma once
+#include "animation/skin_palette.h"   // palettes live out of the component
 // AnimatorSystem — runs every frame, advances animation time, samples clips,
 // computes per-entity bone palettes. Writes into SkinnedMesh::skinMatrices
 // which the renderer reads at extraction time.
@@ -51,6 +52,17 @@ public:
         m_clips     = &clips;
 
         m_query = ecs.query_builder<Animator, SkinnedMesh>().build();
+
+        // Give the slot back when the component goes away. Without this a
+        // destroyed entity leaks its palette — bounded and never unsafe (the
+        // pool never reuses a live slot), but 8 KB a time adds up in a world
+        // that spawns and kills constantly, which is precisely what a horde
+        // shooter does.
+        ecs.component<SkinnedMesh>().on_remove(
+            [](flecs::entity, SkinnedMesh& s) {
+                anim::skinPalettes().release(s.paletteSlot);
+                s.paletteSlot = SkinnedMesh::kNoSlot;
+            });
     }
 
     // Tick the world the system was init()ed with (cached query).
@@ -259,22 +271,34 @@ private:
         // ── Palette: skin[our i] = IBM[our i] * model[ozz joint of i] ───────
         // ozz Float4x4 stores columns; its memory equals the bx row-vector
         // layout for the same transform — store unaligned, then bx::mtxMul.
+        float* palette = paletteFor(skin);
+        if (!palette) { skin.hasSkinMatrices = false; return; }
         for (int i = 0; i < skel->boneCount(); ++i) {
             float model[16];
             const ozz::math::Float4x4& m = ctx.models[(size_t)skel->ozzJointOf[i]];
             for (int c = 0; c < 4; ++c)
                 ozz::math::StorePtrU(m.cols[c], &model[c * 4]);
-            bx::mtxMul(&skin.skinMatrices[i * 16],
+            bx::mtxMul(&palette[i * 16],
                        skel->bones[i].inverseBindMatrix, model);
         }
         skin.hasSkinMatrices = true;
+    }
+
+    // Lazily takes a pool slot the first time this entity is animated, so an
+    // entity that never animates costs a slot's worth of nothing.
+    static float* paletteFor(SkinnedMesh& skin) {
+        if (skin.paletteSlot == SkinnedMesh::kNoSlot)
+            skin.paletteSlot = anim::skinPalettes().acquire();
+        return anim::skinPalettes().at(skin.paletteSlot);
     }
 
     void computeBindPosePalette(const Skeleton& skel, SkinnedMesh& skin) {
         if (skel.boneCount() > kMaxBones2) { skin.hasSkinMatrices = false; return; }
         float worldMatrices[kMaxBones * 16];
         anim::computeBindPoseWorldMatrices(skel, worldMatrices);
-        anim::computeSkinMatrices(skel, worldMatrices, skin.skinMatrices);
+        float* palette = paletteFor(skin);
+        if (!palette) { skin.hasSkinMatrices = false; return; }
+        anim::computeSkinMatrices(skel, worldMatrices, palette);
         skin.hasSkinMatrices = true;
     }
 

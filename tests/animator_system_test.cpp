@@ -35,6 +35,17 @@
 #include "components/skinned_mesh.h"
 #include "runtime/jobs/jobs.h"
 #include "systems/animator_system.h"
+#include "animation/skin_palette.h"
+
+// The palette moved out of the component into anim::skinPalettes(); the tests
+// assert on its CONTENTS, so they resolve the slot the same way the renderer
+// does. Returns a zero block for an unacquired slot so a failed assert reads as
+// "not identity" rather than crashing.
+static const float* palette(const SkinnedMesh& s) {
+    static const float kNone[SkinnedMesh::kMatrixSize] = {};
+    const float* p = anim::skinPalettes().at(s.paletteSlot);
+    return p ? p : kNone;
+}
 
 static int g_failures = 0;
 #define CHECK(cond, ...) do {                                          \
@@ -154,8 +165,8 @@ int main() {
         f.tick(0.016f);
         CHECK(f.skin().hasSkinMatrices,
               "exactly 128 bones -> palette IS written (guard is >, not >=)");
-        CHECK(isIdentity(&f.skin().skinMatrices[0])
-                  && isIdentity(&f.skin().skinMatrices[127 * 16]),
+        CHECK(isIdentity(&palette(f.skin())[0])
+                  && isIdentity(&palette(f.skin())[127 * 16]),
               "bind-pose palette is identity at first and last bone");
     }
 
@@ -166,7 +177,7 @@ int main() {
         f.build(s, nullptr, Animator{});
         f.tick(0.016f);
         CHECK(f.skin().hasSkinMatrices, "no clip -> bind-pose palette written");
-        CHECK(isIdentity(&f.skin().skinMatrices[2 * 16]),
+        CHECK(isIdentity(&palette(f.skin())[2 * 16]),
               "bind-pose skin matrix is identity (IBM * bind world)");
     }
 

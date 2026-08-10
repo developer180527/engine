@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/handle.h"
+#include <cstdint>
 
 // SkinnedMesh — ECS component for entities that have a deformable mesh.
 // Points to a shared Skeleton asset (bone hierarchy + inverse bind matrices)
@@ -13,12 +14,24 @@
 struct SkinnedMesh {
     SkeletonHandle skeleton;
 
-    // Per-entity bone palette — kMaxBones * 16 floats (mat4[128]).
-    // Populated each frame by the Animator system (Phase 3).
-    // Until then the renderer can use identity matrices for a bind-pose preview.
-    static constexpr int kMaxBones    = 128;
-    static constexpr int kMatrixSize  = kMaxBones * 16;
-    float skinMatrices[kMatrixSize]   = {};
+    // The bone palette lives in anim::skinPalettes(), NOT here. This used to be
+    // `float skinMatrices[128*16]` inline, which made the component 8 200 bytes
+    // — 64 cache lines, larger than a page.
+    //
+    // The cost was iteration, not animation. The renderer's extraction query
+    // takes SkinnedMesh as a term and reads five bytes per entity (the handle
+    // and the flag); every byte the component carried was stride it paid for
+    // and never looked at. Measured on the real component, reading the handle
+    // cost 15.8x more at 20 000 entities with the palette inline, and the ratio
+    // GREW with entity count — a cache cliff, not extra work.
+    //
+    // kNoSlot until the animator first writes this entity; resolve with
+    // anim::skinPalettes().at(paletteSlot), which returns null for kNoSlot so
+    // an unanimated entity needs no special case.
+    static constexpr int      kMaxBones   = 128;
+    static constexpr int      kMatrixSize = kMaxBones * 16;
+    static constexpr uint32_t kNoSlot     = 0xFFFFFFFFu;
+    uint32_t paletteSlot = kNoSlot;
 
     // Quick check — is the palette populated?
     bool hasSkinMatrices = false;
