@@ -86,7 +86,15 @@ bool EngineRuntime::frameBegin(float& dt) {
 
 void EngineRuntime::frameEnd() {
     { ENGINE_PROFILE_SCOPE("bgfx.frame");
-      if (!m_headless) m_renderer.frame(); }
+      if (!m_headless) m_renderer.frame();
+      // UNCONDITIONAL, and that is the whole point. Renderer::frame() resets the
+      // external draw-submission list, but it also flips bgfx — so it is gated on
+      // having a window, while engineDrawSubmitBindRenderer() is not. On a
+      // headless server the list therefore filled forever: nothing cleared it and
+      // nothing ever drew it. endFrame() is the device-free half, so it runs on
+      // every path a frame can end on. (frame() calls it too; clearing an already
+      // empty list is free.)
+      else m_renderer.endFrame(); }
     prof::Profiler::get().endFrame();
 }
 

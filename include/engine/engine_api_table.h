@@ -51,6 +51,7 @@
  * client shim — migration, not flag day. (Windows has no dynamic_lookup;
  * there this table is the ONLY path, which is the point.)
  */
+#include <stddef.h>   /* offsetof — the frozen-layout asserts below */
 #include "engine_api.h"
 
 #ifdef __cplusplus
@@ -270,13 +271,54 @@ typedef struct EngineApiTableV1 {
  * There is exactly one case where that is legitimate: this table is pre-1.0
  * and no third party has shipped a kit yet. After that, the answer is a new
  * group or an EngineApiTableV2. */
+/* ── static_assert, from C as well as C++ ────────────────────────────────────
+ * This is an extern "C" ABI header and a C kit must be able to include it — but
+ * bare `static_assert` is C++ (or C23); C11 spells it `_Static_assert`, so the
+ * frozen-layout block below made the whole header fail to compile in any C11
+ * build. It went unnoticed because everything that includes it today is C++.
+ * A pre-C11 compiler simply gets no checks, which is the right trade: the
+ * assertions exist to catch OUR edits, and this repo builds C++17/20. */
+#if defined(__cplusplus) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L)
+#  define ENGINE_API_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#  define ENGINE_API_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#else
+#  define ENGINE_API_STATIC_ASSERT(cond, msg)
+#endif
+
 #define ENGINE_API_FROZEN(group, bytes)                                        \
-    static_assert(sizeof(group) == (bytes),                                    \
+    ENGINE_API_STATIC_ASSERT(sizeof(group) == (bytes),                                    \
         #group " changed size. A shipped group is FROZEN: growing it shifts "  \
         "every later group's offset and makes older modules read the wrong "   \
         "function pointers, silently. Add a NEW group at the end of "          \
         "EngineApiTableV1 instead — see the compatibility contract at the "    \
         "top of this header.")
+
+/* Where each GROUP sits in the table. sizeof() alone does not protect the
+ * contract: it catches appending, and rule 1 also forbids reordering. Swapping
+ * two groups keeps every size identical and moves every offset, so an older
+ * module would read `input` where `physics` now lives and call an entirely
+ * different function through a pointer of the wrong type. These pin the
+ * positions the sizes only imply. */
+#define ENGINE_API_GROUP_AT(field, byteOffset)                                  \
+    ENGINE_API_STATIC_ASSERT(offsetof(EngineApiTableV1, field) == (byteOffset), \
+        "EngineApiTableV1." #field " moved. Groups are positional: a module "   \
+        "reads them at offsets baked in when it was COMPILED, so reordering "   \
+        "or resizing anything before this field silently redirects every call " \
+        "an older module makes through it.")
+
+/* And where each FUNCTION sits inside its group. This is the last of rule 1's
+ * four prohibitions to get a mechanism: reordering two same-typed pointers
+ * within a group is invisible to both checks above — identical size, identical
+ * group offset — and it makes an older module call the wrong function with
+ * arguments that happen to typecheck. Spot-checked on the first and last
+ * pointer of each group rather than every field: the failure is a SHIFT, so it
+ * shows up at the boundaries, and a per-field list of eighty asserts is a
+ * maintenance cost nobody would keep accurate. */
+#define ENGINE_API_FIELD_AT(group, field, byteOffset)                          \
+    ENGINE_API_STATIC_ASSERT(offsetof(group, field) == (byteOffset),           \
+        #group "." #field " moved within its group. Fields are positional for " \
+        "exactly the same reason groups are — see the contract above.")
 
 ENGINE_API_FROZEN(EngineApiCoreV1,       120);
 ENGINE_API_FROZEN(EngineApiInputV1,      120);
@@ -290,6 +332,29 @@ ENGINE_API_FROZEN(EngineApiDrawV1,        40);
 ENGINE_API_FROZEN(EngineApiJobsV1,        32);
 ENGINE_API_FROZEN(EngineApiMemoryV1,      48);
 ENGINE_API_FROZEN(EngineApiDrawSubmitV1,  24);
+
+/* Group offsets. Derived from the sizes above (8-byte aligned, cumulative from
+ * structSize's 4 bytes plus 4 of padding), and asserted rather than trusted. */
+ENGINE_API_GROUP_AT(core,         8);
+ENGINE_API_GROUP_AT(input,      128);
+ENGINE_API_GROUP_AT(physics,    248);
+ENGINE_API_GROUP_AT(audio,      312);
+ENGINE_API_GROUP_AT(assets,     344);
+ENGINE_API_GROUP_AT(anim,       472);
+ENGINE_API_GROUP_AT(ui,         536);
+ENGINE_API_GROUP_AT(nav,        584);
+ENGINE_API_GROUP_AT(draw,       616);
+ENGINE_API_GROUP_AT(jobs,       656);
+ENGINE_API_GROUP_AT(memory,     688);
+ENGINE_API_GROUP_AT(drawSubmit, 736);
+
+/* First and last pointer of each group — the boundaries a reorder shifts. */
+ENGINE_API_FIELD_AT(EngineApiJobsV1,       workerCount,     8);
+ENGINE_API_FIELD_AT(EngineApiJobsV1,       onMain,         24);
+ENGINE_API_FIELD_AT(EngineApiMemoryV1,     alloc,           8);
+ENGINE_API_FIELD_AT(EngineApiMemoryV1,     taggedBytes,    40);
+ENGINE_API_FIELD_AT(EngineApiDrawSubmitV1, submitMesh,      8);
+ENGINE_API_FIELD_AT(EngineApiDrawSubmitV1, submittedCount, 16);
 
 /* Host-side: the filled table (engine_api_table.cpp). */
 const EngineApiTableV1* engineApiHostTable(void);

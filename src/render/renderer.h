@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <mutex>
 #include <filesystem>
 #include <memory>
 
@@ -94,11 +95,22 @@ public:
     // else) and frame() clears them at the flip. A system therefore re-submits
     // every frame, which is also what makes it safe — nothing outlives the
     // frame that created it, so there is no lifetime to get wrong.
+    // THREAD-SAFE, deliberately: the intended callers include kit code running
+    // on the job pool (engineJobsParallelFor), so this takes a lock rather than
+    // documenting a rule nobody can enforce across a C ABI.
     void submitDraw(MeshHandle mesh, MaterialHandle material,
                     const float model[16]);
-    uint32_t submittedDrawCount() const {
-        return (uint32_t)m_externalDraws.size();
-    }
+    uint32_t submittedDrawCount() const;
+
+    // Per-frame reset for the submission list. DEVICE-FREE, so the headless
+    // runtime calls it too — `frame()` cannot serve that purpose because the
+    // runtime only calls frame() when it has a window, which is how submissions
+    // came to accumulate forever on a dedicated server.
+    void endFrame();
+
+    // Submissions dropped this frame because the ceiling was hit — non-zero
+    // means the frame is incomplete and some caller is unbounded.
+    uint32_t droppedExternalDraws() const;
 
     // Drop cached queries against the play-mode world — the runtime calls
     // this when that world is destroyed (sim stop).
@@ -204,8 +216,17 @@ private:
     WorldQueryCache<const Transform, const Light> m_gameLightQuery;  // sim world
     std::vector<RenderItem> m_items;
     // Externally submitted geometry for this frame — see submitDraw().
+    // Guarded by m_externalMtx: submitters may be job threads, while buildView
+    // and endFrame read/clear on the main thread.
     struct ExternalDraw { MeshHandle mesh; MaterialHandle material; Mat4 model; };
+    // Well under kMaxDrawsPerFrame (4096), which these draws also count against —
+    // an external submitter must not be able to starve the scene of its own draw
+    // budget, so it gets a quarter of it and no more.
+    static constexpr std::size_t kMaxExternalDraws = 1024;
+    mutable std::mutex        m_externalMtx;
     std::vector<ExternalDraw> m_externalDraws;
+    uint32_t                  m_externalDropped = 0;
+    bool                      m_warnedExternalCeiling = false;
     std::vector<LightItem>  m_lights;
 
     // ── Parallel extraction scratch ─────────────────────────────────────────

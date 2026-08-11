@@ -6,6 +6,7 @@
 // Run under the ASan lane to prove the UAF stays dead. Exits non-zero on
 // first failure.
 #include <atomic>
+#include <functional>
 #include <chrono>
 #include <cstdio>
 #include <thread>
@@ -79,6 +80,50 @@ int main() {
         jobs::onMain([&] { second = ++order; });
         jobs::pumpMain();
         CHECK(first == 1 && second == 2, "onMain drains FIFO on pumpMain");
+    }
+
+    // ── 6. drainMain: the queue must be EMPTY before code is unloaded ────────
+    // A kit's deferred callback is a function pointer into its dylib. The queue
+    // used to be drained only by tickSystems' pumpMain(), while stopSimulation
+    // dlclosed the kit — so anything queued after that frame's pump was invoked
+    // next frame from unmapped memory. drainMain() is what runs immediately
+    // before an unload, and one pumpMain() is NOT enough: pumpMain swaps the
+    // queue before running it, so a callback that queues more work leaves that
+    // work behind.
+    {
+        int ran = 0;
+        // A chain three deep. One pumpMain() runs only the first link.
+        jobs::onMain([&] {
+            ++ran;
+            jobs::onMain([&] {
+                ++ran;
+                jobs::onMain([&] { ++ran; });
+            });
+        });
+        jobs::pumpMain();
+        CHECK(ran == 1, "one pumpMain() runs ONE batch — the re-queued work "
+              "is still pending (%d)", ran);
+        jobs::drainMain();
+        CHECK(ran == 3, "drainMain() keeps going until the queue is empty (%d)",
+              ran);
+
+        // A callback that re-queues itself FOREVER must not hang the shutdown it
+        // is blocking. Bounded rounds, a warning, and the work is dropped —
+        // dropping work is bad, calling into a freed library is worse.
+        int spins = 0;
+        std::function<void()> forever = [&] {
+            ++spins;
+            jobs::onMain(forever);
+        };
+        jobs::onMain(forever);
+        jobs::drainMain(4);
+        CHECK(spins == 4, "an unconditionally self-requeueing callback is capped "
+              "at the round limit rather than spinning forever (%d)", spins);
+        // And the pending entry is dropped, so a later pump cannot run it after
+        // the unload this was protecting.
+        const size_t after = jobs::pumpMain();
+        CHECK(after == 0, "the runaway's last entry was dropped, not left queued "
+              "for a pump after the dylib is gone (%zu)", after);
     }
 
     // ── 6. Handles outlive shutdown safely ────────────────────────────────

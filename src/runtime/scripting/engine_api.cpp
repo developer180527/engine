@@ -341,8 +341,24 @@ void* engineMemFrameAlloc(size_t size, size_t align) {
     // uninitialised local) would make the HOST attempt that allocation. Asking
     // for a terabyte should cost a null, not the machine. Found by doing
     // exactly that in tests/api_primitives_test.cpp.
-    if (size > g_frameArena->capacity()) return nullptr;
-    return g_frameArena->alloc(size, align ? align : alignof(max_align_t));
+    //
+    // AGAINST WHAT REMAINS, not against total capacity. `size > capacity()`
+    // only refused the absurd — a request against a 90%-full arena sailed
+    // through and FrameArena::alloc spilled to the host heap anyway, which is
+    // exactly what this guard claims to prevent. Alignment padding can still
+    // push a request that fits by this measure into the spill, so the check is
+    // conservative rather than exact; being one allocation pessimistic is the
+    // right side to be wrong on when the alternative is a surprise malloc
+    // inside the host on a module's arithmetic.
+    const size_t used = g_frameArena->used();
+    const size_t cap  = g_frameArena->capacity();
+    const size_t room = used < cap ? cap - used : 0;
+    const size_t pad  = align ? align : alignof(max_align_t);
+    // Two steps so `size + pad` cannot itself overflow: after the first test,
+    // size is bounded by the arena, and a kit passing SIZE_MAX is refused there.
+    if (size > room) return nullptr;
+    if (size + pad > room) return nullptr;
+    return g_frameArena->alloc(size, pad);
 }
 
 uint64_t engineMemTaggedBytes(uint8_t tag) {

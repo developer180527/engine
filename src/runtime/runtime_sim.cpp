@@ -78,6 +78,14 @@ bool EngineRuntime::startSimulation(SimMode mode) {
 void EngineRuntime::stopSimulation() {
     if (!m_simulating) return;
     m_plugins.broadcastSimStop();
+    // ── Deferred callbacks run BEFORE the code they live in is unmapped ──────
+    // engineJobsOnMain lets a kit defer work to the main thread, and the queue
+    // holds a function pointer INTO the kit's dylib. pumpMain() only runs in
+    // tickSystems, so anything queued after this frame's pump was still sitting
+    // there when m_kits.stop() dlclosed the library — and the next frame's pump
+    // jumped into unmapped memory. Draining here runs it while the kit is still
+    // loaded, which is both safe and what the caller asked for.
+    jobs::drainMain();
     // Kits detach + dlclose AFTER the stop broadcast (so onSimulationStop has
     // fired on them) and before the sim world is torn down below.
     m_kits.stop(m_plugins);

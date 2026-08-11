@@ -170,6 +170,11 @@ void EngineRuntime::shutdown() {
     engineMemBindFrameArena(nullptr);
     engineDrawSubmitBindRenderer(nullptr);
     m_input.shutdown();
+    // Same reason as in stopSimulation(): a queued main-thread callback may live
+    // in a plugin about to be detached (and, for a kit, unloaded). Run it while
+    // its code is still mapped — jobs::shutdown() below would otherwise discard
+    // the queue silently, and any pump in between would call into freed code.
+    jobs::drainMain();
     m_plugins.detachAll(); // plugins may hold services — detach before teardown
     jobs::shutdown();      // after plugins: Jolt's adapter schedules here
     mem::shutdown();       // report-only: final per-tag residency dump

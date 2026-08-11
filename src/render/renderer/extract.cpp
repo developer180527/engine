@@ -463,7 +463,16 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     // Appended per VIEW, not per frame: the same submission belongs in the
     // scene view and the game view alike, exactly as an entity's mesh does.
     // frame() clears the list, so a system re-submits each frame.
-    for (const auto& ed : m_externalDraws) {
+    // Under the lock: a kit may still be submitting from a job thread while the
+    // main thread extracts. Copied out rather than held for the whole loop —
+    // getMesh() and writeCullEntry() have no business running inside a lock a
+    // worker thread is waiting on.
+    std::vector<ExternalDraw> external;
+    {
+        std::lock_guard<std::mutex> lk(m_externalMtx);
+        external = m_externalDraws;
+    }
+    for (const auto& ed : external) {
         const Mesh* mesh = m_assets ? m_assets->getMesh(ed.mesh) : nullptr;
         if (!mesh) continue;              // stale handle: drop, never draw junk
         RenderItem it;
@@ -475,9 +484,19 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         // Bounds come from the MESH, so submitted geometry is frustum-culled
         // like everything else. A system that wanted to bypass culling would
         // have to lie about its bounds, and that is the right amount of hard.
-        it.boundsCenter = mesh->boundsCenter();
-        it.boundsSize   = mesh->boundsSize();
-        it.hasBounds    = true;
+        //
+        // `mesh->hasBounds()`, NOT `true`: a mesh whose boundsMin/Max are still
+        // +/-infinity has a centre of (inf + -inf)/2 = NaN, and forcing the flag
+        // made writeCullEntry build a NaN sphere — which never equals the
+        // infinity sentinel, so it took the normal path with a NaN depth and a
+        // garbage sort key. The entity path has always read the mesh; this one
+        // now agrees with it, and an unbounded mesh gets the documented
+        // "never culled" sentinel instead.
+        it.hasBounds = mesh->hasBounds();
+        if (it.hasBounds) {
+            it.boundsCenter = mesh->boundsCenter();
+            it.boundsSize   = mesh->boundsSize();
+        }
         // Same one-call append as the entity paths, so the item and its cull
         // stream entry cannot drift apart.
         CullSphere sp; uint64_t kb;

@@ -54,6 +54,14 @@ imgui.ini
 # `?` is a single-character wildcard rather than punctuation.
 Icon?
 
-# Rust build output. Cargo's own target dir (from a bare `cargo test` inside
-# modules/net) and the CMake-driven one (CARGO_TARGET_DIR=<build>/rust).
+# Rust build output. Cargo's own target dir (from a bare `cargo test` inside a
+# crate) and the CMake-driven one (CARGO_TARGET_DIR=<build>/rust).
+#
+# ONE RULE PER CRATE, listed explicitly rather than a bare `target/`: this repo
+# has a `src/render/pipeline/` and other directories where a future `target/`
+# would be source, and a blanket pattern that hides real files is the failure
+# 82e18cc had to undo for workflows. Add a line when you add a crate — the cost
+# of forgetting is 17 MB of build output in a commit, which is what
+# tests/audio_conformance/ was one `git add -A` away from.
 modules/net/target/
+tests/audio_conformance/target/

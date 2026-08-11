@@ -1,0 +1,15 @@
+[package]
+name    = "engine_audio_conformance"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Executable specification for EngineAudioProviderV1 — the audio ABI."
+
+[lib]
+name = "engine_audio_conformance"
+path = "src/lib.rs"
+
+# Deliberately none. The whole point of this crate is to prove the audio ABI is
+# implementable with nothing but the C declarations — a dependency that wrapped
+# dlopen or generated bindings would hide exactly the thing under test.
+[dependencies]

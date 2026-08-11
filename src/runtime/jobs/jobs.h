@@ -95,6 +95,23 @@ void wait(JobHandle h);
 // queue and returns. This is facade-owned so a fiber backend needs no
 // pinned-task support.
 void onMain(std::function<void()> fn);
-void pumpMain();
+// Runs everything queued as of now and returns how many it ran. A callback that
+// queues MORE work lands in the next batch, not this one (the queue is swapped
+// under the lock before anything runs), which is why the count is returned and
+// why drainMain() exists.
+size_t pumpMain();
+
+// ── Drain before anything a queued callback might point INTO goes away ───────
+// pumpMain() empties one batch. That is not enough before unloading code: a
+// kit's deferred callback is a function pointer into a dylib, so any entry
+// still queued when that dylib is dlclosed becomes a jump into unmapped memory
+// the next time the frame loop pumps. Call this immediately before unloading
+// modules or detaching plugins.
+//
+// Bounded, because "drain until empty" is a hang if a callback re-queues itself
+// unconditionally. Rounds are cheap (a swap and a walk); anything still queued
+// after the cap is a runaway, reported and dropped — dropping work is bad, and
+// calling into a freed library is worse.
+void drainMain(int maxRounds = 8);
 
 } // namespace jobs

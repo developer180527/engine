@@ -54,6 +54,10 @@ claim about freshness as much as about tests. See
   [`guides/scripting.md`](guides/scripting.md) and its
   [API reference](guides/scripting-api.md),
   [`guides/performance.md`](guides/performance.md).
+- **Replacing a subsystem** — [`guides/audio-provider.md`](guides/audio-provider.md)
+  is the worked example: the C ABI a third-party audio engine implements, why it
+  has no HRTF/Atmos switches, and the Rust conformance suite that decides
+  whether an implementation is one.
 - **Is bgfx holding us back?** — [`architecture/renderer-vs-production.md`](architecture/renderer-vs-production.md)
   answers that with numbers (short version: no, and here is what we don't use yet).
 - **The rest of the architecture** — [`architecture/overview.md`](architecture/overview.md),

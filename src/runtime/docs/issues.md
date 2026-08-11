@@ -749,3 +749,56 @@ cascade, because every path that receives a chain unloads the levels it was give
 cascading would free level 0 under a second scene sharing it. Pinned by case 4 of
 `tests/mesh_dedup_test.cpp`, which forces the slot to be recycled first so the assertion
 is about the dangerous case rather than the merely untidy one.
+
+
+## Review of the primitive tier and the audio ABI (2026-08-10) ✅ FIXED
+
+Thirteen findings across `1161f61`, `b1960a0` and the in-flight audio-provider
+work. Twelve reported, one found while fixing them. The ABI compatibility work
+itself was sound — the `!=` → `>=` bind check is the right fix, and the
+`warned[7]`-with-nine-groups overflow was a real stack overrun, correctly caught.
+
+**A dedicated server leaked every draw submission, forever.** `Renderer::frame()`
+cleared the external submission list, and the runtime calls `frame()` only
+`if (!m_headless)` — while `engineDrawSubmitBindRenderer(&m_renderer)` is
+unconditional. So on a server the list filled and nothing ever drew it: ~480 KB/s
+at 100 submissions a tick. Split out `Renderer::endFrame()`, which is device-free
+and therefore callable on every path a frame can end on. The code comment claiming
+"no renderer means headless, so this is a no-op" was reasoning about the API
+BINDING; the `Renderer` object exists in headless, it simply never presents.
+
+**A kit's deferred callback outlived the kit.** `engineJobsOnMain` queues a
+function pointer into the kit's dylib, `pumpMain()` runs only in `tickSystems`,
+and `stopSimulation` dlclosed the kit — so anything queued after that frame's pump
+was invoked next frame from unmapped memory. A crash on Stop, on an API whose only
+purpose is deferring work. `jobs::drainMain()` now runs immediately before
+`m_kits.stop()` and before `m_plugins.detachAll()`.
+
+One `pumpMain()` would not have been enough: it swaps the queue before running
+anything, so a callback that queues more work leaves that work behind. `drainMain`
+therefore loops, bounded — and the first version of it **logged "dropping them"
+without dropping them**, leaving the entry for a later pump to call after the
+unload. `tests/jobs_test.cpp` pumps afterwards and asserts the queue is empty,
+which is what caught it. Exactly the "claim stronger than the mechanism" failure
+this review flagged elsewhere.
+
+**`submitDraw` was unlocked, and the same commit handed kits a job pool.** The
+header's own use case is a kit's particle system and the tier ships
+`engineJobsParallelFor`, so submitting from workers is the expected pattern — an
+unlocked `push_back` there is a torn size plus a reallocation racing every other
+worker. Now locked (one uncontended lock per submitted mesh, nothing beside the
+draw it becomes), with a 1 024 cap so code the engine does not own cannot grow the
+list without bound inside one frame, and the overflow is counted and latched.
+
+**`engineMemFrameAlloc` guarded the wrong quantity.** `size > capacity()` refuses
+only the absurd; a request that fits the arena but not its REMAINING space passed
+and `FrameArena::alloc` spilled to the host heap — the exact surprise malloc the
+guard exists to prevent. Now checked against `capacity() - used()`, in two steps
+so `size + align` cannot overflow on a hostile size.
+
+**External draws forced `hasBounds = true`.** A mesh with ±infinity bounds has a
+centre of NaN, so `writeCullEntry` built a NaN sphere — which never equals the
+infinity sentinel and so took the normal path with a NaN depth and a garbage sort
+key. Now reads `mesh->hasBounds()`, agreeing with the entity path.
+
+See `src/assets/issues.md` for the audio-ABI half and the frozen-layout work.

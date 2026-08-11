@@ -28,6 +28,7 @@
 #include <engine/engine_api.h>
 
 #include "core/memory/mem.h"
+#include "render/renderer.h"        // endFrame() is device-free — see below
 #include "core/frame_arena.h"
 #include "runtime/jobs/jobs.h"
 #include "runtime/scripting/engine_api_binding.h"
@@ -157,6 +158,28 @@ int main() {
               "a request larger than the arena is refused, not spilled to the heap");
         CHECK(engineMemFrameAlloc(0, 16) == nullptr, "a zero-size request is null");
 
+        // ── AGAINST WHAT REMAINS, not against total capacity ────────────────
+        // The guard used to read `size > capacity()`, which only refuses the
+        // absurd. A request that FITS the arena but not the space left in it
+        // sailed through, and FrameArena::alloc spilled it to the host heap —
+        // exactly the surprise malloc the guard exists to prevent.
+        //
+        // So: consume most of the arena, then ask for a size that WOULD fit an
+        // empty one. The old guard passes that through; the new one refuses it.
+        // (My first draft of this asserted against a barely-used arena and
+        // FAILED — the request genuinely fitted. The arena has to be filled for
+        // the assertion to be about anything.)
+        void* bulk = engineMemFrameAlloc(900 * 1024, 16);
+        CHECK(bulk != nullptr, "900 KB of a 1 MB arena is served");
+        const size_t fitsEmptyNotRemaining = 200 * 1024;   // < 1 MB, > what is left
+        CHECK(engineMemFrameAlloc(fitsEmptyNotRemaining, 16) == nullptr,
+              "a request that fits the ARENA but not its REMAINING space is "
+              "refused (%zu B with 900 KB already taken)", fitsEmptyNotRemaining);
+        // And the boundary is not so conservative that it refuses everything:
+        // a small request still succeeds afterwards.
+        CHECK(engineMemFrameAlloc(64, 16) != nullptr,
+              "...while a small request still succeeds");
+
         engineMemBindFrameArena(nullptr);
         arena.shutdown();
     }
@@ -169,6 +192,69 @@ int main() {
         engineDrawSubmitMesh(1, 2, ident);
         CHECK(engineDrawSubmittedCount() == 0,
               "submitting with no renderer is a no-op, not a crash");
+    }
+
+    // ── The submission list must be reset WITHOUT a device ───────────────────
+    // A bound-but-headless renderer is the dedicated-server shape, and it is the
+    // one the original code got wrong: Renderer::frame() cleared this list, but
+    // the runtime only calls frame() when it has a window, so on a server the
+    // submissions accumulated for the life of the process — ~480 KB/s at 100 a
+    // tick, never drawn. endFrame() is the device-free half, which is why it
+    // exists separately and why this test can run it with no bgfx at all.
+    {
+        Renderer r;                       // never init()ed: no device, no window
+        engineDrawSubmitBindRenderer(&r);
+        const float ident[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
+
+        for (int i = 0; i < 32; ++i) engineDrawSubmitMesh(7, 0, ident);
+        CHECK(engineDrawSubmittedCount() == 32,
+              "32 submissions are queued (%u)", engineDrawSubmittedCount());
+
+        r.endFrame();
+        CHECK(engineDrawSubmittedCount() == 0,
+              "endFrame() clears the list with NO DEVICE — the headless leak");
+
+        // An invalid handle must be refused at the door rather than queued for
+        // extraction to discover.
+        engineDrawSubmitMesh(0, 0, ident);
+        engineDrawSubmitMesh(7, 0, nullptr);
+        CHECK(engineDrawSubmittedCount() == 0,
+              "a null handle or null matrix is dropped, not queued");
+
+        // The ceiling: this list is filled by code the engine does not own, so a
+        // runaway caller must be capped rather than allowed to grow without
+        // bound inside one frame.
+        for (int i = 0; i < 4000; ++i) engineDrawSubmitMesh(7, 0, ident);
+        CHECK(engineDrawSubmittedCount() <= 1024,
+              "submissions are capped (%u <= 1024)", engineDrawSubmittedCount());
+        CHECK(r.droppedExternalDraws() > 0,
+              "...and the overflow is REPORTED (%u dropped), not silent",
+              r.droppedExternalDraws());
+
+        r.endFrame();
+        CHECK(r.droppedExternalDraws() == 0,
+              "the drop count resets per frame");
+
+        // Concurrent submission is the documented pattern: the same API tier
+        // hands kits engineJobsParallelFor, and the use case in the header is a
+        // kit's particle system. An unlocked push_back here is a torn size and a
+        // reallocation racing every other worker. Run under TSan for this to
+        // mean everything it can; even without it, a mismatched count is a
+        // failure a plain run can catch.
+        std::atomic<int> submitted{0};
+        engineJobsParallelFor("submit", 512, 16,
+            [](void* user, uint32_t b, uint32_t e) {
+                auto* n = (std::atomic<int>*)user;
+                const float m[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 };
+                for (uint32_t i = b; i < e; ++i) { engineDrawSubmitMesh(7, 0, m); ++*n; }
+            }, &submitted);
+        CHECK(submitted.load() == 512, "512 parallel submissions ran");
+        CHECK(engineDrawSubmittedCount() == 512,
+              "and all 512 arrived intact from worker threads (%u)",
+              engineDrawSubmittedCount());
+
+        r.endFrame();
+        engineDrawSubmitBindRenderer(nullptr);
     }
 
     jobs::shutdown();

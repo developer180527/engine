@@ -324,3 +324,32 @@ if(Python3_Interpreter_FOUND)
                      ${CMAKE_SOURCE_DIR}/scripts/engine_doctor.py status --check)
     set_tests_properties(docs_status_current PROPERTIES LABELS docs TIMEOUT 120)
 endif()
+
+# ── The audio-provider ABI's executable specification (Rust) ─────────────────
+# tests/audio_conformance is an "executable specification": it hand-transcribes
+# engine_audio_provider.h as Rust #[repr(C)] and holds a provider to the
+# contract. It proves the ABI is implementable from the C declarations alone —
+# which is the actual claim being made when we tell a third party they can write
+# a provider in any language.
+#
+# WIRED IN BECAUSE IT WAS NOT. The crate existed and ran nowhere: not in ctest,
+# not in CI, so nothing would have noticed it breaking. An unrun specification is
+# a document.
+#
+# Optional in the same way as modules/net — Rust is a real dependency for every
+# contributor, so a tree without cargo must still configure and test. The
+# difference from a skipped test is visible: cmake says so at configure time.
+if(ENGINE_WITH_RUST)
+    find_program(CARGO_EXECUTABLE cargo)
+    if(CARGO_EXECUTABLE)
+        add_test(NAME audio_abi_conformance
+                 COMMAND ${CARGO_EXECUTABLE} test --quiet
+                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/tests/audio_conformance)
+        # `unit`, not a lane of its own: it is a fast, hermetic, no-GPU check of a
+        # header, which is exactly what the unit lane is.
+        set_tests_properties(audio_abi_conformance PROPERTIES LABELS unit TIMEOUT 300)
+    else()
+        message(STATUS "audio_abi_conformance: cargo not found — audio ABI "
+                       "conformance DISABLED (install rustup to run it)")
+    endif()
+endif()

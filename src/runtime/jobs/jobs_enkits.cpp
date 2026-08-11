@@ -148,16 +148,17 @@ void onMain(std::function<void()> fn) {
     g_mainQueue.push_back(std::move(fn));
 }
 
-void pumpMain() {
+size_t pumpMain() {
     // Frame-loop only, main thread only (facade-level pinning — see jobs.h).
     if (std::this_thread::get_id() != g_mainThread && g_init.load()) {
         LOG_ERROR("Jobs", "pumpMain() off the main thread — ignoring");
-        return;
+        return 0;
     }
     {
         std::lock_guard<std::mutex> lk(g_mainMu);
         g_mainScratch.swap(g_mainQueue);
     }
+    const size_t ran = g_mainScratch.size();
     for (auto& fn : g_mainScratch) fn();
     g_mainScratch.clear();
 
@@ -173,6 +174,33 @@ void pumpMain() {
             }
         }
     }
+    return ran;
+}
+
+void drainMain(int maxRounds) {
+    // Rounds, not one pass: pumpMain() swaps the queue before running anything,
+    // so a callback that queues more work leaves that work behind — and "behind"
+    // means "still queued when the dylib it points into is unloaded".
+    for (int i = 0; i < maxRounds; ++i)
+        if (pumpMain() == 0) return;
+    // DROPPED, not merely reported. The first version of this logged "dropping
+    // them" and then returned with the queue intact — so the next pumpMain()
+    // still ran the callback, which is the very thing draining before an unload
+    // exists to prevent. Caught by tests/jobs_test.cpp, which pumps afterwards
+    // and asserts nothing is left.
+    std::vector<std::function<void()>> abandoned;
+    {
+        std::lock_guard<std::mutex> lk(g_mainMu);
+        abandoned.swap(g_mainQueue);
+    }
+    if (!abandoned.empty())
+        LOG_WARN("Jobs", "%zu main-thread callback(s) still queued after %d "
+                 "drain rounds — DROPPED. Something re-queues itself every "
+                 "round; that work will not run.", abandoned.size(), maxRounds);
+    // Destroyed here, outside the lock: a callback's captures may run arbitrary
+    // destructors, and holding the queue lock through them invites a deadlock
+    // against a worker calling onMain.
+    abandoned.clear();
 }
 
 } // namespace jobs

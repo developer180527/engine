@@ -178,6 +178,29 @@ void Renderer::resize(int w, int h) {
 void Renderer::submitDraw(MeshHandle mesh, MaterialHandle material,
                           const float model[16]) {
     if (!mesh.valid() || !model) return;
+    // LOCKED, because the caller may be a job. The same commit that added this
+    // also handed kits `engineJobsParallelFor`, and the documented use case is a
+    // kit's particle system — so submitting from worker threads is the expected
+    // pattern, not an abuse. An unlocked push_back there is a torn size plus a
+    // reallocation racing every other worker's write. The cost is one
+    // uncontended lock per SUBMITTED MESH, which is nothing beside the draw it
+    // becomes; this is not the per-item hot path that made SkinPalettePool go
+    // lock-free.
+    std::lock_guard<std::mutex> lk(m_externalMtx);
+    // A hard cap, because this list is filled by code the engine does not own.
+    // A kit with a runaway loop would otherwise grow it without bound inside a
+    // single frame. Latched, like every other renderer diagnostic.
+    if (m_externalDraws.size() >= kMaxExternalDraws) {
+        ++m_externalDropped;
+        if (!m_warnedExternalCeiling) {
+            m_warnedExternalCeiling = true;
+            LOG_ERROR("Renderer", "submitDraw ceiling reached (%u) — further "
+                      "submissions this frame are DROPPED and the frame is "
+                      "incomplete. A caller is submitting without bound.",
+                      (unsigned)kMaxExternalDraws);
+        }
+        return;
+    }
     ExternalDraw ed;
     ed.mesh     = mesh;
     ed.material = material;
@@ -185,13 +208,38 @@ void Renderer::submitDraw(MeshHandle mesh, MaterialHandle material,
     m_externalDraws.push_back(ed);
 }
 
+// Per-frame reset that needs NO DEVICE, so the headless runtime can call it too.
+//
+// It used to live in frame(), beside bgfx::frame() — and the runtime calls that
+// only when it has a window (`if (!m_headless)`), while binding the draw-submit
+// API unconditionally. So on a dedicated server every submission accumulated for
+// the life of the process: nothing cleared the list and nothing ever drew it.
+// ~480 KB/s at 100 submissions a tick. The comment claiming "headless is a no-op"
+// was reasoning about the API binding, not about this list.
+void Renderer::endFrame() {
+    std::lock_guard<std::mutex> lk(m_externalMtx);
+    // Cleared at the END of the frame, not before extraction: every view built
+    // this frame must see the same submissions, and the caller submits before
+    // the frame is drawn. Clearing at extraction would give the game view an
+    // empty list whenever the scene view extracted first.
+    m_externalDraws.clear();
+    m_externalDropped = 0;
+    m_warnedExternalCeiling = false;   // one report per frame, not per process
+}
+
+uint32_t Renderer::submittedDrawCount() const {
+    std::lock_guard<std::mutex> lk(m_externalMtx);
+    return (uint32_t)m_externalDraws.size();
+}
+
+uint32_t Renderer::droppedExternalDraws() const {
+    std::lock_guard<std::mutex> lk(m_externalMtx);
+    return m_externalDropped;
+}
+
 void Renderer::frame() {
     bgfx::frame();
-    // Cleared AFTER the flip, not before extraction: every view built this
-    // frame must see the same submissions, and the caller submits before the
-    // frame is drawn. Clearing at extraction would give the game view an empty
-    // list whenever the scene view extracted first.
-    m_externalDraws.clear();
+    endFrame();
 }
 
 bool Renderer::homogeneousDepth() const {

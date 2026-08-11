@@ -101,3 +101,62 @@ carries `InflateLod*` corruptions (the generic ones only damage HEADER fields, s
 level checks were unreachable without them — confirmed by deleting the validation and
 watching the lane pass anyway), round-trips levels including their range tables, and has
 four regression seeds.
+
+
+## The audio provider ABI and the frozen-layout mechanism (2026-08-10) ✅ FIXED
+
+Same review as `src/runtime/docs/issues.md`. These are the contract defects — all
+found before a single provider was written, which is the only time they are cheap.
+
+**`createSound` could not honour its own documented lifetime rule.** The header
+said `ENGINE_AUDIO_F_STREAM` means "the engine must keep `bytes` alive until
+destroySound" — but F_STREAM was a PLAY-time flag. So the provider had to choose
+retain-or-decode during `createSound`, before any `play()` told it which, and the
+engine had to decide whether to keep the buffer alive on the strength of a call
+that had not happened. Streaming is a property of the RESOURCE: the flag moved to
+`createSound`.
+
+**`EngineAudioEmitterUpdate` is a bulk array, so its stride was baked into every
+provider.** The header's blanket rule ("append-only and carry structSize") cannot
+hold for an array element — a size field per row would cost 4 bytes times hundreds
+every frame. `updateEmitters` now takes a `stride`, passed once, which is what
+Vulkan and D3D12 do and the only thing that makes the struct extensible: without
+it, adding a field silently misaligns every read in every provider already
+compiled. `EngineAudioListener` gained the `structSize` every other struct in the
+header already carried.
+
+**`getStats` was documented "(any thread)" while the struct promised no two calls
+would ever overlap.** A diagnostics overlay reading stats while the game thread
+calls `play()` IS that overlap, and a provider author following the general rule
+would not have made it safe. Now an explicit carve-out.
+
+**Nothing detected C-side drift in the audio layout.** The conformance crate
+hand-transcribes the structs as Rust `#[repr(C)]` and asserts hardcoded sizes —
+against its OWN layout, so it caught Rust-side drift and was blind to the C side.
+All seven agreed when checked, but a change to the header would have left the
+suite green. `ENGINE_AUDIO_FROZEN` now asserts the same numbers in C, so neither
+half can move alone. Verified by making them disagree.
+
+**`ENGINE_API_FROZEN` enforced one of rule 1's four prohibitions.** Rule 1 forbids
+appending, reordering, removing and repurposing; `sizeof` catches only appending.
+Swapping two groups, or two same-typed pointers inside a group, keeps every size
+identical and redirects every call an older module makes. Added
+`ENGINE_API_GROUP_AT` (twelve group offsets, checked against the compiler) and
+`ENGINE_API_FIELD_AT` (first and last pointer of each new group). Mutation-proved:
+a group swap fails three asserts, and a same-size field reorder — invisible to the
+size check — fails the field asserts.
+
+**And the C ABI header did not compile as C.** `ENGINE_API_FROZEN` used bare
+`static_assert`, which is C++ (or C23); C11 spells it `_Static_assert`, so the
+whole `extern "C"` table header failed in any C11 build. Unnoticed because
+everything including it today is C++ — but the point of a C ABI table is that a C
+kit can use it. Both headers now dispatch on `__STDC_VERSION__`, and a C11 compile
+is part of what was checked.
+
+**Hygiene:** 17 MB of Rust `target/` was one `git add -A` from being committed —
+`.gitignore` listed `modules/net/target/` specifically, so the new crate was not
+covered. And the conformance suite ran NOWHERE: not in ctest, not in CI. It is now
+`audio_abi_conformance` in the unit lane, gated on cargo like `modules/net`.
+`native_provider_conforms` still skips unless `ENGINE_AUDIO_PROVIDER` names a
+module — correct, since no host provider exists yet — but the reference provider
+and a new wide-stride forward-compat case now run on every ctest.
