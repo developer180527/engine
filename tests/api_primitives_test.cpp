@@ -278,10 +278,10 @@ int main() {
         std::memset(volatileName, 'Z', 31);   // as good as unmapped, for our purposes
         std::free(volatileName);
         elog::Category* resolved = elog::categoryById(tc);
-        CHECK(resolved && resolved->name &&
-              std::strcmp(resolved->name, "TestKitTransient") == 0,
+        CHECK(resolved && resolved->name.load() &&
+              std::strcmp(resolved->name.load(), "TestKitTransient") == 0,
               "the engine COPIED the name — it survives the caller's buffer dying "
-              "('%s')", resolved && resolved->name ? resolved->name : "<null>");
+              "('%s')", resolved && resolved->name.load() ? resolved->name.load() : "<null>");
 
         // enabled() before write() is the contract, and write() re-checks so a
         // module that skips the check cannot defeat the console's filters.

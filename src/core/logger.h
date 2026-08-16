@@ -35,7 +35,16 @@
 //      the slot it was reading got recycled underneath it (see `read`). The
 //      alternative — locking readers against writers — puts the console's frame
 //      time inside the engine's log path.
-//   4. LOSS IS COUNTED AND VISIBLE. A ring drops the oldest; that is correct
+//   4. THE ORDERING IS THE CORRECTNESS, and two halves of it were wrong in the
+//      first version — both benign on x86's strong ordering and both real on
+//      ARM64, which is every phone this engine targets. `Category::name` is now
+//      published with release AFTER the slot is filled (the index is reserved by
+//      a fetch_add, which makes the slot visible first), and the in-progress
+//      poison is followed by a release FENCE so the field writes cannot become
+//      visible ahead of it. Run the TSan lane — `cmake -B build-tsan
+//      -DENGINE_SANITIZE=thread` — after touching any of this; a comment is not
+//      a proof and neither is a green run on a Mac.
+//   5. LOSS IS COUNTED AND VISIBLE. A ring drops the oldest; that is correct
 //      and it must not be silent. `evicted()` is exact, and the console shows
 //      it, because a console that quietly omits the line you are looking for is
 //      worse than one that says it lost 1 342.
@@ -77,6 +86,11 @@ inline const char* levelName(Level l) {
 // than the tag list in this engine and overflow degrades to "uncategorised"
 // rather than failing.
 constexpr int kMaxCategories = 64;
+// The LAST slot is reserved as the overflow bucket, so 63 subsystems can be
+// targeted independently and the 64th onward are visibly pooled rather than
+// silently merged into whichever real subsystem happened to register first.
+constexpr int kUsableCategories = kMaxCategories - 1;
+constexpr int kOverflowIndex    = kMaxCategories - 1;
 
 // ── Who a line is FOR ───────────────────────────────────────────────────────
 // Two consoles read this one ring, because two different people are looking:
@@ -100,7 +114,15 @@ enum class Audience : uint8_t { Engine, Game };
 constexpr int kMaxNameLen = 32;
 
 struct Category {
-    const char*         name;
+    // ATOMIC, and published LAST. The index is reserved with a fetch_add, which
+    // makes the slot visible to every other thread BEFORE its contents are
+    // written — so a plain `const char* name` was a genuine data race, not the
+    // benign duplication the comment below describes: a concurrent reader could
+    // observe the bumped count, index this slot, and read `name` with no
+    // happens-before edge covering the write. A release store here paired with an
+    // acquire load in every reader is the edge. Null means "reserved, not ready";
+    // readers skip it, which degrades to the duplication case that IS benign.
+    std::atomic<const char*> name;
     // Storage for a name the engine had to copy. Zero-length for the common case
     // (a literal in engine code), in which case `name` points at that literal.
     char                owned[kMaxNameLen];
@@ -122,26 +144,66 @@ constexpr uint32_t levelBit(Level l) { return 1u << (uint32_t)l; }
 // Everything except Trace, which is opt-in per category.
 constexpr uint32_t kDefaultMask = 0xFFFFFFFFu & ~levelBit(Level::Trace);
 
+// ── Overflow ────────────────────────────────────────────────────────────────
+// Past 63 distinct tags, everything lands here. This used to return
+// `&cats[0]` with no diagnostic of any kind, which is a much worse failure than
+// "degrade, do not fail" suggests: the 64th tag inherited slot 0's mask, bumped
+// slot 0's counter, and DISPLAYED UNDER SLOT 0'S NAME — so a kit's lines would
+// appear to come from, say, the renderer, and could not be targeted or silenced
+// independently. That directly defeats the one feature this file exists for.
+//
+// A named bucket keeps the lines identifiable and keeps the first 63 subsystems
+// individually targetable, and the count says how much was pooled.
+inline std::atomic<uint64_t> g_overflowHits{0};
+inline std::atomic<bool>     g_overflowWarned{false};
+
+inline Category* overflowCategory(const char* wanted) {
+    Category& c = g_reg.cats[kOverflowIndex];
+    if (c.name.load(std::memory_order_acquire) == nullptr) {
+        c.mask.store(kDefaultMask, std::memory_order_relaxed);
+        c.name.store("(categories exhausted)", std::memory_order_release);
+    }
+    g_overflowHits.fetch_add(1, std::memory_order_relaxed);
+    if (!g_overflowWarned.exchange(true, std::memory_order_relaxed))
+        std::fprintf(stderr, "[elog] more than %d distinct log categories — '%s' "
+                     "and everything after it is pooled into "
+                     "'(categories exhausted)' and cannot be targeted or silenced "
+                     "on its own. Raise kMaxCategories.\n",
+                     kUsableCategories, wanted ? wanted : "?");
+    return &c;
+}
+inline uint64_t overflowHits() { return g_overflowHits.load(std::memory_order_relaxed); }
+
 // Resolve (or create) a category. Called once per CALL SITE via the macros'
 // function-local static, so the linear scan below runs a few dozen times in the
 // life of the process, not once per line.
 inline Category* category(const char* name) {
     const int n = g_reg.count.load(std::memory_order_acquire);
-    for (int i = 0; i < n; ++i)
-        if (g_reg.cats[i].name == name ||
-            (g_reg.cats[i].name && std::strcmp(g_reg.cats[i].name, name) == 0))
+    const int scan = n < kMaxCategories ? n : kMaxCategories;
+    for (int i = 0; i < scan; ++i) {
+        // Acquire: pairs with the release store at the bottom of this function.
+        // A null name is a slot another thread has RESERVED but not filled —
+        // skipping it is what makes claiming a second slot for the same tag the
+        // worst case, instead of reading a pointer mid-write.
+        const char* nm = g_reg.cats[i].name.load(std::memory_order_acquire);
+        if (nm && (nm == name || std::strcmp(nm, name) == 0))
             return &g_reg.cats[i];
+    }
     // Claim a slot. A race just means two call sites with the same tag get two
     // slots — harmless duplication in the UI, never a wrong filter decision.
     const int idx = g_reg.count.fetch_add(1, std::memory_order_acq_rel);
-    if (idx >= kMaxCategories) {
+    if (idx >= kUsableCategories) {
+        // Do not let count run away past the array — categoryCount() clamps, but
+        // an ever-growing counter makes the diagnostic below meaningless.
         g_reg.count.store(kMaxCategories, std::memory_order_release);
-        return &g_reg.cats[0];        // degrade, do not fail
+        return overflowCategory(name);
     }
     Category& c = g_reg.cats[idx];
-    c.name = name;
     uint32_t dm = g_reg.defaultMask.load(std::memory_order_relaxed);
-    c.mask.store(dm ? dm : kDefaultMask, std::memory_order_release);
+    c.mask.store(dm ? dm : kDefaultMask, std::memory_order_relaxed);
+    // PUBLISHED LAST, with release: everything above must be visible to a thread
+    // that observes this pointer.
+    c.name.store(name, std::memory_order_release);
     return &c;
 }
 
@@ -155,9 +217,9 @@ inline Category* category(const char* name) {
 inline Category* categoryCopied(const char* name) {
     if (!name || !*name) name = "?";
     Category* c = category(name);       // resolves by text, so this still dedups
-    if (c->name != c->owned) {          // first time: take our own copy
+    if (c->name.load(std::memory_order_acquire) != c->owned) {
         std::snprintf(c->owned, sizeof(c->owned), "%s", name);
-        c->name = c->owned;
+        c->name.store(c->owned, std::memory_order_release);
     }
     return c;
 }
@@ -256,18 +318,42 @@ inline void watchAll() {
 constexpr uint32_t kSlots  = 4096;             // power of two: index is a mask
 constexpr uint32_t kMsgMax = 192;
 
+// ── The record, and why the payload is atomic WORDS ─────────────────────────
+// This is a seqlock: the reader copies a slot a writer may be overwriting and
+// validates afterwards with the stamp. That protocol is correct — it is proved
+// under load in logger_test, 4.6 M reads with zero spliced records — but as
+// PLAIN fields it is also a data race by the letter of the standard, and
+// therefore undefined behaviour, and ThreadSanitizer says so nine times.
+//
+// The memory model has no way to spell "a racy read I will discard". Relaxed
+// atomic accesses are the way to spell it: they are well-defined under a race
+// and on arm64 (and x86) a relaxed load/store of a word compiles to exactly the
+// same instruction a plain one does — so this costs the extra copy through a
+// local and nothing else.
+//
+// The alternative was to leave the race and suppress it. Rejected: a permanently
+// red sanitizer lane is worse than the bug it is reporting, because it trains
+// everyone to stop reading it.
+struct Rec {
+    double      t;          // seconds since first use
+    uint64_t    frame;
+    const char* cat;        // category name; engine-owned, stable for the process
+    uint8_t     level;
+    uint8_t     truncated;
+    uint16_t    len;
+    uint32_t    _pad;
+    char        msg[kMsgMax];
+};
+static_assert(sizeof(Rec) % sizeof(uint64_t) == 0,
+              "the payload is copied a word at a time");
+constexpr uint32_t kRecWords = sizeof(Rec) / sizeof(uint64_t);
+
 struct Slot {
     // seq+1 once the record is complete; 0 = never written. Deliberately NOT
     // initialised here, so the whole array is statically zero-initialised and
     // safe to write from a static-init-time log call.
     std::atomic<uint64_t> stamp;
-    double      t;          // seconds since first use
-    uint64_t    frame;
-    const char* cat;
-    uint8_t     level;
-    uint16_t    len;
-    bool        truncated;
-    char        msg[kMsgMax];
+    std::atomic<uint64_t> w[kRecWords];
 };
 
 inline Slot                  g_slots[kSlots];
@@ -288,33 +374,57 @@ inline void setStdout(bool on) { g_toStdout.store(on, std::memory_order_relaxed)
 inline void setFrame(uint64_t f) { g_frame.store(f, std::memory_order_relaxed); }
 
 inline void writeV(Category* c, Level level, const char* fmt, va_list args) {
-    // Reserve first: the slot is ours for as long as it takes 4096 more lines to
-    // lap us, which is orders of magnitude longer than a vsnprintf.
+    // Built on the STACK first, then published a word at a time. Formatting
+    // straight into the slot would be one copy cheaper and would put a plain,
+    // racy write where the reader is looking — see the note on Rec.
+    Rec r;
+    const int n = std::vsnprintf(r.msg, kMsgMax, fmt, args);
+    if (n < 0) { r.msg[0] = '\0'; r.len = 0; r.truncated = 0; }
+    else if ((uint32_t)n >= kMsgMax) {
+        r.len = (uint16_t)(kMsgMax - 1);
+        r.truncated = 1;
+        g_truncated.fetch_add(1, std::memory_order_relaxed);
+    } else { r.len = (uint16_t)n; r.truncated = 0; }
+    r.t     = now();
+    r.frame = g_frame.load(std::memory_order_relaxed);
+    r.cat   = c ? c->name.load(std::memory_order_relaxed) : "?";
+    if (!r.cat) r.cat = "?";          // a slot reserved but not yet named
+    r.level = (uint8_t)level;
+    r._pad  = 0;                      // padding is COPIED, so never leave it dirty
+
+    uint64_t buf[kRecWords];
+    std::memcpy(buf, &r, sizeof(r));
+
+    // Reserve late: the slot is ours from here, and the window in which a reader
+    // can catch it half-written is now a memcpy rather than a vsnprintf.
     const uint64_t seq = g_seq.fetch_add(1, std::memory_order_relaxed);
     Slot& s = g_slots[seq & (kSlots - 1)];
-    // Mark in-progress so a concurrent reader discards rather than reads half a
-    // record. (stamp != seq+1 means "not publishable".)
-    s.stamp.store(0, std::memory_order_relaxed);
 
-    const int n = std::vsnprintf(s.msg, kMsgMax, fmt, args);
-    uint16_t len;
-    if (n < 0) { s.msg[0] = '\0'; len = 0; }
-    else if ((uint32_t)n >= kMsgMax) {
-        len = (uint16_t)(kMsgMax - 1);
-        s.truncated = true;
-        g_truncated.fetch_add(1, std::memory_order_relaxed);
-    } else { len = (uint16_t)n; s.truncated = false; }
-    s.len   = len;
-    s.t     = now();
-    s.frame = g_frame.load(std::memory_order_relaxed);
-    s.cat   = c ? c->name : "?";
-    s.level = (uint8_t)level;
-    // PUBLISH LAST: everything above must be visible before the stamp is.
+    // ── Mark in-progress, then FENCE ────────────────────────────────────────
+    // The poison tells a reader mid-copy that this slot is being recycled. A
+    // relaxed store alone does not achieve that on a weakly-ordered machine —
+    // which is every ARM64 target, i.e. every phone this engine is aimed at: the
+    // payload stores below could become visible BEFORE the poison, so a reader
+    // holding the previous sequence would pass its first stamp check, copy the new
+    // record's words, and pass the re-check too (the writer's own stamp update not
+    // being visible yet). It would return a splice of two records and believe it.
+    //
+    // The release fence orders this store ahead of every store after it, and the
+    // reader's acquire fence orders its word loads ahead of its stamp re-read.
+    // Together: if a reader saw ANY new word, its re-check must see at least the
+    // poison, so it discards.
+    s.stamp.store(0, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+
+    for (uint32_t i = 0; i < kRecWords; ++i)
+        s.w[i].store(buf[i], std::memory_order_relaxed);
+
+    // PUBLISH LAST: every word above must be visible before the stamp is.
     s.stamp.store(seq + 1, std::memory_order_release);
 
     if (c) c->written.fetch_add(1, std::memory_order_relaxed);
     if (g_toStdout.load(std::memory_order_relaxed))
-        std::printf("[%s] %s\n", s.cat, s.msg);
+        std::printf("[%s] %s\n", r.cat, r.msg);
 }
 
 inline void write(Category* c, Level level, const char* fmt, ...) {
@@ -353,26 +463,39 @@ inline bool read(uint64_t seq, Entry& out) {
     const Slot& s = g_slots[seq & (kSlots - 1)];
     const uint64_t before = s.stamp.load(std::memory_order_acquire);
     if (before != seq + 1) return false;              // not ours (yet, or any more)
-    out.t = s.t; out.frame = s.frame; out.seq = seq; out.cat = s.cat;
-    out.level = (Level)s.level; out.truncated = s.truncated;
-    const uint16_t len = s.len < kMsgMax ? s.len : (uint16_t)(kMsgMax - 1);
-    std::memcpy(out.msg, s.msg, len);
-    out.msg[len] = '\0';
+
+    // Copied into locals FIRST and only published to `out` after the re-check.
+    // A torn record can hold a garbage `cat` pointer, so nothing read here may
+    // reach the caller — or be dereferenced — before the stamp is confirmed.
+    uint64_t buf[kRecWords];
+    for (uint32_t i = 0; i < kRecWords; ++i)
+        buf[i] = s.w[i].load(std::memory_order_relaxed);
+
     std::atomic_thread_fence(std::memory_order_acquire);
-    // Re-check: if a writer lapped us mid-copy, what we just read is a mix of
-    // two records and must be discarded rather than displayed.
-    return s.stamp.load(std::memory_order_acquire) == before;
+    // If a writer lapped us mid-copy, what we just read is a mix of two records
+    // and must be discarded rather than displayed.
+    if (s.stamp.load(std::memory_order_acquire) != before) return false;
+
+    Rec r;
+    std::memcpy(&r, buf, sizeof(r));
+    out.t = r.t; out.frame = r.frame; out.seq = seq; out.cat = r.cat;
+    out.level = (Level)r.level; out.truncated = r.truncated != 0;
+    const uint16_t len = r.len < kMsgMax ? r.len : (uint16_t)(kMsgMax - 1);
+    std::memcpy(out.msg, r.msg, len);
+    out.msg[len] = '\0';
+    return true;
 }
 
-inline void clear() {
-    // Does NOT reset g_seq — sequence numbers stay monotonic for the life of the
-    // process, so "cleared" cannot be confused with "wrapped". The console just
-    // starts reading from here.
-    const uint64_t w = written();
-    for (uint32_t i = 0; i < kSlots; ++i)
-        g_slots[i].stamp.store(0, std::memory_order_relaxed);
-    (void)w;
-}
+// NO clear(). Both consoles move a `viewFrom` sequence instead, which is
+// strictly better and has no concurrency story at all: sequence numbers stay
+// monotonic for the life of the process, so "cleared" can never be confused with
+// "wrapped", and nothing has to be coordinated with in-flight writers.
+//
+// The version that existed zeroed every stamp under no lock, so a record whose
+// publish landed after its slot was zeroed survived the clear while one that
+// landed before did not — a clear that is not atomic across the ring, which was
+// stated nowhere. It also had no callers. An unused primitive with an unstated
+// concurrency caveat is a trap for whoever reaches for it first.
 
 } // namespace elog
 

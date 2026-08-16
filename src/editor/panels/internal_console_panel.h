@@ -96,11 +96,12 @@ inline void drawInternalConsolePanel(bool* open) {
             const int n = elog::categoryCount();
             for (int i = 0; i < n; ++i) {
                 elog::Category& c = elog::categoryAt(i);
-                if (!c.name) continue;
+                const char* cname = c.name.load(std::memory_order_acquire);
+                if (!cname) continue;
                 ImGui::PushID(i);
                 ImGui::TableNextRow();
 
-                ImGui::TableNextColumn(); ImGui::TextUnformatted(c.name);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(cname);
                 ImGui::TableNextColumn();
                 ImGui::TextDisabled(elog::audienceOf(c) == elog::Audience::Game
                                     ? "game" : "engine");

@@ -183,6 +183,67 @@ int main() {
         CHECK(wellFormed, "no record read back is a splice of two writers");
     }
 
+    // ── A reader running WHILE writers write ────────────────────────────────
+    // The section above joins every writer before reading, so it never exercised
+    // the path the stamp protocol exists for: a console draining the ring while
+    // the engine logs into it. That is the case the in-progress poison and its
+    // release fence are for, and it has to be in the test or those fixes are
+    // asserted by comment only.
+    //
+    // What is checked is the PROTOCOL's guarantee, which is not "every line is
+    // readable" — a fast writer legitimately laps a reader — but "anything read
+    // is a whole record from one writer". A splice would show up as a message
+    // that does not parse.
+    {
+        constexpr int kThreads = 6, kEach = 20000;
+        std::atomic<bool> stop{false};
+        std::atomic<uint64_t> readOk{0}, readSkipped{0}, spliced{0};
+
+        std::vector<std::thread> writers;
+        for (int k = 0; k < kThreads; ++k) writers.emplace_back([k] {
+            for (int i = 0; i < kEach; ++i) LOG_INFO("TestRace", "w%d %d", k, i);
+        });
+        std::thread reader([&] {
+            elog::Entry e;
+            while (!stop.load(std::memory_order_relaxed)) {
+                const uint64_t total = elog::written();
+                const uint64_t from  = total > 64 ? total - 64 : 0;
+                for (uint64_t s2 = from; s2 < total; ++s2) {
+                    if (!elog::read(s2, e)) { readSkipped.fetch_add(1); continue; }
+                    readOk.fetch_add(1);
+                    if (e.cat && std::strcmp(e.cat, "TestRace") == 0) {
+                        int tid = -1, line = -1;
+                        if (std::sscanf(e.msg, "w%d %d", &tid, &line) != 2 ||
+                            tid < 0 || tid >= kThreads || line < 0 || line >= kEach)
+                            spliced.fetch_add(1);
+                    }
+                }
+            }
+        });
+        for (auto& t : writers) t.join();
+        stop.store(true, std::memory_order_relaxed);
+        reader.join();
+
+        CHECK(readOk.load() > 0,
+              "the concurrent reader actually read records (%llu ok, %llu skipped)",
+              (unsigned long long)readOk.load(),
+              (unsigned long long)readSkipped.load());
+        // Skipping is PERMITTED, not required — asserting it happens would pin an
+        // implementation artifact rather than the contract. An earlier draft did
+        // assert it and started failing the moment the writer got faster: the
+        // sequence is now reserved AFTER formatting, so the window in which a
+        // reader can catch a slot mid-write is a memcpy rather than a vsnprintf,
+        // and the reader stopped losing races it used to lose. The refusal logic
+        // itself is covered deterministically by the ring-wrap section above.
+        std::printf("  note  reader skipped %llu of %llu (0 is fine — it means the "
+                    "write window is narrow)\n",
+                    (unsigned long long)readSkipped.load(),
+                    (unsigned long long)(readOk.load() + readSkipped.load()));
+        CHECK(spliced.load() == 0,
+              "and not one record it accepted was a splice of two writers (%llu)",
+              (unsigned long long)spliced.load());
+    }
+
     // ── AUDIENCE: two consoles, one ring ────────────────────────────────────
     // The game console shows game-facing categories plus warnings and errors
     // from EVERYWHERE; the internal console shows the machinery. The asymmetry is
@@ -232,6 +293,70 @@ int main() {
               "'Scene' is game-facing");
         CHECK(elog::audienceOf(*elog::category("Renderer")) == elog::Audience::Engine,
               "'Renderer' is NOT — it is machinery");
+    }
+
+    // ── Category OVERFLOW is visible, not a silent merge ────────────────────
+    // Past the usable capacity this used to return &cats[0], so the 64th tag
+    // inherited slot 0's mask, bumped slot 0's counter and displayed under slot
+    // 0's NAME — a kit's lines appearing to come from the renderer, untargetable
+    // and unsilenceable. That defeats the one feature this file exists for, and
+    // nothing reported it. Kept last in this file because it exhausts the
+    // registry for the rest of the process.
+    {
+        elog::Category* first = &elog::categoryAt(0);
+        const char* firstName = first->name.load();
+        const uint64_t firstLines = first->written.load();
+
+        char names[80][16];
+        elog::Category* cats[80];
+        for (int i = 0; i < 80; ++i) {
+            std::snprintf(names[i], sizeof(names[i]), "Fill%02d", i);
+            cats[i] = elog::category(names[i]);
+        }
+
+        CHECK(elog::overflowHits() > 0,
+              "overflow is COUNTED (%llu), not silent",
+              (unsigned long long)elog::overflowHits());
+
+        // The decisive property: an overflowed tag must not impersonate a real
+        // subsystem. It lands in a bucket that says what it is.
+        elog::Category* over = cats[79];
+        const char* overName = over->name.load();
+        CHECK(over != first,
+              "an overflowed category is NOT slot 0 — it cannot impersonate the "
+              "first subsystem that ever registered ('%s')",
+              firstName ? firstName : "?");
+        CHECK(overName && std::strstr(overName, "exhausted") != nullptr,
+              "it lands in a bucket that names itself ('%s')",
+              overName ? overName : "<null>");
+
+        // And slot 0 is untouched: same name, and its line count did not absorb
+        // anybody else's writes.
+        CHECK(first->name.load() == firstName, "slot 0 kept its own name");
+        elog::write(over, elog::Level::Info, "overflowed line");
+        CHECK(first->written.load() == firstLines,
+              "and slot 0's counter did not absorb the overflowed write "
+              "(%llu, was %llu)", (unsigned long long)first->written.load(),
+              (unsigned long long)firstLines);
+
+        // Everything up to the usable limit is still independently targetable —
+        // that is what the reserved bucket buys.
+        elog::Category* mid = cats[10];
+        elog::setLevel(*mid, elog::Level::Info, false);
+        CHECK(!elog::enabled(mid, elog::Level::Info) &&
+              elog::enabled(cats[11], elog::Level::Info),
+              "a category below the limit is silenced ALONE");
+        elog::setLevel(*mid, elog::Level::Info, true);
+
+        // Every registered name must be non-null: a reader observing the count
+        // must never see a reserved-but-unnamed slot as a live category. (The
+        // race this guards is a real one, and only a TSan run can prove the
+        // ordering — see the header. This at least pins the invariant.)
+        bool allNamed = true;
+        const int n = elog::categoryCount();
+        for (int i = 0; i < n; ++i)
+            if (!elog::categoryAt(i).name.load()) allNamed = false;
+        CHECK(allNamed, "every slot the count exposes has a published name");
     }
 
     if (g_failures) {

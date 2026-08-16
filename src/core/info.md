@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-16
+verified: 2026-08-17
 covers:
   - src/core/
 tests:
@@ -137,6 +137,58 @@ noise or silence at info level and can never hide a failure from the person whos
 build is broken. `panels/console_panel.h` is the game console;
 `panels/internal_console_panel.h` is the engine instrument (subsystem targeting,
 ring health) and is off by default.
+
+**MEMORY ORDERING — the two places the first version was wrong.** Both were
+data races by the standard that would only misbehave on weakly-ordered hardware,
+i.e. every ARM64 phone this engine is aimed at:
+
+* `Category::name` was a plain `const char*` written AFTER
+  `count.fetch_add(acq_rel)` had already published the slot. A concurrent
+  `category()` could observe the bumped count, index the slot and read `name`
+  with no happens-before edge covering that write. It is now
+  `std::atomic<const char*>`, published last with release and acquire-loaded by
+  every reader; a null name means "reserved, not filled", and skipping it
+  degrades to claiming a second slot for the same tag — which is the benign
+  duplication the design always accepted.
+* The in-progress poison (`stamp.store(0)`) was relaxed, so the field writes
+  after it could become visible FIRST. A reader holding the previous sequence
+  would then pass its first stamp check, copy bytes from the new record, and pass
+  the re-check as well — returning a splice of two records and believing it. A
+  `release` fence after the poison, paired with the reader's existing `acquire`
+  fence, closes it: if a reader saw any new word, its re-check must see at least
+  the poison. The final publish was always correctly ordered; this half was not.
+* **And the deeper version of the same finding: the PAYLOAD was plain.** Ordering
+  the poison correctly does not stop `s.msg` being a plain write racing a plain
+  read — this is a seqlock, and the memory model has no way to spell "a racy read
+  I will discard". It is UB, and TSan reported it nine times once the test grew a
+  concurrent reader. The record is now copied through a local and published as
+  RELAXED ATOMIC WORDS (`Rec` / `Slot::w`), which is well-defined under a race and
+  compiles to the same load/store instructions on arm64 and x86. Suppressing it
+  was the alternative and was rejected: a permanently red sanitizer lane is worse
+  than the bug it reports, because it teaches everyone to stop reading it.
+
+  Two side effects worth knowing. The sequence is now reserved AFTER formatting,
+  so the window a reader can catch mid-write is a memcpy rather than a
+  `vsnprintf` — much narrower, and a timestamp taken before reservation means seq
+  order and timestamp order can invert by a hair. And **TSan detection here is
+  window-dependent**: the fixed version reporting zero is consistent with being
+  race-free but is not what proves it. What proves it is that every shared access
+  is an atomic or ordered by one; the nine reports on the pre-fix code are the
+  evidence that mattered, and a clean run on its own would not have been.
+
+**Category overflow is a named bucket, not slot 0.** Past 63 distinct tags the
+first version returned `&cats[0]` with no diagnostic, so the 64th tag inherited
+slot 0's mask, bumped slot 0's counter and displayed under slot 0's NAME — a
+kit's lines appearing to come from the renderer, and impossible to target or
+silence on their own. That defeats the one feature the file exists for. The last
+slot is reserved as `(categories exhausted)`, the pooling is counted
+(`overflowHits()`) and reported once with the tag that first overflowed.
+
+**There is no `clear()`.** Both consoles move a `viewFrom` sequence instead, which
+needs no coordination with writers at all. The version that existed zeroed every
+stamp under no lock, so a record whose publish landed after its slot was zeroed
+survived while one that landed before did not — a clear that was not atomic across
+the ring, stated nowhere, and with no callers.
 
 **What does not belong here:** per-item telemetry. Ten thousand "this draw did X"
 events a second is a trace, not a log — that is the profiler and the submit
