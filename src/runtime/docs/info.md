@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-10
+verified: 2026-08-11
 parses-external-input: true
 covers:
   - src/runtime/
@@ -142,19 +142,33 @@ required.
       only: a job handle crossing a module boundary means the module owns a
       lifetime the host allocated, and a kit unloaded mid-job takes the process
       with it. Async can be appended in v2, which is what per-group versioning
-      is for.
+      is for. `onMain` defers to the main thread, and its queue is DRAINED
+      (`jobs::drainMain`) immediately before kits are dlclosed and before plugins
+      detach — a queued callback is a function pointer into a dylib, so one left
+      pending when that library unmaps is a jump into freed code the next time the
+      frame loop pumps.
     - `memory` — tagged heaps plus the frame arena, so kit allocations are
       visible to the budget telemetry instead of hiding in malloc. `frameAlloc`
-      REFUSES anything larger than the arena rather than passing it through:
-      `FrameArena` spills to the heap on overflow, which suits engine code that
-      overshoots slightly and is wrong for a module that can ask for anything.
-    - `drawSubmit` — geometry with no entity and no component, cleared at the
-      frame flip. The primitive for a renderer-facing system the engine never
-      modelled. Bound to the renderer at boot and UNBOUND at shutdown, or a kit
-      ticking late would submit into a destroyed one.
+      REFUSES anything the arena cannot serve FROM WHAT REMAINS, not merely
+      anything larger than the arena: `FrameArena` spills to the heap on overflow,
+      which suits engine code that overshoots slightly and is wrong for a module
+      that can ask for anything. Checking total capacity let a request that fits
+      an empty arena through against a nearly full one, which is the spill the
+      guard exists to prevent.
+    - `drawSubmit` — geometry with no entity and no component, reset once per
+      frame by `Renderer::endFrame()`. The primitive for a renderer-facing system
+      the engine never modelled. Bound to the renderer at boot and UNBOUND at
+      shutdown, or a kit ticking late would submit into a destroyed one.
+      THREAD-SAFE, because the tier also ships a job pool and the intended use is
+      a kit's particle system; capped at 1 024 submissions a frame, because the
+      list is filled by code the engine does not own.
+      The reset is deliberately NOT in `Renderer::frame()`: that flips bgfx, so the
+      runtime calls it only with a window, while the binding is unconditional — and
+      a headless server therefore accumulated every submission for the life of the
+      process, ~480 KB/s at 100 a tick, drawn by nobody.
   All three are published unconditionally, including headless: `drawSubmit`
-  no-ops without a renderer rather than going absent, so a kit that draws runs
-  unchanged on a dedicated server instead of branching on capability.
+  accepts and discards without a renderer rather than going absent, so a kit that
+  draws runs unchanged on a dedicated server instead of branching on capability.
 - **`AsyncLoader`** (`async_loader.h/.cpp`) — legacy import path used by the
   editor for source-format assets (FBX via Assimp etc.).
 - **Input** (`input_system.h`, `input_map.h`) — polled GLFW state with

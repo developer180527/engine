@@ -173,6 +173,88 @@ int main() {
         delete v;
     }
 
+    // ── A shrinking LARGE realloc must correct the accounting ───────────────
+    // Large blocks are charged at the REQUESTED size, and the in-place shrink
+    // path used to return without updating it — so stats over-reported until the
+    // free, and allocSize() claimed more than the caller owned. Pool blocks are
+    // charged at tlsf_block_size() and must NOT change, so both are asserted:
+    // the fix has to touch one and leave the other alone.
+    {
+        const uint64_t live0 = mem::stats(mem::Tag::Core).currentBytes;
+        void* big = mem::alloc(4u << 20, 8, mem::Tag::Core);        // large: 4 MB
+        CHECK(big && mem::allocSize(big) == (4u << 20),
+              "a 4 MB block reports its requested size (%zu)", mem::allocSize(big));
+        const uint64_t liveBig = mem::stats(mem::Tag::Core).currentBytes;
+        CHECK(liveBig >= live0 + (4u << 20), "and is charged to the tag");
+
+        void* small = mem::realloc(big, 1u << 20);                 // shrink to 1 MB
+        CHECK(small == big, "a large shrink keeps the block in place");
+        CHECK(mem::allocSize(small) == (1u << 20),
+              "allocSize follows the shrink (%zu, expected %u)",
+              mem::allocSize(small), 1u << 20);
+        CHECK(mem::stats(mem::Tag::Core).currentBytes <= liveBig - (3u << 20),
+              "and the tag is credited the 3 MB given back (%llu -> %llu)",
+              (unsigned long long)liveBig,
+              (unsigned long long)mem::stats(mem::Tag::Core).currentBytes);
+        mem::free(small);
+        CHECK(mem::stats(mem::Tag::Core).currentBytes == live0,
+              "a shrink then free balances exactly, with no double-credit (%llu vs %llu)",
+              (unsigned long long)mem::stats(mem::Tag::Core).currentBytes,
+              (unsigned long long)live0);
+
+        // The pool case, which must be left alone: same block, same accounting.
+        const uint64_t poolBefore = mem::stats(mem::Tag::Core).currentBytes;
+        void* a = mem::alloc(4096, 8, mem::Tag::Core);
+        const uint64_t withA = mem::stats(mem::Tag::Core).currentBytes;
+        void* b = mem::realloc(a, 64);
+        CHECK(b == a && mem::stats(mem::Tag::Core).currentBytes == withA,
+              "a POOL shrink changes nothing: TLSF still holds the same block");
+        mem::free(b);
+        CHECK(mem::stats(mem::Tag::Core).currentBytes == poolBefore,
+              "and it still balances on free");
+    }
+
+    // ── A non-power-of-two alignment is REFUSED, not masked ─────────────────
+    // Reachable from outside the engine: engineMemAlloc forwards a kit's align
+    // straight through. The masks in the allocator are only correct for powers of
+    // two, and a bad one can hand back a pointer overlapping its own header.
+    {
+        CHECK(mem::alloc(64, 24, mem::Tag::Core) == nullptr,
+              "align=24 is refused");
+        CHECK(mem::alloc(64, 3, mem::Tag::Core) == nullptr, "align=3 is refused");
+        void* ok = mem::alloc(64, 64, mem::Tag::Core);
+        CHECK(ok && ((uintptr_t)ok % 64) == 0,
+              "...while a real power of two still works and is aligned");
+        mem::free(ok);
+    }
+
+    // ── MEM_SCOPE deeper than the stack must not corrupt OUTER scopes ────────
+    // A dropped push used to leave the matching pop consuming an outer frame, so
+    // every allocation in the ENCLOSING scope was misattributed from then on —
+    // the imbalance propagated outward and the last pop clamped at zero, hiding
+    // it. Nest past the limit and assert the tag we come back to.
+    {
+        MEM_SCOPE(mem::Tag::Assets);
+        CHECK(mem::currentTag() == mem::Tag::Assets, "outer scope is Assets");
+        {
+            // 40 levels against a 16-deep stack: 24 pushes get dropped.
+            struct Nest {
+                static void go(int depth) {
+                    if (depth == 0) return;
+                    MEM_SCOPE(mem::Tag::Physics);
+                    go(depth - 1);
+                }
+            };
+            Nest::go(40);
+        }
+        CHECK(mem::currentTag() == mem::Tag::Assets,
+              "after 40 nested scopes unwind, the OUTER tag is intact (got '%s')",
+              mem::tagName(mem::currentTag()));
+        void* p = mem::alloc(128, 8);
+        CHECK(mem::owns(p), "and allocation still works in the restored scope");
+        mem::free(p);
+    }
+
     mem::logStats("mem_test end");
     if (g_failures) {
         std::printf("mem_test: FAIL — %d failure(s)\n", g_failures);

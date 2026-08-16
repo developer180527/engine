@@ -4,12 +4,27 @@
 // Tagged heaps over a 2MB-block OS backend. The design goal is the same as
 // engine::jobs: the OS is a boot/growth-time concern, never a frame concern.
 //
-//   Layer 0  Block backend — 2MB-ALIGNED regions mmap'd on heap growth and
-//            NEVER returned to the OS until process exit (recycled through a
-//            free list). Alignment is the whole trick: for any pointer we
-//            own, `ptr & ~(2MB-1)` is its block base, where a header names
-//            the owning heap — O(1) provenance with zero per-allocation
-//            metadata of our own.
+//   Layer 0  Block backend — 2MB-ALIGNED regions mmap'd on heap growth.
+//            Alignment is the whole trick: for any pointer we own,
+//            `ptr & ~(2MB-1)` is its block base, where a header names the
+//            owning heap — O(1) provenance with zero per-allocation metadata
+//            of our own.
+//
+//            POOL BLOCKS ARE NEVER RETURNED, AND NEVER RECYCLED AS BLOCKS.
+//            This used to say "recycled through a free list"; there is no such
+//            list. TLSF reuses memory WITHIN its pools, but a 2MB block, once
+//            mapped into a shard, stays mapped and stays in that shard's pool
+//            list for the life of the process. Two consequences worth knowing
+//            before you budget against these numbers:
+//              * committed memory is the historical HIGH-WATER of every
+//                (tag, shard) pair, not the current live set. A tag that
+//                spiked once holds that peak forever.
+//              * pools are striped kShards ways, so a tag allocated from by
+//                many threads holds up to kShards separate 2MB blocks even
+//                when very little is live.
+//            Large blocks (>= ~1MB) ARE unmapped on free — they own their
+//            mapping outright. See docs/architecture/platform-efficiency.md:
+//            on a phone this is a survival question, not a tidiness one.
 //   Layer 1  TagHeap per Tag — a TLSF allocator (third_party/tlsf: O(1)
 //            malloc/free, bounded fragmentation, the industry embedded/game
 //            standard) growing 2MB at a time. Allocations >= ~1MB bypass

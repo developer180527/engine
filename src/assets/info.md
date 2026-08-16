@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-10
+verified: 2026-08-11
 parses-external-input: true
 covers:
   - src/assets/
@@ -73,7 +73,13 @@ format / scheduling).
 - `TextureCooker` — stb decode → block-compressed texels + mips via
   `texture_encode` (vendored rgbcx/bc7enc: ~200ms per 4K BC1, BC7 final
   bake seconds not minutes; encoder TUs pinned to -O2 even in Debug).
-- `SceneCooker` — scene JSON → binary for SceneService.
+- `SceneCooker` — scene JSON → binary for SceneService. Every read goes through
+  `core/json_read.h`, not `nlohmann`'s own accessors: the const
+  `operator[](size_type)` is UNCHECKED (`"position": []` indexes an empty vector)
+  and `value(key, default)` THROWS on a key present with the wrong type, while the
+  only try/catch here wraps the parse — so `"id": "3"` escaped the cooker onto
+  CookService's background thread. A hand-editable file read by an unattended
+  cooker gets the bounds- and type-safe accessors, always.
 - `CookService` — drives the pipeline: background thread in the editor
   (`start()`, WAL SQLite allows concurrent main-thread reads), synchronous
   `cookOnce()` for the engine_cook CLI. Assets AND scenes cook as ONE task

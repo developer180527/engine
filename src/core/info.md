@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-10
+verified: 2026-08-11
 covers:
   - src/core/
 tests:
@@ -82,3 +82,50 @@ include renderer, ECS, or editor headers.
 ## Rules
 - Keep this layer header-only and free of engine state; it should compile in
   a unit test with no GPU, no ECS, no filesystem.
+
+
+## The log ring (2026-08-11 rewrite)
+
+`logger.h` is `elog::` — a fixed-slot, lock-free ring. The old `Logger` cost
+**2.44 µs per line**, measured with stdout to `/dev/null` so terminal I/O was
+excluded, and the decomposition is the whole story:
+
+```
+vsnprintf only            0.157 us
++ printf to /dev/null     0.280 us  (+0.123)
++ mutex + vector shift    2.431 us  (+2.151)   <- 88% of the cost
+```
+
+It was a `std::vector<LogEntry>` doing `erase(begin())` at 1024: an O(n) shift of
+a thousand entries each holding two `std::string`s, plus two heap allocations per
+line. A thousand lines in a frame cost 2.4 ms.
+
+After, on the same machine:
+
+| | before | after |
+|---|---|---|
+| a recorded line | 2.437 µs | **0.163 µs** — essentially just the `vsnprintf` |
+| a line whose category is FILTERED | 2.437 µs | **0.0007 µs** |
+| console redraw | 24.9 µs for 1 024 records | 11.4 µs for **4 096** |
+| 8 threads writing | one mutex, one memmove each | 0.186 µs/line aggregate, lock-free |
+
+**The filtered number is the one that matters.** Per-subsystem targeting is only
+usable if the subsystems you are *not* watching cost nothing, and 0.7 ns is that.
+Each call site resolves its category once through a function-local static, then
+tests one relaxed atomic load — so the arguments are not even evaluated when
+suppressed. `elog::solo(cat)` streams one subsystem at every level and drops the
+rest to warnings and errors.
+
+**`elog`, not `log`:** a namespace named `log` makes every unqualified `log(x)`
+ambiguous against `::log` from `<cmath>`, which broke `third_party/imgui` as soon
+as both landed in one TU.
+
+**Loss is counted, not hidden.** `evicted()` is exact (written − slots) and the
+console shows it; a ring that silently omits the line you are hunting is worse
+than one that admits losing 1 342. Records carry a sequence stamp checked before
+and after the copy, so a reader that gets lapped mid-record discards it rather
+than displaying a splice of two writers.
+
+**What does not belong here:** per-item telemetry. Ten thousand "this draw did X"
+events a second is a trace, not a log — that is the profiler and the submit
+counters. `LOG_TRACE` compiles to nothing unless `ENGINE_LOG_TRACE` is defined.

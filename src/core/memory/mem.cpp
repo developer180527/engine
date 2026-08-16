@@ -193,26 +193,78 @@ inline size_t regHash(uintptr_t base) {
     return size_t(((base >> kBlockShift) * 0x9E3779B97F4A7C15ull) >> 49);
 }
 
-void regInsert(uintptr_t base) {
+// Live entries and tombstones, for the saturation guard below. Only mutated
+// under g_regMu; read without it for reporting, so relaxed is right.
+std::atomic<size_t> g_regLive{0}, g_regTombs{0};
+std::atomic<bool>   g_regSatWarned{false};
+
+// BOUNDED, because the unbounded version was an infinite loop the moment the
+// table filled — and it spun holding g_regMu, so every subsequent alloc and free
+// that touches the registry blocked behind it. A hang inside the allocator is the
+// worst shape this failure can take: no crash, no stack that names the cause.
+// Failing the insert instead turns 64 GB of live blocks into a refused allocation
+// with a message.
+bool regInsert(uintptr_t base) {
     ImmortalLock lk(g_regMu);
     size_t i = regHash(base);
-    for (;;) {
+    for (size_t probes = 0; probes < kRegSlots; ++probes) {
         uintptr_t v = g_registry[i].load(std::memory_order_relaxed);
         if (v == 0 || v == kTombstone) {
+            if (v == kTombstone) g_regTombs.fetch_sub(1, std::memory_order_relaxed);
             g_registry[i].store(base, std::memory_order_release);
-            return;
+            g_regLive.fetch_add(1, std::memory_order_relaxed);
+            return true;
         }
         i = (i + 1) & (kRegSlots - 1);
     }
+    std::fprintf(stderr, "[mem] block registry FULL (%zu slots, all live) — "
+                 "refusing to register %p. Allocation will fail; this is a %zu GB "
+                 "live-block ceiling, not a leak in the table.\n",
+                 kRegSlots, (void*)base, (kRegSlots * kBlockSize) >> 30);
+    return false;
 }
 
 void regErase(uintptr_t base) {
     ImmortalLock lk(g_regMu);
     size_t i = regHash(base);
-    for (;;) {
+    for (size_t probes = 0; probes < kRegSlots; ++probes) {
         uintptr_t v = g_registry[i].load(std::memory_order_relaxed);
         if (v == base) {
-            g_registry[i].store(kTombstone, std::memory_order_release);
+            // ── Write 0 rather than a tombstone WHEN THE NEXT SLOT IS 0 ──────
+            // Tombstones exist so a probe does not stop early at a deleted slot,
+            // and nothing ever cleaned them up: `regHas` only stops at 0, so as
+            // tombstones filled the table every MISS walked further, toward a
+            // full 32 768-slot scan. Misses are the foreign-pointer path in
+            // free()/realloc() — the hot path in exactly the mixed-allocator
+            // case this design exists to support.
+            //
+            // Clearing to 0 is safe precisely when the following slot is already
+            // 0: any key whose probe chain passes through here would have had to
+            // continue past that 0 to be inserted, which cannot have happened. So
+            // no present key becomes unreachable. Isolated entries — the common
+            // case for large allocations — cost no tombstone at all.
+            const size_t next = (i + 1) & (kRegSlots - 1);
+            const bool isolated =
+                g_registry[next].load(std::memory_order_relaxed) == 0;
+            g_registry[i].store(isolated ? 0 : kTombstone,
+                                std::memory_order_release);
+            g_regLive.fetch_sub(1, std::memory_order_relaxed);
+            if (!isolated) {
+                const size_t t = g_regTombs.fetch_add(1, std::memory_order_relaxed) + 1;
+                // A slope, not a cliff: probe length grows as the zero slots run
+                // out. Reported once so it is a number somebody can see rather
+                // than a mystery slowdown deep in free(). If this ever fires, the
+                // fix is a double-buffered rebuild (a table swap is safe for the
+                // lock-free readers; an in-place rehash is NOT).
+                if (t + g_regLive.load(std::memory_order_relaxed) > kRegSlots * 3 / 4
+                    && !g_regSatWarned.exchange(true))
+                    std::fprintf(stderr, "[mem] block registry is %zu%% saturated "
+                                 "(%zu live + %zu tombstones of %zu) — pointer "
+                                 "provenance lookups are getting longer. See "
+                                 "mem::logStats.\n",
+                                 (t + g_regLive.load()) * 100 / kRegSlots,
+                                 g_regLive.load(), t, kRegSlots);
+            }
             return;
         }
         if (v == 0) return;   // not present
@@ -249,10 +301,18 @@ struct Shard {
         h->magic = kMagic; h->tag = (uint8_t)tag; h->isLarge = 0;
         h->mapBytes = kBlockSize; h->userBytes = 0; h->shard = this;
         h->mapRaw = m.raw;
+        // REGISTER BEFORE PUBLISHING TO TLSF. If the registry refuses, a pool
+        // added here would hand out pointers that headerOf() cannot resolve —
+        // free() would route them to std::free() and corrupt the system heap.
+        // Better to drop the mapping and fail the growth.
+        if (!regInsert((uintptr_t)b)) {
+            g_mappedBytes.fetch_sub(kBlockSize, std::memory_order_relaxed);
+            unmapRegion(m.raw, kBlockSize);
+            return false;
+        }
         void* pool = (char*)b + kHeaderSize;
         if (!tlsf) tlsf = tlsf_create_with_pool(pool, kBlockSize - kHeaderSize);
         else       tlsf_add_pool(tlsf, pool, kBlockSize - kHeaderSize);
-        regInsert((uintptr_t)b);
         return true;
     }
     void*  allocate(Tag tag, size_t size, size_t align);   // needs heap() → below
@@ -281,6 +341,17 @@ struct TagHeap {
     void drop(uint64_t sz) {
         cur.fetch_sub(sz, std::memory_order_relaxed);
         frees.fetch_add(1, std::memory_order_relaxed);
+    }
+    // A block changed size in place — `cur` moves, the alloc/free counts must
+    // NOT. Using bump()/drop() here would invent an allocation and a free that
+    // never happened and make the counts useless for churn analysis.
+    void resized(uint64_t oldSz, uint64_t newSz) {
+        if (newSz == oldSz) return;
+        if (newSz < oldSz) { cur.fetch_sub(oldSz - newSz, std::memory_order_relaxed); return; }
+        const uint64_t c = cur.fetch_add(newSz - oldSz, std::memory_order_relaxed)
+                         + (newSz - oldSz);
+        uint64_t pk = peak.load(std::memory_order_relaxed);
+        while (c > pk && !peak.compare_exchange_weak(pk, c)) {}
     }
 };
 
@@ -320,6 +391,8 @@ void Shard::release(Tag tag, void* p) {
 constexpr int kScopeDepth = 16;
 thread_local Tag t_scopes[kScopeDepth];
 thread_local int t_scopeTop = 0;
+// Pushes that did not fit. pop() unwinds these BEFORE touching the real stack.
+thread_local int t_scopeDropped = 0;
 
 // ── Large allocations — dedicated aligned mappings ──────────────────────────
 void* largeAlloc(Tag tag, size_t size, size_t align) {
@@ -334,15 +407,22 @@ void* largeAlloc(Tag tag, size_t size, size_t align) {
     h->magic = kMagic; h->tag = (uint8_t)tag; h->isLarge = 1;
     h->mapBytes = total; h->userBytes = size; h->shard = nullptr;
     h->mapRaw = m.raw;
-    regInsert((uintptr_t)base);
+    if (!regInsert((uintptr_t)base)) {   // see Shard::grow for why this is fatal
+        g_mappedBytes.fetch_sub(total, std::memory_order_relaxed);
+        unmapRegion(m.raw, total);
+        return nullptr;
+    }
     heap(tag).bump(size);
     return (char*)base + offset;
 }
 
 void largeFree(BlockHeader* h) {
     TagHeap& th = heap((Tag)h->tag);
-    th.cur.fetch_sub(h->userBytes, std::memory_order_relaxed);
-    th.frees.fetch_add(1, std::memory_order_relaxed);
+    // drop(), not a hand-rolled fetch_sub pair: bump/drop are documented as the
+    // only two places `cur` moves, and this copy was equivalent only by accident.
+    // The first time drop() gains a step, the hand-rolled version silently stops
+    // matching it.
+    th.drop(h->userBytes);
     g_mappedBytes.fetch_sub(h->mapBytes, std::memory_order_relaxed);
     regErase((uintptr_t)h);
     // Read the reservation base BEFORE unmapping — the header lives inside
@@ -353,7 +433,27 @@ void largeFree(BlockHeader* h) {
 
 inline BlockHeader* headerOf(void* p) {
     const uintptr_t base = (uintptr_t)p & kBlockMask;
-    return regHas(base) ? (BlockHeader*)base : nullptr;
+    if (!regHas(base)) return nullptr;
+    auto* h = (BlockHeader*)base;
+    // ── magic was written and never read ────────────────────────────────────
+    // Provenance came entirely from regHas(base), so a SCRIBBLED header was
+    // trusted completely: `h->shard->release(...)` is a call through whatever
+    // those eight bytes now contain, and `h->tag` indexes g_heaps.
+    //
+    // Aborting is the right answer and the alternatives are worse. Returning
+    // null routes our own pointer to std::free(); carrying on makes a wild call.
+    // Both are undefined and neither names the cause. The block base is printed
+    // because it is the one thing that identifies which mapping was overwritten.
+    if (h->magic != kMagic) {
+        std::fprintf(stderr, "[mem] CORRUPT block header at %p (magic 0x%08x, "
+                     "expected 0x%08x) while resolving %p. Something wrote over "
+                     "the first %zu bytes of a 2MB block — a buffer overrun into "
+                     "the block below, or a misaligned large allocation.\n",
+                     (void*)base, h->magic, kMagic, p, kHeaderSize);
+        std::fflush(stderr);
+        std::abort();
+    }
+    return h;
 }
 
 } // namespace
@@ -364,11 +464,46 @@ const char* tagName(Tag t) {
 }
 
 Tag currentTag() { return t_scopeTop ? t_scopes[t_scopeTop - 1] : Tag::Core; }
-void pushTag(Tag t) { if (t_scopeTop < kScopeDepth) t_scopes[t_scopeTop++] = t; }
-void popTag() { if (t_scopeTop > 0) --t_scopeTop; }
+// ── Overflow must stay BALANCED, not merely be dropped ──────────────────────
+// A push past kScopeDepth used to vanish while the matching pop still
+// decremented — so the pop consumed an OUTER scope's frame, and every
+// allocation in that enclosing scope was attributed to the wrong tag from then
+// on. The imbalance propagated outward and the final pop clamped at zero,
+// hiding it. Counting the dropped pushes makes pop() unwind them first, so the
+// frames that DID fit are never disturbed.
+void pushTag(Tag t) {
+    if (t_scopeTop < kScopeDepth) { t_scopes[t_scopeTop++] = t; return; }
+    ++t_scopeDropped;
+    static std::atomic<bool> warned{false};
+    if (!warned.exchange(true))
+        std::fprintf(stderr, "[mem] MEM_SCOPE nested deeper than %d — tag '%s' is "
+                     "not being attributed. Outer scopes stay correct; this one "
+                     "charges to its parent.\n", kScopeDepth, tagName(t));
+}
+void popTag() {
+    if (t_scopeDropped > 0) { --t_scopeDropped; return; }
+    if (t_scopeTop > 0) --t_scopeTop;
+}
 
 void* alloc(size_t size, size_t align, Tag tag) {
     if (size == 0) size = 1;
+    // ── align MUST be a power of two, and nothing checked ───────────────────
+    // Every mask in this file — kBlockMask, largeAlloc's header offset,
+    // tlsf_memalign's own contract — is only correct for a power of two. An
+    // align of 24 produces a garbage mask, and the resulting offset is neither
+    // aligned nor guaranteed to clear the BlockHeader, so the caller can be
+    // handed a pointer that overlaps the header it will later be resolved
+    // through. Reachable from OUTSIDE the engine: engineMemAlloc forwards a
+    // kit's align straight here.
+    if (align != 0 && (align & (align - 1)) != 0) {
+        static std::atomic<bool> warned{false};
+        if (!warned.exchange(true))
+            std::fprintf(stderr, "[mem] alloc() refused: align=%zu is not a power "
+                         "of two. Every provenance mask in the allocator assumes "
+                         "it is; a bad value hands back a pointer overlapping its "
+                         "own block header.\n", align);
+        return nullptr;
+    }
     if (align < 8) align = 8;
     if (size + align >= kLargeMin) return largeAlloc(tag, size, align);
     return heap(tag).shards[myShard()].allocate(tag, size, align);
@@ -392,7 +527,25 @@ void* realloc(void* p, size_t newSize) {
     if (!h) return std::realloc(p, newSize);   // foreign provenance stays std
     const Tag tag = (Tag)h->tag;
     const size_t oldSize = h->isLarge ? h->userBytes : h->shard->liveSize(p);
-    if (newSize <= oldSize) return p;          // shrink: keep in place
+    if (newSize <= oldSize) {
+        // ── A shrink in place still has to be ACCOUNTED for ─────────────────
+        // Only for LARGE blocks. A pool block is accounted at
+        // tlsf_block_size(p) on both bump and drop, and shrinking inside the
+        // same TLSF block does not change it — so `cur` there is already right,
+        // and touching it would make it wrong.
+        //
+        // Large blocks are accounted at the REQUESTED size, and this path
+        // returned without updating `userBytes` — so stats over-reported until
+        // the eventual free (which then subtracted the stale, larger value and
+        // balanced out), and allocSize() reported more than the caller now owns.
+        // The mapping is untouched, so this was never a safety bug; it made the
+        // per-tag numbers lie, which for a telemetry-driven budget is enough.
+        if (h->isLarge && newSize < oldSize) {
+            heap(tag).resized(oldSize, newSize);
+            h->userBytes = newSize;
+        }
+        return p;
+    }
     void* np = alloc(newSize, 8, tag);
     if (!np) return nullptr;
     std::memcpy(np, p, oldSize);
