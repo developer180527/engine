@@ -10,6 +10,11 @@ struct PanelVisibility {
     bool sceneView = true, gameView = true, stats     = true;
     bool hierarchy = true, inspector = true, assets   = true, console = true;
     bool inputBindings = false;   // View > Panels > Input Bindings
+    // OFF by default, deliberately: the internal console is the ENGINE
+    // debugger's instrument (subsystem targeting, ring health), and a game
+    // developer should never have to know it exists. See
+    // panels/internal_console_panel.h.
+    bool internalConsole = false;
 };
 
 // Callbacks for menu items that require engine-level actions.
@@ -132,6 +137,10 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
             ImGui::MenuItem("Inspector",  nullptr, &cb.panels->inspector);
             ImGui::MenuItem("Assets",     nullptr, &cb.panels->assets);
             ImGui::MenuItem("Console",    nullptr, &cb.panels->console);
+            ImGui::MenuItem("Internal Console", nullptr, &cb.panels->internalConsole);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Engine-internal log: per-subsystem targeting,\n"
+                                  "ring health. For debugging the ENGINE, not a game.");
             ImGui::MenuItem("Stats",      nullptr, &cb.panels->stats);
             ImGui::MenuItem("Input Bindings", nullptr, &cb.panels->inputBindings);
             if (cb.showPlugins) ImGui::MenuItem("Plug-in Manager", nullptr, cb.showPlugins);

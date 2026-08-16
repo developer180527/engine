@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-11
+verified: 2026-08-16
 covers:
   - src/core/
 tests:
@@ -125,6 +125,18 @@ console shows it; a ring that silently omits the line you are hunting is worse
 than one that admits losing 1 342. Records carry a sequence stamp checked before
 and after the copy, so a reader that gets lapped mid-record discards it rather
 than displaying a splice of two writers.
+
+**TWO CONSOLES, ONE RING.** `Category` carries an `Audience`, because two
+different people read logs. A game builder wants to know that THEIR content or
+script is wrong; an engine debugger wants extraction phases, the job pool and
+allocator growth. `elog::visibleToGame` is the rule, and its asymmetry is what
+makes the split safe to get wrong: **info-level chatter is an allowlist
+(`markGameFacingDefaults`), but warnings and errors from EVERY category always
+reach the game console.** A tag nobody remembered to mark can therefore cost
+noise or silence at info level and can never hide a failure from the person whose
+build is broken. `panels/console_panel.h` is the game console;
+`panels/internal_console_panel.h` is the engine instrument (subsystem targeting,
+ring health) and is off by default.
 
 **What does not belong here:** per-item telemetry. Ten thousand "this draw did X"
 events a second is a trace, not a log — that is the profiler and the submit

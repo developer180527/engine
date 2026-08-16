@@ -28,6 +28,7 @@
 #include "editor/panels/inspector_panel.h"
 #include "editor/panels/asset_browser_panel.h"
 #include "editor/panels/console_panel.h"
+#include "editor/panels/internal_console_panel.h"
 #include "editor/panels/plugins_panel.h"
 #include "editor/panels/profiler_panel.h"
 #include "editor/panels/project_settings_window.h"
@@ -606,6 +607,7 @@ private:
         drawInspectorPanel(ctx, &m_panels.inspector);
         drawAssetBrowserPanel(ctx, m_loader, m_cookService, &m_panels.assets);
         drawConsolePanel(&m_panels.console);
+        drawInternalConsolePanel(&m_panels.internalConsole);
         drawPluginsPanel(&m_showPlugins, &m_focusPlugins, m_rt.plugins(),
                          m_rt.project(), m_rt.kits(), m_rt.simulating(),
                          m_pluginWindows,

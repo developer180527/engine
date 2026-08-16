@@ -183,6 +183,57 @@ int main() {
         CHECK(wellFormed, "no record read back is a splice of two writers");
     }
 
+    // ── AUDIENCE: two consoles, one ring ────────────────────────────────────
+    // The game console shows game-facing categories plus warnings and errors
+    // from EVERYWHERE; the internal console shows the machinery. The asymmetry is
+    // the safety property: a category nobody remembered to mark can cost noise or
+    // silence at info level, and can NEVER hide a failure from the person whose
+    // build is broken.
+    {
+        elog::Category* eng  = elog::category("TestEngineSide");
+        elog::Category* game = elog::category("TestGameSide");
+        elog::setAudience(*game, elog::Audience::Game);
+
+        CHECK(elog::audienceOf(*eng) == elog::Audience::Engine,
+              "a category defaults to Engine");
+        CHECK(elog::audienceOf(*game) == elog::Audience::Game,
+              "and can be marked game-facing");
+
+        // Info: game-facing only.
+        CHECK(elog::visibleToGame(game, elog::Level::Info),
+              "the game console sees a game-facing INFO line");
+        CHECK(!elog::visibleToGame(eng, elog::Level::Info),
+              "and does NOT see engine INFO chatter");
+        CHECK(!elog::visibleToGame(eng, elog::Level::Success),
+              "nor engine success lines");
+        CHECK(!elog::visibleToGame(eng, elog::Level::Debug),
+              "nor engine debug");
+
+        // THE RULE THAT MAKES THE SPLIT SAFE.
+        CHECK(elog::visibleToGame(eng, elog::Level::Warning),
+              "a WARNING from an engine category still reaches the game console");
+        CHECK(elog::visibleToGame(eng, elog::Level::Error),
+              "and so does an ERROR — a failure is never filed as an internal");
+
+        // An unregistered/unknown category must also not swallow failures.
+        CHECK(elog::visibleToGame(nullptr, elog::Level::Error),
+              "even an unresolved category cannot hide an error");
+        CHECK(!elog::visibleToGame(nullptr, elog::Level::Info),
+              "while unresolved info stays out of the game console");
+
+        // The tags the engine ships as game-facing must actually be marked —
+        // "Script" is the one every kit and Lua script logs under, so if it is
+        // wrong, a game developer cannot see their own script errors at info
+        // level at all.
+        elog::markGameFacingDefaults();
+        CHECK(elog::audienceOf(*elog::category("Script")) == elog::Audience::Game,
+              "'Script' — every kit and Lua log — is game-facing");
+        CHECK(elog::audienceOf(*elog::category("Scene")) == elog::Audience::Game,
+              "'Scene' is game-facing");
+        CHECK(elog::audienceOf(*elog::category("Renderer")) == elog::Audience::Engine,
+              "'Renderer' is NOT — it is machinery");
+    }
+
     if (g_failures) {
         std::printf("\nlogger_test: FAIL — %d failure(s)\n", g_failures);
         return 1;

@@ -78,12 +78,30 @@ inline const char* levelName(Level l) {
 // rather than failing.
 constexpr int kMaxCategories = 64;
 
+// ── Who a line is FOR ───────────────────────────────────────────────────────
+// Two consoles read this one ring, because two different people are looking:
+//
+//   Game   a person building a game. They want to know that THEIR content or
+//          THEIR script is wrong. "AssetService loaded 176 meshes" is not their
+//          problem; "your material references a texture that does not exist" is.
+//   Engine a person debugging the engine. They want the machinery: extraction
+//          phases, job pool state, allocator growth, submit counters.
+//
+// Default is Engine, and the curated set below is opened up explicitly. THE
+// IMPORTANT PART: `Game` is an allowlist for INFO-LEVEL CHATTER ONLY. Warnings
+// and errors from every category always reach the game console (see
+// `visibleToGame`), so a tag nobody remembered to mark can cost noise or silence
+// at info level and can never hide a failure. That asymmetry is what makes the
+// split safe to get wrong.
+enum class Audience : uint8_t { Engine, Game };
+
 struct Category {
     const char*         name;
     // Which levels are recorded. A bitmask rather than a minimum level so a
     // caller can watch errors from everything and info from ONE subsystem.
     std::atomic<uint32_t> mask;
     std::atomic<uint64_t> written;   // lifetime lines from this category
+    std::atomic<uint8_t>  audience;  // Audience; zero-init = Engine
 };
 
 struct Registry {
@@ -150,6 +168,43 @@ inline void solo(const Category* only) {
                      std::memory_order_relaxed);
     }
 }
+// ── Audience plumbing ───────────────────────────────────────────────────────
+inline void setAudience(Category& c, Audience a) {
+    c.audience.store((uint8_t)a, std::memory_order_relaxed);
+}
+inline Audience audienceOf(const Category& c) {
+    return (Audience)c.audience.load(std::memory_order_relaxed);
+}
+
+// The rule the game console uses. Info and below only for game-facing tags;
+// warnings and errors from EVERYTHING, always — a game builder must not miss a
+// hard failure because it came out of a subsystem nobody marked.
+inline bool visibleToGame(const Category* c, Level l) {
+    if (l >= Level::Warning) return true;
+    return c && audienceOf(*c) == Audience::Game;
+}
+
+// The tags a game builder is answerable for. Deliberately a short, visible list
+// rather than a flag on 56 call sites: these are the subsystems that report on
+// the USER'S content — a broken material, an unresolved mesh, a script that
+// threw. Everything else is machinery.
+//
+// "Script" covers Lua and every kit, because ScriptHost::logInfo/Warn/Error —
+// which is what the whole `EngineApiCoreV1` logging group forwards to — writes
+// under that tag. A kit's own diagnostics are the game builder's business.
+inline void markGameFacingDefaults() {
+    static const char* kGameTags[] = {
+        "Script",        // Lua + every kit, via the C API
+        "Scene",         // the user's scene failed to load / entity unresolved
+        "AssetService",  // their asset is missing or unreadable
+        "Cook", "SceneCook", "MaterialCook", "ShaderCook",   // their content
+        "Import",        // their FBX/glTF
+        "Project",       // their project.json
+        "Input",         // their bindings
+    };
+    for (const char* t : kGameTags) setAudience(*category(t), Audience::Game);
+}
+
 inline void watchAll() {
     const int n = categoryCount();
     for (int i = 0; i < n; ++i)

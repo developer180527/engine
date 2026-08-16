@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-11
+verified: 2026-08-16
 covers:
   - src/core/memory/
 tests:

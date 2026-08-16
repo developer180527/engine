@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: prototype
-verified: 2026-08-09
+verified: 2026-08-16
 covers:
   - src/editor/
 tests:
@@ -208,3 +208,22 @@ Two kinds of isolation, by construction:
   to the `engineUi*` panel facade.
 - Reflection so kit-defined components serialize + show in the Inspector
   (replaces the hand-rolled add-component registry).
+
+## Two consoles, because there are two audiences
+
+`panels/console_panel.h` is the **Console** a game developer sees: their content,
+their scripts, and any warning or error from anywhere. `panels/internal_console_panel.h`
+is the **Internal Console** — subsystem targeting (Solo streams one subsystem at
+every level and drops the rest to warnings/errors), per-category volume, and the
+log ring's own health (occupancy, evicted, truncated). It is **off by default**
+under View > Panels; a game developer should never have to know it exists.
+
+They read the same ring; only the filter and the instrumentation differ.
+`elog::visibleToGame` is the rule, and the asymmetry matters more than the split:
+info-level chatter is an allowlist, but **warnings and errors from every category
+always reach the game console**, so a subsystem nobody marked can never hide a
+failure from the person whose build is broken.
+
+This was a correction. The first version of the logger rewrite put the subsystem
+grid inside the game console, which hands a game developer a diagnostic instrument
+for somebody else's problem and buries theirs underneath it.

@@ -67,6 +67,11 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     m_inputLatency = std::make_unique<InputLatencyChannel>(&m_input);
     prof::Profiler::get().addChannel(m_inputLatency.get());
     m_frameStats = std::make_unique<FrameStatsChannel>();
+    // Which log categories a GAME builder is answerable for, versus the engine
+    // machinery. Warnings and errors reach the game console from everywhere
+    // regardless, so this only routes info-level chatter — see logger.h.
+    // Called first so nothing logged during boot lands in the wrong console.
+    elog::markGameFacingDefaults();
     prof::Profiler::get().addChannel(m_frameStats.get());
     prof::Profiler::get().beginFrame();   // boot = "frame 0"
     m_frameArena.init(4 * 1024 * 1024);   // 4 MB per-frame transient pool
