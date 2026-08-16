@@ -155,6 +155,20 @@ required.
       that can ask for anything. Checking total capacity let a request that fits
       an empty arena through against a nearly full one, which is the spill the
       guard exists to prevent.
+    - `log` — a module's own CATEGORY in the engine's ring, as opposed to
+      `core.logInfo`'s one-liner (which lands under "Script"). A subsystem gets
+      its own row in the Internal Console's table, its own per-level filters and
+      its own Solo button. Three properties are load-bearing:
+        * THE NAME IS COPIED. A literal in a module's dylib would dangle the
+          instant that module unloads, and both the registry and every buffered
+          record hold pointers to it — the same class of hazard as a deferred
+          `onMain` callback outliving its library. `elog::categoryCopied`.
+        * `enabled()` EXISTS SO FORMATTING CAN BE SKIPPED, and `write()`
+          re-checks it, so a module that ignores the advice still cannot defeat
+          the console's filters.
+        * MESSAGES ARE PRE-FORMATTED and passed with `"%s"`. Nothing variadic
+          crosses the boundary in either direction: a stray `%n` in a module's
+          message would otherwise read the HOST's stack.
     - `drawSubmit` — geometry with no entity and no component, reset once per
       frame by `Renderer::endFrame()`. The primitive for a renderer-facing system
       the engine never modelled. Bound to the renderer at boot and UNBOUND at

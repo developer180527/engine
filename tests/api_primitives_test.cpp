@@ -28,7 +28,9 @@
 #include <engine/engine_api.h>
 
 #include "core/memory/mem.h"
-#include "render/renderer.h"        // endFrame() is device-free — see below
+#include "render/renderer.h"
+#include "core/logger.h"
+#include <cstdlib>        // endFrame() is device-free — see below
 #include "core/frame_arena.h"
 #include "runtime/jobs/jobs.h"
 #include "runtime/scripting/engine_api_binding.h"
@@ -255,6 +257,79 @@ int main() {
 
         r.endFrame();
         engineDrawSubmitBindRenderer(nullptr);
+    }
+
+    // ── Log categories: a module gets a real row in the engine's ring ────────
+    {
+        const EngineLogCat cat = engineLogCategory("TestKitSubsystem");
+        CHECK(cat != 0, "a module can register its own category (id %u)", cat);
+        CHECK(engineLogCategory("TestKitSubsystem") == cat,
+              "and asking again returns the same one");
+        CHECK(engineLogCategory("TestKitOther") != cat, "a different name differs");
+
+        // THE NAME MUST BE COPIED. A kit's literal lives in the kit's dylib, and
+        // both the registry and every buffered record hold a pointer to it — so a
+        // stored pointer dangles the moment the kit is dlclosed. Simulated with a
+        // heap buffer that is overwritten and freed after registering: if the
+        // engine kept the pointer, the category's name is now garbage.
+        char* volatileName = (char*)std::malloc(32);
+        std::snprintf(volatileName, 32, "TestKitTransient");
+        const EngineLogCat tc = engineLogCategory(volatileName);
+        std::memset(volatileName, 'Z', 31);   // as good as unmapped, for our purposes
+        std::free(volatileName);
+        elog::Category* resolved = elog::categoryById(tc);
+        CHECK(resolved && resolved->name &&
+              std::strcmp(resolved->name, "TestKitTransient") == 0,
+              "the engine COPIED the name — it survives the caller's buffer dying "
+              "('%s')", resolved && resolved->name ? resolved->name : "<null>");
+
+        // enabled() before write() is the contract, and write() re-checks so a
+        // module that skips the check cannot defeat the console's filters.
+        elog::Category* c = elog::categoryById(cat);
+        CHECK(engineLogEnabled(cat, ENGINE_LOG_INFO) != 0,
+              "a fresh category records info");
+        elog::setLevel(*c, elog::Level::Info, false);
+        CHECK(engineLogEnabled(cat, ENGINE_LOG_INFO) == 0,
+              "and reports itself disabled once filtered");
+        const uint64_t before = elog::written();
+        engineLogWrite(cat, ENGINE_LOG_INFO, "should not be recorded");
+        CHECK(elog::written() == before,
+              "write() re-checks the filter, so a module that ignores enabled() "
+              "still cannot bypass it");
+        elog::setLevel(*c, elog::Level::Info, true);
+
+        engineLogWrite(cat, ENGINE_LOG_WARN, "a warning from a module");
+        elog::Entry e;
+        CHECK(elog::read(elog::written() - 1, e) &&
+              std::strcmp(e.msg, "a warning from a module") == 0 &&
+              e.level == elog::Level::Warning,
+              "and a permitted line lands in the ring verbatim");
+
+        // A message containing a format specifier must be DATA. If the host ever
+        // passed it as a format string, this reads its own stack.
+        engineLogWrite(cat, ENGINE_LOG_ERROR, "100%% sure: %s %d %n");
+        CHECK(elog::read(elog::written() - 1, e) &&
+              std::strstr(e.msg, "%s %d %n") != nullptr,
+              "a module's message is never treated as a format string ('%s')", e.msg);
+
+        // Audience is the module's declaration of which console it belongs in.
+        engineLogSetAudience(cat, ENGINE_LOG_AUDIENCE_GAME);
+        CHECK(elog::audienceOf(*c) == elog::Audience::Game,
+              "a module can declare itself game-facing");
+        engineLogSetAudience(cat, ENGINE_LOG_AUDIENCE_ENGINE);
+        CHECK(elog::audienceOf(*c) == elog::Audience::Engine, "...and engine-facing");
+
+        // Garbage in from a module must be inert, not fatal.
+        CHECK(engineLogEnabled(0, ENGINE_LOG_INFO) == 0, "category 0 is never enabled");
+        CHECK(engineLogEnabled(99999, ENGINE_LOG_INFO) == 0,
+              "an out-of-range category is refused");
+        const uint64_t b2 = elog::written();
+        engineLogWrite(0, ENGINE_LOG_INFO, "nowhere");
+        engineLogWrite(cat, 12345, "bad level");
+        engineLogWrite(cat, ENGINE_LOG_INFO, nullptr);
+        engineLogSetAudience(99999, ENGINE_LOG_AUDIENCE_GAME);
+        CHECK(elog::written() == b2,
+              "a null message, a bad level and a bad category all no-op");
     }
 
     jobs::shutdown();

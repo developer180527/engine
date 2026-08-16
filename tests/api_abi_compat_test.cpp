@@ -70,7 +70,7 @@ int main() {
         // Appended after the contract was written. Their offsets are frozen
         // from here on for exactly the same reason.
         { "jobs",     656,    32 }, { "memory",   688,  48 },
-        { "drawSubmit", 736,  24 },
+        { "drawSubmit", 736,  24 }, { "log",      760,  40 },
     };
     const size_t offs[] = {
         offsetof(EngineApiTableV1, core),   offsetof(EngineApiTableV1, input),
@@ -79,6 +79,7 @@ int main() {
         offsetof(EngineApiTableV1, ui),     offsetof(EngineApiTableV1, nav),
         offsetof(EngineApiTableV1, draw),   offsetof(EngineApiTableV1, jobs),
         offsetof(EngineApiTableV1, memory), offsetof(EngineApiTableV1, drawSubmit),
+        offsetof(EngineApiTableV1, log),
     };
     for (size_t i = 0; i < sizeof(frozen)/sizeof(*frozen); ++i)
         CHECK(offs[i] == frozen[i].off,

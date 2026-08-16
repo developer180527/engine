@@ -72,6 +72,11 @@ const EngineApiTableV1* engineApiHostTable(void) {
           engineMemFrameAlloc, engineMemTaggedBytes },
         { ENGINE_API_DRAWSUB_V,
           engineDrawSubmitMesh, engineDrawSubmittedCount },
+        // A module's own category in the engine's log ring: its own row in the
+        // Internal Console's subsystem table, its own levels, its own Solo.
+        { ENGINE_API_LOG_V,
+          engineLogCategory, engineLogEnabled, engineLogWrite,
+          engineLogSetAudience },
     };
     // Re-published on every call: absent (0) until a UI backend registers.
     t.ui.version = engineUiHasBackend() ? ENGINE_API_UI_V : 0;

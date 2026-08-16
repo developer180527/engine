@@ -4,6 +4,7 @@
 // semantics. Compiled into engine_runtime; symbols export from the host
 // executable so hot-reloaded game modules resolve them at load time.
 #include <engine/engine_api.h>
+#include <engine/engine_api_table.h>   // ENGINE_LOG_* level/audience constants
 #include "runtime/scripting/engine_api_binding.h"
 #include "runtime/input/input_manager.h"
 #include "runtime/scripting/script_host.h"
@@ -382,4 +383,41 @@ void engineDrawSubmitMesh(uint32_t meshHandle, uint32_t materialHandle,
 
 uint32_t engineDrawSubmittedCount(void) {
     return g_drawRenderer ? g_drawRenderer->submittedDrawCount() : 0u;
+}
+
+// ── Log — a module's own category in the engine's ring ───────────────────────
+// The point of exposing this rather than leaving kits on core.logInfo: a
+// SUBSYSTEM wants its own name in the Internal Console's table, its own levels,
+// and its own Solo button. A kit that only wants to print a line still uses
+// core.logInfo, which lands under "Script".
+EngineLogCat engineLogCategory(const char* name) {
+    // categoryCopied, NOT category: the engine would otherwise store a pointer
+    // into the module's dylib and read it after dlclose — both the registry and
+    // every buffered record hold that pointer.
+    return elog::idOf(elog::categoryCopied(name));
+}
+
+int32_t engineLogEnabled(EngineLogCat cat, uint32_t level) {
+    if (level >= (uint32_t)elog::Level::Count) return 0;
+    return elog::enabled(elog::categoryById(cat), (elog::Level)level) ? 1 : 0;
+}
+
+void engineLogWrite(EngineLogCat cat, uint32_t level, const char* msg) {
+    if (!msg || level >= (uint32_t)elog::Level::Count) return;
+    elog::Category* c = elog::categoryById(cat);
+    // Re-checked here as well as in the client shim: `enabled` is advice a module
+    // may skip, and the ring must not record what the filter excludes — otherwise
+    // a module that ignores the check silently defeats every subsystem filter.
+    if (!elog::enabled(c, (elog::Level)level)) return;
+    // "%s", never msg-as-format: the module's text is DATA. Passing it as a
+    // format string would let a stray %n or %s in a module's message read the
+    // host's stack, which is why nothing variadic crosses this boundary.
+    elog::write(c, (elog::Level)level, "%s", msg);
+}
+
+void engineLogSetAudience(EngineLogCat cat, uint32_t audience) {
+    elog::Category* c = elog::categoryById(cat);
+    if (!c) return;
+    elog::setAudience(*c, audience == ENGINE_LOG_AUDIENCE_GAME
+                          ? elog::Audience::Game : elog::Audience::Engine);
 }

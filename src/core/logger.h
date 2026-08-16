@@ -95,8 +95,15 @@ constexpr int kMaxCategories = 64;
 // split safe to get wrong.
 enum class Audience : uint8_t { Engine, Game };
 
+// Longest category name kept when the engine has to OWN the string. Engine call
+// sites pass literals and cost nothing; see `categoryCopied`.
+constexpr int kMaxNameLen = 32;
+
 struct Category {
     const char*         name;
+    // Storage for a name the engine had to copy. Zero-length for the common case
+    // (a literal in engine code), in which case `name` points at that literal.
+    char                owned[kMaxNameLen];
     // Which levels are recorded. A bitmask rather than a minimum level so a
     // caller can watch errors from everything and info from ONE subsystem.
     std::atomic<uint32_t> mask;
@@ -136,6 +143,38 @@ inline Category* category(const char* name) {
     uint32_t dm = g_reg.defaultMask.load(std::memory_order_relaxed);
     c.mask.store(dm ? dm : kDefaultMask, std::memory_order_release);
     return &c;
+}
+
+// ── A category whose NAME the engine must own ───────────────────────────────
+// For anything registering across the module ABI. A kit's string literal lives
+// in the kit's dylib, and `Category::name` plus every ring record's `cat` field
+// are POINTERS to it — so the moment that kit is dlclosed, the console reads
+// freed memory. Copying is the only fix that survives a kit being unloaded, or
+// crashing, or being force-unloaded by the editor. Same class of hazard as a
+// deferred `onMain` callback outliving its library.
+inline Category* categoryCopied(const char* name) {
+    if (!name || !*name) name = "?";
+    Category* c = category(name);       // resolves by text, so this still dedups
+    if (c->name != c->owned) {          // first time: take our own copy
+        std::snprintf(c->owned, sizeof(c->owned), "%s", name);
+        c->name = c->owned;
+    }
+    return c;
+}
+
+// ── Stable ids, for handles that cross the ABI ──────────────────────────────
+// A pointer is not something to hand a module: it invites arithmetic and it
+// cannot be validated on the way back. An index can be range-checked, and 0 is
+// reserved so a zero-initialised struct means "no category".
+inline uint32_t idOf(const Category* c) {
+    if (!c) return 0;
+    const ptrdiff_t i = c - &g_reg.cats[0];
+    return (i >= 0 && i < kMaxCategories) ? (uint32_t)i + 1 : 0;
+}
+inline Category* categoryById(uint32_t id) {
+    if (id == 0 || id > (uint32_t)kMaxCategories) return nullptr;
+    const int n = g_reg.count.load(std::memory_order_acquire);
+    return (int)(id - 1) < n ? &g_reg.cats[id - 1] : nullptr;
 }
 
 inline int categoryCount() {

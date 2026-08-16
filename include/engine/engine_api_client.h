@@ -30,7 +30,7 @@
 static const EngineApiTableV1* g_eapi = nullptr;
 enum { EAPI_CORE, EAPI_INPUT, EAPI_PHYSICS, EAPI_AUDIO,
        EAPI_ASSETS, EAPI_ANIM, EAPI_UI, EAPI_NAV, EAPI_DRAW,
-       EAPI_JOBS, EAPI_MEMORY, EAPI_DRAWSUB, EAPI_COUNT };
+       EAPI_JOBS, EAPI_MEMORY, EAPI_DRAWSUB, EAPI_LOG, EAPI_COUNT };
 
 /* Sized from the enum, never a literal. It was `bool g_eapiOk[9]` beside a
  * hand-counted comment, which is the shape of bug that appears the day someone
@@ -109,6 +109,7 @@ void engineModuleBindApiV1(const EngineApiTableV1* t) {
         { EAPI_DRAW,    t->draw.version,    ENGINE_API_DRAW_V,    "draw"    },
         { EAPI_JOBS,    t->jobs.version,       ENGINE_API_JOBS_V,    "jobs"    },
         { EAPI_MEMORY,  t->memory.version,     ENGINE_API_MEMORY_V,  "memory"  },
+        { EAPI_LOG,     t->log.version,        ENGINE_API_LOG_V,     "log"     },
         { EAPI_DRAWSUB, t->drawSubmit.version, ENGINE_API_DRAWSUB_V, "drawSubmit" },
     };
     for (auto& c : checks) {
@@ -323,4 +324,46 @@ uint32_t engineDrawSubmittedCount(void) {
                ? g_eapi->drawSubmit.submittedCount() : 0;
 }
 
+/* ── log categories ───────────────────────────────────────────────────────── */
+EngineLogCat engineLogCategory(const char* name) {
+    return eapiGuard(EAPI_LOG,"logCategory") ? g_eapi->log.category(name) : 0;
+}
+int32_t engineLogEnabled(EngineLogCat cat, uint32_t level) {
+    /* No eapiGuard: this is called on the HOT PATH, once per candidate line, and
+     * a guard would both warn repeatedly and cost more than the check it guards.
+     * An unbound host simply reports "not enabled", which is the safe answer —
+     * the module skips its formatting and writes nothing. */
+    return (g_eapi && g_eapiOk[EAPI_LOG]) ? g_eapi->log.enabled(cat, level) : 0;
+}
+void engineLogWrite(EngineLogCat cat, uint32_t level, const char* msg) {
+    if (eapiGuard(EAPI_LOG,"logWrite")) g_eapi->log.write(cat, level, msg);
+}
+void engineLogSetAudience(EngineLogCat cat, uint32_t audience) {
+    if (eapiGuard(EAPI_LOG,"logSetAudience"))
+        g_eapi->log.setAudience(cat, audience);
+}
+
 } /* extern "C" */
+
+/* ── ENGINE_LOG — the shape a module should actually use ──────────────────────
+ * Formats ONLY if the category and level are being watched, which is the whole
+ * point of the group: a subsystem nobody has selected in the Internal Console
+ * costs one atomic load per suppressed line instead of a formatted string. The
+ * arguments are not evaluated either, so an expensive expression inside one of
+ * these is free when it is filtered.
+ *
+ * Cache the category — resolving it does a string compare:
+ *     static EngineLogCat kMyLog = 0;
+ *     if (!kMyLog) kMyLog = engineLogCategory("MyPhysics");
+ *     ENGINE_LOG(kMyLog, ENGINE_LOG_INFO, "solved %d islands in %.2f ms", n, ms);
+ *
+ * 256 bytes is deliberately smaller than nothing: the engine's own slots hold
+ * 192 characters, so a longer line would be truncated on arrival anyway. */
+#define ENGINE_LOG(cat, lvl, ...)                                              \
+    do {                                                                       \
+        if (engineLogEnabled((cat), (lvl))) {                                  \
+            char engine_log_buf_[256];                                         \
+            snprintf(engine_log_buf_, sizeof(engine_log_buf_), __VA_ARGS__);   \
+            engineLogWrite((cat), (lvl), engine_log_buf_);                     \
+        }                                                                      \
+    } while (0)

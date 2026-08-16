@@ -76,6 +76,7 @@ extern "C" {
 #define ENGINE_API_JOBS_V    1  /* worker pool: parallelFor, main-thread defer */
 #define ENGINE_API_MEMORY_V  1  /* tagged heaps + the per-frame arena          */
 #define ENGINE_API_DRAWSUB_V 1  /* submit geometry with no entity/component    */
+#define ENGINE_API_LOG_V     1  /* the engine's own log ring, by category      */
 
 typedef struct EngineApiCoreV1 {
     uint32_t version;
@@ -243,6 +244,36 @@ typedef struct EngineApiDrawSubmitV1 {
     uint32_t (*submittedCount)(void);
 } EngineApiDrawSubmitV1;
 
+/* Log — a module gets a first-class category in the ENGINE's ring, which means
+ * its lines appear in the editor's consoles, obey the same per-subsystem
+ * targeting, and cost the same ~0.7 ns when filtered out.
+ *
+ * `core.logInfo/Warn/Error` remain: they are the one-line path for a script and
+ * they log under "Script". This group is for a SUBSYSTEM — something that wants
+ * its own name in the Internal Console's subsystem table, with its own levels
+ * and its own Solo button. */
+typedef struct EngineApiLogV1 {
+    uint32_t version;
+    /* Resolve or create a category. THE NAME IS COPIED: a literal in a module's
+     * dylib would dangle the instant that module is unloaded, and both the
+     * registry and every buffered record hold pointers to it. Returns 0 if the
+     * registry is full, which callers may ignore — writing to 0 is a no-op. */
+    EngineLogCat (*category)(const char* name);
+    /* CALL THIS BEFORE FORMATTING. It is one relaxed load and a bit test, and
+     * it is the entire reason this group exists rather than just a write(): a
+     * subsystem nobody is watching should cost a branch, not a formatted string.
+     * Returns 0/1. */
+    int32_t (*enabled)(EngineLogCat cat, uint32_t level);
+    /* PRE-FORMATTED, like core.logInfo and ui.text. No format string crosses the
+     * boundary in either direction: a mismatched one from a module would be a
+     * crash — or worse, a read of the host's stack — inside the host. The module
+     * formats with its own snprintf; see ENGINE_LOG in engine_api_client.h. */
+    void (*write)(EngineLogCat cat, uint32_t level, const char* msg);
+    /* Declare the audience. Optional — the default is ENGINE, which is right for
+     * a subsystem and wrong only for a kit whose logs are really gameplay's. */
+    void (*setAudience)(EngineLogCat cat, uint32_t audience);
+} EngineApiLogV1;
+
 typedef struct EngineApiTableV1 {
     uint32_t structSize;   /* = sizeof(EngineApiTableV1) — hard gate */
     EngineApiCoreV1    core;
@@ -259,6 +290,9 @@ typedef struct EngineApiTableV1 {
     EngineApiJobsV1       jobs;
     EngineApiMemoryV1     memory;
     EngineApiDrawSubmitV1 drawSubmit;
+    /* Appended, so every offset above is untouched and only structSize moves —
+     * which is exactly what an older module is allowed to ignore. */
+    EngineApiLogV1        log;
 } EngineApiTableV1;
 
 /* ── Frozen layout ───────────────────────────────────────────────────────────
@@ -332,6 +366,7 @@ ENGINE_API_FROZEN(EngineApiDrawV1,        40);
 ENGINE_API_FROZEN(EngineApiJobsV1,        32);
 ENGINE_API_FROZEN(EngineApiMemoryV1,      48);
 ENGINE_API_FROZEN(EngineApiDrawSubmitV1,  24);
+ENGINE_API_FROZEN(EngineApiLogV1,         40);
 
 /* Group offsets. Derived from the sizes above (8-byte aligned, cumulative from
  * structSize's 4 bytes plus 4 of padding), and asserted rather than trusted. */
@@ -347,6 +382,7 @@ ENGINE_API_GROUP_AT(draw,       616);
 ENGINE_API_GROUP_AT(jobs,       656);
 ENGINE_API_GROUP_AT(memory,     688);
 ENGINE_API_GROUP_AT(drawSubmit, 736);
+ENGINE_API_GROUP_AT(log,        760);
 
 /* First and last pointer of each group — the boundaries a reorder shifts. */
 ENGINE_API_FIELD_AT(EngineApiJobsV1,       workerCount,     8);
@@ -355,6 +391,8 @@ ENGINE_API_FIELD_AT(EngineApiMemoryV1,     alloc,           8);
 ENGINE_API_FIELD_AT(EngineApiMemoryV1,     taggedBytes,    40);
 ENGINE_API_FIELD_AT(EngineApiDrawSubmitV1, submitMesh,      8);
 ENGINE_API_FIELD_AT(EngineApiDrawSubmitV1, submittedCount, 16);
+ENGINE_API_FIELD_AT(EngineApiLogV1,        category,        8);
+ENGINE_API_FIELD_AT(EngineApiLogV1,        setAudience,    32);
 
 /* Host-side: the filled table (engine_api_table.cpp). */
 const EngineApiTableV1* engineApiHostTable(void);

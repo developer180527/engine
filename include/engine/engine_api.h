@@ -259,6 +259,42 @@ void     engineDrawSubmitMesh(uint32_t meshHandle, uint32_t materialHandle,
                               const float model[16]);
 uint32_t engineDrawSubmittedCount(void);
 
+
+/* ── Log categories (ENGINE_API_LOG_V) ───────────────────────────────────────
+ * A SUBSYSTEM's path into the engine's log ring, as opposed to engineLogInfo's
+ * one-liner (which logs under "Script"). A category gets its own row in the
+ * editor's Internal Console, its own per-level filters and its own Solo button.
+ *
+ * The name is COPIED — a literal in your dylib would dangle the moment the
+ * module unloads, and the engine keeps pointers to it. 0 means "no category"
+ * and writing to it is a no-op.
+ *
+ * ALWAYS engineLogEnabled() BEFORE FORMATTING. That check is one atomic load;
+ * the formatting is what costs. ENGINE_LOG in engine_api_client.h does it for
+ * you. */
+/* Numerically identical to elog::Level / elog::Audience. Spelled out here
+ * because a module cannot see the C++ enum — and once a module ships with these
+ * baked in they can never be renumbered. Appending a level is fine; reordering
+ * is not. */
+#define ENGINE_LOG_TRACE   0u
+#define ENGINE_LOG_DEBUG   1u
+#define ENGINE_LOG_INFO    2u
+#define ENGINE_LOG_SUCCESS 3u
+#define ENGINE_LOG_WARN    4u
+#define ENGINE_LOG_ERROR   5u
+
+/* Which console the lines surface in: a kit's gameplay diagnostics belong to the
+ * game developer, a subsystem replacement's internals to whoever debugs the
+ * engine. Warnings and errors reach the game console either way. */
+#define ENGINE_LOG_AUDIENCE_ENGINE 0u
+#define ENGINE_LOG_AUDIENCE_GAME   1u
+
+typedef uint32_t EngineLogCat;
+EngineLogCat engineLogCategory(const char* name);
+int32_t      engineLogEnabled(EngineLogCat cat, uint32_t level);
+void         engineLogWrite(EngineLogCat cat, uint32_t level, const char* msg);
+void         engineLogSetAudience(EngineLogCat cat, uint32_t audience);
+
 #ifdef __cplusplus
 }
 #endif
