@@ -64,6 +64,11 @@ inline std::string libError() {
 using LibHandle = void*;
 inline LibHandle libOpen(const fs::path& p) { return ::dlopen(p.c_str(), RTLD_NOW | RTLD_LOCAL); }
 inline void*     libSym(LibHandle h, const char* n) { return ::dlsym(h, n); }
+// DELIBERATELY UNUSED on both platforms — see unload(): retired images go to the
+// graveyard and are never unmapped, because live worlds keep pointers into
+// module code. Kept as the symmetric half of libOpen so the shim reads
+// completely, and so the decision not to call it is visible here rather than
+// only discoverable by grepping for callers.
 inline void      libClose(LibHandle h) { if (h) ::dlclose(h); }
 inline std::string libError() { const char* e = ::dlerror(); return e ? e : ""; }
 inline unsigned long osProcessId() { return (unsigned long)::getpid(); }
@@ -276,6 +281,19 @@ public:
     // table it points at dies here.
     void unload() {
         releaseContracts();
+        // ── The one retention contract still enforced only by comment ────────
+        // The graveyard means CODE and STRING LITERALS from this image are safe
+        // to hold forever. The TABLE is not: m_destroy below is the module's own
+        // delete, so any adapter still referencing it becomes a live shared_ptr
+        // into freed module memory. `plugin()` hands out shared_ptrs, and the
+        // rule "release them all first" was a sentence in a comment. Checked
+        // now — use_count() of 1 is our own m_plugin.
+        if (m_plugin && m_plugin.use_count() > 1)
+            LOG_ERROR("Module", "unload() with %ld outstanding plugin() "
+                      "reference(s) — the adapter's table is about to be "
+                      "destroyed and those holders will dereference freed module "
+                      "memory. Unregister the plugin before unloading.",
+                      (long)m_plugin.use_count() - 1);
         if (m_table && m_destroy) m_destroy(m_table);  // module-side delete
         m_table   = nullptr;
         m_destroy = nullptr;
