@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-16
+verified: 2026-08-17
 parses-external-input: true
 covers:
   - src/assets/
@@ -226,3 +226,39 @@ source asset ── scan → registry.db (UUID, hash, state)
   silhouette error is what hurts. Clustering trades quality for the guarantees
   above; it is the right default, not the endpoint.
 - Custom asset type registration (cooker + loader pairs from plugins).
+
+## ENGINE_COOK_DETERMINISM_CHECK — cook twice, compare, fail
+
+The DDC names a cooked output by a hash of its **inputs**, so a cooker that is not
+a pure function of those inputs makes the cache serve bytes that recooking would
+not reproduce — and the disagreement travels to everyone who pulls from the shared
+store. We shipped exactly that and found it by READING code: the decimator's
+`(int32_t)std::floor(NaN)` is `INT_MIN` on x86-64 and `0` on arm64, so two
+machines cooked different LOD levels from one mesh.
+
+`ENGINE_COOK_DETERMINISM_CHECK=1` cooks every asset twice and compares. It lives
+in `dispatchCook`, the one choke point both the serial and batch pipelines share,
+so neither can bypass it. It compares:
+
+- the **primary output's** bytes (`blake3File` — the same hash the DDC keys on);
+- every **extra output** by BASENAME, because the second cook writes into a
+  directory of its own so absolute paths cannot match. A cooker deterministic in
+  its primary and not in its sibling `.ctex` blobs is still broken;
+- the **recorded dependencies**, which feed the next cook's key, so a cooker that
+  varies here makes staleness itself non-deterministic;
+- and whether the second cook **failed at all** — one-shot state looks fine in a
+  clean build and breaks the moment anything cooks twice.
+
+A mismatch **fails the cook.** A warning would be read as advisory, and the damage
+is not local.
+
+An ENVIRONMENT VARIABLE rather than a build flag, copied from vCAD's
+`CAD_PLUGIN_DETERMINISM_CHECK`: it can be turned on against a build that already
+exists, on the day an artist says an asset looks different on the build machine.
+Off by default because it doubles every cook.
+
+`tests/cook_determinism_test.cpp` proves the check CATCHES each drift mode with a
+fake cooker per failure, because a determinism check that only ever passes cannot
+be told apart from one that does nothing. It runs twice under ctest — once with
+the flag on, once off — since a check that fires when disabled would double every
+cook and the flag would be turned off and stay off.

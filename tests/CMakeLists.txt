@@ -194,6 +194,23 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # Cook infrastructure (scheduler / DDC / manifest / scanner) — needs only
     # the GPU-free core, no game assets.
     engine_test(cook_infra_test LIB engine_core)
+    # ENGINE_COOK_DETERMINISM_CHECK: cook twice, compare, fail on a difference.
+    # A non-deterministic cooker makes the content-addressed cache serve bytes
+    # recooking would not reproduce — and it travels to everyone pulling from the
+    # shared DDC. We shipped one (the decimator's (int32_t)floor(NaN), INT_MIN on
+    # x86-64 and 0 on arm64) and found it by reading. This proves the check CATCHES
+    # each way a cooker can drift, because one that only ever passes is
+    # indistinguishable from one that does nothing. Needs the internal dispatch
+    # header — the choke point both pipelines share.
+    engine_test(cook_determinism_test LIB engine_core)
+    target_include_directories(cook_determinism_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/modules/assetlib/src)
+    # The same binary with the flag OFF: a check that fires when disabled would
+    # double every cook, and the flag would be turned off and stay off.
+    add_test(NAME cook_determinism_test_off
+             COMMAND cook_determinism_test --off)
+    set_tests_properties(cook_determinism_test_off
+                         PROPERTIES LABELS unit TIMEOUT 120)
     # Result-file framing, DDC budget/LRU eviction, registry schema versioning
     engine_test(cook_hardening_test LIB engine_core)
     # Enforces that every cooker's DECLARED inputs move its cook key

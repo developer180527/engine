@@ -190,6 +190,23 @@ stamp under no lock, so a record whose publish landed after its slot was zeroed
 survived while one that landed before did not — a clear that was not atomic across
 the ring, stated nowhere, and with no callers.
 
+**THE SHIPPING POSTURE.** `elog::quietForShipping()` drops ENGINE categories to
+warnings and errors and leaves GAME categories alone — which is the payoff for
+`Audience` existing. A released build must not print `Loaded material: X -> shader
+Y (3 blocks, 2 textures, features 0x5)` into the player's log (there are 117
+Info/Success sites in the engine), and it must not silence a game that uses our
+logger as its own. `engine_player` calls it before `init()`.
+
+Deliberately **not** a stdout switch: the ring is memory-only, so turning the
+mirror off would leave a shipped build with no persistence and a crash report with
+nothing in it. 0.12 µs a line is a fair price for the only log that survives.
+
+`watchAll()` resets the sticky default as well as the existing categories —
+"watch all" has to include subsystems discovered later, or a dev clicks it in the
+Internal Console and everything registering afterwards stays silent while the UI
+claims otherwise. That omission was caught by an unrelated assertion in
+`logger_test`, which is the argument for having the default be observable at all.
+
 **What does not belong here:** per-item telemetry. Ten thousand "this draw did X"
 events a second is a trace, not a log — that is the profiler and the submit
 counters. `LOG_TRACE` compiles to nothing unless `ENGINE_LOG_TRACE` is defined.

@@ -306,7 +306,51 @@ inline void markGameFacingDefaults() {
     for (const char* t : kGameTags) setAudience(*category(t), Audience::Game);
 }
 
+// ── The shipping default ────────────────────────────────────────────────────
+// A released game should not print engine internals into the player's log.
+// "Loaded material: X -> shader Y (3 blocks, 2 textures, features 0x5)" is a
+// developer's line; there are 117 Info/Success sites in the engine and they make
+// a shipped log useless for the one thing it is for — finding the problem when
+// something breaks.
+//
+// So: ENGINE categories drop to warnings and errors, GAME categories are left
+// exactly as they are. That distinction is the whole reason `Audience` exists —
+// a game's own diagnostics (its scripts, its kits, its content pipeline
+// complaints) belong to the developer who shipped it, and silencing those would
+// break anyone using the engine's logger as their game's logger.
+//
+// NOT a stdout switch. The ring is memory-only, so turning the mirror off would
+// leave a shipped build with no persistence at all and a crash report with
+// nothing in it. 0.12 us a line is a fair price for the only log that survives.
+//
+// Applied to categories that already exist AND set as the default for ones
+// created later, so it does not matter whether the host calls this before or
+// after boot logging has started.
+inline void quietForShipping() {
+    const uint32_t engineMask = levelBit(Level::Error) | levelBit(Level::Warning);
+    g_reg.defaultMask.store(engineMask, std::memory_order_relaxed);
+    const int n = categoryCount();
+    for (int i = 0; i < n; ++i) {
+        Category& c = g_reg.cats[i];
+        if (audienceOf(c) == Audience::Engine)
+            c.mask.store(engineMask, std::memory_order_relaxed);
+    }
+}
+
+// The default a fresh category gets. `quietForShipping` is the one caller today;
+// exposed because a dedicated server or a soak harness may want its own posture.
+inline void setDefaultMask(uint32_t mask) {
+    g_reg.defaultMask.store(mask, std::memory_order_relaxed);
+}
+
 inline void watchAll() {
+    // Resets the DEFAULT too, not just the categories that exist. "Watch all"
+    // has to mean subsystems discovered later as well — otherwise a dev who has
+    // called quietForShipping (or is on a host that did) clicks Watch all in the
+    // Internal Console, and every subsystem that registers after that click is
+    // still silent, with the UI claiming otherwise. Caught by an unrelated
+    // assertion in logger_test: the sticky default leaked into a later case.
+    g_reg.defaultMask.store(kDefaultMask, std::memory_order_relaxed);
     const int n = categoryCount();
     for (int i = 0; i < n; ++i)
         g_reg.cats[i].mask.store(kDefaultMask, std::memory_order_relaxed);

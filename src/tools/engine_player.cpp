@@ -95,6 +95,11 @@ int main(int argc, char** argv) {
         return 3;
     }
 
+    // Engine chatter off, warnings and errors kept, the GAME's own categories
+    // untouched — a released build should not print engine internals into the
+    // player's log, but a game that uses our logger as its logger must keep
+    // working. Set before init() so boot logging is covered too.
+    elog::quietForShipping();
     // Kits load IN PLACE here: a shipped player cannot hot-reload, so the
     // copy-to-temp that exists for reload is pure launch cost plus a temp file
     // per kit left on the user's disk. engine_build ships real kit binaries, so

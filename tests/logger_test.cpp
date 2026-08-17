@@ -295,6 +295,46 @@ int main() {
               "'Renderer' is NOT — it is machinery");
     }
 
+    // ── The shipping posture silences ENGINE chatter, not the GAME's ─────────
+    // A released build should not print engine internals into the player's log,
+    // but a game using our logger as its logger must keep working. That
+    // distinction is the payoff for Audience existing at all.
+    {
+        elog::Category* eng  = elog::category("TestShipEngine");
+        elog::Category* game = elog::category("TestShipGame");
+        elog::setAudience(*game, elog::Audience::Game);
+        elog::quietForShipping();
+
+        CHECK(!elog::enabled(eng, elog::Level::Info),
+              "an ENGINE category stops recording info");
+        CHECK(!elog::enabled(eng, elog::Level::Success),
+              "...and success");
+        CHECK(elog::enabled(eng, elog::Level::Warning) &&
+              elog::enabled(eng, elog::Level::Error),
+              "but keeps warnings and errors — a shipped log's whole purpose");
+        CHECK(elog::enabled(game, elog::Level::Info),
+              "a GAME category is untouched: silencing it would break anyone "
+              "using the engine's logger as their game's");
+
+        // Order-independent: a category created AFTER the call gets the posture
+        // too, so a host may call this before or after boot logging starts.
+        elog::Category* late = elog::category("TestShipLate");
+        CHECK(!elog::enabled(late, elog::Level::Info) &&
+              elog::enabled(late, elog::Level::Error),
+              "a category created afterwards inherits the shipping default");
+
+        elog::watchAll();
+        CHECK(elog::enabled(eng, elog::Level::Info),
+              "and watchAll() puts the engine categories back for a dev host");
+        // watchAll must clear the sticky DEFAULT as well, or a subsystem that
+        // registers after it is still silent while the UI says otherwise. This
+        // assertion exists because the first version did not, and the omission
+        // surfaced as a failure in the unrelated overflow case below.
+        CHECK(elog::enabled(elog::category("TestShipAfterWatchAll"),
+                            elog::Level::Info),
+              "including for a category created after watchAll()");
+    }
+
     // ── Category OVERFLOW is visible, not a silent merge ────────────────────
     // Past the usable capacity this used to return &cats[0], so the 64th tag
     // inherited slot 0's mask, bumped slot 0's counter and displayed under slot
