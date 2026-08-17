@@ -131,6 +131,16 @@ public:
     // running sim world. Call early in tickSimulation, before the broadcasts,
     // so the registry is stable while they iterate.
     void poll(float dt, PluginRegistry& reg, RuntimeContext& ctx, flecs::world& world) {
+        // ── A host that cannot reload must not WATCH either ──────────────────
+        // This is called from tickSimulation in every build, so a shipped player
+        // was stat()ing every kit binary every 250 ms forever, looking for a
+        // rebuild that cannot happen — and keeping a live reload path that would
+        // fire if anything else touched the file (an installer, a sync client, an
+        // antivirus scanner). Hot-reloading a kit inside a released game is not a
+        // behaviour anyone asked for; it is dev machinery that was simply never
+        // switched off. The stat cost is negligible; the code path existing is
+        // the actual problem.
+        if (m_reload == modload::ModuleLibrary::Reload::Never) return;
         for (size_t i = 0; i < m_loaded.size(); /* stepped below */) {
             auto& e = m_loaded[i];
             if (!e->watcher.changed(dt)) { ++i; continue; }

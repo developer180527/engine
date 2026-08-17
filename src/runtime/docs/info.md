@@ -343,7 +343,12 @@ project.json to point at them. The honest accounting is:
 | temp file left per kit on exit | dev machine | **none**, now that the copy is skipped |
 
 `KitHost::setReloadPolicy(Reload::Never)` is what removes the last two, and
-`engine_player` sets it. The default is `Allowed`, deliberately: a host that
+`engine_player` sets it. It also **turns the watcher off**: `KitHost::poll` runs
+from `tickSimulation` in every build, so a shipped player was `stat()`ing every
+kit binary every 250 ms forever, looking for a rebuild that cannot happen — and
+keeping a live reload path that would fire if an installer, a sync client or an
+antivirus scanner touched the file. The stat cost is negligible; a released game
+being able to swap a kit mid-play is the actual problem. The default is `Allowed`, deliberately: a host that
 forgets to opt in loses a little launch time, where the opposite default would
 silently break hot-reload in the editor.
 
