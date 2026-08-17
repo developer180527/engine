@@ -37,6 +37,18 @@
 
 class KitHost {
 public:
+    // ── Whether this host can hot-reload a kit at all ───────────────────────
+    // The editor watches kit binaries and rebuilds them mid-session, and that is
+    // the ONLY reason ModuleLibrary copies an image to temp before loading it
+    // (dlopen caches by inode, so a rebuild must be able to overwrite the file
+    // while the old image is mapped). A shipped player never reloads, and
+    // `engine_build` ships real kit binaries — so it was paying for the copy at
+    // every launch and leaving a temp file per kit behind on exit.
+    //
+    // Default stays Allowed: the editor is the common caller, and a host that
+    // forgets to opt in loses a little startup time rather than the ability to
+    // reload. Getting it wrong the other way would silently break iteration.
+    void setReloadPolicy(modload::ModuleLibrary::Reload r) { m_reload = r; }
     // Per-manifest-kit outcome of the last start() — the truth the editor shows
     // instead of guessing from "is the sim running". Lives only while playing.
     struct KitStatus {
@@ -129,6 +141,8 @@ public:
             e->plugin.reset();
             e->lib.unload();
 
+            // A reload can only happen under Reload::Allowed, so this call site
+            // does not need the policy — reaching it at all means copies are on.
             if (!e->lib.load(e->path)) {          // bring up new code
                 // Audit C.2: the old `continue` left this Entry in m_loaded
                 // with plugin == nullptr — stop() then null-derefed on the
@@ -170,6 +184,9 @@ private:
         std::shared_ptr<IEnginePlugin> plugin;
     };
 
+    modload::ModuleLibrary::Reload m_reload =
+        modload::ModuleLibrary::Reload::Allowed;
+
     // Absolute manifest paths pass through; relative ones resolve against the
     // project root (kits typically live under <engine>/Kits/<name>).
     static std::filesystem::path resolve(const ProjectContext& project,
@@ -200,7 +217,7 @@ private:
             return false;
         }
         auto e = std::make_unique<Entry>(k.name, path);
-        if (!e->lib.load(path)) {
+        if (!e->lib.load(path, m_reload)) {
             LOG_ERROR("Kit", "failed to load '%s'", k.name.c_str());
             setStatus(k.name, path, KitStatus::State::LoadFailed,
                       "load failed — ABI mismatch or bad module (see console)");

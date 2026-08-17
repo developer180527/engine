@@ -95,6 +95,11 @@ int main(int argc, char** argv) {
         return 3;
     }
 
+    // Kits load IN PLACE here: a shipped player cannot hot-reload, so the
+    // copy-to-temp that exists for reload is pure launch cost plus a temp file
+    // per kit left on the user's disk. engine_build ships real kit binaries, so
+    // this path is the one players actually take.
+    engine.kits().setReloadPolicy(modload::ModuleLibrary::Reload::Never);
     engine.startSimulation();   // in-place: boot = play
 
     if (!gpuStats && frameLimit <= 0) {

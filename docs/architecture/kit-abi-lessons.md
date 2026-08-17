@@ -213,10 +213,21 @@ instances of it were not.
 
 What remains, in value order:
 
-1. **The CAD "save from a session without the plugin" test**, against
-   `ReflectedPending`. We appear to have the design; nobody has proved the step
-   that destroys someone's work — author with the kit, reopen without it, **save
-   from that session**, reopen with it, assert the bytes are unchanged.
+1. ~~**The CAD "save from a session without the plugin" test.**~~ **DONE** —
+   `tests/reflected_pending_test.cpp`. The design held; the save had never been
+   exercised. Mutation-proved by deleting the re-emission. It also settled a
+   question the design did not answer: flecs emits floats with 10 significant
+   digits, so the round-trip is exact and a document does not drift each time it
+   passes through a machine missing a kit.
+
+   The same pass corrected a **factually wrong comment** that would have misled
+   the next reader: `unload()` claimed shipped games statically link kits and
+   never reach the graveyard. `engine_build` ships real kit binaries, so
+   `engine_player` reaches it exactly as the editor does — it was paying for the
+   hot-reload copy-to-temp at every launch and leaving a temp file per kit on the
+   player's disk. `Reload::Never` removes both; the graveyard itself is bounded by
+   kit count in a shipped session and only grows if the game calls
+   `kitLoad`/`kitUnload` itself.
 2. **`ENGINE_COOK_DETERMINISM_CHECK=1`.** Cheap, and it retroactively covers a
    class of bug we have already shipped once (the decimator's
    architecture-dependent `(int32_t)floor(NaN)`, found by reading).

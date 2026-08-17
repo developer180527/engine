@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-16
+verified: 2026-08-17
 parses-external-input: true
 covers:
   - src/runtime/
@@ -250,7 +250,8 @@ fall back to manifest order). Single kits can be unloaded/reloaded mid-play
 The dynamic-library load + ABI gauntlet is shared with `engine_host` via
 `module_loader.h` (`ModuleLibrary` + `GameModuleAdapter` + `ModuleWatcher`);
 the loader is cross-platform (dlfcn on macOS/Linux, the Win32 loader on
-Windows behind a small `libOpen`/`libSym`/`libClose` shim). Hosts that dlopen
+Windows behind a small `libOpen`/`libSym`/`libClose` shim — `libClose` is
+deliberately never called; see the graveyard note below). Hosts that dlopen
 modules need `ENABLE_EXPORTS` so kits resolve engine symbols (engine_host,
 editor). A shipped game instead LINKS the kit library and registers the plugin
 directly — no manifest, no dlopen.
@@ -317,3 +318,36 @@ Jolt/Lua. `engine_cook` links engine_core alone; `engine_runtime` links
 engine_core plus the graphics/platform/plugin stack. Keep new sources on
 the right side of this line: if a .cpp references no bgfx/GLFW symbols
 and serves data processing, it belongs in engine_core.
+
+## Kit images: the graveyard, and what a shipped game pays for it
+
+`ModuleLibrary::unload()` releases contracts and calls the module's own destroy,
+then **parks the image in a process-lifetime graveyard — it is never unmapped**,
+on either platform. `libClose` exists as the symmetric half of `libOpen` and has
+no callers. The reason is in `tests/kit_lifecycle_test.cpp`: kits register flecs
+component hooks (ctor/dtor template instantiations compiled INTO the kit), a live
+world keeps those pointers, and dlclosing made "unload a kit mid-play, resume,
+shoot" jump into unmapped memory. This is the Unreal hot-reload model, and vCAD's
+plugin contract reaches the same conclusion from the same kind of crash
+(`docs/architecture/kit-abi-lessons.md`).
+
+**What that costs, stated correctly.** A previous version of the comment claimed
+shipped games statically link kits and never take this path. They do:
+`engine_build` assembles `dist/kits/` from real kit binaries and rewrites
+project.json to point at them. The honest accounting is:
+
+| | editor | shipped player |
+|---|---|---|
+| mapped images retained | one per reload — unbounded by design, the price of iteration | one per kit, bounded; `startSimulation`/`stopSimulation` run once each |
+| startup copy of every kit binary | needed — `dlopen` caches by inode, so a rebuild must overwrite the file while the old image is mapped | **not needed**, and now skipped |
+| temp file left per kit on exit | dev machine | **none**, now that the copy is skipped |
+
+`KitHost::setReloadPolicy(Reload::Never)` is what removes the last two, and
+`engine_player` sets it. The default is `Allowed`, deliberately: a host that
+forgets to opt in loses a little launch time, where the opposite default would
+silently break hot-reload in the editor.
+
+The one case that CAN grow during play is a game calling `kitLoad`/`kitUnload`
+itself (the editor's Plug-in Manager does). Each cycle is one temp copy plus one
+permanently mapped image, so a game exposing kit toggling to players should not
+do it per level transition.

@@ -80,6 +80,13 @@ engine_test(profiler_test  LIB engine_core)
 # through the output), concurrent writers must lose no reservations, and the
 # ring's loss must be countable exactly.
 engine_test(logger_test    LIB engine_core)
+# A scene must outlive the kit that authored it. reflected_serde stashes unknown
+# component blobs in ReflectedPending and re-emits them on save — and the SAVE was
+# never tested, which is the only step that can destroy anything: a load that
+# stashes and a save that omits look identical from inside the session doing the
+# damage. Hermetic — "the type is not registered" is the whole condition, so this
+# needs no kit and no dlopen.
+engine_test(reflected_pending_test)
 engine_test(event_test)
 engine_test(input_test)
 engine_test(script_host_test)

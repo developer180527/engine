@@ -142,8 +142,34 @@ public:
     ModuleLibrary(const ModuleLibrary&)            = delete;
     ModuleLibrary& operator=(const ModuleLibrary&) = delete;
 
-    bool load(const fs::path& sourcePath) {
+    // ── Why there are two ways to load ──────────────────────────────────────
+    // COPY exists for hot-reload and nothing else: dlopen caches by inode, and a
+    // rebuild has to be able to overwrite the file on disk while the previous
+    // image is still mapped. A host that never reloads gains nothing from it and
+    // pays for it three times over — a full copy of every kit binary at startup,
+    // a temp file per kit left behind on exit, and, on Windows, a mapped DLL that
+    // cannot be deleted.
+    //
+    // That cost was being paid in SHIPPED GAMES. `engine_build` assembles
+    // `dist/kits/` out of real kit binaries and rewrites project.json to point at
+    // them, so `engine_player` goes down this path like the editor does — while
+    // the comment on unload() claimed "shipped games statically link kits and
+    // never come here". They do come here, and they do not reload.
+    enum class Reload { Allowed, Never };
+
+    bool load(const fs::path& sourcePath, Reload reload = Reload::Allowed) {
         std::error_code ec;
+        if (reload == Reload::Never) {
+            // In place. Nothing to clean up afterwards, and startup does not read
+            // and rewrite every kit binary for a capability this host has no way
+            // to use.
+            m_handle = libOpen(sourcePath);
+            if (!m_handle) {
+                LOG_ERROR("Module", "load failed: %s", libError().c_str());
+                return false;
+            }
+            return finishLoad(sourcePath);
+        }
         // PID in the name: the per-process counter alone collides across
         // concurrent engine instances (two editors, a CI matrix) sharing the
         // system temp dir — one process's copy_file racing another's libOpen
@@ -165,7 +191,15 @@ public:
             LOG_ERROR("Module", "load failed: %s", libError().c_str());
             return false;
         }
+        return finishLoad(sourcePath);
+    }
 
+    // The half that is identical whether the image came from a temp copy or from
+    // the file itself: resolve the exports, run the compatibility gauntlet, pin
+    // the component contracts, build the adapter.
+private:
+    bool finishLoad(const fs::path& sourcePath) {
+        (void)sourcePath;
         auto create  = (EngineGameModuleCreateV1Fn) libSym(m_handle, "engineGameModuleCreateV1");
         auto destroy = (EngineGameModuleDestroyV1Fn)libSym(m_handle, "engineGameModuleDestroyV1");
         if (!create || !destroy) {
@@ -274,11 +308,23 @@ public:
     // adding those components through the shared contract. dlclosing here made
     // "unload kit mid-play, resume, shoot" jump into unmapped memory. Retired
     // handles are parked in a process-lifetime graveyard instead — the Unreal
-    // hot-reload model. Dev-host-only cost: one small mapped image per
-    // unload/reload; shipped games statically link kits and never come here.
+    // hot-reload model.
+    //
+    // COST, stated correctly. An earlier version of this comment said "shipped
+    // games statically link kits and never come here", and that is false:
+    // `engine_build` assembles dist/kits/ from real kit binaries and rewrites
+    // project.json to point at them, so `engine_player` loads them exactly like
+    // the editor does. What IS true is that a shipped player calls
+    // startSimulation/stopSimulation once each, so the graveyard holds one entry
+    // per kit and is bounded by the kit count — it cannot grow during play unless
+    // the game itself calls kitLoad/kitUnload. The unbounded case is the editor,
+    // where it is one small mapped image per reload and that is the trade.
+    // Reload::Never (see load()) is what removes the other two costs — the
+    // startup copy and the temp-file litter — for hosts that cannot reload.
     // Safe to call repeatedly. The caller MUST have already released every
     // shared_ptr to plugin() — the adapter's deleter lives in the host, but the
     // table it points at dies here.
+public:
     void unload() {
         releaseContracts();
         // ── The one retention contract still enforced only by comment ────────

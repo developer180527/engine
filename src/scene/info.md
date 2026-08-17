@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-09
+verified: 2026-08-17
 parses-external-input: true
 covers:
   - src/scene/
@@ -109,3 +109,26 @@ prefabs.
 - Caller runs `assignMissingIds()` before save (set<> is illegal mid-query).
 - Parent links restore in a post-pass (all entities must exist first).
 - Scene saves auto-cook the binary twin (editor keeps both in sync).
+
+## A scene must outlive the kit that authored it — now tested
+
+`ReflectedPending` stashes a component blob whose type is not registered and
+re-emits it on save, so a scene round-trips losslessly through a session whose
+kits are missing. The design was there; **the save was never tested**, and the
+save is the only step that can destroy anything — a load that stashes correctly
+and a save that omits the stash look identical from inside the session doing the
+damage, which is how a colleague's file gets ruined by someone who never saw a
+warning.
+
+`tests/reflected_pending_test.cpp` runs every case THROUGH a kit-less session and
+saves from it: both unknown components re-emitted (not just the first), the result
+byte-identical to what the kit wrote, five consecutive kit-less saves changing
+nothing, a half-equipped session that has one of two kits still writing both, and
+`applyPending` restoring exactly the original values — asserted with `==` on
+floats, because "close enough" is how a document drifts every time it passes
+through a machine missing a plugin. Mutation-proved: deleting the re-emission from
+`save()` fails four assertions.
+
+Hermetic — "the type is not registered" is the whole condition, so it needs no
+kit, no dlopen and no project. Worth knowing from writing it: flecs emits floats
+with 10 significant digits, so the JSON round-trip is exact rather than nearly so.
