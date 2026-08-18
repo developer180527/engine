@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-17
+verified: 2026-08-18
 covers:
   - src/core/
 tests:
@@ -137,6 +137,29 @@ noise or silence at info level and can never hide a failure from the person whos
 build is broken. `panels/console_panel.h` is the game console;
 `panels/internal_console_panel.h` is the engine instrument (subsystem targeting,
 ring health) and is off by default.
+
+**Engine detail is demand-driven in the editor.** The Internal Console is off by
+default and a game developer is never meant to open it, so the 117 Info/Success
+call sites were being formatted, ring-written and mirrored to stdout for a window
+nobody had open, for the whole session. `armDemandGating()` (called by the editor
+AFTER init, so boot logging is never lost) makes ENGINE categories record detail
+only while something is watching; the panel `acquireWatch()`/`releaseWatch()`es on
+its open/closed transition. Three properties that are not negotiable:
+
+* **Warnings and errors are never gated.** The gate can only cost detail. One that
+  could hide a failure would be a bug generator and nobody would trust the log
+  again after the first time it ate one.
+* **Game categories are untouched.** They feed the other console, which is always
+  live; silencing a game's own scripts because an engine panel is shut would be
+  indefensible.
+* **Per-category targeting survives a sleep.** Solo Physics, close the panel,
+  reopen: the Solo is still there. `idleQuiet`/`wakeVerbose` are IDEMPOTENT for
+  this reason — the first version was not, and a second sleep saved the QUIET mask
+  over the real one, permanently destroying what waking up restores.
+
+The cost is real and stated in the UI, not hidden: lines from before you opened
+the panel were never recorded, so a bug noticed late has no run-up. The answer is
+the visible "Keep recording" pin (`pinVerbose`) and a reproduction.
 
 **MEMORY ORDERING — the two places the first version was wrong.** Both were
 data races by the standard that would only misbehave on weakly-ordered hardware,

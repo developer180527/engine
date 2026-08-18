@@ -138,6 +138,15 @@ public:
         // stock_plugins.h) — the editor runs whatever the game ships with.
         addStockPlugins(m_rt);
         m_rt.attachPlugins();
+
+        // ── Engine detail becomes demand-driven from here on ─────────────────
+        // Armed AFTER init, not before: boot is the one stretch of the session
+        // during which nobody can open a panel, and it is also the stretch whose
+        // log matters most when a project fails to load. Everything above this
+        // line is recorded in full; from here, engine categories record detail
+        // only while the Internal Console is open (or pinned). Warnings and
+        // errors are never gated, and game-facing categories are untouched.
+        elog::armDemandGating();
     }
 
     // frameLimit > 0 exits after that many frames — for scripted profiling

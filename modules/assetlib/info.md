@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-16
+verified: 2026-08-18
 parses-external-input: true
 covers:
   - modules/assetlib/
@@ -43,6 +43,25 @@ both verbatim, which is the lesson worth keeping: a hardening that lands in one
 deserializer and not its sibling is a coincidence, not a policy. A third was
 unique to it — `stringTableRead` computed `offset + length` in 32-bit, so the
 bound wrapped and the read ran off the heap.
+
+`texture_asset` carries THREE block-compression families now — BC for desktop
+and Steam Deck, ASTC for iOS and modern Android, ETC2 for the GLES 3.0 floor —
+because no single family runs everywhere and none of them is optional if the
+engine claims a mobile target. Two consequences worth knowing before touching it:
+
+* **Format ids are append-only.** A cooked `.ctex` stores the id, so renumbering
+  reinterprets every cached texture in every project on disk.
+* **Block geometry is no longer 4x4.** ASTC 6x6 and 8x8 exist, so the mip-size
+  math moved into `texBlockDims` / `texMipBytes` / `texChainBytes` and every
+  caller must go through them. `ceil(w/4)*ceil(h/4)` on a 6x6 texture does not
+  fail loudly — it shifts every later mip in the chain, so mip 3 reads mip 4's
+  bytes and the texture dissolves at distance. `texChainBytes` shipped with a
+  guard clause that dropped the final 1x1 level of every chain, caught by
+  `texture_format_test` comparing against a hand-summed chain.
+
+Which family a cook targets is a BUILD decision (`COOK_TEX_TARGET`), not a
+property of the asset, and it keys the DDC — see `src/assets/info.md` for why
+that one is not optional.
 
 `material_asset` v3 added `MaterialTexture::cooked`: a CACHE-RELATIVE path to
 the cooked texture, beside the source path the author wrote. It exists because a

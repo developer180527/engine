@@ -211,6 +211,15 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
              COMMAND cook_determinism_test --off)
     set_tests_properties(cook_determinism_test_off
                          PROPERTIES LABELS unit TIMEOUT 120)
+    # Block geometry for non-4x4 (ASTC) formats, the cook TARGET in the DDC key,
+    # and the EAC encoder bimg does not provide. Links bimg for its ETC2A
+    # DECODER: the alpha encoder is validated against an implementation nobody
+    # here wrote, which is the only reason to believe the bit layout.
+    engine_test(texture_format_test LIB engine_core)
+    target_link_libraries(texture_format_test PRIVATE bimg)
+    target_include_directories(texture_format_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bimg/include)
+
     # Result-file framing, DDC budget/LRU eviction, registry schema versioning
     engine_test(cook_hardening_test LIB engine_core)
     # Enforces that every cooker's DECLARED inputs move its cook key

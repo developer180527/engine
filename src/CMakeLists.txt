@@ -87,6 +87,10 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         # "build/": .gitignore's unanchored `build/` matches at any depth and
         # silently excluded the whole directory from the repo.
         tools/packaging/package_closure.cpp
+        # Texture targets: which block family this cook is for, and the EAC
+        # encoder bimg does not have (ETC2 alpha + RG11 normals).
+        assets/cookers/texture/texture_target.cpp
+        assets/cookers/texture/texture_eac.cpp
         # Fast CPU block compression (rgbcx BC1/3/5 + bc7enc BC7) — offline only
         ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
         ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp)
@@ -140,6 +144,21 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # of ms at equal-or-better quality.)
     target_include_directories(engine_core PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/bc7enc)
+    # ASTC + ETC2 come from bimg, which already vendors ARM's astc-encoder and
+    # an ETC2 encoder for bgfx — so the mobile texture targets needed no new
+    # dependency, only this target. BC stays on rgbcx/bc7enc: bimg's BC path is
+    # squish cluster-fit, which is the ~6.5s-per-4K encoder this engine replaced.
+    # Offline only, and inside the ENGINE_WITH_SOURCE_IMPORTERS branch, so a
+    # shipped player links no encoder of any kind.
+    # bimg (not just bimg_encode): image_encode.cpp calls back into bimg's core
+    # for getBlockInfo/imageConvert/imageAlloc. engine_runtime already linked bimg
+    # so the editor was fine, and engine_cook_worker — the out-of-process cook
+    # path, which links engine_core WITHOUT the runtime — was the target that
+    # failed. Worth remembering that the worker is the build that catches
+    # engine_core's real dependency surface.
+    target_link_libraries(engine_core PRIVATE bimg_encode bimg)
+    target_include_directories(engine_core PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bimg/include)
     # Where the ShaderCooker finds the compiler. Baked in rather than searched
     # for at runtime so a cook from any working directory resolves it; the
     # ENGINE_SHADERC env var overrides, which is how a Windows runner points at
@@ -183,6 +202,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
             ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
             ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
             assets/cookers/texture/texture_encode.cpp
+            assets/cookers/texture/texture_eac.cpp
             PROPERTIES COMPILE_OPTIONS "-O2")
     elseif(MSVC)
         # NOT applied in Debug: MSVC's Debug config carries /RTC1, and
@@ -199,6 +219,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
             ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
             ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
             assets/cookers/texture/texture_encode.cpp
+            assets/cookers/texture/texture_eac.cpp
             PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:/O2>")
     endif()
 endif()

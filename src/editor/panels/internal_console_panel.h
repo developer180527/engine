@@ -29,7 +29,25 @@
 #include "editor/editor_icons.h"
 
 inline void drawInternalConsolePanel(bool* open) {
-    if (open && !*open) return;
+    // ── Recording follows the panel ──────────────────────────────────────────
+    // This window is off by default and a game developer is never meant to open
+    // it, so for essentially the whole life of an editor session the engine was
+    // formatting, ring-writing and mirroring 117 Info/Success call sites for a
+    // window nobody had open. Opening the panel is the INVOCATION; closing it
+    // ends the subscription. Engine categories only — the game console is a
+    // different audience and stays live (see elog::armDemandGating).
+    //
+    // Edge-triggered on the open bool rather than refreshed every frame, because
+    // acquire/release is a refcount: calling acquire once per frame would leak a
+    // watcher per frame and the lights would never go out.
+    static bool s_watching = false;
+    const bool wantOpen = !open || *open;
+    if (wantOpen != s_watching) {
+        s_watching = wantOpen;
+        if (wantOpen) elog::acquireWatch(); else elog::releaseWatch();
+    }
+    if (!wantOpen) return;
+
     ImGui::Begin(ICON_FA_BUG " Internal Console", open);
 
     const ImVec4* col = elogLevelColors();
@@ -57,6 +75,24 @@ inline void drawInternalConsolePanel(bool* open) {
                               "and is what a shipping build wants.");
     }
 
+    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+    {
+        // The pin, and it is deliberately visible rather than buried in a menu.
+        // Demand gating trades one real capability away: lines from BEFORE you
+        // opened the panel were never recorded, so a bug you notice late has no
+        // run-up. The honest tool says so at the point where the person needs to
+        // know, so the answer is "pin it and reproduce" and not "why is the log
+        // empty".
+        bool pinned = elog::verbosePinned();
+        if (ImGui::Checkbox("Keep recording", &pinned)) elog::pinVerbose(pinned);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(
+                "Engine detail is recorded only while this panel is OPEN — the\n"
+                "117 Info call sites cost nothing the rest of the time.\n\n"
+                "The trade: a bug you notice AFTER the fact has no run-up,\n"
+                "because those lines were never written. Pin this and reproduce\n"
+                "when you need the lead-up. Warnings and errors are never gated.");
+    }
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
     ImGui::TextDisabled("ring %llu/%u", (unsigned long long)inRing, elog::kSlots);
     if (lost) {

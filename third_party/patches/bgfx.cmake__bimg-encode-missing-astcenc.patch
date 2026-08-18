@@ -1,0 +1,12 @@
+diff --git a/cmake/bimg/bimg_encode.cmake b/cmake/bimg/bimg_encode.cmake
+index 82d9fe0..29c52f8 100644
+--- a/cmake/bimg/bimg_encode.cmake
++++ b/cmake/bimg/bimg_encode.cmake
+@@ -41,6 +41,7 @@ file(
+ 	${BIMG_DIR}/src/image_encode.* #
+ 	${BIMG_DIR}/src/image_cubemap_filter.* #
+ 	${LIBSQUISH_SOURCES} #
++	${ASTC_ENCODER_SOURCES} #
+ 	${EDTAA3_SOURCES} #
+ 	${ETC1_SOURCES} #
+ 	${ETC2_SOURCES} #

@@ -131,12 +131,23 @@ struct Category {
     std::atomic<uint32_t> mask;
     std::atomic<uint64_t> written;   // lifetime lines from this category
     std::atomic<uint8_t>  audience;  // Audience; zero-init = Engine
+    // The mask this category had when demand gating last put it to sleep, so
+    // reopening the Internal Console restores the targeting a developer set up
+    // rather than resetting it to "everything". Without this, Solo-ing a
+    // subsystem and then closing the panel would silently throw the Solo away.
+    std::atomic<uint32_t> savedMask;
 };
 
 struct Registry {
     Category            cats[kMaxCategories];
     std::atomic<int>    count;
     std::atomic<uint32_t> defaultMask;   // applied to categories on creation
+    // ── Demand gating (see `armDemandGating`) ────────────────────────────────
+    std::atomic<int>      watchers;      // how many observers want engine detail
+    std::atomic<bool>     gated;         // is the policy armed at all?
+    std::atomic<bool>     pinned;        // keep recording regardless of watchers
+    std::atomic<bool>     asleep;        // engine detail currently clamped
+    std::atomic<uint32_t> savedDefault;  // defaultMask from before it slept
 };
 inline Registry g_reg;
 
@@ -343,6 +354,120 @@ inline void setDefaultMask(uint32_t mask) {
     g_reg.defaultMask.store(mask, std::memory_order_relaxed);
 }
 
+// ── Demand gating: engine detail is recorded only while someone is looking ───
+//
+// The engine has 117 Info/Success call sites and the busy ones run per frame. In
+// the editor every one of them was formatted, ring-written and mirrored to stdout
+// at all times — including the entire time the Internal Console was closed, which
+// is almost always, because that panel is off by default and a game developer is
+// never meant to open it. Work whose only consumer is a window nobody has open.
+//
+// So: while nothing is watching, ENGINE categories drop to warnings and errors.
+// Opening the panel raises them; closing it lowers them again. GAME categories
+// are never touched — they feed the other console, which is always live, and
+// silencing a game's own scripts because an engine panel is shut would be
+// indefensible.
+//
+// Two properties this deliberately has:
+//
+//   * PER-CATEGORY STATE SURVIVES. A developer who Solos Physics, closes the
+//     panel and reopens it gets the Solo back, not a reset to "watch all".
+//   * WARNINGS AND ERRORS ARE NEVER GATED. The gate can only ever cost detail.
+//     A gate that could hide a failure would be a bug generator, and nobody
+//     would trust the log again after the first time it ate one.
+//
+// ── The cost, stated plainly ─────────────────────────────────────────────────
+// Detail that was not recorded cannot be recovered. If a bug happens and THEN
+// you open the panel, the interesting lines are gone — the ring holds what was
+// written, and nothing was. That is a real regression against always-recording,
+// and it is why `pinVerbose` exists and why the panel offers it as a visible
+// checkbox rather than burying it: the answer to "I need the run-up to this" is
+// pin it and reproduce, and the tool has to say so.
+//
+// Not armed by default. The editor arms it AFTER init, so boot logging — the one
+// stretch nobody can open a panel during — is recorded in full.
+inline void armDemandGating();
+inline void idleQuiet();
+
+inline int  watchers()      { return g_reg.watchers.load(std::memory_order_relaxed); }
+inline bool verboseActive() {
+    return !g_reg.gated.load(std::memory_order_relaxed)
+        ||  g_reg.pinned.load(std::memory_order_relaxed)
+        ||  watchers() > 0;
+}
+
+// Put engine categories to sleep, remembering what they had.
+//
+// IDEMPOTENT, and that is not a nicety. The first version was not, and a second
+// call while already asleep saved the QUIET mask over the real one — so an
+// unmatched release, or pinVerbose(false) called twice, permanently destroyed the
+// targeting that waking up is supposed to restore. It surfaced as "pinning
+// records with the panel closed" failing three assertions later, which is how far
+// a lost save propagates before anything notices.
+inline void idleQuiet() {
+    if (g_reg.asleep.exchange(true, std::memory_order_relaxed)) return;
+    const uint32_t quiet = levelBit(Level::Error) | levelBit(Level::Warning);
+    g_reg.savedDefault.store(g_reg.defaultMask.load(std::memory_order_relaxed),
+                             std::memory_order_relaxed);
+    g_reg.defaultMask.store(quiet, std::memory_order_relaxed);
+    const int n = categoryCount();
+    for (int i = 0; i < n; ++i) {
+        Category& c = g_reg.cats[i];
+        if (audienceOf(c) != Audience::Engine) continue;
+        c.savedMask.store(c.mask.load(std::memory_order_relaxed),
+                          std::memory_order_relaxed);
+        c.mask.store(quiet, std::memory_order_relaxed);
+    }
+}
+
+// Wake them, restoring the targeting that was in place. Also idempotent, for
+// the same reason in reverse.
+inline void wakeVerbose() {
+    if (!g_reg.asleep.exchange(false, std::memory_order_relaxed)) return;
+    const uint32_t sd = g_reg.savedDefault.load(std::memory_order_relaxed);
+    g_reg.defaultMask.store(sd ? sd : kDefaultMask, std::memory_order_relaxed);
+    const int n = categoryCount();
+    for (int i = 0; i < n; ++i) {
+        Category& c = g_reg.cats[i];
+        if (audienceOf(c) != Audience::Engine) continue;
+        const uint32_t sm = c.savedMask.load(std::memory_order_relaxed);
+        c.mask.store(sm ? sm : kDefaultMask, std::memory_order_relaxed);
+    }
+}
+
+inline void armDemandGating() {
+    g_reg.gated.store(true, std::memory_order_relaxed);
+    if (!verboseActive()) idleQuiet();
+}
+
+// A panel becoming visible is an observer arriving. Refcounted rather than a
+// bool because more than one thing can want detail at once — the console panel,
+// a soak harness, a future remote log viewer — and the last one to leave is the
+// one that turns the lights off.
+inline void acquireWatch() {
+    const int before = g_reg.watchers.fetch_add(1, std::memory_order_relaxed);
+    if (before == 0 && g_reg.gated.load(std::memory_order_relaxed)) wakeVerbose();
+}
+inline void releaseWatch() {
+    const int before = g_reg.watchers.fetch_sub(1, std::memory_order_relaxed);
+    if (before <= 1 && g_reg.gated.load(std::memory_order_relaxed) &&
+        !g_reg.pinned.load(std::memory_order_relaxed))
+        idleQuiet();
+    if (before <= 0)   // release without a matching acquire — clamp, don't wrap
+        g_reg.watchers.store(0, std::memory_order_relaxed);
+}
+
+// "Keep recording even with the panel closed." The escape hatch for the case
+// demand gating genuinely makes worse: needing the lines from BEFORE you knew
+// there was a problem.
+inline void pinVerbose(bool on) {
+    g_reg.pinned.store(on, std::memory_order_relaxed);
+    if (!g_reg.gated.load(std::memory_order_relaxed)) return;
+    if (on) wakeVerbose();
+    else if (watchers() == 0) idleQuiet();
+}
+inline bool verbosePinned() { return g_reg.pinned.load(std::memory_order_relaxed); }
+
 inline void watchAll() {
     // Resets the DEFAULT too, not just the categories that exist. "Watch all"
     // has to mean subsystems discovered later as well — otherwise a dev who has
@@ -351,9 +476,15 @@ inline void watchAll() {
     // still silent, with the UI claiming otherwise. Caught by an unrelated
     // assertion in logger_test: the sticky default leaked into a later case.
     g_reg.defaultMask.store(kDefaultMask, std::memory_order_relaxed);
+    // Clear the demand-gating sleep flag too. "Watch all" means watch all; if the
+    // gate still believed it was asleep, the next release would skip its save and
+    // the following wake would restore masks from before this click.
+    g_reg.asleep.store(false, std::memory_order_relaxed);
     const int n = categoryCount();
-    for (int i = 0; i < n; ++i)
+    for (int i = 0; i < n; ++i) {
         g_reg.cats[i].mask.store(kDefaultMask, std::memory_order_relaxed);
+        g_reg.cats[i].savedMask.store(kDefaultMask, std::memory_order_relaxed);
+    }
 }
 
 // ── The ring ────────────────────────────────────────────────────────────────

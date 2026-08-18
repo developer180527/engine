@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-17
+verified: 2026-08-18
 parses-external-input: true
 covers:
   - src/assets/
@@ -71,8 +71,27 @@ format / scheduling).
   re-import extracts the skeleton and embedded clips into the same binary.
   Also emits an **LOD chain** — see below.
 - `TextureCooker` — stb decode → block-compressed texels + mips via
-  `texture_encode` (vendored rgbcx/bc7enc: ~200ms per 4K BC1, BC7 final
-  bake seconds not minutes; encoder TUs pinned to -O2 even in Debug).
+  `texture_encode`, in one of THREE families chosen by `COOK_TEX_TARGET`:
+  `bc` (default; desktop + Steam Deck, via vendored rgbcx/bc7enc — ~200ms per
+  4K BC1, BC7 final bake seconds not minutes), `astc` (iOS + modern Android,
+  via the astc-encoder bimg already vendors), `etc2` (the GLES 3.0 floor).
+  Encoder TUs pinned to -O2 even in Debug. BC is NOT available on any phone and
+  ASTC is not on desktop AMD/NVIDIA, so this is a real fork in the output, not a
+  quality tier. Notes:
+    - ASTC and ETC2-RGB come from `bimg_encode`, which needed no new dependency
+      (bgfx already vendors both encoders) but did need a patch —
+      `bgfx.cmake__bimg-encode-missing-astcenc.patch`: upstream's source glob
+      lists every 3rdparty encoder EXCEPT astcenc, so ASTC linked nowhere.
+    - EAC is written here (`texture_eac.cpp`), because bimg has no EAC encoder at
+      all — which would have left the ETC2 target unable to cook a cutout leaf
+      (ETC2A alpha) or a normal map (EAC RG11), i.e. half of a real game.
+    - Nothing goes to bimg at a partial-block size: its ETC2 loop indexes off
+      the source with no edge clamp, and our mip chains end at 1x1. Mips are
+      edge-replicated up to a whole block count first.
+    - The runtime side refuses rather than guesses: `cooked_texture.h` used to
+      default an unknown format id to RGBA8, handing block bytes to the driver
+      as raw pixels. It now rejects unknown ids and formats the GPU cannot
+      sample, naming the format and pointing at `COOK_TEX_TARGET`.
 - `SceneCooker` — scene JSON → binary for SceneService. Every read goes through
   `core/json_read.h`, not `nlohmann`'s own accessors: the const
   `operator[](size_type)` is UNCHECKED (`"position": []` indexes an empty vector)
@@ -201,9 +220,13 @@ path, the pipeline ingests then hardlink-materializes — never hand a cooker a
 hardlinked final path (an ofstream would truncate the blob for every project;
 blobs are also stored chmod 0444 for exactly that reason). Cook identity per
 cooker: `id()` + `version()` + `settingsFingerprint(ctx)` — the fingerprint
-MUST cover every env knob that alters output (`COOK_TEX_HQ`, the normal-map
-filename heuristic), or a fast-quality blob silently satisfies a final-bake
-request. Failed cooks store no blob but record the key: identical inputs are
+MUST cover every env knob that alters output (`COOK_TEX_HQ`, `COOK_TEX_TARGET`,
+the normal-map filename heuristic), or a fast-quality blob silently satisfies a
+final-bake request. `COOK_TEX_TARGET` is the sharpest case: a source PNG is
+byte-identical whichever device the build is for, so without it in the key a
+desktop machine's cached BC7 blob answers a phone's ASTC request and the SHARED
+CACHE is what shipped undecodable blocks. Same shape as the arm64/x86 NaN
+divergence in the decimator, and equally invisible on the machine that made it. Failed cooks store no blob but record the key: identical inputs are
 not retried until source/cooker/settings change (`forceRecook` evicts the
 local blob and bypasses the fetch path — otherwise it would just re-download
 the bytes under suspicion).

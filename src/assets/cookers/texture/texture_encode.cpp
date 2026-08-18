@@ -10,6 +10,19 @@
 #include <rgbcx.h>
 #include <bc7enc.h>
 
+// The mobile families come from bimg, which already vendors ARM's astc-encoder
+// and an ETC2 RGB encoder — both submodules this tree carries for bgfx. That is
+// why adding ASTC/ETC2 needed no new dependency; only the `bimg_encode` target,
+// which was dropped earlier because its BC path (squish cluster-fit, ~6.5 s per
+// 4K BC1) was far slower than rgbcx. BC stays on rgbcx; bimg is used ONLY for
+// the two families it is the best available option for.
+#include <bimg/encode.h>
+#include <bx/allocator.h>
+#include <bx/error.h>
+
+#include "assets/cookers/texture/texture_eac.h"
+#include "assets/cookers/texture/texture_target.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -108,8 +121,65 @@ void downsample2x2(const std::vector<uint8_t>& src, uint32_t sw, uint32_t sh,
     }
 }
 
-inline size_t bcMipBytes(uint32_t w, uint32_t h, uint32_t bytesPerBlock) {
-    return (size_t)((w + 3) / 4) * ((h + 3) / 4) * bytesPerBlock;
+// ── Padding, and the bimg over-read it exists to avoid ──────────────────────
+// bimg's ETC2 block loop indexes straight off the source pointer with no edge
+// clamp: for a mip whose width is not a multiple of 4 it reads past the end of
+// the row, and for the last row past the end of the IMAGE. Our mip chains run
+// down to 1x1, so mips 2x2 and 1x1 hit it on every single texture. (Its own
+// destination-size math has the matching hole — dstPitch is width*bpp/8, which
+// is 0 bytes for a 1-wide ETC2 mip that really needs 8.)
+//
+// So nothing goes to bimg at a partial-block size. Every mip is edge-replicated
+// up to a whole number of blocks first, which is also what the BC path already
+// does per-block in extractBlock. Replication rather than zero-fill: black
+// padding bleeds into the last block's endpoints and shows up as a dark fringe
+// along the right and bottom edges of every atlas.
+void padToBlockMultiple(const std::vector<uint8_t>& src, uint32_t w, uint32_t h,
+                        uint32_t blockW, uint32_t blockH,
+                        std::vector<uint8_t>& dst, uint32_t& pw, uint32_t& ph) {
+    pw = ((w + blockW - 1) / blockW) * blockW;
+    ph = ((h + blockH - 1) / blockH) * blockH;
+    if (pw == w && ph == h) { dst = src; return; }
+    dst.resize((size_t)pw * ph * 4);
+    for (uint32_t y = 0; y < ph; ++y) {
+        const uint32_t sy = std::min(y, h - 1);
+        for (uint32_t x = 0; x < pw; ++x) {
+            const uint32_t sx = std::min(x, w - 1);
+            std::memcpy(&dst[((size_t)y * pw + x) * 4],
+                        &src[((size_t)sy * w + sx) * 4], 4);
+        }
+    }
+}
+
+bx::AllocatorI* bimgAllocator() {
+    static bx::DefaultAllocator alloc;
+    return &alloc;
+}
+
+// One mip through bimg, for the families it owns (ASTC via astc-encoder, ETC2
+// RGB via its own encoder). `out` is sized by the caller from texMipBytes.
+bool bimgEncodeMip(const std::vector<uint8_t>& rgba, uint32_t w, uint32_t h,
+                   bimg::TextureFormat::Enum fmt, bool isNormalMap,
+                   uint8_t* out, size_t outBytes) {
+    const bimg::ImageBlockInfo& bi = bimg::getBlockInfo(fmt);
+    std::vector<uint8_t> padded;
+    uint32_t pw = 0, ph = 0;
+    padToBlockMultiple(rgba, w, h, bi.blockWidth, bi.blockHeight, padded, pw, ph);
+
+    const size_t blocks = (size_t)(pw / bi.blockWidth) * (ph / bi.blockHeight);
+    if (blocks * (bi.blockSize) != outBytes) return false;
+
+    bx::Error err;
+    // Quality::Default even for normal maps, deliberately. bimg's
+    // NormalMapDefault tier switches astcenc into ASTC_ENC_NORMAL_RA, which
+    // stores X in R and Y in ALPHA — better error metrics, and a different
+    // shader contract from BC5's .rg. One swizzle for every target is worth more
+    // than a few dB on one of them; a per-target sampling rule is exactly the
+    // kind of hidden divergence that makes a mobile port feel like a fork.
+    (void)isNormalMap;
+    bimg::imageEncodeFromRgba8(bimgAllocator(), out, padded.data(), pw, ph, 1,
+                               fmt, bimg::Quality::Default, &err);
+    return err.isOk();
 }
 
 // Copy one 4x4 block out of the mip, clamping (edge-replicating) at the
@@ -139,6 +209,113 @@ void encodersInitOnce() {
     });
 }
 
+// ── One mip, whichever family ───────────────────────────────────────────────
+// The BC path walks 4x4 blocks itself (rgbcx/bc7enc are per-block APIs); the
+// mobile families hand a whole mip to bimg or to our EAC encoder. `outBytes`
+// comes from assetlib::texMipBytes, which is the only place block geometry
+// lives — a 6x6 ASTC mip is NOT ceil(w/4)*ceil(h/4) blocks, and computing it
+// locally is how a mip chain starts reading the next level as pixel data.
+bool encodeMip(uint32_t fmt, const std::vector<uint8_t>& mip,
+               uint32_t mw, uint32_t mh, bool isNormalMap,
+               const bc7enc_compress_block_params& bc7Params,
+               uint8_t* dst, size_t outBytes) {
+    using namespace assetlib;
+
+    switch (fmt) {
+        // ── ASTC ────────────────────────────────────────────────────────────
+        case kTexASTC4x4:
+        case kTexASTC6x6:
+        case kTexASTC8x8: {
+            // Normal maps carry X,Y only — Z is reconstructed in-shader, the
+            // same contract BC5 has. Flattening B to a constant before the
+            // encode stops ASTC spending bits on a channel nobody samples;
+            // leaving the authored Z in costs real quality at 6x6.
+            std::vector<uint8_t> src = mip;
+            if (isNormalMap)
+                for (size_t i = 0; i < src.size(); i += 4) {
+                    src[i + 2] = 0;
+                    src[i + 3] = 255;
+                }
+            const bimg::TextureFormat::Enum bf =
+                fmt == kTexASTC4x4 ? bimg::TextureFormat::ASTC4x4
+              : fmt == kTexASTC6x6 ? bimg::TextureFormat::ASTC6x6
+                                   : bimg::TextureFormat::ASTC8x8;
+            return bimgEncodeMip(src, mw, mh, bf, isNormalMap, dst, outBytes);
+        }
+
+        // ── ETC2 RGB ────────────────────────────────────────────────────────
+        case kTexETC2:
+            return bimgEncodeMip(mip, mw, mh, bimg::TextureFormat::ETC2,
+                                 isNormalMap, dst, outBytes);
+
+        // ── ETC2 RGBA: 8 bytes of EAC alpha then 8 of ETC2 RGB, per block ───
+        // bimg has the RGB half and no alpha encoder at all, so the two are
+        // produced separately and interleaved here. The ORDER is not a choice:
+        // COMPRESSED_RGBA8_ETC2_EAC puts alpha first, and swapping the halves
+        // yields a texture that decodes to noise rather than to anything a
+        // reviewer would recognise as "the alpha is wrong".
+        case kTexETC2A: {
+            const uint32_t bx_ = (mw + 3) / 4, by_ = (mh + 3) / 4;
+            std::vector<uint8_t> rgbBlocks((size_t)bx_ * by_ * 8);
+            if (!bimgEncodeMip(mip, mw, mh, bimg::TextureFormat::ETC2,
+                               isNormalMap, rgbBlocks.data(), rgbBlocks.size()))
+                return false;
+            uint8_t block[64], alpha[16];
+            for (uint32_t byi = 0; byi < by_; ++byi)
+                for (uint32_t bxi = 0; bxi < bx_; ++bxi) {
+                    extractBlock(mip.data(), mw, mh, bxi, byi, block);
+                    for (int i = 0; i < 16; ++i) alpha[i] = block[i * 4 + 3];
+                    const size_t bi = (size_t)byi * bx_ + bxi;
+                    cook::encodeEacAlphaBlock(alpha, dst + bi * 16);
+                    std::memcpy(dst + bi * 16 + 8, &rgbBlocks[bi * 8], 8);
+                }
+            return true;
+        }
+
+        // ── EAC RG11: the ETC2 answer to BC5 ────────────────────────────────
+        case kTexEACRG11: {
+            const uint32_t bx_ = (mw + 3) / 4, by_ = (mh + 3) / 4;
+            uint8_t block[64], ch[16];
+            for (uint32_t byi = 0; byi < by_; ++byi)
+                for (uint32_t bxi = 0; bxi < bx_; ++bxi) {
+                    extractBlock(mip.data(), mw, mh, bxi, byi, block);
+                    uint8_t* d = dst + ((size_t)byi * bx_ + bxi) * 16;
+                    for (int i = 0; i < 16; ++i) ch[i] = block[i * 4 + 0];
+                    cook::encodeEacR11Block(ch, d);         // X
+                    for (int i = 0; i < 16; ++i) ch[i] = block[i * 4 + 1];
+                    cook::encodeEacR11Block(ch, d + 8);     // Y
+                }
+            return true;
+        }
+
+        // ── BC, per-block through rgbcx/bc7enc ──────────────────────────────
+        default: {
+            const uint32_t bpb = texBlockDims(fmt).bytes;
+            const uint32_t bw = (mw + 3) / 4, bh = (mh + 3) / 4;
+            uint8_t block[64];
+            for (uint32_t byi = 0; byi < bh; ++byi)
+                for (uint32_t bxi = 0; bxi < bw; ++bxi) {
+                    extractBlock(mip.data(), mw, mh, bxi, byi, block);
+                    uint8_t* d = dst + ((size_t)byi * bw + bxi) * bpb;
+                    switch (fmt) {
+                        case kTexBC1:
+                            rgbcx::encode_bc1(kBc1Level, d, block,
+                                              /*allow_3color=*/false,
+                                              /*transparent_black=*/false);
+                            break;
+                        case kTexBC3: rgbcx::encode_bc3(kBc1Level, d, block); break;
+                        case kTexBC5: rgbcx::encode_bc5(d, block, 0, 1, 4);   break;
+                        case kTexBC7:
+                            bc7enc_compress_block(d, block, &bc7Params);
+                            break;
+                        default: return false;   // unknown format id
+                    }
+                }
+            return true;
+        }
+    }
+}
+
 } // namespace
 
 bool looksLikeNormalMap(const char* filename) {
@@ -156,13 +333,18 @@ bool encodeTexture(const uint8_t* rgba, uint32_t w, uint32_t h,
     encodersInitOnce();
 
     // ── Format choice ────────────────────────────────────────────────────
-    //   normals -> BC5 (two-channel XY, Z reconstructed in-shader)
-    //   color   -> BC1 when opaque (8:1), BC3 when the source has alpha (4:1)
-    //   COOK_TEX_HQ=1 -> BC7 for color (near-lossless 4:1, final bake) —
-    //   with bc7enc it's seconds per 4K, not nvtt's exhaustive minutes, but
-    //   BC1/BC3 iteration cooks remain ~20x faster still.
+    // Two inputs, both from the environment rather than the asset: the quality
+    // TIER (COOK_TEX_HQ) and the TARGET FAMILY (COOK_TEX_TARGET — bc, astc or
+    // etc2). texFormatFor owns the whole decision so that
+    // TextureCooker::settingsFingerprint can name the format without running an
+    // encode; a fingerprint that re-derives the rule separately is a fingerprint
+    // that will eventually describe a different cook than the one it keys.
     const char* hqEnv = std::getenv("COOK_TEX_HQ");
     const bool  hq     = hqEnv && *hqEnv && hqEnv[0] != '0';
+
+    std::string why;
+    const TexTarget target = resolveTexTarget(&why);
+    if (!why.empty()) std::printf("[TexEncode] WARNING: %s\n", why.c_str());
 
     bool hasAlpha = false;
     if (!isNormalMap) {
@@ -171,13 +353,7 @@ bool encodeTexture(const uint8_t* rgba, uint32_t w, uint32_t h,
             if (rgba[i] != 255) { hasAlpha = true; break; }
     }
 
-    enum class Codec { BC1, BC3, BC5, BC7 };
-    Codec codec; uint32_t fmt;
-    if (isNormalMap)   { codec = Codec::BC5; fmt = assetlib::kTexBC5; }
-    else if (hq)       { codec = Codec::BC7; fmt = assetlib::kTexBC7; }
-    else if (hasAlpha) { codec = Codec::BC3; fmt = assetlib::kTexBC3; }
-    else               { codec = Codec::BC1; fmt = assetlib::kTexBC1; }
-    const uint32_t bpb = assetlib::bcBytesPerBlock(fmt);
+    const uint32_t fmt = texFormatFor(target, isNormalMap, hasAlpha, hq);
 
     bc7enc_compress_block_params bc7Params;
     bc7enc_compress_block_params_init(&bc7Params);
@@ -194,33 +370,15 @@ bool encodeTexture(const uint8_t* rgba, uint32_t w, uint32_t h,
     uint32_t mw = w, mh = h, mips = 0;
     for (;;) {
         ++mips;
-        const size_t off = out.pixels.size();
-        out.pixels.resize(off + bcMipBytes(mw, mh, bpb));
-        uint8_t*       dst = out.pixels.data() + off;
-        const uint32_t bw  = (mw + 3) / 4;
-        const uint32_t bh  = (mh + 3) / 4;
-        uint8_t block[64];
-        for (uint32_t by = 0; by < bh; ++by)
-            for (uint32_t bx = 0; bx < bw; ++bx) {
-                extractBlock(mip.data(), mw, mh, bx, by, block);
-                uint8_t* d = dst + ((size_t)by * bw + bx) * bpb;
-                switch (codec) {
-                    case Codec::BC1:
-                        rgbcx::encode_bc1(kBc1Level, d, block,
-                                          /*allow_3color=*/false,
-                                          /*transparent_black=*/false);
-                        break;
-                    case Codec::BC3:
-                        rgbcx::encode_bc3(kBc1Level, d, block);
-                        break;
-                    case Codec::BC5:
-                        rgbcx::encode_bc5(d, block, 0, 1, 4);
-                        break;
-                    case Codec::BC7:
-                        bc7enc_compress_block(d, block, &bc7Params);
-                        break;
-                }
-            }
+        const size_t off      = out.pixels.size();
+        const size_t mipBytes = assetlib::texMipBytes(fmt, mw, mh);
+        out.pixels.resize(off + mipBytes);
+        if (!encodeMip(fmt, mip, mw, mh, isNormalMap, bc7Params,
+                       out.pixels.data() + off, mipBytes)) {
+            std::printf("[TexEncode] ERROR: %ux%u mip failed in format %u\n",
+                        mw, mh, fmt);
+            return false;
+        }
 
         if (mw == 1 && mh == 1) break;
         const uint32_t nw = std::max(1u, mw >> 1);
@@ -231,11 +389,10 @@ bool encodeTexture(const uint8_t* rgba, uint32_t w, uint32_t h,
         mw = nw; mh = nh;
     }
     out.header.mipCount = mips;
-    static const char* kName[] = {"RGBA8","BC7","BC5","BC1","BC3"};
     const double ms = std::chrono::duration<double, std::milli>(
                           std::chrono::steady_clock::now() - t0).count();
-    std::printf("[TexEncode] %ux%u %s %u mips in %.0f ms\n", w, h,
-                fmt < 5 ? kName[fmt] : "?", mips, ms);
+    std::printf("[TexEncode] %ux%u %s (%s) %u mips in %.0f ms\n", w, h,
+                assetlib::texFormatName(fmt), texTargetName(target), mips, ms);
     return true;
 }
 

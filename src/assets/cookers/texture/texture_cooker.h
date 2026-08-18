@@ -9,7 +9,11 @@ public:
     // v2: DDC transition — this version now feeds the per-cooker cache key
     // (bumping it re-cooks textures and ONLY textures).
     // v3: rgbcx/bc7enc encoders replace squish/nvtt (different block bytes).
-    static constexpr uint32_t kVersion = 3;
+    // v4: ASTC/ETC2 targets. Bumped even though a BC cook's bytes are unchanged,
+    //     because the mip-size math moved from a hard-coded 4x4 block to
+    //     assetlib::texMipBytes — and a version bump is the cheap way to be sure
+    //     no entry keyed under the old, block-size-blind layout is ever served.
+    static constexpr uint32_t kVersion = 4;
 
     std::vector<std::string> extensions() const override {
         return {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".hdr"};
