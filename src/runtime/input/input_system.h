@@ -2,32 +2,7 @@
 #include <vector>
 #include <cstring>
 #include "runtime/input/input_event.h"
-
-#if defined(ENGINE_WINDOW_BACKEND_SDL3)
-    // Scroll and text arrive as EVENTS here (there is no SDL polling API for
-    // either), fed in by the platform's native-event hook — see
-    // processNativeEvent(). Key/mouse/cursor are still polled.
-    #include "runtime/input/sdl3_keymap.h"
-#else
-    #define GLFW_INCLUDE_NONE
-    #include <GLFW/glfw3.h>
-
-    // The engine-owned Key/MouseButton constants (input_event.h, backend-free)
-    // must stay numerically identical to GLFW's — this backend casts between
-    // them, and kKeyCodeMax/kMouseButtonMax mirror GLFW's bounds.
-    static_assert((int)Key::Space      == GLFW_KEY_SPACE);
-    static_assert((int)Key::Escape     == GLFW_KEY_ESCAPE);
-    static_assert((int)Key::Enter      == GLFW_KEY_ENTER);
-    static_assert((int)Key::W          == GLFW_KEY_W);
-    static_assert((int)Key::Num9       == GLFW_KEY_9);
-    static_assert((int)Key::F12        == GLFW_KEY_F12);
-    static_assert((int)Key::LeftShift  == GLFW_KEY_LEFT_SHIFT);
-    static_assert((int)Key::RightSuper == GLFW_KEY_RIGHT_SUPER);
-    static_assert((int)MouseButton::Left   == GLFW_MOUSE_BUTTON_LEFT);
-    static_assert((int)MouseButton::Middle == GLFW_MOUSE_BUTTON_MIDDLE);
-    static_assert(kKeyCodeMax     == GLFW_KEY_LAST);
-    static_assert(kMouseButtonMax == GLFW_MOUSE_BUTTON_LAST);
-#endif
+#include "runtime/platform/window_ops.h"
 
 // ── InputSystem ────────────────────────────────────────────────────────────
 // The WINDOW input source: keys/mouse/cursor polled from the windowing layer,
@@ -37,6 +12,19 @@
 //
 // State is indexed by the ENGINE's code space (Key/MouseButton values), not by
 // the backend's, so everything below the poll is backend-independent.
+//
+// ── This header names NO windowing library, and that is load-bearing ────────
+// It used to `#include <GLFW/glfw3.h>` and branch on ENGINE_WINDOW_BACKEND_SDL3
+// in six places. Because input.h, input_map.h, input_sources.h, runtime.cpp and
+// the editor all include it, that single include linked GLFW into every build
+// of engine_runtime — including SDL3 ones, and including a host that supplies
+// its own window. A Qt or Rust editor dragged in a windowing library it had no
+// use for, which is precisely the vendor-lock the SDK exists to avoid.
+//
+// Everything backend-specific now lives behind wsi:: in
+// runtime/platform/window_ops.h, so each library is reachable from exactly two
+// TUs and CMake links only the one selected. Keep it that way: an #include of
+// GLFW or SDL here silently re-couples every consumer of this header.
 class InputSystem {
 public:
     static InputSystem& get() {
@@ -44,50 +32,37 @@ public:
         return inst;
     }
 
-    // Call once after window creation AND after imguiInit().
-    // Only installs scroll + char callbacks (chained to ImGui's).
-    // Opaque handle for the same reason as setActiveWindow(): the editor must
-    // not need GLFW types to hand its window to the window input source.
+    // Call once after window creation AND after the UI backend initialises —
+    // on GLFW the sink chains to ImGui's scroll/char callbacks, so installing
+    // first would let ImGui displace it.
+    //
+    // Opaque handle for the same reason as setActiveWindow(): no caller needs a
+    // windowing-library type to hand its window to the input source.
     void init(void* window) {
         m_window = window;
-#if defined(ENGINE_WINDOW_BACKEND_SDL3)
-        // No callbacks to install: SDL has one event queue and the platform
-        // hook feeds us from it (processNativeEvent). Seed the cursor so the
-        // first delta is 0.
-        float mx = 0.0f, my = 0.0f;
-        SDL_GetMouseState(&mx, &my);
-        m_lastX = mx; m_lastY = my;
-#else
-        auto* gw = static_cast<GLFWwindow*>(window);
-        // Chain scroll + char — ImGui needs these too
-        m_prevScroll = glfwSetScrollCallback(gw, cbScroll);
-        m_prevChar   = glfwSetCharCallback  (gw, cbChar);
-        // Seed cursor so first delta is 0
-        glfwGetCursorPos(gw, &m_lastX, &m_lastY);
-#endif
+        wsi::installInputSink(window, wsi::InputSink{
+            this,
+            [](void* ctx, double dx, double dy) {
+                auto* s = static_cast<InputSystem*>(ctx);
+                s->m_pendingScrollX += (float)dx;
+                s->m_pendingScrollY += (float)dy;
+            },
+            [](void* ctx, uint32_t cp) {
+                static_cast<InputSystem*>(ctx)->m_pendingText.push_back(cp);
+            }});
+        // Seed the cursor so the first delta is 0.
+        wsi::cursorPos(window, m_lastX, m_lastY);
     }
 
-    // Feed one native event (SDL_Event* on SDL3). Wired by the app to
-    // IPlatform::setNativeEventHook. No-op on GLFW, which uses callbacks.
+    // Feed one native event (an SDL_Event* on SDL3). Wired by the app to
+    // IPlatform::setNativeEventHook; a no-op on GLFW, which uses callbacks.
+    // Which of those is true is the seam's business, not this class's.
     void processNativeEvent(const void* nativeEvent) {
-#if defined(ENGINE_WINDOW_BACKEND_SDL3)
-        const SDL_Event* e = static_cast<const SDL_Event*>(nativeEvent);
-        if (!e) return;
-        if (e->type == SDL_EVENT_MOUSE_WHEEL) {
-            m_pendingScrollX += e->wheel.x;
-            m_pendingScrollY += e->wheel.y;
-        } else if (e->type == SDL_EVENT_TEXT_INPUT && e->text.text) {
-            // SDL delivers UTF-8; the engine's text stream is codepoints
-            // (GLFW's char callback already gave codepoints).
-            appendUtf8AsCodepoints(e->text.text);
-        }
-#else
-        (void)nativeEvent;
-#endif
+        wsi::feedNativeEvent(nativeEvent);
     }
 
-    // Call AFTER glfwPollEvents(), before any gameplay code.
-    // Polls GLFW state directly — zero callback interference with ImGui.
+    // Call AFTER the platform has pumped its events, before any gameplay code.
+    // Polls window state directly — no callback interference with ImGui.
     void processEvents() {
         if (!m_window) return;
 
@@ -95,47 +70,14 @@ public:
         std::memcpy(m_prev,      m_cur,      sizeof(m_cur));
         std::memcpy(m_prevMouse, m_curMouse, sizeof(m_curMouse));
 
-#if defined(ENGINE_WINDOW_BACKEND_SDL3)
-        // ── Poll keys ─────────────────────────────────────────────────────
-        // SDL's state array is indexed by SCANCODE, so we walk the engine's
-        // key list and translate, rather than sweeping our own code space.
-        int numKeys = 0;
-        const bool* ks = SDL_GetKeyboardState(&numKeys);
-        std::memset(m_cur, 0, sizeof(m_cur));
-        if (ks) {
-            size_t nk = 0;
-            const Key* keys = sdl3keys::allKeys(nk);
-            for (size_t i = 0; i < nk; ++i) {
-                const SDL_Scancode sc = sdl3keys::toScancode(keys[i]);
-                if (sc != SDL_SCANCODE_UNKNOWN && (int)sc < numKeys && ks[sc])
-                    m_cur[(int)keys[i]] = true;
-            }
-        }
+        // One call each, into the engine's own code space. How the backend
+        // gets there — casting on GLFW, a scancode table on SDL — is the
+        // seam's problem and no longer visible from here.
+        wsi::pollKeyboard(m_window, m_cur, kKeyCodeMax + 1);
+        wsi::pollMouseButtons(m_window, m_curMouse, kMouseButtonMax + 1);
 
-        // ── Poll mouse buttons + cursor ───────────────────────────────────
-        float fx = 0.0f, fy = 0.0f;
-        const SDL_MouseButtonFlags mb = SDL_GetMouseState(&fx, &fy);
-        std::memset(m_curMouse, 0, sizeof(m_curMouse));
-        m_curMouse[(int)MouseButton::Left]   = (mb & SDL_BUTTON_LMASK) != 0;
-        m_curMouse[(int)MouseButton::Right]  = (mb & SDL_BUTTON_RMASK) != 0;
-        m_curMouse[(int)MouseButton::Middle] = (mb & SDL_BUTTON_MMASK) != 0;
-
-        double cx = fx, cy = fy;
-#else
-        // ── Poll keys ─────────────────────────────────────────────────────
-        // Skip key 0..31 (GLFW_KEY_UNKNOWN etc.), start at Space (32)
-        auto* gw = static_cast<GLFWwindow*>(m_window);
-        for (int k = 32; k <= kKeyCodeMax; ++k)
-            m_cur[k] = (glfwGetKey(gw, k) == GLFW_PRESS);
-
-        // ── Poll mouse buttons ────────────────────────────────────────────
-        for (int b = 0; b <= kMouseButtonMax; ++b)
-            m_curMouse[b] = (glfwGetMouseButton(gw, b) == GLFW_PRESS);
-
-        // ── Cursor delta ──────────────────────────────────────────────────
-        double cx, cy;
-        glfwGetCursorPos(gw, &cx, &cy);
-#endif
+        double cx = 0.0, cy = 0.0;
+        wsi::cursorPos(m_window, cx, cy);
         m_dx      = (float)(cx - m_lastX);
         m_dy      = (float)(cy - m_lastY);
         m_lastX   = cx; m_lastY = cy;
@@ -170,33 +112,15 @@ public:
     // lives in its own OS window — keys/cursor must be read THERE). Reseeds
     // the cursor baseline so the switch doesn't produce a delta spike.
     //
-    // Takes an OPAQUE handle so callers (the editor) don't need GLFW types:
-    // this backend knows it is really a GLFWwindow*, they don't. The window
-    // source is GLFW-backed by design — GLFW keeps window + text/IME — but
-    // that must not leak into the editor's own headers.
+    // Takes an OPAQUE handle so no caller needs a windowing-library type.
     void setActiveWindow(void* w) {
         if (!w || w == m_window) return;
         m_window = w;
-#if defined(ENGINE_WINDOW_BACKEND_SDL3)
-        float mx = 0.0f, my = 0.0f;
-        SDL_GetMouseState(&mx, &my);
-        m_lastX = mx; m_lastY = my;
-#else
-        glfwGetCursorPos(static_cast<GLFWwindow*>(w), &m_lastX, &m_lastY);
-#endif
+        wsi::cursorPos(w, m_lastX, m_lastY);
     }
 
     // Window focus — the InputManager's gate for raw (system-wide) input.
-    bool windowFocused() const {
-        if (!m_window) return false;
-#if defined(ENGINE_WINDOW_BACKEND_SDL3)
-        return (SDL_GetWindowFlags(static_cast<SDL_Window*>(m_window))
-                & SDL_WINDOW_INPUT_FOCUS) != 0;
-#else
-        return glfwGetWindowAttrib(static_cast<GLFWwindow*>(m_window),
-                                   GLFW_FOCUSED) != 0;
-#endif
-    }
+    bool windowFocused() const { return wsi::isFocused(m_window); }
 
     // ── UI focus gate ──────────────────────────────────────────────────────
     void setUICapture(bool keyboard, bool mouse) noexcept {
@@ -220,7 +144,8 @@ public:
 private:
     InputSystem() = default;
 
-    // Opaque: GLFWwindow* or SDL_Window* depending on the backend.
+    // Opaque: GLFWwindow* or SDL_Window* depending on the backend. This class
+    // never learns which.
     void* m_window = nullptr;
 
     bool m_cur [kKeyCodeMax + 1] = {};
@@ -241,49 +166,6 @@ private:
     bool m_uiCaptureKb    = false;
     bool m_uiCaptureMouse = false;
 
-#if !defined(ENGINE_WINDOW_BACKEND_SDL3)
-    // Previous callbacks (ImGui's) for scroll + char only
-    GLFWscrollfun m_prevScroll = nullptr;
-    GLFWcharfun   m_prevChar   = nullptr;
-#endif
-
     bool valid (int k) const { return k >= 32 && k <= kKeyCodeMax; }
     bool validM(int b) const { return b >= 0  && b <= kMouseButtonMax; }
-
-#if defined(ENGINE_WINDOW_BACKEND_SDL3)
-    // Minimal UTF-8 -> codepoint decode for SDL_EVENT_TEXT_INPUT. Malformed
-    // sequences are skipped rather than emitted as replacement characters: a
-    // text field should drop garbage, not insert it.
-    void appendUtf8AsCodepoints(const char* utf8) {
-        const unsigned char* p = (const unsigned char*)utf8;
-        while (*p) {
-            uint32_t cp = 0; int extra = 0;
-            if      (*p < 0x80) { cp = *p;        extra = 0; }
-            else if ((*p >> 5) == 0x6)  { cp = *p & 0x1F; extra = 1; }
-            else if ((*p >> 4) == 0xE)  { cp = *p & 0x0F; extra = 2; }
-            else if ((*p >> 3) == 0x1E) { cp = *p & 0x07; extra = 3; }
-            else { ++p; continue; }                     // invalid lead byte
-            ++p;
-            bool ok = true;
-            for (int i = 0; i < extra; ++i, ++p) {
-                if ((*p & 0xC0) != 0x80) { ok = false; break; }
-                cp = (cp << 6) | (*p & 0x3F);
-            }
-            if (ok && cp) m_pendingText.push_back(cp);
-        }
-    }
-#else
-    // ── Callbacks (scroll + char only) ────────────────────────────────────
-    static void cbScroll(GLFWwindow* w, double x, double y) {
-        auto& s = get();
-        s.m_pendingScrollX += (float)x;
-        s.m_pendingScrollY += (float)y;
-        if (s.m_prevScroll) s.m_prevScroll(w, x, y); // chain to ImGui
-    }
-    static void cbChar(GLFWwindow* w, unsigned int cp) {
-        auto& s = get();
-        s.m_pendingText.push_back(cp);
-        if (s.m_prevChar) s.m_prevChar(w, cp); // chain to ImGui
-    }
-#endif
 };

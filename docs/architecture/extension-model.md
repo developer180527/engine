@@ -276,6 +276,54 @@ one bgfx currently solves for us at a ceiling we have already hit.
 
 ---
 
+## 4b. Hosts — the category that is not an extension
+
+A **host** is the application that drives the engine: the ImGui editor,
+`engine_player`, `engine_host`, a future Qt or Rust editor, a studio's own
+launcher. A host is not an extension — it does not attach *to* the engine, it
+*contains* one. But it belongs in this document, because "could someone else
+write the host?" is the same question as "is anything vendor-locked?"
+
+**The rule: the editor is a consumer of the SDK, not a layer of it.** Anything
+the ImGui editor needs, every other host needs too — so nothing a host requires
+may live under `src/editor/`.
+
+Verified state of that rule:
+
+| | Status |
+|---|---|
+| Sources outside `src/editor/` including ImGui or editor headers | **none** (two comments mention ImGui; no includes) |
+| `editor` target | an **executable**, the only thing linking ImGui, one-way on `engine_runtime` |
+| SDK header install | excludes `src/editor` explicitly |
+| `engine_cook`, `engine_cook_worker`, `engine_build`, `engine_project` | link **only `engine_core`** — no runtime, no window, no ImGui |
+| `engine_core` | genuinely GPU-free: zero `#include` of bgfx/GLFW/SDL (shaderc runs as a child process) |
+| `assetlib` | links SQLite + blake3 only; no engine dependency |
+
+So a Qt or Rust editor can link `engine_core` **today** and get cooking, the
+DDC, the material/shader/texture cookers, package closure and project
+scaffolding, with no window system at all.
+
+The window seam (`wsi::`, `runtime/platform/window_ops.h`) moved out of
+`src/editor/` for exactly this reason: it had made multi-window support an
+ImGui-editor privilege, forcing any other host to reinvent it against GLFW
+directly.
+
+**Driving the runtime works too.** `engine_runtime` used to link GLFW
+unconditionally in both backends, because `runtime/input/input_system.h`
+included `<GLFW/glfw3.h>` and branched on the backend throughout — so an SDL3
+build linked GLFW, and so did a host supplying its own window. That header now
+goes through `wsi::` and names no backend at all, which leaves each windowing
+library reachable from exactly two TUs (its `IPlatform` and its `window_ops`),
+both already selected by one CMake branch. `libglfw3.a` is in the SDL3 link line
+before the change and absent after.
+
+So the SDK now offers a host three things independently: a **GPU-free** layer
+for tools (`engine_core`), a **runtime** that links one windowing library of its
+choosing, and a **per-window seam** for driving more than one window. None of
+them requires ImGui, and none of them requires the editor.
+
+---
+
 ## 5. Adding a *new* subsystem — the API registry *(not built)*
 
 The API table is fixed at compile time: twelve groups, frozen offsets. A studio

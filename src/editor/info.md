@@ -152,14 +152,24 @@ only layer that links ImGui/ImGuizmo — the runtime stays UI-free.
   fonts), `imgui_impl_glfw.*` (platform backend), docking + multi-viewport.
   `imguiInit` also registers the **editor UI backend** (`engineUiSetBackend`)
   so any plugin/kit can draw via the `engineUi*` facade without linking ImGui.
-- **Window seam** (`window_ops.h` + `window_ops_glfw.cpp`) — the editor's ONLY
-  window-system dependency. The editor drives several OS windows (a detached
-  Scene/Game View is its own ImGui viewport), which `IPlatform` cannot model
-  since it owns a single window, and the handles come from
-  `ImGuiViewport::PlatformHandle`. So per-window focus/key-poll/cursor-capture
-  goes through `edwin::` on an opaque handle, with one implementation TU per
-  backend. Swapping to SDL3 = `window_ops_sdl3.cpp` + the ImGui platform
-  backend + the platform choice in `main.cpp`; no panel changes.
+- **Window seam** — `wsi::`, from **`runtime/platform/window_ops.h`**. The
+  editor drives several OS windows (a detached Scene/Game View is its own ImGui
+  viewport), which `IPlatform` cannot model since it owns a single window, and
+  the handles come from `ImGuiViewport::PlatformHandle`. So per-window
+  focus/key-poll/cursor-capture goes through an opaque handle, with one
+  implementation TU per backend compiled into `engine_runtime`.
+
+  **This used to live here**, as `src/editor/window_ops.h` in namespace
+  `edwin`, and that made multi-window support an ImGui-editor privilege: any
+  other host — Qt, a Rust tool, a custom launcher — got the single-window
+  `IPlatform` and had to reinvent it against GLFW directly. The editor is a
+  *consumer* of the SDK, not a layer of it, so the seam moved to the runtime
+  beside its matching `IPlatform`.
+
+  What is still backend-specific to the editor is exactly one file: the ImGui
+  platform backend. Swapping to SDL3 = that backend + the platform choice in
+  `main.cpp`; no panel changes, and the window seam comes along for free.
+
   This is TOOLING input — engine systems and kits bind to actions through
   InputManager and must never poll windows.
 - **Plug-in Manager** (`panels/plugins_panel.h`) — lists running plugins +

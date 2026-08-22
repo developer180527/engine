@@ -60,6 +60,44 @@ required.
   bar. Title-bar suppression reaches past GLFW/SDL to the native window, so
   CMake selects the implementation by OS rather than by window backend — which
   is why adding it did not fork the two window backends.
+- **`wsi::`** (`platform/window_ops.h`) — the *per-window* seam, for hosts that
+  drive more than one. `IPlatform` models exactly ONE window
+  (`nativeWindowHandle()`, not `nativeWindowHandle(w)`), which is right for a
+  game and wrong for a tool: a detached panel is its own OS window, and a host
+  must query focus, poll keys and lock the cursor per window. So `wsi::` is free
+  functions over an opaque handle, with one implementation TU
+  (`window_ops_glfw.cpp` / `window_ops_sdl3.cpp`) selected by
+  `ENGINE_WINDOW_BACKEND` in the same branch as the `IPlatform` implementation —
+  the same backend choice made twice, so a build cannot pair a GLFW platform
+  with an SDL window seam.
+
+  It **moved here from `src/editor/`** (namespace `edwin`), where it had made
+  multi-window support an ImGui-editor privilege: a Qt or Rust editor got the
+  single-window `IPlatform` and had to reinvent this against GLFW directly,
+  which is the coupling the SDK exists to prevent. The editor is a consumer of
+  the SDK, not a layer of it.
+
+  The SDL3 implementation had **never been compiled** while it lived in the
+  editor (the editor's SDL3 path was incomplete, so its TU was excluded); it
+  builds now under `ENGINE_WINDOW_BACKEND=sdl3`.
+
+  The seam also carries the **window input source's** backend needs:
+  `pollKeyboard` / `pollMouseButtons` (bulk, into the engine's own code space —
+  ~350 out-of-line calls per frame would otherwise make the input system's cost
+  a property of how the seam is compiled), plus `InputSink` / `installInputSink`
+  / `feedNativeEvent` for scroll and text, the two inputs neither backend can
+  poll. GLFW delivers those as callbacks and SDL as events; both reduce to
+  "call me when this happens", so the sink reconciles them and no consumer ever
+  learns which it is behind.
+
+  **This is what made GLFW conditional.** `input/input_system.h` used to
+  `#include <GLFW/glfw3.h>` and branch on `ENGINE_WINDOW_BACKEND_SDL3`
+  throughout, so every TU touching input pulled a windowing library in — an
+  SDL3 build linked GLFW, and so did a host supplying its own window. The header
+  now names no backend at all (289 -> 158 lines, zero `#ifdef`), each library is
+  reachable from exactly two TUs — its `IPlatform` and its `window_ops` — and
+  `engine_runtime` links only the one selected. Verified: `libglfw3.a` is in the
+  SDL3 link line before the change and absent after.
 - **`Renderer`** (`renderer.h/.cpp`) — owns the GPU device lifecycle,
   framebuffers, and the swappable `IRenderPipeline`. Borrows the ECS world and
   registries from `EngineRuntime`. See `src/render/info.md` for the pipeline.

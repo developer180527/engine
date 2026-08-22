@@ -253,10 +253,24 @@ add_library(engine::core ALIAS engine_core)
 # ── Window backend selection (ENGINE_WINDOW_BACKEND, root CMakeLists) ────────
 # Only the chosen backend's TU is compiled: the other one's library isn't
 # necessarily even available. platform_factory.cpp resolves the choice.
+#
+# window_ops_*.cpp rides along with its matching IPlatform: they are the same
+# choice made twice — one models the single window a game has, the other the
+# many windows a TOOL has. Keeping them in one branch is what stops a build
+# pairing a GLFW platform with an SDL window seam.
+#
+# These moved here from src/editor/. Multi-window support had been an
+# ImGui-editor privilege, so any other host — Qt, a Rust tool, a custom
+# launcher — had to reinvent it against GLFW or SDL directly, which is exactly
+# the coupling the SDK exists to prevent.
 if(ENGINE_WINDOW_BACKEND STREQUAL "sdl3")
-    set(ENGINE_PLATFORM_SOURCES runtime/platform/sdl3_platform.cpp)
+    set(ENGINE_PLATFORM_SOURCES
+        runtime/platform/sdl3_platform.cpp
+        runtime/platform/window_ops_sdl3.cpp)
 else()
-    set(ENGINE_PLATFORM_SOURCES runtime/platform/glfw_platform.cpp)
+    set(ENGINE_PLATFORM_SOURCES
+        runtime/platform/glfw_platform.cpp
+        runtime/platform/window_ops_glfw.cpp)
 endif()
 
 # Title-bar suppression is a WINDOW-SYSTEM concern, not a windowing-LIBRARY
@@ -363,11 +377,6 @@ target_compile_definitions(engine_runtime PUBLIC
 target_link_libraries(engine_runtime PUBLIC
     engine_core
     bgfx bx bimg
-    # GLFW is linked in BOTH backends for now: the window input source
-    # (runtime/input/input_system.h) is still GLFW-callback based and is pulled
-    # in by runtime.cpp / runtime_sim.cpp. Selecting sdl3 today swaps the
-    # WINDOW, not yet the window input source — see sdl3_platform.h.
-    glfw
     flecs_static
     Jolt
     lua
@@ -416,9 +425,22 @@ endif()
 
 # Namespaced alias — what consumers link:
 #   target_link_libraries(my_game PRIVATE engine::runtime)
+# ── The window library, and ONLY the one selected ───────────────────────────
+# GLFW used to be linked in BOTH backends, because input_system.h was
+# GLFW-callback based and every TU that touched input pulled <GLFW/glfw3.h>
+# through it. An SDL3 build therefore still linked GLFW, and — worse for the
+# SDK's actual promise — so did a host that supplies its own window: a Qt or
+# Rust editor dragged in a windowing library it had no use for.
+#
+# input_system.h now goes through wsi:: (runtime/platform/window_ops.h) and
+# names no backend at all, so each library is reachable from exactly two TUs —
+# its IPlatform and its window_ops — and both are already excluded by the
+# branch above. Which makes this the whole fix: one library, chosen once.
 if(ENGINE_WINDOW_BACKEND STREQUAL "sdl3")
     target_link_libraries(engine_runtime PUBLIC SDL3::SDL3)
     target_compile_definitions(engine_runtime PUBLIC ENGINE_WINDOW_BACKEND_SDL3=1)
+else()
+    target_link_libraries(engine_runtime PUBLIC glfw)
 endif()
 
 add_library(engine::runtime ALIAS engine_runtime)

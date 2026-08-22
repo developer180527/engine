@@ -3,7 +3,7 @@
 #include "editor/editor_icons.h"
 #include <string>
 #include <cstring>
-#include "editor/window_ops.h"
+#include "runtime/platform/window_ops.h"
 #include "runtime/input/input_map.h"
 #include "runtime/input/input_system.h"
 #include "editor/editor_state.h"
@@ -11,7 +11,7 @@
 // ── Key display name ───────────────────────────────────────────────────────
 // Label for a key in the binding UI. The switch covers keys with no
 // printable form; anything else falls back to the backend's layout-aware
-// name (edwin::keyName), which is what shows the user "q" vs "a" on AZERTY.
+// name (wsi::keyName), which is what shows the user "q" vs "a" on AZERTY.
 inline const char* keyDisplayName(Key key) {
     switch (key) {
     case Key::Space:         return "Space";
@@ -40,7 +40,7 @@ inline const char* keyDisplayName(Key key) {
     case Key::F11: return "F11"; case Key::F12: return "F12";
     case Key::Unknown: return "None";
     default: {
-        const char* n = edwin::keyName(key);
+        const char* n = wsi::keyName(key);
         return n ? n : "?";
     }
     }

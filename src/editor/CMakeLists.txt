@@ -3,19 +3,21 @@
 # engine_runtime; this layer adds panels, gizmos, docking, and the ImGui
 # platform/renderer glue (GLFW + bgfx backends).
 #
-# Two files carry the whole window-system dependency: the window-ops seam
-# (editor/window_ops.h) and the ImGui platform backend. Selecting a backend
-# swaps exactly those — no panel, gizmo or camera code changes.
+# The window-ops seam used to live here (window_ops_glfw.cpp /
+# window_ops_sdl3.cpp) and now ships in engine_runtime as
+# runtime/platform/window_ops.h — multi-window support was never an editor
+# feature, it is what any host driving more than one window needs, and keeping
+# it here forced a Qt or Rust editor to reinvent it against GLFW directly.
+#
+# What remains backend-specific to the EDITOR is exactly one thing: the ImGui
+# platform backend.
 if(ENGINE_WINDOW_BACKEND STREQUAL "sdl3")
+    # Upstream ImGui backend, used straight from third_party rather than
+    # vendored into the editor: there is nothing local to patch in it.
     set(EDITOR_WINDOW_SOURCES
-        window_ops_sdl3.cpp
-        # Upstream ImGui backend, used straight from third_party rather than
-        # vendored into the editor: there is nothing local to patch in it.
         ${CMAKE_SOURCE_DIR}/third_party/imgui/backends/imgui_impl_sdl3.cpp)
 else()
-    set(EDITOR_WINDOW_SOURCES
-        window_ops_glfw.cpp
-        imgui/imgui_impl_glfw.cpp)
+    set(EDITOR_WINDOW_SOURCES imgui/imgui_impl_glfw.cpp)
 endif()
 
 add_executable(editor

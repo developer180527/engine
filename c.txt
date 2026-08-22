@@ -1,89 +1,81 @@
-audio: miniaudio moves behind the ABI, and the suite catches the first real bug
+input: the header that linked GLFW into every build, including the SDL3 ones
 
-The seam is live. src/plugins/audio_plugin.h no longer contains the word
-ma_engine; the engine's only remaining reference to miniaudio is one line in
-audio_host_services.h naming an entry point. Replacing it with an FMOD adapter
-or a Rust spatial engine is now a change to which table that line asks for.
+engine_runtime linked GLFW unconditionally, in both window backends. The cause
+was one line: input_system.h did `#include <GLFW/glfw3.h>` and branched on
+ENGINE_WINDOW_BACKEND_SDL3 in six places. Because input.h, input_map.h,
+input_sources.h, runtime.cpp and the editor all include that header, a single
+include decided the link line for the whole engine — an SDL3 build linked GLFW,
+and so did a host that supplies its own window. A Qt or Rust editor dragged in a
+windowing library it had no use for, which is exactly the vendor-lock the SDK
+exists to avoid.
 
-── the same source, built twice, on purpose ────────────────────────────────
-engine_audio_miniaudio          linked into the engine (no dlopen in a game)
-engine_audio_miniaudio_module   a standalone .so the Rust suite dlopens
+It was also the ONLY header in the tree leaking a window library. Everything
+else was already isolated in backend TUs, which is why this reads as one knot
+rather than a sweep.
 
-The conformance lane now runs against the MODULE, so it tests the code the game
-actually runs rather than something written to pass it. And the module build is
-not redundant — it is the proof: it links CoreAudio, CoreFoundation,
-AudioToolbox and libc++ and NOTHING ELSE, exporting exactly one symbol. Add an
-engine header to that file and it stops linking. "The provider is
-engine-independent" stopped being a claim in a doc.
+── the seam already existed ────────────────────────────────────────────────
+wsi:: (hoisted out of src/editor/ last commit) was already 80% of what the
+input source needed — isFocused and cursorPos were sitting right there. So this
+extends that seam rather than inventing a second abstraction beside it:
 
-── the suite earned its keep on day one ────────────────────────────────────
-The first version let ma_engine create its own device, so samplesPlayed came
-from ma_engine_get_time_in_pcm_frames. That is the NODE GRAPH's clock: it
-advances only while something is mixing, and sits frozen at 0 otherwise. The
-run failed with
+  pollKeyboard / pollMouseButtons   bulk, writing into the ENGINE's code space.
+      Per-key isKeyDown would be ~350 out-of-line calls per frame, which makes
+      the input system's per-frame cost a property of how the seam is compiled.
+      That is the wrong thing to leave to a linker.
 
-  FAIL  the sample clock and the host clock agree on elapsed time
-        (0.0 ms of samples vs 125.2 ms of host)
+  InputSink / installInputSink / feedNativeEvent
+      Scroll and text — the two inputs NEITHER backend can poll, and therefore
+      the entire reason that #ifdef existed. GLFW delivers them as callbacks and
+      SDL as events; both reduce to "call me when this happens", so the sink
+      reconciles them and no consumer learns which it is behind.
 
-which is precisely the bug that assertion was written to find, one commit after
-writing it. As a device clock it was unusable and nothing else would have
-noticed.
+Text crosses as CODEPOINTS, because GLFW's char callback already provides them.
+The SDL backend's UTF-8 decode moved into window_ops_sdl3.cpp where it belongs,
+so no consumer ever sees an encoding.
 
-The fix was to honour the ABI's own central claim — THE PROVIDER OWNS THE
-DEVICE — by passing our own ma_device. Three contract obligations fell out at
-once: samplesPlayed became a real free-running clock, callbackOverruns became
-measured instead of hardcoded 0, and desc->bufferFrames is finally honoured.
-(miniaudio's comment on its pDevice field names a "ma_engine_data_callback"
-that is not a public symbol; ma_engine_read_pcm_frames is what its internal
-callback actually calls.)
+The GLFW/Key static_asserts moved to window_ops_glfw.cpp. They are a claim ABOUT
+THE GLFW BACKEND, and asserting them in the one TU that relies on the
+equivalence is both more accurate and free of consequence for everyone else —
+whereas stating them in a shared header is what forced that header to include
+GLFW in the first place.
 
-── preserved deliberately ──────────────────────────────────────────────────
-mem::Tag::Audio. The old code pointed miniaudio's allocation callbacks at the
-audio heap with hardcoded lambdas. The provider now receives that heap through
-host services, so the tagging travels THROUGH the ABI instead of around it —
-which is what makes it survive swapping the backend.
+input_system.h: 289 -> 158 lines, zero #ifdef, no backend named anywhere except
+in comments. There is now a note at the top saying why that matters, because the
+next person to add an #include there would silently re-couple every consumer.
 
-The device still does not start on the main thread. Sampling startup put 585 of
-1722 main-thread samples — 34%, ~536 ms — blocked inside CoreAudio's
-HALB_IOThread::StartAndWaitForState. create() runs on a job, m_ready gates
-everything, and nothing on screen ever depended on an audio device.
+── proven, not asserted ────────────────────────────────────────────────────
+Stashed the change, reconfigured, read the link line:
 
-── better for free ─────────────────────────────────────────────────────────
-The old path called ma_sound_init_from_file per play: every gunshot reopened
-and re-decoded the same file. Sounds are cached by path now, so a repeat play
-costs a voice instead of a decode, and one decoded sound feeds 8 concurrent
-voices from a single copy of the samples. Large files go through createStream,
-so nothing big is ever resident — the old code streamed too, but only because
-miniaudio was doing the file I/O itself.
+  BEFORE  SDL3 build, engine_player link line:  libglfw3.a
+  AFTER   GLFW build: libglfw3.a      SDL3 build: absent
 
-Nothing allocates once the device is running: fixed-capacity sound and voice
-arrays in one block taken at create(), with index+generation handles so a stale
-id is REJECTED rather than rebound to whatever reused the slot. The engine
-legitimately sends stale voice ids — a voice can end between frames — so that
-is correctness, not tuning.
+Zero undefined glfw symbols in the SDL3 engine_runtime. Each windowing library
+is now reachable from exactly two TUs — its IPlatform and its window_ops — both
+already selected by the one CMake branch that picks the backend.
 
-── the suite only ever fed it garbage ──────────────────────────────────────
-Every existing assertion checked that a provider says NO correctly. A backend
-that rejected every sound in existence would have passed all of them. So
-run_playback builds a WAV sine by hand and drives all three resource paths:
-
-  ok  a valid WAV is DECODED, not rejected
-  ok  the device clock advances while audio plays (0 -> 4096)
-  ok  one decoded sound supports concurrent voices (8/8)
-  ok  an F_STREAM sound plays from the engine's buffer
-  ok  createStream actually CALLED the engine's reader
-  ok  memory returned through host free (40 allocs, 40 frees)
-
-48 assertions against the real provider — 33 contract, 15 playback.
+── a landmine defused rather than reproduced ───────────────────────────────
+Moving the chained callbacks into file-statics meant a second installInputSink
+on the same window would store OUR OWN function as the one to chain to, and the
+next scroll event would recurse until the stack ran out. Not reachable today
+(the editor calls init() once, and there is no project close/reopen cycle) and
+the same latent shape existed before. But the failure mode is a stack overflow
+far from its cause, so it is guarded: keep the original previous callback if
+GLFW hands back our own.
 
 ── verification ────────────────────────────────────────────────────────────
-Full build clean; ctest 71/72. The failure is kit_lifecycle_test wanting Kit
-.so files from separate gitignored repos, failing before this work too. Docs
-gate 0 errors.
+Both backends build clean. GLFW ctest 72/73; SDL3 unit lane the same single
+failure — kit_lifecycle_test, which wants Kit .so files from separate gitignored
+repos and failed before any of this. input_test and input_config_test pass.
+Docs gate 0 errors, warning set unchanged.
 
-── still not done ──────────────────────────────────────────────────────────
-updateEmitters and setListener are implemented on both sides, but the engine
-does not drive them from the scene: sounds still play at fixed positions with
-the listener at the origin. That is engine-side work, not ABI work, and the
-guide says so rather than reading as finished.
+── what this finishes ──────────────────────────────────────────────────────
+docs/architecture/extension-model.md §4b now says the SDK offers a host three
+things independently: a GPU-free layer for tools (engine_core), a runtime that
+links ONE windowing library of its choosing, and a per-window seam for driving
+more than one window. None of them requires ImGui, and none requires the editor.
 
+The custom-editor story has no remaining structural blocker.
+
+Related, and now a smaller job than it was: gamepads still do not reach the raw
+HID path (HidSource::init passes {.gamepad = false}, pending curation, backlog
+#13). The window/input coupling that tangled it is gone.

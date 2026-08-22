@@ -23,7 +23,7 @@
 #include <string>
 #include <filesystem>
 #include <system_error>
-#include "editor/window_ops.h"
+#include "runtime/platform/window_ops.h"
 
 namespace {
 const bgfx::EmbeddedShader kShaders[] = {
@@ -149,9 +149,9 @@ void setupViewportCallbacks() {
     pio.Renderer_CreateWindow = [](ImGuiViewport* vp) {
         auto* d   = new BgfxViewportData;
         d->viewId = g_nextViewId++;
-        edwin::WindowHandle win = vp->PlatformHandle;
-        int fbW, fbH; edwin::framebufferSize(win, fbW, fbH);
-        d->fb = bgfx::createFrameBuffer(edwin::nativeWindowHandle(win),
+        wsi::WindowHandle win = vp->PlatformHandle;
+        int fbW, fbH; wsi::framebufferSize(win, fbW, fbH);
+        d->fb = bgfx::createFrameBuffer(wsi::nativeWindowHandle(win),
                                         (uint16_t)fbW, (uint16_t)fbH);
         vp->RendererUserData = d;
     };
@@ -165,10 +165,10 @@ void setupViewportCallbacks() {
     pio.Renderer_SetWindowSize = [](ImGuiViewport* vp, ImVec2) {
         auto* d = (BgfxViewportData*)vp->RendererUserData;
         if (!d) return;
-        edwin::WindowHandle win = vp->PlatformHandle;
-        int fbW, fbH; edwin::framebufferSize(win, fbW, fbH);
+        wsi::WindowHandle win = vp->PlatformHandle;
+        int fbW, fbH; wsi::framebufferSize(win, fbW, fbH);
         if (bgfx::isValid(d->fb)) bgfx::destroy(d->fb);
-        d->fb = bgfx::createFrameBuffer(edwin::nativeWindowHandle(win),
+        d->fb = bgfx::createFrameBuffer(wsi::nativeWindowHandle(win),
                                         (uint16_t)fbW, (uint16_t)fbH);
     };
     pio.Renderer_RenderWindow = [](ImGuiViewport* vp, void*) {

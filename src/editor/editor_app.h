@@ -1,6 +1,6 @@
 #include <filesystem>
 #pragma once
-#include "editor/window_ops.h"
+#include "runtime/platform/window_ops.h"
 #include "runtime/platform/title_bar.h"  // traffic-light inset for the menu bar
 #include "runtime/runtime.h"
 #include "scene/scene_serializer.h"
@@ -42,9 +42,9 @@
 class EditorApp {
 public:
     // The window is an opaque handle from whichever platform backend created
-    // it; the editor operates on it only through edwin:: (editor/window_ops.h)
+    // it; the editor operates on it only through wsi:: (runtime/platform/window_ops.h)
     // for focus, key polling and cursor capture. See that header for why.
-    EditorApp(EngineRuntime& rt, edwin::WindowHandle window)
+    EditorApp(EngineRuntime& rt, wsi::WindowHandle window)
         : m_rt(rt), m_window(window) {}
     ~EditorApp() = default;
 
@@ -192,14 +192,14 @@ private:
             { auto& io = ImGui::GetIO();
               const bool __playing = (m_editor.simState == SimState::Playing);
               const bool __cursorLocked =
-                  edwin::cursorMode(m_window) == CursorMode::Captured;
+                  wsi::cursorMode(m_window) == CursorMode::Captured;
               InputSystem::get().setUICapture(
                   __playing ? io.WantTextInput : io.WantCaptureKeyboard,
                   __cursorLocked ? false : io.WantCaptureMouse);
               // Captured play-mode cursor is GAME input: ImGui must not see
               // the invisible mouse at all, or panels stay clickable and
               // steal edits mid-play. Esc (release) restores editor UI.
-              const bool __capFocused = edwin::isFocused(m_lastCaptureWin);
+              const bool __capFocused = wsi::isFocused(m_lastCaptureWin);
               if (__playing && __cursorLocked && __capFocused)
                   io.ConfigFlags |=  ImGuiConfigFlags_NoMouse;
               else
@@ -212,25 +212,25 @@ private:
             // ---- Editor camera ----
             // Use the OS window that currently hosts the Scene View panel.
             // When docked: main window. When detached: the OS child window.
-            edwin::WindowHandle camWin = m_sceneHostWindow ? m_sceneHostWindow : m_window;
+            wsi::WindowHandle camWin = m_sceneHostWindow ? m_sceneHostWindow : m_window;
             updateEditorCamera(m_cam, m_input, camWin, dt, m_sceneViewHovered);
             // ---- Play-mode cursor capture (FPS mouse-look) ----
             {
                 // Capture on the window that HOSTS the Game View — detached
                 // panels are separate OS windows and own the play input.
-                edwin::WindowHandle gw = m_gameHostWindow ? m_gameHostWindow : m_window;
+                wsi::WindowHandle gw = m_gameHostWindow ? m_gameHostWindow : m_window;
                 if (m_lastCaptureWin && m_lastCaptureWin != gw)
-                    edwin::setCursorMode(m_lastCaptureWin, CursorMode::Normal);
+                    wsi::setCursorMode(m_lastCaptureWin, CursorMode::Normal);
                 m_lastCaptureWin = gw;
                 const bool playing = (m_editor.simState == SimState::Playing);
                 if (playing && !m_wasPlaying) m_playCursorLocked = true;
                 // FAIL-SAFE: losing focus always releases the cursor (the
                 // alt-tab rule) — a hidden cursor can never strand the UI.
-                if (playing && m_playCursorLocked && !edwin::isFocused(gw))
+                if (playing && m_playCursorLocked && !wsi::isFocused(gw))
                     m_playCursorLocked = false;
                 if (playing) {
                     InputSystem::get().setActiveWindow(gw);
-                    const bool escNow = edwin::isKeyDown(gw, Key::Escape);
+                    const bool escNow = wsi::isKeyDown(gw, Key::Escape);
                     if (escNow && !m_escPrev) {
                         if (m_playCursorLocked) m_playCursorLocked = false; // 1st Esc: free mouse
                         else onStop();                                       // 2nd Esc: stop play
@@ -238,13 +238,13 @@ private:
                     m_escPrev = escNow;
                     const CursorMode want = m_playCursorLocked ? CursorMode::Captured
                                                 : CursorMode::Normal;
-                    if (edwin::cursorMode(gw) != want)
-                        edwin::setCursorMode(gw, want);
+                    if (wsi::cursorMode(gw) != want)
+                        wsi::setCursorMode(gw, want);
                 } else {
                     m_escPrev = false;
                     InputSystem::get().setActiveWindow(m_window);
                     if (m_playCursorLocked) { m_playCursorLocked = false;
-                        edwin::setCursorMode(gw, CursorMode::Normal); }
+                        wsi::setCursorMode(gw, CursorMode::Normal); }
                 }
                 m_wasPlaying = playing;
 
@@ -315,7 +315,7 @@ public:
 
 private:
     EngineRuntime&  m_rt;
-    edwin::WindowHandle m_window = nullptr; // owned by the runtime's platform
+    wsi::WindowHandle m_window = nullptr; // owned by the runtime's platform
     std::filesystem::path m_projectRoot;
     std::filesystem::path m_scenePath;
     AsyncLoader      m_loader;
@@ -331,9 +331,9 @@ private:
     bool           m_escPrev          = false;
     bool           m_wasPlaying       = false;
     float          m_sceneAspect      = 16.0f / 9.0f;
-    edwin::WindowHandle m_sceneHostWindow = nullptr; // window hosting Scene View
-    edwin::WindowHandle m_gameHostWindow  = nullptr; // window hosting Game View
-    edwin::WindowHandle m_lastCaptureWin  = nullptr; // un-hide cursor on host switch
+    wsi::WindowHandle m_sceneHostWindow = nullptr; // window hosting Scene View
+    wsi::WindowHandle m_gameHostWindow  = nullptr; // window hosting Game View
+    wsi::WindowHandle m_lastCaptureWin  = nullptr; // un-hide cursor on host switch
     int            m_desiredSceneW    = 1280;
     int            m_desiredSceneH    = 720;
     int            m_lastDesiredW     = 0;    // FB-recreate debounce
@@ -505,7 +505,7 @@ private:
         drawMenuBar({
             [this]{ saveScene(); },
             [this]{ setProject(m_rt.ctx().project); },
-            [this]{ edwin::requestClose(m_window); },
+            [this]{ wsi::requestClose(m_window); },
             [this]{ m_showProjectSettings = true; },
             [this]{ m_editor.undoStack.undo(m_rt.ctx().ecs); },
             [this]{ m_editor.undoStack.redo(m_rt.ctx().ecs); },
