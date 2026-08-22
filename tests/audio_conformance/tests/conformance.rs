@@ -76,3 +76,23 @@ fn native_provider_conforms() {
     report.print(&format!("native provider ({path})"));
     assert_eq!(report.failures(), 0, "native provider violated the contract");
 }
+
+#[test]
+fn native_provider_actually_plays_audio() {
+    // The contract suite proves a provider says NO correctly. This proves it can
+    // say yes: real WAV bytes, decoded, played, clocked, streamed from memory,
+    // and pulled through a reader. The reference provider decodes nothing, so
+    // this only means something against a native one — and without it, a
+    // backend that rejected every sound in existence would pass everything.
+    let Ok(path) = std::env::var("ENGINE_AUDIO_PROVIDER") else {
+        println!("ENGINE_AUDIO_PROVIDER unset — skipping playback.");
+        return;
+    };
+    let p = match conf::load(&path) {
+        Ok(p) => p,
+        Err(e) => panic!("could not load provider '{path}': {e}"),
+    };
+    let report = unsafe { conf::run_playback(p) };
+    report.print(&format!("playback ({path})"));
+    assert_eq!(report.failures(), 0, "native provider failed real playback");
+}

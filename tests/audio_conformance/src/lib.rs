@@ -256,6 +256,231 @@ pub const _ABI_SIZES: () = {
     assert!(std::mem::size_of::<ProviderV1>() == 120);
 };
 
+// ── Real audio, so the suite tests more than refusal ────────────────────────
+/// A 16-bit PCM WAV of a sine tone, built by hand.
+///
+/// Everything in `run` feeds the provider GARBAGE and checks it says no. That
+/// is half a contract. A provider can reject every byte ever offered and pass
+/// all of it while being incapable of playing a sound — which is exactly the
+/// state the Rust reference provider is in, legitimately, and exactly the state
+/// a real backend must not be in. So the suite needs audio a decoder will
+/// actually accept, and WAV is the one container simple enough to emit here
+/// without a dependency (44-byte header, then samples).
+pub fn wav_sine(seconds: f32, rate: u32, freq: f32) -> Vec<u8> {
+    let frames = (seconds * rate as f32) as u32;
+    let data_len = frames * 2; // mono, 16-bit
+    let mut v = Vec::with_capacity(44 + data_len as usize);
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&(36 + data_len).to_le_bytes());
+    v.extend_from_slice(b"WAVEfmt ");
+    v.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+    v.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    v.extend_from_slice(&1u16.to_le_bytes()); // mono
+    v.extend_from_slice(&rate.to_le_bytes());
+    v.extend_from_slice(&(rate * 2).to_le_bytes()); // byte rate
+    v.extend_from_slice(&2u16.to_le_bytes()); // block align
+    v.extend_from_slice(&16u16.to_le_bytes()); // bits
+    v.extend_from_slice(b"data");
+    v.extend_from_slice(&data_len.to_le_bytes());
+    for i in 0..frames {
+        let t = i as f32 / rate as f32;
+        let s = (t * freq * std::f32::consts::TAU).sin() * 0.25;
+        v.extend_from_slice(&((s * 32767.0) as i16).to_le_bytes());
+    }
+    v
+}
+
+/// Bytes a `StreamSource` can read from, for the pull path.
+struct ByteReader {
+    bytes: Vec<u8>,
+    reads: std::sync::atomic::AtomicU64,
+}
+unsafe extern "C" fn byte_read(ud: *mut c_void, offset: u64, dst: *mut c_void, n: u64) -> i64 {
+    let r = &*(ud as *const ByteReader);
+    r.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if offset >= r.bytes.len() as u64 {
+        return 0;
+    }
+    let avail = r.bytes.len() as u64 - offset;
+    let take = n.min(avail);
+    std::ptr::copy_nonoverlapping(
+        r.bytes.as_ptr().add(offset as usize),
+        dst as *mut u8,
+        take as usize,
+    );
+    take as i64
+}
+
+/// The functional half of the contract: a provider that claims to play audio
+/// must actually decode and play some.
+///
+/// Skipped wholesale (reporting success) when `create` says E_NO_DEVICE, and
+/// each capability is skipped individually on E_UNSUPPORTED — a provider that
+/// cannot stream is still conformant, it just is not being tested here.
+///
+/// # Safety
+/// `p` must be a valid provider table that outlives the call.
+pub unsafe fn run_playback(p: &ProviderV1) -> Report {
+    let mut r = Report::new();
+    let desc = DeviceDesc {
+        structSize: std::mem::size_of::<DeviceDesc>() as u32,
+        sampleRate: 48_000,
+        bufferFrames: 128,
+        channelHint: 0,
+    };
+    let counters = host::Counters::default();
+    let services = host::services(&counters);
+    let mut sp: *mut c_void = std::ptr::null_mut();
+    let res = (p.create.unwrap())(&desc, &services, &mut sp);
+    if res == ENGINE_AUDIO_E_NO_DEVICE {
+        r.check(true, "no output device — playback checks skipped");
+        return r;
+    }
+    if res != ENGINE_AUDIO_OK || sp.is_null() {
+        r.check(false, format!("create() failed ({res})"));
+        return r;
+    }
+
+    let wav = wav_sine(0.5, 48_000, 440.0);
+    let stats = |sp: *mut c_void| -> Stats {
+        let mut s = Stats { structSize: std::mem::size_of::<Stats>() as u32, ..Default::default() };
+        (p.getStats.unwrap())(sp, &mut s);
+        s
+    };
+
+    // ── Decode and play ─────────────────────────────────────────────────────
+    let mut sound: EngineSoundId = 0;
+    let rc = (p.createSound.unwrap())(
+        sp, wav.as_ptr() as *const c_void, wav.len() as u64, 0,
+        b"sine.wav\0".as_ptr() as *const c_char, &mut sound);
+    let decoded = rc == ENGINE_AUDIO_OK;
+    r.check(
+        decoded || rc == ENGINE_AUDIO_E_UNSUPPORTED,
+        format!("a valid WAV is DECODED, not rejected (got {rc})"),
+    );
+
+    if decoded {
+        r.check(sound != ENGINE_AUDIO_NO_SOUND, "...and yields a usable sound id");
+
+        let pd = PlayDesc {
+            structSize: std::mem::size_of::<PlayDesc>() as u32,
+            sound,
+            volume: 0.2,   // audible if anyone is listening, not startling
+            pitch: 1.0,
+            ..Default::default()
+        };
+        let v = (p.play.unwrap())(sp, &pd);
+        r.check(v != ENGINE_AUDIO_NO_VOICE, "playing a real sound yields a voice");
+
+        if v != ENGINE_AUDIO_NO_VOICE {
+            let s0 = stats(sp);
+            r.check(s0.activeVoices >= 1,
+                format!("getStats sees the voice ({} active)", s0.activeVoices));
+
+            // A LIVE id in the bulk path, which nothing else in the suite
+            // exercises — every other updateEmitters test sends stale ids.
+            let up = EmitterUpdate {
+                voice: v, position: [1.0, 2.0, 3.0], volume: 0.2, pitch: 1.0,
+                flags: F_SPATIAL, ..Default::default()
+            };
+            (p.updateEmitters.unwrap())(
+                sp, &up, 1, std::mem::size_of::<EmitterUpdate>() as u32);
+            r.check(true, "a LIVE voice survives a bulk emitter update");
+
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            let s1 = stats(sp);
+            r.check(s1.samplesPlayed > s0.samplesPlayed,
+                format!("the device clock advances while audio plays ({} -> {})",
+                        s0.samplesPlayed, s1.samplesPlayed));
+            r.check(s1.callbackOverruns == 0,
+                format!("no overruns while actually mixing ({})", s1.callbackOverruns));
+
+            (p.stop.unwrap())(sp, v, 0);
+            r.check(true, "stopping a live voice completes");
+        }
+
+        // Many voices over one sound: the decoded case must not need a copy of
+        // the samples per voice.
+        let mut spawned = 0;
+        for _ in 0..8 {
+            if (p.play.unwrap())(sp, &pd) != ENGINE_AUDIO_NO_VOICE { spawned += 1; }
+        }
+        r.check(spawned >= 2,
+            format!("one decoded sound supports concurrent voices ({spawned}/8)"));
+
+        (p.destroySound.unwrap())(sp, sound);
+        r.check(true, "destroySound with voices still live does not crash");
+    }
+
+    // ── The same bytes, streamed from memory (F_STREAM) ─────────────────────
+    {
+        let mut sid: EngineSoundId = 0;
+        let rc = (p.createSound.unwrap())(
+            sp, wav.as_ptr() as *const c_void, wav.len() as u64, F_STREAM,
+            b"sine.stream\0".as_ptr() as *const c_char, &mut sid);
+        if rc == ENGINE_AUDIO_OK {
+            let pd = PlayDesc {
+                structSize: std::mem::size_of::<PlayDesc>() as u32,
+                sound: sid, volume: 0.2, pitch: 1.0, ..Default::default()
+            };
+            r.check((p.play.unwrap())(sp, &pd) != ENGINE_AUDIO_NO_VOICE,
+                    "an F_STREAM sound plays from the engine's buffer");
+            (p.destroySound.unwrap())(sp, sid);
+        } else {
+            r.check(rc == ENGINE_AUDIO_E_UNSUPPORTED || rc == ENGINE_AUDIO_E_BAD_DATA,
+                    format!("F_STREAM declined cleanly ({rc})"));
+        }
+    }
+
+    // ── The same bytes, PULLED through a reader (createStream) ──────────────
+    {
+        let reader = Box::new(ByteReader {
+            bytes: wav.clone(),
+            reads: std::sync::atomic::AtomicU64::new(0),
+        });
+        let src = StreamSource {
+            structSize: std::mem::size_of::<StreamSource>() as u32,
+            _reserved: 0,
+            read: Some(byte_read),
+            totalBytes: wav.len() as u64,
+            userData: &*reader as *const ByteReader as *mut c_void,
+        };
+        let mut sid: EngineSoundId = 0;
+        let rc = (p.createStream.unwrap())(
+            sp, &src, F_STREAM, b"sine.pull\0".as_ptr() as *const c_char, &mut sid);
+        if rc == ENGINE_AUDIO_OK {
+            r.check(
+                reader.reads.load(std::sync::atomic::Ordering::Relaxed) > 0,
+                "createStream actually CALLED the engine's reader — the pull path \
+                 is wired, not just accepted",
+            );
+            let pd = PlayDesc {
+                structSize: std::mem::size_of::<PlayDesc>() as u32,
+                sound: sid, volume: 0.2, pitch: 1.0, ..Default::default()
+            };
+            r.check((p.play.unwrap())(sp, &pd) != ENGINE_AUDIO_NO_VOICE,
+                    "a pull-streamed sound plays");
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            (p.destroySound.unwrap())(sp, sid);
+            r.check(true, "a pull-streamed sound destroys cleanly");
+        } else {
+            r.check(rc == ENGINE_AUDIO_E_UNSUPPORTED,
+                    format!("createStream declined cleanly ({rc})"));
+        }
+        // The reader must not be touched after destroySound; dropping it here
+        // is itself the check — a provider still holding it would use freed
+        // memory under ASan.
+        drop(reader);
+    }
+
+    (p.destroy.unwrap())(sp);
+    r.check(counters.frees.load(std::sync::atomic::Ordering::Relaxed) > 0,
+            format!("memory returned through host free ({} allocs, {} frees)",
+                    counters.allocs.load(std::sync::atomic::Ordering::Relaxed),
+                    counters.frees.load(std::sync::atomic::Ordering::Relaxed)));
+    r
+}
+
 // ── A host, so the suite can prove the provider uses one ────────────────────
 // Passing services and never checking they were touched would test nothing: a
 // provider could take the struct, ignore it, and call malloc. These count.

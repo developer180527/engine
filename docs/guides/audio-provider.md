@@ -16,13 +16,25 @@ never into engine globals, never by linking an engine symbol. That distinction i
 what lets a provider be built by a different team, in a different language,
 against a different engine version.
 
-> **Status, honestly:** the interface and its conformance suite exist and are
-> verified. **No provider is wired into the engine yet** — audio still runs
-> through `src/plugins/audio_plugin.h` (miniaudio, C++, `IEnginePlugin`).
-> Porting that behind this interface is the next step, and until it happens the
-> seam is unproven in production. A reference provider in Rust
-> (`tests/audio_conformance/src/reference.rs`) proves the interface is
-> implementable; it makes no sound.
+> **Status:** the seam is live. `src/audio/miniaudio_provider.cpp` implements
+> this interface and `src/plugins/audio_plugin.h` consumes it — the engine's
+> only remaining reference to miniaudio is the one line in
+> `audio_host_services.h` that names the entry point.
+>
+> The **same source** builds twice: linked into the engine, and as a standalone
+> `.so` (`engine_audio_miniaudio_module`) that the Rust suite dlopens. So the
+> conformance lane tests the code the game actually runs, and the module's
+> refusal to link against `engine_runtime` mechanically proves the provider is
+> engine-independent.
+>
+> Two Rust reference points remain: `reference.rs` (a correct provider that
+> makes no sound, so the suite has something known-good to validate itself
+> against) and `run_playback`, which drives real WAV audio through decode,
+> F_STREAM and pull-streaming.
+>
+> Not yet done: emitters are not driven from the scene — `updateEmitters` and
+> `setListener` are implemented on both sides but the engine still plays sounds
+> at fixed positions with the listener at the origin.
 
 ---
 

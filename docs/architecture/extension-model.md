@@ -15,7 +15,7 @@ engine; the fourth *replaces* part of it.
 > |---|---|
 > | **Plugin** | built, in use — `src/plugins/`, `IEnginePlugin` |
 > | **Kit** | built, in use — `include/engine/engine_api_table.h`, hot-reloaded `.so` |
-> | **Provider** | **one interface defined**, `include/engine/engine_audio_provider.h`, with host services, name lookup and pull streaming; **no provider wired in** |
+> | **Provider** | **live** — `engine_audio_provider.h`, implemented by `src/audio/miniaudio_provider.cpp`, consumed by `audio_plugin.h`. Built both statically and as a standalone `.so` the conformance suite loads |
 > | **Add-on** | **not built.** Designed here, nothing implements it |
 > | **API registry** | **not built.** Designed here |
 >

@@ -395,8 +395,17 @@ if(ENGINE_WITH_RUST)
     find_program(CARGO_EXECUTABLE cargo)
     if(CARGO_EXECUTABLE)
         add_test(NAME audio_abi_conformance
-                 COMMAND ${CARGO_EXECUTABLE} test --quiet
+                 COMMAND ${CMAKE_COMMAND} -E env
+                         ENGINE_AUDIO_PROVIDER=$<TARGET_FILE:engine_audio_miniaudio_module>
+                         ${CARGO_EXECUTABLE} test --quiet
                  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/tests/audio_conformance)
+        # Pointed at the REAL provider, not just the Rust reference. Without
+        # this the lane proved only that the suite could pass something written
+        # to pass it; with it, the shipping miniaudio backend is the thing under
+        # test. It is also what caught the first version of that backend letting
+        # ma_engine own the device, which left samplesPlayed frozen at 0.
+        set_property(TEST audio_abi_conformance APPEND PROPERTY
+                     DEPENDS audio_abi_check)
         # `unit`, not a lane of its own: it is a fast, hermetic, no-GPU check of a
         # header, which is exactly what the unit lane is.
         set_tests_properties(audio_abi_conformance PROPERTIES LABELS unit TIMEOUT 300)

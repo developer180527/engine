@@ -322,6 +322,11 @@ add_library(engine_runtime STATIC
     # Plugin backends
     plugins/audio_impl.cpp
 
+    # miniaudio behind EngineAudioProviderV1. Compiled INTO the engine (no
+    # dlopen in a shipping game) while the identical source also builds as a
+    # standalone module for the conformance suite — see the target below.
+    audio/miniaudio_provider.cpp
+
     # Shaders (HEADER_FILE_ONLY — listed to trigger compilation)
     ${ENGINE_SHADER_SOURCES}
 )
@@ -556,3 +561,36 @@ set_target_properties(scene_resave PROPERTIES
 endif() # ENGINE_BUILD_TOOLS
 
 endif() # ENGINE_WITH_SOURCE_IMPORTERS (dev-only targets)
+
+# ── engine_audio_miniaudio_module — the provider as a standalone .so ─────────
+# The SAME source the engine links, built as a loadable module with its own copy
+# of miniaudio and NO link to engine_runtime. Two things fall out of that:
+#
+#   1. It is what tests/audio_conformance dlopens. The Rust suite therefore
+#      holds the code the game actually runs to the contract, rather than a
+#      demo written beside it.
+#   2. It MECHANICALLY PROVES the provider is engine-independent. If anyone adds
+#      an engine header or an engine symbol to miniaudio_provider.cpp, this
+#      target fails to link — which is the whole claim the audio ABI makes, made
+#      unbreakable instead of merely documented.
+#
+# Deliberately not installed and not linked by anything: its job is to be built.
+add_library(engine_audio_miniaudio_module MODULE
+    audio/miniaudio_provider.cpp
+    plugins/audio_impl.cpp          # this module's own MA_IMPLEMENTATION
+)
+target_include_directories(engine_audio_miniaudio_module PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party/miniaudio
+)
+set_target_properties(engine_audio_miniaudio_module PROPERTIES
+    CXX_VISIBILITY_PRESET hidden      # only engineAudioProviderV1 escapes
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    PREFIX "lib" OUTPUT_NAME "engine_audio_miniaudio" SUFFIX ".so"
+)
+if(APPLE)
+    target_link_libraries(engine_audio_miniaudio_module PRIVATE
+        "-framework CoreFoundation" "-framework CoreAudio" "-framework AudioToolbox")
+elseif(UNIX)
+    target_link_libraries(engine_audio_miniaudio_module PRIVATE dl m pthread)
+endif()
