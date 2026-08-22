@@ -48,6 +48,7 @@ pub const ENGINE_AUDIO_E_FAIL: EngineAudioResult = -1;
 pub const ENGINE_AUDIO_E_NO_DEVICE: EngineAudioResult = -2;
 pub const ENGINE_AUDIO_E_BAD_ARG: EngineAudioResult = -3;
 pub const ENGINE_AUDIO_E_BAD_DATA: EngineAudioResult = -4;
+pub const ENGINE_AUDIO_E_OOM: EngineAudioResult = -5;
 pub const ENGINE_AUDIO_E_UNSUPPORTED: EngineAudioResult = -6;
 
 pub const ENGINE_AUDIO_NO_SOUND: EngineSoundId = 0;
@@ -55,6 +56,24 @@ pub const ENGINE_AUDIO_NO_VOICE: EngineVoiceId = 0;
 
 pub const F_LOOP: u32 = 0x1;
 pub const F_SPATIAL: u32 = 0x2;
+pub const F_STREAM: u32 = 0x4;
+pub const F_BANK: u32 = 0x8;
+
+/// FNV-1a 64, transcribed from `engineAudioHashName` in the header.
+///
+/// Deliberately re-implemented rather than called through FFI: the engine and a
+/// provider each compile their own copy, so the risk this guards is the two
+/// copies *disagreeing*. A test that called the C function would be comparing
+/// it against itself and could never catch that. `hash_matches_the_c_header`
+/// pins it to a value measured from the compiled C.
+pub fn hash_name(name: &str) -> u64 {
+    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+    for b in name.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100_0000_01B3);
+    }
+    if h == 0 { 1 } else { h }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -121,6 +140,45 @@ pub struct Stats {
     pub callbackOverruns: u64,
     pub samplesPlayed: u64,
     pub cpuLoad: f32,
+    pub _reserved: u32,
+    /// Host clock read at the same instant as `samplesPlayed`. Without the
+    /// pair, `startSampleTime` cannot be computed — one number is a count, not
+    /// a mapping between two clocks.
+    pub hostTimeNs: u64,
+}
+
+/// The engine's jobs and allocators, handed to the provider at `create`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HostServices {
+    pub structSize: u32,
+    pub _reserved: u32,
+    pub userData: *mut c_void,
+    pub alloc: Option<unsafe extern "C" fn(*mut c_void, u64, u64) -> *mut c_void>,
+    pub free: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
+    pub parallelFor: Option<
+        unsafe extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            u32,
+            u32,
+            unsafe extern "C" fn(*mut c_void, u32, u32),
+            *mut c_void,
+        ),
+    >,
+    pub workerCount: Option<unsafe extern "C" fn(*mut c_void) -> u32>,
+    pub nowNs: Option<unsafe extern "C" fn(*mut c_void) -> u64>,
+}
+
+/// A pull-based resource the provider reads on its own streaming worker.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct StreamSource {
+    pub structSize: u32,
+    pub _reserved: u32,
+    pub read: Option<unsafe extern "C" fn(*mut c_void, u64, *mut c_void, u64) -> i64>,
+    pub totalBytes: u64,
+    pub userData: *mut c_void,
 }
 
 #[repr(C)]
@@ -128,7 +186,13 @@ pub struct ProviderV1 {
     pub version: u32,
     pub structSize: u32,
 
-    pub create: Option<unsafe extern "C" fn(*const DeviceDesc, *mut *mut c_void) -> EngineAudioResult>,
+    pub create: Option<
+        unsafe extern "C" fn(
+            *const DeviceDesc,
+            *const HostServices,
+            *mut *mut c_void,
+        ) -> EngineAudioResult,
+    >,
     pub destroy: Option<unsafe extern "C" fn(*mut c_void)>,
     pub suspend: Option<unsafe extern "C" fn(*mut c_void, i32)>,
 
@@ -143,6 +207,22 @@ pub struct ProviderV1 {
         ) -> EngineAudioResult,
     >,
     pub destroySound: Option<unsafe extern "C" fn(*mut c_void, EngineSoundId)>,
+
+    pub createStream: Option<
+        unsafe extern "C" fn(
+            *mut c_void,
+            *const StreamSource,
+            u32,
+            *const c_char,
+            *mut EngineSoundId,
+        ) -> EngineAudioResult,
+    >,
+    // Name lookup — what makes an event-based provider (Wwise, FMOD) expressible
+    // at all. Without it, banks have no addressing scheme.
+    pub findSound: Option<
+        unsafe extern "C" fn(*mut c_void, u64, *const c_char, *mut EngineSoundId)
+            -> EngineAudioResult,
+    >,
 
     pub play: Option<unsafe extern "C" fn(*mut c_void, *const PlayDesc) -> EngineVoiceId>,
     pub stop: Option<unsafe extern "C" fn(*mut c_void, EngineVoiceId, u32)>,
@@ -170,9 +250,117 @@ pub const _ABI_SIZES: () = {
     assert!(std::mem::size_of::<EmitterUpdate>() == 48);
     assert!(std::mem::size_of::<PlayDesc>() == 64);
     assert!(std::mem::size_of::<AcousticGeometry>() == 48);
-    assert!(std::mem::size_of::<Stats>() == 40);
-    assert!(std::mem::size_of::<ProviderV1>() == 104);
+    assert!(std::mem::size_of::<StreamSource>() == 32);
+    assert!(std::mem::size_of::<HostServices>() == 56);
+    assert!(std::mem::size_of::<Stats>() == 48);
+    assert!(std::mem::size_of::<ProviderV1>() == 120);
 };
+
+// ── A host, so the suite can prove the provider uses one ────────────────────
+// Passing services and never checking they were touched would test nothing: a
+// provider could take the struct, ignore it, and call malloc. These count.
+pub mod host {
+    use super::*;
+    use std::alloc::{alloc as rs_alloc, dealloc, Layout};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Default)]
+    pub struct Counters {
+        pub allocs: AtomicU64,
+        pub frees: AtomicU64,
+        pub bytes: AtomicU64,
+        pub parallel_for_calls: AtomicU64,
+        pub parallel_for_items: AtomicU64,
+        pub now_ns_calls: AtomicU64,
+    }
+
+    /// Header stored immediately before every returned block, so `free` can
+    /// rebuild the exact `Layout` Rust requires for deallocation.
+    #[repr(C)]
+    struct Head {
+        size: u64,
+        align: u64,
+    }
+
+    unsafe extern "C" fn h_alloc(ud: *mut c_void, size: u64, align: u64) -> *mut c_void {
+        let c = &*(ud as *const Counters);
+        // Offset by `align.max(16)` rather than a flat 16: a 32-byte-aligned
+        // request offset by 16 would come back MISALIGNED, which is the sort of
+        // bug that surfaces as a SIMD fault deep in someone's mixer.
+        let align = (align.max(16) as usize).next_power_of_two();
+        let total = size as usize + align;
+        let Ok(layout) = Layout::from_size_align(total, align) else {
+            return std::ptr::null_mut();
+        };
+        let base = rs_alloc(layout);
+        if base.is_null() {
+            return std::ptr::null_mut();
+        }
+        let user = base.add(align);
+        (user as *mut Head).sub(1).write(Head { size: size as u64, align: align as u64 });
+        c.allocs.fetch_add(1, Ordering::Relaxed);
+        c.bytes.fetch_add(size, Ordering::Relaxed);
+        user as *mut c_void
+    }
+
+    unsafe extern "C" fn h_free(ud: *mut c_void, p: *mut c_void) {
+        if p.is_null() {
+            return; // freeing null is legal, as it is everywhere else
+        }
+        let c = &*(ud as *const Counters);
+        let head = (p as *mut Head).sub(1).read();
+        let align = head.align as usize;
+        let layout = Layout::from_size_align(head.size as usize + align, align).unwrap();
+        dealloc((p as *mut u8).sub(align), layout);
+        c.frees.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Serial, on purpose. The suite is testing that the provider *routes* work
+    /// here, not that our pool is fast — and a real engine pool would make the
+    /// assertions timing-dependent for no gain.
+    unsafe extern "C" fn h_parallel_for(
+        ud: *mut c_void,
+        _name: *const c_char,
+        count: u32,
+        _grain: u32,
+        f: unsafe extern "C" fn(*mut c_void, u32, u32),
+        ctx: *mut c_void,
+    ) {
+        let c = &*(ud as *const Counters);
+        c.parallel_for_calls.fetch_add(1, Ordering::Relaxed);
+        c.parallel_for_items.fetch_add(count as u64, Ordering::Relaxed);
+        if count > 0 {
+            f(ctx, 0, count);
+        }
+    }
+
+    unsafe extern "C" fn h_worker_count(_ud: *mut c_void) -> u32 {
+        4
+    }
+
+    unsafe extern "C" fn h_now_ns(ud: *mut c_void) -> u64 {
+        let c = &*(ud as *const Counters);
+        c.now_ns_calls.fetch_add(1, Ordering::Relaxed);
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+    }
+
+    /// Build a services table pointing at `counters`, which must outlive it.
+    pub fn services(counters: &Counters) -> HostServices {
+        HostServices {
+            structSize: std::mem::size_of::<HostServices>() as u32,
+            _reserved: 0,
+            userData: counters as *const Counters as *mut c_void,
+            alloc: Some(h_alloc),
+            free: Some(h_free),
+            parallelFor: Some(h_parallel_for),
+            workerCount: Some(h_worker_count),
+            nowNs: Some(h_now_ns),
+        }
+    }
+}
 
 // ── Loading a native provider ───────────────────────────────────────────────
 #[cfg(unix)]
@@ -275,7 +463,9 @@ pub unsafe fn run(p: &ProviderV1) -> Report {
         && p.setListener.is_some()
         && p.setGeometry.is_some()
         && p.setParam.is_some()
-        && p.getStats.is_some();
+        && p.getStats.is_some()
+        && p.createStream.is_some()
+        && p.findSound.is_some();
     r.check(complete, "every function pointer is populated");
     if !complete {
         return r;
@@ -287,8 +477,10 @@ pub unsafe fn run(p: &ProviderV1) -> Report {
         bufferFrames: 128,
         channelHint: 0,
     };
+    let counters = host::Counters::default();
+    let services = host::services(&counters);
     let mut self_ptr: *mut c_void = std::ptr::null_mut();
-    let res = (p.create.unwrap())(&desc, &mut self_ptr);
+    let res = (p.create.unwrap())(&desc, &services, &mut self_ptr);
 
     // A host with no output device is normal — CI, dedicated servers. The
     // contract says report it; the engine then runs silent.
@@ -332,6 +524,139 @@ pub unsafe fn run(p: &ProviderV1) -> Report {
             &mut s2,
         );
         r.check(rc2 != ENGINE_AUDIO_OK, "null/empty bytes are refused");
+    }
+
+    // ── Host services are actually USED ─────────────────────────────────────
+    // The point of handing over jobs and allocators is that the provider does
+    // not build its own. A provider that takes the struct and calls malloc is
+    // invisible to the engine's memory budget, and this is the only place that
+    // can be caught.
+    {
+        use std::sync::atomic::Ordering;
+        r.check(
+            counters.allocs.load(Ordering::Relaxed) > 0,
+            format!(
+                "allocates through host services, not malloc ({} allocs, {} bytes) \
+                 — otherwise its footprint never appears in the engine's audio budget",
+                counters.allocs.load(Ordering::Relaxed),
+                counters.bytes.load(Ordering::Relaxed)
+            ),
+        );
+    }
+
+    // ── Name lookup: the event-system path ──────────────────────────────────
+    // A sample-based provider answers E_UNSUPPORTED; a Wwise/FMOD adapter
+    // resolves the name. Both are conformant. What neither may do is crash, or
+    // hand back a live-looking id for a name it does not know.
+    {
+        let h = hash_name("conformance/definitely_not_a_real_event");
+        let mut found: EngineSoundId = 0xABCD;
+        let rc = (p.findSound.unwrap())(
+            self_ptr,
+            h,
+            b"conformance/definitely_not_a_real_event\0".as_ptr() as *const c_char,
+            &mut found,
+        );
+        r.check(
+            rc != ENGINE_AUDIO_OK,
+            format!("findSound refuses an unknown name (got {rc})"),
+        );
+        r.check(
+            found == ENGINE_AUDIO_NO_SOUND,
+            "...and writes NO_SOUND rather than leaving the caller's value",
+        );
+
+        // Hash 0 is reserved — engineAudioHashName never produces it, so it can
+        // only arrive from a caller that failed to hash something.
+        let mut z: EngineSoundId = 7;
+        let rcz = (p.findSound.unwrap())(self_ptr, 0, std::ptr::null(), &mut z);
+        r.check(rcz != ENGINE_AUDIO_OK, "findSound refuses the reserved hash 0");
+
+        // A bank is a container: unsupported is fine, decoding garbage is not.
+        let junk = [0u8; 32];
+        let mut bank: EngineSoundId = 0;
+        let rcb = (p.createSound.unwrap())(
+            self_ptr,
+            junk.as_ptr() as *const c_void,
+            junk.len() as u64,
+            F_BANK,
+            b"junk.bnk\0".as_ptr() as *const c_char,
+            &mut bank,
+        );
+        r.check(
+            rcb != ENGINE_AUDIO_OK,
+            "a garbage bank is rejected (E_UNSUPPORTED or E_BAD_DATA), never parsed",
+        );
+    }
+
+    // ── Pull streaming ──────────────────────────────────────────────────────
+    // The provider must not read on the caller's thread during createStream,
+    // must not read past totalBytes, and must cope with a reader that fails.
+    {
+        unsafe extern "C" fn ok_read(
+            ud: *mut c_void, offset: u64, dst: *mut c_void, count: u64,
+        ) -> i64 {
+            let calls = &*(ud as *const std::sync::atomic::AtomicU64);
+            calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let total: u64 = 4096;
+            if offset >= total {
+                return 0; // end of resource
+            }
+            let n = count.min(total - offset);
+            std::ptr::write_bytes(dst as *mut u8, 0xA5, n as usize);
+            n as i64
+        }
+        unsafe extern "C" fn failing_read(
+            _ud: *mut c_void, _o: u64, _d: *mut c_void, _c: u64,
+        ) -> i64 {
+            -1 // an archive went away mid-stream: routine, not fatal
+        }
+
+        let reads = std::sync::atomic::AtomicU64::new(0);
+        let src = StreamSource {
+            structSize: std::mem::size_of::<StreamSource>() as u32,
+            _reserved: 0,
+            read: Some(ok_read),
+            totalBytes: 4096,
+            userData: &reads as *const _ as *mut c_void,
+        };
+        let mut sid: EngineSoundId = 0xFEED;
+        let rc = (p.createStream.unwrap())(
+            self_ptr, &src, F_STREAM, b"stream\0".as_ptr() as *const c_char, &mut sid);
+        r.check(
+            rc == ENGINE_AUDIO_OK || rc == ENGINE_AUDIO_E_UNSUPPORTED
+                || rc == ENGINE_AUDIO_E_BAD_DATA,
+            format!("createStream returns OK, E_UNSUPPORTED or E_BAD_DATA (got {rc})"),
+        );
+        if rc != ENGINE_AUDIO_OK {
+            r.check(sid == ENGINE_AUDIO_NO_SOUND, "...and NO_SOUND when it declines");
+        } else {
+            (p.destroySound.unwrap())(self_ptr, sid);
+            r.check(true, "a streamed sound destroys cleanly");
+        }
+
+        let bad = StreamSource {
+            read: Some(failing_read),
+            userData: std::ptr::null_mut(),
+            ..src
+        };
+        let mut bsid: EngineSoundId = 1;
+        let rcb = (p.createStream.unwrap())(
+            self_ptr, &bad, F_STREAM, std::ptr::null(), &mut bsid);
+        r.check(
+            rcb != ENGINE_AUDIO_OK || bsid != ENGINE_AUDIO_NO_SOUND,
+            "a reader that fails immediately does not produce a live sound id",
+        );
+        if rcb == ENGINE_AUDIO_OK {
+            (p.destroySound.unwrap())(self_ptr, bsid);
+        }
+
+        // A null reader is a malformed source, not a segfault.
+        let nul = StreamSource { read: None, ..src };
+        let mut nsid: EngineSoundId = 3;
+        let rcn = (p.createStream.unwrap())(
+            self_ptr, &nul, F_STREAM, std::ptr::null(), &mut nsid);
+        r.check(rcn != ENGINE_AUDIO_OK, "a StreamSource with a null read fn is refused");
     }
 
     // ── Invalid handles ─────────────────────────────────────────────────────
@@ -472,6 +797,48 @@ pub unsafe fn run(p: &ProviderV1) -> Report {
             s1.samplesPlayed >= s0.samplesPlayed,
             "samplesPlayed is monotonic — it is the clock startSampleTime is computed against",
         );
+
+        // ── Clock correlation ───────────────────────────────────────────────
+        // samplesPlayed alone is a count, not a mapping: it says how many
+        // samples have played but not WHEN that was true, so it cannot place a
+        // future event on the host's timeline. Reporting hostTimeNs is optional
+        // (0 = "I don't"), but a provider that reports it must make it usable.
+        if s0.hostTimeNs != 0 && s1.hostTimeNs != 0 {
+            r.check(
+                s1.hostTimeNs > s0.hostTimeNs,
+                "hostTimeNs advances between readings",
+            );
+
+            // The two clocks must agree on how much time passed. Anything far
+            // off means the pair was not sampled together — which silently
+            // ruins every scheduling calculation built on it.
+            let d_samples = s1.samplesPlayed.saturating_sub(s0.samplesPlayed) as f64;
+            let d_host_ns = s1.hostTimeNs.saturating_sub(s0.hostTimeNs) as f64;
+            let implied_ns = d_samples / s1.sampleRate.max(1) as f64 * 1e9;
+            // Generous: this runs on loaded CI machines, and the assertion is
+            // aimed at a mapping that is WRONG, not one that is imprecise.
+            let ok = d_host_ns > 0.0
+                && implied_ns > 0.0
+                && (implied_ns / d_host_ns) > 0.5
+                && (implied_ns / d_host_ns) < 2.0;
+            r.check(
+                ok,
+                format!(
+                    "the sample clock and the host clock agree on elapsed time \
+                     ({:.1} ms of samples vs {:.1} ms of host) — sampled together, \
+                     so startSampleTime can be computed",
+                    implied_ns / 1e6,
+                    d_host_ns / 1e6
+                ),
+            );
+            r.check(
+                counters.now_ns_calls.load(std::sync::atomic::Ordering::Relaxed) > 0,
+                "hostTimeNs comes from services->nowNs, not a private clock — \
+                 two different monotonic clocks share no epoch",
+            );
+        } else {
+            r.check(true, "hostTimeNs not reported (0) — scheduling degrades to buffer boundaries");
+        }
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────

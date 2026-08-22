@@ -26,6 +26,30 @@ fn reference_stride_is_walked_by_stride() {
 }
 
 #[test]
+fn hash_matches_the_c_header() {
+    // findSound and setParam address content by name hash, so the engine's C
+    // implementation and a provider's own must agree EXACTLY or every lookup
+    // silently misses — no crash, no error, just a sound that never plays.
+    //
+    // These expectations were measured by compiling engineAudioHashName from
+    // engine_audio_provider.h and printing the result, in both C11 and C++20.
+    // Pinning literals rather than calling the C function is deliberate: an FFI
+    // call would compare the header against itself and could never catch drift
+    // between two independent implementations, which is the actual risk.
+    assert_eq!(
+        conf::hash_name("Play_Gunshot"),
+        7_375_508_369_329_266_918,
+        "FNV-1a 64 diverged from the C header — every findSound would miss"
+    );
+    // The empty string must land on the unmodified FNV offset basis; getting
+    // the seed wrong is the classic way two implementations disagree.
+    assert_eq!(conf::hash_name(""), 0xCBF2_9CE4_8422_2325);
+    // Distinct names must not collide in the trivial way a broken multiply
+    // produces.
+    assert_ne!(conf::hash_name("a"), conf::hash_name("b"));
+}
+
+#[test]
 fn reference_provider_conforms() {
     let report = unsafe { conf::run(&conf::reference::REFERENCE) };
     report.print("rust reference provider");

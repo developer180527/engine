@@ -364,6 +364,19 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(docs_status_current PROPERTIES LABELS docs TIMEOUT 120)
 endif()
 
+# ── The C half of the audio ABI freeze ───────────────────────────────────────
+# The header's ENGINE_AUDIO_FROZEN static asserts fire only in a TU that
+# INCLUDES it, and until this target existed no TU in the tree did — so they had
+# never been compiled once. The Rust suite pins its own transcription and is
+# blind to the C side moving underneath it; this is the other half. Plain C11 on
+# purpose: it also proves the header is consumable without a C++ compiler, which
+# is the claim we make to anyone writing a provider.
+add_executable(audio_abi_check audio_abi_check.c)
+set_target_properties(audio_abi_check PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+target_include_directories(audio_abi_check PRIVATE ${CMAKE_SOURCE_DIR}/include)
+add_test(NAME audio_abi_check COMMAND audio_abi_check)
+set_tests_properties(audio_abi_check PROPERTIES LABELS unit TIMEOUT 30)
+
 # ── The audio-provider ABI's executable specification (Rust) ─────────────────
 # tests/audio_conformance is an "executable specification": it hand-transcribes
 # engine_audio_provider.h as Rust #[repr(C)] and holds a provider to the

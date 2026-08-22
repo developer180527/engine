@@ -3,7 +3,13 @@
  *
  * The contract a REPLACEMENT audio engine implements: miniaudio (the default),
  * an FMOD or Wwise adapter, a Rust spatial engine, someone's ray-traced audio
- * experiment. The engine calls this; nothing here calls back into the engine.
+ * experiment.
+ *
+ * The engine calls this. The provider calls back ONLY through pointers the
+ * engine handed it explicitly — EngineAudioHostServices and
+ * EngineAudioStreamSource — and never into engine globals, never by linking an
+ * engine symbol. That distinction is what lets a provider be built by a
+ * different team, in a different language, against a different engine version.
  *
  * ── The one decision everything else follows from ────────────────────────────
  * THE PROVIDER OWNS THE DEVICE, THE REAL-TIME THREAD, AND THE MIXER.
@@ -90,6 +96,126 @@ typedef uint64_t EngineVoiceId;   /* one playing instance of a sound     */
 #define ENGINE_AUDIO_F_SPATIAL  0x2u  /* positioned; else played "in the head" */
 #define ENGINE_AUDIO_F_STREAM   0x4u  /* stream from the resource, do not fully
                                        * decode — music and long ambience     */
+/* These bytes are a CONTAINER registering many named sounds, not one sound: a
+ * Wwise .bnk, an FMOD .bank, a provider's own pack. createSound returns one id
+ * standing for the whole container (destroySound unloads it); the individual
+ * sounds inside are reached by name through findSound. Ignored — and the bytes
+ * rejected with E_UNSUPPORTED — by a provider with no container format. */
+#define ENGINE_AUDIO_F_BANK     0x8u
+
+/* ── Name hashing ────────────────────────────────────────────────────────────
+ * findSound and setParam both address things by a 64-bit name hash, and engine
+ * and provider MUST agree on the function or every lookup silently misses. So
+ * it is defined here, inline, once: FNV-1a 64. Both sides compile the same
+ * code and the question cannot be got wrong.
+ *
+ * Case-sensitive and separator-agnostic on purpose — "Play_Gunshot" and
+ * "weapons/rifle/fire" are both just bytes, and normalising them would be the
+ * engine having an opinion about a namespace it does not own. */
+#define ENGINE_AUDIO_HASH_SEED 0xCBF29CE484222325ull
+static inline uint64_t engineAudioHashName(const char* name) {
+    uint64_t h = ENGINE_AUDIO_HASH_SEED;
+    if (!name) return 0;
+    while (*name) {
+        h ^= (uint64_t)(unsigned char)*name++;
+        h *= 0x100000001B3ull;
+    }
+    /* 0 is reserved: setParam uses objectId 0 for "global", and a name that
+     * happened to hash to 0 would be indistinguishable from "no name". */
+    return h ? h : 1ull;
+}
+
+/* ── Streaming by pull ───────────────────────────────────────────────────────
+ * The engine hands the provider a reader instead of a buffer. This exists
+ * because createSound's byte pointer cannot express the cases a shipping title
+ * actually has: audio packed inside an archive, fetched over the network, or
+ * decrypted on demand. Memory-mapping covers the first and none of the rest.
+ *
+ * THREADING, and this is the sharp edge: the provider calls `read` from its own
+ * streaming worker — NEVER from the real-time thread, where a file read would
+ * be an instant underrun. `read` may block, and the engine's implementation
+ * must be safe against concurrent calls for different sounds.
+ *
+ * LIFETIME: `read` and `userData` must stay valid until destroySound. */
+typedef struct EngineAudioStreamSource {
+    uint32_t structSize;
+    uint32_t _reserved;
+    /* Returns bytes read (0 = end of resource), or negative on error. `offset`
+     * is absolute within the resource, so the provider may seek freely — which
+     * is what looping a streamed track requires. */
+    int64_t  (*read)(void* userData, uint64_t offset, void* dst, uint64_t byteCount);
+    uint64_t totalBytes;   /* 0 = unknown (a live/network source) */
+    void*    userData;
+} EngineAudioStreamSource;
+
+/* ── Host services ───────────────────────────────────────────────────────────
+ * The engine's jobs and allocators, handed to the provider at create().
+ *
+ * WHY THIS EXISTS. A provider that brings its own thread pool and its own
+ * allocator is not free of the engine — it is invisible to it. Four audio
+ * workers beside the engine's pool beside a physics provider's pool
+ * oversubscribes the cores: those threads do not run in parallel, they
+ * context-switch, evict each other's cache lines, and each idle pool burns
+ * power spinning. And a provider calling malloc sits outside the tagged-heap
+ * telemetry entirely, so nobody can answer "what does audio cost" — which is
+ * the question a memory budget review is made of.
+ *
+ * WHAT THE PROVIDER STILL OWNS: the real-time thread. That one is not
+ * negotiable and must NOT come from `parallelFor`. The audio callback is
+ * scheduled by the OS driver at elevated priority against a hard deadline; a
+ * general worker runs arbitrary queued work and gets preempted, so a mixer on
+ * a pool thread is a mixer that eventually clicks. The rule is:
+ *
+ *   THE PROVIDER OWNS THE REAL-TIME THREAD. EVERYTHING ELSE USES THE HOST.
+ *
+ * So: decoding, streaming refill, propagation, ray tracing and reverb solving
+ * go to `parallelFor`; every allocation goes to `alloc`; and only the mixer
+ * runs on the provider's own thread. Ray-traced audio at 15 Hz is bulk parallel
+ * compute — exactly what the pool is for, and the worst thing to spin private
+ * threads for.
+ *
+ * COST: an allocation is ~50-100 ns of real work and an indirect call adds ~2;
+ * these happen at load and decode time and never per sample.
+ *
+ * NOT NULL. The engine always supplies this, and the conformance suite supplies
+ * a counting implementation — so a provider may use it unconditionally, and a
+ * provider that ignores it can be caught doing so.
+ *
+ * REAL-TIME SAFETY: none of these may be called from the audio thread. `alloc`
+ * can block and `parallelFor` can wait; both are deadline violations there. */
+typedef struct EngineAudioHostServices {
+    uint32_t structSize;
+    uint32_t _reserved;
+    /* Passed back to every callback below. */
+    void*    userData;
+
+    /* Tagged as audio memory, so the provider's footprint is visible in the
+     * engine's budget telemetry. `alignment` is a power of two. Returns null on
+     * failure — the provider must handle that, not assume it. */
+    void*    (*alloc)(void* userData, uint64_t byteCount, uint64_t alignment);
+    void     (*free)(void* userData, void* ptr);
+
+    /* The engine's job pool. `fn` is invoked with a [begin, end) sub-range,
+     * possibly on several threads, possibly on the calling one; the call
+     * returns once every range has completed. `grain` is the minimum items per
+     * task (0 = the pool decides). `name` is for the profiler and may be null.
+     *
+     * NOTE, and it is a real limitation rather than an oversight: the pool has
+     * no priority classes, so decode work queues behind gameplay work. Fine for
+     * buffers of hundreds of milliseconds; if a provider needs tighter
+     * streaming than the pool can promise, a private thread for THAT is
+     * legitimate — and it should say so in its documentation. */
+    void     (*parallelFor)(void* userData, const char* name,
+                            uint32_t count, uint32_t grain,
+                            void (*fn)(void* ctx, uint32_t begin, uint32_t end),
+                            void* ctx);
+    uint32_t (*workerCount)(void* userData);
+
+    /* The engine's monotonic clock, in nanoseconds. The provider samples THIS
+     * for EngineAudioStats::hostTimeNs — see that field for why a raw
+     * clock_gettime would not do. */
+    uint64_t (*nowNs)(void* userData);
+} EngineAudioHostServices;
 
 /* ── Device ──────────────────────────────────────────────────────────────── */
 /* Zero means "provider chooses". bufferFrames is the DOMINANT latency term:
@@ -188,7 +314,13 @@ typedef struct EngineAcousticGeometry {
     const uint32_t* materialIds;   /* one per TRIANGLE, or null */
 } EngineAcousticGeometry;
 
-/* ── Diagnostics ─────────────────────────────────────────────────────────── */
+/* ── Diagnostics ─────────────────────────────────────────────────────────────
+ * OUT-PARAMETER, so the structSize check runs the OTHER WAY round from every
+ * other struct here: the ENGINE sets outStats->structSize before the call, and
+ * the provider writes only the fields that fit in it. A provider built against
+ * a longer version of this struct that writes its full size into a shorter
+ * engine's buffer is a stack smash — and it is the one direction the frozen
+ * layout alone does not protect, because the writer is the newer party. */
 typedef struct EngineAudioStats {
     uint32_t structSize;
     uint32_t activeVoices;
@@ -201,6 +333,27 @@ typedef struct EngineAudioStats {
     /* The provider's clock, for computing startSampleTime. Monotonic. */
     uint64_t samplesPlayed;
     float    cpuLoad;          /* 0..1 of the real-time budget, -1 = unknown */
+    uint32_t _reserved;
+    /* The host clock (services->nowNs) read AT THE SAME INSTANT as
+     * samplesPlayed — sample the two adjacently, publish them together.
+     *
+     * WITHOUT THIS FIELD startSampleTime is decorative, and that is why it is
+     * here. The game thread polls getStats and learns a sample count, but not
+     * WHEN that count was true; between the provider publishing it and the
+     * engine reading it, an arbitrary and variable amount of time passed. To
+     * schedule a sound at a future instant the engine must map its own clock
+     * onto the audio clock, and one number cannot express a mapping — it needs
+     * the pair. With the pair:
+     *
+     *   samplesAtHostTime(t) ≈ samplesPlayed + (t - hostTimeNs) * sampleRate / 1e9
+     *
+     * and two readings apart in time also give the DRIFT between the two
+     * clocks, which is real: an audio device's crystal is not the host's, and
+     * over a few minutes they separate by milliseconds.
+     *
+     * 0 means the provider does not report it; the engine then treats
+     * startSampleTime as best-effort and quantises to buffer boundaries. */
+    uint64_t hostTimeNs;
 } EngineAudioStats;
 
 /* ── The provider ────────────────────────────────────────────────────────────
@@ -227,8 +380,15 @@ typedef struct EngineAudioProviderV1 {
     /* ── Lifecycle (game thread) ─────────────────────────────────────────── */
     /* Opens the device and starts the real-time thread. A host with no output
      * device is NORMAL, not an error to abort on: return E_NO_DEVICE and the
-     * engine runs silent (dedicated servers, CI). */
-    EngineAudioResult (*create)(const EngineAudioDeviceDesc* desc, void** outSelf);
+     * engine runs silent (dedicated servers, CI).
+     *
+     * `services` is never null and outlives the instance. Take a copy of it —
+     * of the STRUCT, not the pointer — and use it for every allocation and every
+     * piece of off-real-time parallelism for the instance's whole life. See
+     * EngineAudioHostServices for what that buys and what stays yours. */
+    EngineAudioResult (*create)(const EngineAudioDeviceDesc* desc,
+                                const EngineAudioHostServices* services,
+                                void** outSelf);
     void (*destroy)(void* self);
     /* Application focus loss / OS interruption. suspended != 0 stops the
      * device without destroying voices. */
@@ -265,6 +425,40 @@ typedef struct EngineAudioProviderV1 {
                                      uint32_t flags, const char* debugName,
                                      EngineSoundId* outSound);
     void (*destroySound)(void* self, EngineSoundId sound);
+
+    /* Creates a sound the provider reads on demand, instead of from a buffer
+     * the engine holds. For audio inside an archive, behind the network, or
+     * decrypted lazily — see EngineAudioStreamSource, especially its threading
+     * rule. `flags` takes F_STREAM (implied) and nothing else.
+     *
+     * E_UNSUPPORTED is a legitimate answer; the engine then falls back to
+     * createSound with the bytes resident, which costs memory and works. */
+    EngineAudioResult (*createStream)(void* self, const EngineAudioStreamSource* src,
+                                      uint32_t flags, const char* debugName,
+                                      EngineSoundId* outSound);
+
+    /* Resolves a sound the PROVIDER already knows about, by name hash
+     * (engineAudioHashName) — from a bank loaded with F_BANK, or from the
+     * provider's own configuration.
+     *
+     * WHY THIS EXISTS, and it is the difference between this interface working
+     * for Wwise and FMOD or not. Those are EVENT systems: a title ships banks
+     * and posts "Play_Gunshot", and the sound designer's graph decides what
+     * actually plays — layers, randomisation, RTPCs. There is no buffer of
+     * gunshot bytes for the engine to hand over, and addressing content by NAME
+     * is the only thing sample-based and event-based providers have in common.
+     * Without this, an adapter would have to smuggle event names through
+     * setParam, which is the shape of an abstraction that is wrong.
+     *
+     * The returned id is playable exactly like one from createSound. Ownership
+     * stays with whatever created it: destroySound on a findSound result must
+     * be a no-op, and the bank's own id is what unloads it.
+     *
+     * E_UNSUPPORTED from a provider with no name registry; E_BAD_ARG for a name
+     * it does not know. Both are normal — the engine degrades to silence for
+     * that one sound rather than failing to start. */
+    EngineAudioResult (*findSound)(void* self, uint64_t nameHash,
+                                   const char* debugName, EngineSoundId* outSound);
 
     /* ── Playback (game thread) ──────────────────────────────────────────── */
     /* Returns NO_VOICE if the sound is invalid or the provider's voice budget
@@ -321,14 +515,27 @@ typedef struct EngineAudioProviderV1 {
 #endif
 
 #if UINTPTR_MAX == 0xFFFFFFFFFFFFFFFFu
-ENGINE_AUDIO_FROZEN(EngineAudioDeviceDesc,     16);
-ENGINE_AUDIO_FROZEN(EngineAudioListener,       52);
-ENGINE_AUDIO_FROZEN(EngineAudioEmitterUpdate,  48);
-ENGINE_AUDIO_FROZEN(EngineAudioPlayDesc,       64);
-ENGINE_AUDIO_FROZEN(EngineAcousticGeometry,    48);
-ENGINE_AUDIO_FROZEN(EngineAudioStats,          40);
-ENGINE_AUDIO_FROZEN(EngineAudioProviderV1,    104);
+ENGINE_AUDIO_FROZEN(EngineAudioDeviceDesc,      16);
+ENGINE_AUDIO_FROZEN(EngineAudioListener,        52);
+ENGINE_AUDIO_FROZEN(EngineAudioEmitterUpdate,   48);
+ENGINE_AUDIO_FROZEN(EngineAudioPlayDesc,        64);
+ENGINE_AUDIO_FROZEN(EngineAcousticGeometry,     48);
+ENGINE_AUDIO_FROZEN(EngineAudioStreamSource,    32);
+ENGINE_AUDIO_FROZEN(EngineAudioHostServices,    56);
+ENGINE_AUDIO_FROZEN(EngineAudioStats,           48);
+ENGINE_AUDIO_FROZEN(EngineAudioProviderV1,     120);
 #endif
+
+/* WHEN THE FREEZE STARTS BITING. These numbers have already moved once — Stats
+ * 40 -> 48 and the table 104 -> 120, when host services, name lookup, pull
+ * streaming and the host clock went in. That was free, because NO PROVIDER HAS
+ * EVER SHIPPED against this header: there was nothing in the world to break.
+ *
+ * The moment one does, that stops. From then on this header obeys
+ * engine_api_table.h's rules without exception — append only, never resize,
+ * never reorder, and a fourteenth function means EngineAudioProviderV2 rather
+ * than a bigger V1. Getting the shape right is cheap exactly once, and this was
+ * the once. */
 
 /* The module entry point: `const EngineAudioProviderV1* engineAudioProviderV1(void)` */
 typedef const EngineAudioProviderV1* (*EngineAudioProviderGetV1Fn)(void);

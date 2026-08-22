@@ -29,6 +29,9 @@ struct Device {
     next_voice: AtomicU64,
     sample_rate: u32,
     buffer_frames: u32,
+    /// Copied by value at create(), per the contract — the engine promises the
+    /// services outlive the instance, not that the pointer does.
+    host: HostServices,
 }
 
 /// Rust panics must never unwind into C. The suite calls these through
@@ -45,12 +48,25 @@ unsafe fn dev<'a>(p: *mut c_void) -> Option<&'a Device> {
 
 unsafe extern "C" fn create(
     desc: *const DeviceDesc,
+    services: *const HostServices,
     out: *mut *mut c_void,
 ) -> EngineAudioResult {
     if out.is_null() {
         return ENGINE_AUDIO_E_BAD_ARG;
     }
     *out = std::ptr::null_mut();
+
+    // The contract says services is never null and every entry is populated.
+    // Checking anyway: a provider that trusts this and is wrong crashes inside
+    // someone else's engine, where the cause is invisible.
+    let Some(host) = services.as_ref().copied() else {
+        return ENGINE_AUDIO_E_BAD_ARG;
+    };
+    if host.alloc.is_none() || host.free.is_none() || host.nowNs.is_none()
+        || host.parallelFor.is_none()
+    {
+        return ENGINE_AUDIO_E_BAD_ARG;
+    }
 
     let (rate, frames) = match desc.as_ref() {
         Some(d) => (
@@ -81,7 +97,20 @@ unsafe extern "C" fn create(
         });
     }
 
-    let d = Box::new(Device {
+    // Through the HOST allocator, not Box — this is the whole point of host
+    // services. A real provider's voice pool, scratch buffers and convolution
+    // workspace all come from here, which is what makes audio's footprint
+    // visible in the engine's memory budget instead of anonymous malloc.
+    let mem = (host.alloc.unwrap())(
+        host.userData,
+        std::mem::size_of::<Device>() as u64,
+        std::mem::align_of::<Device>() as u64,
+    ) as *mut Device;
+    if mem.is_null() {
+        running.store(false, Ordering::Relaxed); // stop the clock thread we started
+        return ENGINE_AUDIO_E_OOM;
+    }
+    mem.write(Device {
         running,
         samples,
         overruns,
@@ -90,8 +119,9 @@ unsafe extern "C" fn create(
         next_voice: AtomicU64::new(1),
         sample_rate: rate,
         buffer_frames: frames,
+        host,
     });
-    *out = Box::into_raw(d) as *mut c_void;
+    *out = mem as *mut c_void;
     ENGINE_AUDIO_OK
 }
 
@@ -99,8 +129,11 @@ unsafe extern "C" fn destroy(p: *mut c_void) {
     if p.is_null() {
         return;
     }
-    let d = Box::from_raw(p as *mut Device);
+    let d = (p as *mut Device).read();
     d.running.store(false, Ordering::Relaxed);
+    let host = d.host;
+    drop(d);
+    (host.free.unwrap())(host.userData, p);
 }
 
 unsafe extern "C" fn suspend(_p: *mut c_void, _s: i32) {}
@@ -128,6 +161,91 @@ unsafe extern "C" fn create_sound(
 }
 
 unsafe extern "C" fn destroy_sound(_p: *mut c_void, _s: EngineSoundId) {}
+
+/// This provider has no name registry, so every lookup misses. Answering
+/// E_UNSUPPORTED — rather than E_FAIL — is what tells the engine the capability
+/// is absent instead of broken, and it is the honest answer for anything that
+/// is not an event system.
+unsafe extern "C" fn find_sound(
+    p: *mut c_void,
+    name_hash: u64,
+    _debug: *const c_char,
+    out: *mut EngineSoundId,
+) -> EngineAudioResult {
+    if !out.is_null() {
+        *out = ENGINE_AUDIO_NO_SOUND;
+    }
+    if dev(p).is_none() || out.is_null() {
+        return ENGINE_AUDIO_E_BAD_ARG;
+    }
+    // 0 is reserved by engineAudioHashName, so it can only mean the caller
+    // failed to hash something.
+    if name_hash == 0 {
+        return ENGINE_AUDIO_E_BAD_ARG;
+    }
+    ENGINE_AUDIO_E_UNSUPPORTED
+}
+
+/// Demonstrates the pull-streaming contract rather than declining it: validate
+/// the source, then probe it **through the host job pool**, which is where a
+/// real provider's decode and refill work belongs. It still decodes nothing, so
+/// the honest final answer is E_BAD_DATA.
+unsafe extern "C" fn create_stream(
+    p: *mut c_void,
+    src: *const StreamSource,
+    _flags: u32,
+    _debug: *const c_char,
+    out: *mut EngineSoundId,
+) -> EngineAudioResult {
+    if !out.is_null() {
+        *out = ENGINE_AUDIO_NO_SOUND;
+    }
+    let Some(d) = dev(p) else { return ENGINE_AUDIO_E_BAD_ARG };
+    let Some(s) = src.as_ref() else { return ENGINE_AUDIO_E_BAD_ARG };
+    if out.is_null() || s.read.is_none() {
+        return ENGINE_AUDIO_E_BAD_ARG;
+    }
+
+    struct Probe {
+        src: StreamSource,
+        bytes: i64,
+    }
+    // The engine's reader may itself be Rust and may panic. Catching it here
+    // stops an unwind crossing back into C through the job pool, which is
+    // undefined behaviour and unrecoverable.
+    unsafe extern "C" fn probe(ctx: *mut c_void, _b: u32, _e: u32) {
+        let pr = &mut *(ctx as *mut Probe);
+        let mut buf = [0u8; 256];
+        // AssertUnwindSafe is sound here for the reason the lint exists to make
+        // you state: if the engine's reader panics we discard `buf` entirely
+        // and report failure, so no partially-written buffer is ever observed.
+        pr.bytes = guard(-1i64, std::panic::AssertUnwindSafe(|| {
+            (pr.src.read.unwrap())(
+                pr.src.userData,
+                0,
+                buf.as_mut_ptr() as *mut c_void,
+                buf.len() as u64,
+            )
+        }));
+    }
+
+    let mut pr = Probe { src: *s, bytes: -1 };
+    // NOT on the calling thread by contract, and never on the real-time thread:
+    // `read` may block on a file or the network.
+    (d.host.parallelFor.unwrap())(
+        d.host.userData,
+        b"audio.stream.probe\0".as_ptr() as *const c_char,
+        1,
+        1,
+        probe,
+        &mut pr as *mut Probe as *mut c_void,
+    );
+
+    if pr.bytes <= 0 {
+        return ENGINE_AUDIO_E_BAD_DATA; // unreadable source
+    }
+    ENGINE_AUDIO_E_BAD_DATA // readable, but this provider decodes nothing
+}
 
 unsafe extern "C" fn play(p: *mut c_void, desc: *const PlayDesc) -> EngineVoiceId {
     let Some(d) = dev(p) else { return ENGINE_AUDIO_NO_VOICE };
@@ -212,17 +330,29 @@ unsafe extern "C" fn set_param(_p: *mut c_void, _obj: u64, _hash: u64, _v: f32) 
 unsafe extern "C" fn get_stats(p: *mut c_void, out: *mut Stats) {
     let Some(o) = out.as_mut() else { return };
     let Some(d) = dev(p) else { return };
+    // The engine set structSize; write only what fits. Skipping this check is a
+    // stack smash the day a provider is newer than the engine calling it — the
+    // one direction frozen layout cannot protect, because the writer is the
+    // newer party.
+    let cap = o.structSize as usize;
+    if cap < std::mem::size_of::<Stats>() {
+        return; // older engine than this provider knows how to fill safely
+    }
     o.activeVoices = d.voices.load(Ordering::Relaxed);
     o.sampleRate = d.sample_rate;
     o.bufferFrames = d.buffer_frames;
     o.callbackOverruns = d.overruns.load(Ordering::Relaxed);
+    // Read the pair ADJACENTLY. The engine correlates these two to place a
+    // future sample on its own timeline, so any work between them shows up as
+    // scheduling error that nothing downstream can detect or correct.
     o.samplesPlayed = d.samples.load(Ordering::Relaxed);
+    o.hostTimeNs = (d.host.nowNs.unwrap())(d.host.userData);
     o.cpuLoad = 0.0;
 }
 
 /// The reference table. `guard` is deliberately unused on the trivial entries:
-/// wrapping a function that cannot panic buys nothing and hides which ones
-/// genuinely needed it.
+/// wrapping a function that cannot panic buys nothing and hides which one
+/// genuinely needed it — `create_stream`, which invokes the engine's callback.
 pub static REFERENCE: ProviderV1 = ProviderV1 {
     version: 1,
     structSize: std::mem::size_of::<ProviderV1>() as u32,
@@ -231,6 +361,8 @@ pub static REFERENCE: ProviderV1 = ProviderV1 {
     suspend: Some(suspend),
     createSound: Some(create_sound),
     destroySound: Some(destroy_sound),
+    createStream: Some(create_stream),
+    findSound: Some(find_sound),
     play: Some(play),
     stop: Some(stop),
     updateEmitters: Some(update_emitters),
@@ -239,8 +371,3 @@ pub static REFERENCE: ProviderV1 = ProviderV1 {
     setParam: Some(set_param),
     getStats: Some(get_stats),
 };
-
-#[allow(dead_code)]
-fn _guard_is_used() {
-    let _ = guard(0, || 0);
-}

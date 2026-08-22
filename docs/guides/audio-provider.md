@@ -8,8 +8,13 @@ status: reference
 
 This is the contract a **replacement audio engine** implements: miniaudio (the
 intended default), an FMOD or Wwise adapter, a Rust spatial engine, someone's
-ray-traced audio experiment. The engine calls it; nothing in it calls back into
-the engine.
+ray-traced audio experiment.
+
+The engine calls it. The provider calls back **only** through pointers the engine
+handed it explicitly — `EngineAudioHostServices` and `EngineAudioStreamSource` —
+never into engine globals, never by linking an engine symbol. That distinction is
+what lets a provider be built by a different team, in a different language,
+against a different engine version.
 
 > **Status, honestly:** the interface and its conformance suite exist and are
 > verified. **No provider is wired into the engine yet** — audio still runs
@@ -23,9 +28,33 @@ the engine.
 
 ## 1. The one decision everything follows from
 
-**The provider owns the device, the real-time thread, and the mixer.**
+**The provider owns the device, the real-time thread, and the mixer. It uses the
+engine's jobs and allocators for everything else.**
 
 The engine never fills an audio buffer and never runs code on the audio thread.
+
+That second sentence is as load-bearing as the first. A provider that brings its
+own thread pool and its own allocator is not independent of the engine — it is
+*invisible* to it. Four audio workers beside the engine's pool beside a physics
+provider's pool oversubscribes the cores: those threads do not run in parallel,
+they context-switch, evict each other's cache lines, and each idle pool burns
+power spinning. A provider calling `malloc` sits outside the tagged-heap
+telemetry, so nobody can answer "what does audio cost" — which is the entire
+content of a memory budget review.
+
+So the split is:
+
+| | Owner |
+|---|---|
+| device, real-time thread, mixer | **provider** |
+| decode, streaming refill, propagation, ray tracing, reverb solve | **engine's `parallelFor`** |
+| every allocation | **engine's tagged heap** |
+| the clock `hostTimeNs` is sampled from | **engine's `nowNs`** |
+
+The real-time thread is the one exception, and it is not negotiable: the audio
+callback is scheduled by the OS driver at elevated priority against a hard
+deadline, while a pool worker runs arbitrary queued work and gets preempted. A
+mixer on a pool thread is a mixer that eventually clicks.
 
 This is not a stylistic choice. If the engine owned the device and called the
 provider to fill buffers, this ABI would sit *inside* the real-time callback,
@@ -62,14 +91,14 @@ module while pointers into it are live.
 
 ### 2.2 Fill the table
 
-Twelve function pointers. **All are mandatory** — a null entry turns a missing
+Fourteen function pointers. **All are mandatory** — a null entry turns a missing
 feature into a crash at first call, when `ENGINE_AUDIO_E_UNSUPPORTED` would have
 been a clean refusal.
 
 | Group | Functions |
 |---|---|
 | Lifecycle | `create`, `destroy`, `suspend` |
-| Resources | `createSound`, `destroySound` |
+| Resources | `createSound`, `destroySound`, `createStream`, `findSound` |
 | Playback | `play`, `stop` |
 | Per-frame scene | `updateEmitters`, `setListener` |
 | Acoustic scene | `setGeometry` |
@@ -84,11 +113,42 @@ Set `version = ENGINE_AUDIO_PROVIDER_V` and
 You can conform while doing almost nothing:
 
 - `createSound` → `ENGINE_AUDIO_E_BAD_DATA` if you decode nothing
+- `createStream` → `ENGINE_AUDIO_E_UNSUPPORTED` if you cannot pull
+- `findSound` → `ENGINE_AUDIO_E_UNSUPPORTED` if you have no name registry
 - `setGeometry` → `ENGINE_AUDIO_E_UNSUPPORTED` if you do no propagation
 - `setParam` → ignore every hash
 - `getStats` → report the device's real sample rate and `callbackOverruns = 0`
 
-`tests/audio_conformance/src/reference.rs` is exactly this, in ~200 lines.
+What you may **not** skip is the host services: allocate through
+`services->alloc` and sample `services->nowNs` for `hostTimeNs`. The conformance
+suite passes a counting implementation and asserts both, so "took the struct and
+called `malloc`" is a detectable failure rather than a silent one.
+
+`tests/audio_conformance/src/reference.rs` is exactly this.
+
+### 2.4 Sound identity: bytes, a reader, or a name
+
+Three ways to get an `EngineSoundId`, because providers differ in kind:
+
+| Call | For | Who holds the data |
+|---|---|---|
+| `createSound(bytes, …)` | a cooked asset in memory | engine, until `destroySound` if `F_STREAM` |
+| `createStream(src, …)` | audio in an archive, over the network, decrypted lazily | engine serves reads on demand |
+| `findSound(nameHash, …)` | an event inside a loaded bank | provider |
+
+`findSound` is what makes this interface expressible for **Wwise and FMOD at
+all**. Those are event systems: a title ships banks and posts `Play_Gunshot`,
+and the designer's graph decides what actually plays — layers, randomisation,
+RTPCs. There is no buffer of gunshot bytes to hand over, and addressing content
+by *name* is the only thing sample-based and event-based providers have in
+common. Load the bank with `createSound(…, ENGINE_AUDIO_F_BANK, …)`; the
+returned id owns the container, and `findSound` resolves the events inside it.
+
+Hash names with **`engineAudioHashName`**, defined inline in the header. Engine
+and provider each compile their own copy, so both must be the same function —
+FNV-1a 64, pinned by literal in both `tests/audio_abi_check.c` and the Rust
+suite. A divergence here produces no error at all: every lookup simply misses
+and the sound never plays.
 
 ---
 
@@ -97,9 +157,14 @@ You can conform while doing almost nothing:
 **At startup**
 
 ```
-create(desc)                → void* self          (E_NO_DEVICE is normal!)
+create(desc, services)      → void* self          (E_NO_DEVICE is normal!)
 createSound(bytes, count, flags) → EngineSoundId  (per asset, game thread)
+createStream(src, flags)    → EngineSoundId       (pull-based resources)
+findSound(nameHash)         → EngineSoundId       (events inside a bank)
 ```
+
+Copy `services` **by value** at `create`: the engine promises the services
+outlive the instance, not that the pointer does.
 
 **Every frame**
 
@@ -154,10 +219,25 @@ thread). **Nothing is called from the audio thread.**
 
 `createSound` may block and decode; it is explicitly not real-time.
 
+Two callbacks run the *other* way — the engine's `read` in
+`EngineAudioStreamSource`, and everything in `EngineAudioHostServices`. Both are
+called **by you**, and neither may be called from the audio thread: `read` can
+block on a file, `alloc` can block on a lock, `parallelFor` waits for workers.
+All three are deadline violations there.
+
+Call `read` from your own streaming worker. The engine's implementation is safe
+against concurrent calls for different sounds.
+
 ### 4.2 Real-time safety inside your callback
 
 No locks, no allocation, no syscalls, no file I/O, no unbounded work. Decoding
-and streaming belong on your own worker thread.
+and streaming belong off the real-time thread — on `parallelFor` for bulk work,
+or on your own worker when you need tighter latency than the pool promises.
+
+**The pool has no priority classes.** Decode work queues behind gameplay work.
+That is fine for buffers of hundreds of milliseconds and a real constraint for
+tight streaming; a private thread for *that specific case* is legitimate, and a
+provider that needs one should say so in its documentation.
 
 `callbackOverruns` in `getStats` is the number that matters: a missed deadline
 is an audible click, and it is the only audio failure a player notices
@@ -185,10 +265,24 @@ property of the resource, so it is decided where the resource is created.
 A provider that cannot stream from memory may decode instead — correct, just
 heavier. It must **not** retain a pointer it was not promised.
 
+- **`createStream`** — no engine buffer at all. You call `read(offset, dst, n)`
+  when you need bytes, so an archive, a network source or lazy decryption all
+  work. `read` and its `userData` stay valid until `destroySound`.
+
 `setGeometry`'s arrays are the opposite: copy or build your acceleration
 structure during the call; they do not outlive it.
 
-### 4.4 ABI rules
+### 4.4 Stats is an out-parameter, so its size check runs backwards
+
+For every other struct here the *producer* sets `structSize` and the consumer
+adapts. `getStats` inverts that: the **engine** sets `outStats->structSize`, and
+you write only the fields that fit inside it.
+
+Skipping this check is a stack smash the day a provider is newer than the engine
+calling it — and it is the one direction frozen layout cannot protect you from,
+because the writer is the newer party.
+
+### 4.5 ABI rules
 
 - Fixed-width types only. No `bool`, no `size_t`, no plain `enum`.
 - Structs are append-only and carry `structSize`.
@@ -197,7 +291,7 @@ structure during the call; they do not outlive it.
   or `catch_unwind` at every entry. Unwinding out of the audio thread is the
   worst possible place to discover otherwise.
 
-### 4.5 Failure is normal
+### 4.6 Failure is normal
 
 `create` returning `ENGINE_AUDIO_E_NO_DEVICE` is an expected outcome, not an
 error to abort on — dedicated servers and CI have no output device, and the
@@ -243,6 +337,11 @@ Both are event/parameter systems with C APIs. If the answer is no, the proposed
 function is describing *our implementation* rather than *the scene*, and it
 belongs behind `setParam`.
 
+`findSound` is the one function added *because* of that test rather than despite
+it. Without name-based addressing a Wwise or FMOD adapter could not be written at
+all, and event names would have had to be smuggled through `setParam` — which is
+what an abstraction looks like when it is wrong.
+
 ---
 
 ## 6. Testing your provider
@@ -275,9 +374,32 @@ once:
 - **zero callback overruns** under a command burst
 - `samplesPlayed` monotonic — it is the clock `startSampleTime` is computed
   against
+- **allocations actually go through host services** — a counting allocator, so a
+  provider that ignores them and calls `malloc` fails here rather than silently
+  escaping the memory budget
+- **the sample clock and the host clock agree on elapsed time**, which is what
+  proves the `samplesPlayed`/`hostTimeNs` pair was sampled together
+- `findSound` refusing an unknown name and the reserved hash `0`
+- `createStream` refusing a null reader, and not minting a live id from a reader
+  that fails immediately
 
-It also asserts Rust's struct sizes equal the C header's at **compile time**
-(104 / 64 / 48 / 40 bytes). If those ever diverge the crate does not build.
+33 assertions in all. Each new one is mutation-verified: breaking the reference
+provider in that specific way makes exactly that line fail, and restoring it
+passes again.
+
+### The two halves of the ABI freeze
+
+The Rust suite asserts **its own** struct sizes at compile time. That catches
+Rust-side drift and is **blind to the C side moving underneath it**.
+`tests/audio_abi_check.c` is the other half: a C11 translation unit that includes
+the header — which is what makes its `ENGINE_AUDIO_FROZEN` static asserts compile
+at all — and pins the field **offsets** and the name hash, both invisible to a
+`sizeof` check. Swapping two `uint64` fields keeps every size identical and
+silently rebinds every read; only the offset check sees it.
+
+Both are `ctest` lanes (`audio_abi_check`, `audio_abi_conformance`, label
+`unit`). The numbers in the two files are the same numbers, so neither side can
+move alone.
 
 ---
 
@@ -290,8 +412,28 @@ Honour it by starting the voice at that exact sample *within* a buffer rather
 than at the buffer boundary. Without it, a sound triggered mid-frame quantises
 to the next callback — audible on rapid fire and anything rhythmic.
 
-It ships in v1 with nothing behind it yet, because it is one `uint64` now and an
-ABI break later.
+### It needs two numbers, not one
+
+`samplesPlayed` alone cannot be scheduled against. The game thread polls
+`getStats` and learns a sample *count*, but not **when** that count was true —
+between you publishing it and the engine reading it, an arbitrary and variable
+amount of time passed. Placing a future sound on the engine's timeline requires
+mapping its clock onto yours, and one number is not a mapping.
+
+So report **`hostTimeNs`** alongside it: `services->nowNs()`, read at the same
+instant as `samplesPlayed`, adjacently, published together. Then:
+
+```
+samplesAtHostTime(t) ≈ samplesPlayed + (t - hostTimeNs) * sampleRate / 1e9
+```
+
+Two readings apart in time also give the **drift** between the clocks, which is
+real — an audio device's crystal is not the host's, and over a few minutes they
+separate by milliseconds.
+
+Report `0` if you do not track it; the engine falls back to buffer-boundary
+quantisation. Do not substitute a private `clock_gettime`: two monotonic clocks
+share no epoch, and the conformance suite checks that `nowNs` was the source.
 
 ---
 

@@ -1,0 +1,80 @@
+audio: the provider ABI grows a host, a name, and a clock it can be scheduled against
+Four changes to engine_audio_provider.h, all of them things a real studio would
+have hit on day one, and all of them free right now for one reason: NO PROVIDER
+HAS EVER SHIPPED against this header. Stats went 40 -> 48 and the table
+104 -> 120. There was nothing in the world to break. The moment miniaudio sits
+behind it that stops, and the header now says so.
+── the provider was building a second engine beside ours ───────────────────
+It owned the device, the real-time thread AND its own threads and allocator.
+The last two were a mistake. Four audio workers beside the engine's pool beside
+a physics provider's pool does not run in parallel — it context-switches, evicts
+cache lines, and burns power spinning in three idle pools. A provider calling
+malloc sits outside the tagged heaps entirely, so nobody can answer "what does
+audio cost", which is the whole content of a budget review.
+create() now takes EngineAudioHostServices: alloc/free on the tagged heap,
+parallelFor, workerCount, nowNs. The rule is no longer "the provider owns
+everything" but the smaller, correct one:
+THE PROVIDER OWNS THE REAL-TIME THREAD. EVERYTHING ELSE USES THE HOST.
+Decode, streaming refill, propagation and ray tracing go to parallelFor —
+ray-traced audio at 15 Hz is bulk parallel compute, the worst thing to spin
+private threads for. The RT thread stays theirs and is not negotiable: it is
+driver-scheduled at elevated priority against a hard deadline, and a mixer on a
+general worker is a mixer that eventually clicks.
+The suite passes a COUNTING allocator and asserts the calls arrive. Services
+handed over but never checked would test nothing — a provider can take the
+struct and call malloc, and that is now a detectable failure.
+── an interface no commercial adapter could have implemented ───────────────
+createSound(bytes) assumes the engine holds the data. True for sample players,
+false for every event system: Wwise and FMOD ship banks and resolve
+"Play_Gunshot" through a designer's graph — layers, randomisation, RTPCs. There
+is no buffer of gunshot bytes to hand over.
+findSound(nameHash) + F_BANK fixes it. Addressing by NAME is the only thing
+sample-based and event-based providers have in common. Without it event names
+would have been smuggled through setParam, which is what an abstraction looks
+like when it is wrong.
+The hash ships INLINE IN THE HEADER (engineAudioHashName, FNV-1a 64) because
+engine and provider each compile their own copy. Divergence there raises no
+error at all — every lookup simply misses and the sound never plays — so it is
+pinned by literal on both sides.
+── startSampleTime was decorative ──────────────────────────────────────────
+It shipped in v1 to avoid an ABI break, against getStats().samplesPlayed. But a
+count is not a mapping: the game thread learns HOW MANY samples played, never
+WHEN that was true, and between publish and read an arbitrary amount of time
+passed. Stats now carries hostTimeNs, read from services->nowNs adjacently to
+samplesPlayed. Two readings also give the drift between the crystals, which is
+real. The suite checks the clocks agree on elapsed time — which is what proves
+they were sampled together rather than merely both present.
+── streaming was push-only ─────────────────────────────────────────────────
+createStream hands the provider a read(offset, dst, n) instead of a buffer, for
+audio inside an archive, over the network, or decrypted lazily. Memory-mapping
+covered the first case and none of the rest. Called from the provider's
+streaming worker, never the RT thread, where a file read is an instant underrun.
+── a check that had never once run ─────────────────────────────────────────
+The header carried ENGINE_AUDIO_FROZEN asserts and a comment claiming the C and
+C++ builds checked them. NO TRANSLATION UNIT IN THE TREE INCLUDED THE HEADER, so
+not one of them had ever compiled. The Rust suite pins its own transcription and
+is structurally blind to the C side moving underneath it.
+tests/audio_abi_check.c is the other half — C11, includes the header (which is
+most of the point), and pins field OFFSETS and the hash. Proven by swapping two
+uint64 fields in Stats: THE BUILD SUCCEEDED, every static assert blind to it,
+and only the offset check caught it. C rather than Rust because it asserts facts
+about C; Rust checking its own transcription cannot see this.
+── docs/architecture/extension-model.md ────────────────────────────────────
+The taxonomy, written down: Plugins (static, full access, crash = engine dies),
+Kits (dynamic C ABI, hot-reload, v1 survives to v5 — but same process, so
+version-safe is NOT fault-safe), Add-ons (out-of-process, crash-proof, tools;
+designed, not built), and the axis those three miss — Providers, which do not
+extend the engine but REPLACE parts of it. Same isolation tier as a Kit,
+opposite direction: a Kit consumes the table, a provider implements one.
+Plus the ABI saga that paid for all of it (the "==" gate that invalidated every
+module on every append, why ">=" alone would have been WORSE given inline
+groups, and the permanent cost: a shipped group can never resize or move, so
+growth is append-only forever), and the API registry that would let a third
+party add a subsystem the engine has never heard of.
+── verification ────────────────────────────────────────────────────────────
+Layouts identical in C11 -Werror and C++20. Suite is 33 assertions, up from 21,
+and EVERY NEW ONE IS MUTATION-VERIFIED: malloc instead of services->alloc, a
+private clock, findSound minting an id for a name it does not know, createStream
+accepting a null reader. Each failed exactly its own line and passed on revert.
+ctest 71/72; the failure is kit_lifecycle_test wanting Kit .so files from
+separate gitignored repos. Docs gate 0 errors.

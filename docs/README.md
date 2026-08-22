@@ -54,6 +54,10 @@ claim about freshness as much as about tests. See
   [`guides/scripting.md`](guides/scripting.md) and its
   [API reference](guides/scripting-api.md),
   [`guides/performance.md`](guides/performance.md).
+- **Extending the engine** — [`architecture/extension-model.md`](architecture/extension-model.md)
+  defines the four ways code attaches: Plugins (static), Kits (dynamic,
+  version-stable), Add-ons (out-of-process, crash-proof) and Providers
+  (subsystem replacement). Also the ABI rules and why they cost what they cost.
 - **Replacing a subsystem** — [`guides/audio-provider.md`](guides/audio-provider.md)
   is the worked example: the C ABI a third-party audio engine implements, why it
   has no HRTF/Atmos switches, and the Rust conformance suite that decides
