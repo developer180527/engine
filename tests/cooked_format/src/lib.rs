@@ -30,10 +30,15 @@
 //! that shifts the payload shows up as a parse failure here instead of as
 //! plausible-looking garbage.
 
+pub mod ddc_manifest;
+pub mod harness;
 pub mod material;
+pub mod shader;
 pub mod texture;
 
+pub use ddc_manifest::{read_manifest, read_manifest_from, Manifest};
 pub use material::{read_material, read_material_from, MaterialAsset};
+pub use shader::{read_shader, read_shader_from, ShaderAsset};
 pub use texture::{read_texture, read_texture_from, TexFormat, TextureAsset};
 
 use std::path::Path;
@@ -80,6 +85,7 @@ pub enum ReadError {
     /// ignoring it is how a reader drifts out of date without anyone noticing.
     TrailingBytes { parsed: usize, total: usize },
     UnknownFormat(u32),
+    Manifest(String),
 }
 
 impl std::fmt::Display for ReadError {
@@ -102,7 +108,8 @@ impl std::fmt::Display for ReadError {
                 "parsed {parsed} of {total} bytes — the writer emits a section this \
                  reader does not know about"
             ),
-            ReadError::UnknownFormat(v) => write!(f, "unknown texture format id {v}"),
+            ReadError::UnknownFormat(v) => write!(f, "unknown enum id {v}"),
+            ReadError::Manifest(m) => write!(f, "ddc manifest: {m}"),
         }
     }
 }

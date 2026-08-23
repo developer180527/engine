@@ -24,21 +24,9 @@
 //! `engine_cook_worker`'s process CLI, so what is parsed is what ships.
 
 use engine_cooked_format as fmt;
-use std::path::{Path, PathBuf};
+use fmt::harness::{cook_worker, scratch, skip};
+use std::path::Path;
 use std::process::Command;
-
-fn cook_worker() -> Option<PathBuf> {
-    let dir = std::env::var("ENGINE_BUILD_DIR").ok()?;
-    let p = Path::new(&dir).join("engine_cook_worker");
-    p.exists().then_some(p)
-}
-
-fn scratch(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("engine_cooked_format_{name}"));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).expect("scratch dir");
-    d
-}
 
 fn cook(worker: &Path, src: &Path, out: &Path) -> bool {
     let res = out.with_extension("result.json");
@@ -119,7 +107,7 @@ fn tiny_png() -> Vec<u8> {
 #[test]
 fn ctex_mip_chain_length_matches_its_declared_format() {
     let Some(worker) = cook_worker() else {
-        println!("ENGINE_BUILD_DIR unset — skipping.");
+        skip("cmat/ctex cook", "ENGINE_BUILD_DIR unset or engine_cook_worker missing");
         return;
     };
     let dir = scratch("ctex");
@@ -170,7 +158,7 @@ fn ctex_block_math_is_ceiling_not_floor() {
 #[test]
 fn cmat_round_trips_through_an_independent_reader() {
     let Some(worker) = cook_worker() else {
-        println!("ENGINE_BUILD_DIR unset — skipping.");
+        skip("cmat/ctex cook", "ENGINE_BUILD_DIR unset or engine_cook_worker missing");
         return;
     };
     let dir = scratch("cmat");
@@ -182,7 +170,7 @@ fn cmat_round_trips_through_an_independent_reader() {
         .join("../../shaders/standard.shader")
         .canonicalize();
     let Ok(shader_src) = shader_src else {
-        println!("shaders/standard.shader not found — skipping.");
+        skip("cmat/ctex cook", "shaders/standard.shader not found");
         return;
     };
     std::fs::copy(&shader_src, dir.join("standard.shader")).expect("copy shader");
@@ -204,7 +192,7 @@ fn cmat_round_trips_through_an_independent_reader() {
         // a bare worker invocation may not provide. Skipping is honest — the
         // reader is still covered by the negative cases below and by any .cmat
         // a real project produces.
-        println!("material cook did not produce output in isolation — skipping the live leg.");
+        skip("cmat live leg", "the material cook produced no output in isolation");
         return;
     }
 

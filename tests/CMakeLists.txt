@@ -399,9 +399,18 @@ endif()
 if(ENGINE_WITH_RUST AND NOT ENGINE_SANITIZE AND TARGET engine_cook_worker)
     find_program(CARGO_EXECUTABLE cargo)
     if(CARGO_EXECUTABLE)
+        # ENGINE_REQUIRE_COOK_TESTS turns a SKIP into a FAILURE. The tests that
+        # cook a real asset and read the bytes back are the only ones that can
+        # catch the writer drifting — every other test in the crate builds
+        # structs by hand — and each of them used to print a reason and return.
+        # `cargo test --quiet` captures stdout, so a lane that had silently
+        # stopped exercising anything reported `ok` exactly like one that
+        # passed. Here the build directory, the worker and the shaders are all
+        # known to exist, so a skip is a finding rather than a shrug.
         add_test(NAME cooked_format_conformance
                  COMMAND ${CMAKE_COMMAND} -E env
                          ENGINE_BUILD_DIR=$<TARGET_FILE_DIR:engine_cook_worker>
+                         ENGINE_REQUIRE_COOK_TESTS=1
                          ${CARGO_EXECUTABLE} test --quiet
                  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/tests/cooked_format)
         set_tests_properties(cooked_format_conformance PROPERTIES

@@ -232,12 +232,34 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   lane in the project's history to execute `ctest -L unit` on a push — which
   also means the 63 test binaries have only ever been run on developer
   machines.
-- **Cooked formats now have an independent reader, and it is partial.**
-  `tests/cooked_format/` parses `.cooked`, `.cmat` and `.ctex` from outside C++.
-  `.cshader` and the DDC manifest do not have one yet. A C++ save/load
-  round-trip proves the writer and reader agree with each other and nothing
-  more — both can move together and stay green — so every format without an
-  outside reader is unchecked in the way that matters.
+- **Cooked formats have an independent reader now — every one of them.**
+  `tests/cooked_format/` parses `.cooked`, `.cmat`, `.ctex`, `.cshader` and the
+  DDC record manifest from outside C++, with no engine code. A C++ save/load
+  round-trip proves the writer and reader agree WITH EACH OTHER and nothing
+  more; both can move together and stay green.
+
+  What remains open is the second half of the same idea: the readers pin
+  STRUCTURE, not content equality across platforms. Diffing two machines' cooked
+  bytes over the same corpus is the DDC's load-bearing assumption (assetlib
+  issues.md O2) and the cross-ISA determinism lane in the soak plan — and this
+  crate is now the tool that could do it without either engine running.
+- **Four of those readers had never once run outside ctest, and said `ok`.**
+  Every test in `tests/cooked_format/` that COOKS a real asset — `.cmat`,
+  `.ctex`, `.cshader`, the glTF factor case — began with a `println!` and an
+  early `return` when `ENGINE_BUILD_DIR` was unset. `cargo test --quiet`, which
+  is how CMake invokes the crate, captures stdout: a lane that had silently
+  stopped exercising anything reported exactly what a passing lane reports.
+  Running the crate by hand showed `6 passed` while the shader test did nothing
+  at all. The eight tests that DID run all build structs by hand, so the entire
+  "read what the engine actually wrote" premise rested on the four that were
+  invisible.
+
+  Fixed by `ENGINE_REQUIRE_COOK_TESTS=1`, which the CMake entry sets and which
+  turns a skip into a failure — a bare `cargo test` still skips, because there
+  no build directory was ever promised. Same shape as `ENGINE_AUDIO_FROZEN`
+  asserting in a header no translation unit included: the check existed, was
+  correct, and had never executed.
+
 - **The backfill is incomplete.** Twelve `issues.md` files hold roughly 2,400
   lines of documented, already-fixed defects. The entries above are today's
   findings plus the recent ABI and audio work. Older subsystems — the renderer's

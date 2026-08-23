@@ -37,7 +37,7 @@
 //! writing a C shim first, which ADDS untested C++ for the privilege of testing
 //! in Rust. The boundary has to already exist.
 
-use std::path::{Path, PathBuf};
+use engine_cooked_format::harness::{cook_worker, skip};
 use std::process::Command;
 
 /// A minimal glTF with one material whose `pbrMetallicRoughness` is present but
@@ -104,20 +104,15 @@ fn base64(data: &[u8]) -> String {
     out
 }
 
-/// The cooker binary, from the build directory CMake told us about.
-fn cook_worker() -> Option<PathBuf> {
-    let dir = std::env::var("ENGINE_BUILD_DIR").ok()?;
-    let p = Path::new(&dir).join("engine_cook_worker");
-    p.exists().then_some(p)
-}
 
 #[test]
 fn gltf_without_pbr_factors_cooks_to_one_point_zero() {
     let Some(worker) = cook_worker() else {
         // Registered by CMake with ENGINE_BUILD_DIR set; a bare `cargo test`
         // from a shell has no engine to drive and skips rather than failing on
-        // something that is not the test's subject.
-        println!("ENGINE_BUILD_DIR unset or engine_cook_worker missing — skipping.");
+        // something that is not the test's subject. Under the CMake entry
+        // (ENGINE_REQUIRE_COOK_TESTS=1) the same skip is a FAILURE.
+        skip("gltf cook", "ENGINE_BUILD_DIR unset or engine_cook_worker missing");
         return;
     };
 
