@@ -103,7 +103,10 @@ impl<'a> Cursor<'a> {
         // A length field is the one place a corrupt or reshaped file turns into
         // an enormous allocation. Bounds-check before reserving anything.
         self.need(n)?;
-        let s = String::from_utf8_lossy(&self.b[self.at..self.at + n]).into_owned();
+        // Refused, not repaired: from_utf8_lossy would substitute U+FFFD per bad
+        // byte and hand back a name that looks merely unusual, after which every
+        // comparison runs against text the engine never wrote.
+        let s = crate::utf8(&self.b[self.at..self.at + n], self.at, "a .cmat string field")?;
         self.at += n;
         Ok(s)
     }

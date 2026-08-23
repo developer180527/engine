@@ -227,7 +227,10 @@ impl<'a> Cursor<'a> {
     fn string(&mut self) -> Result<String, ReadError> {
         let n = self.u32()? as usize;
         self.need(n)?;   // before any allocation — a corrupt length is otherwise a huge reserve
-        let s = String::from_utf8_lossy(&self.b[self.at..self.at + n]).into_owned();
+        // Refused, not repaired: from_utf8_lossy would substitute U+FFFD per bad
+        // byte and hand back a name that looks merely unusual, after which every
+        // comparison runs against text the engine never wrote.
+        let s = crate::utf8(&self.b[self.at..self.at + n], self.at, "a .cshader string field")?;
         self.at += n;
         Ok(s)
     }

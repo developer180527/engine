@@ -86,6 +86,17 @@ pub enum ReadError {
     TrailingBytes { parsed: usize, total: usize },
     UnknownFormat(u32),
     Manifest(String),
+    /// A text field that is not valid UTF-8.
+    ///
+    /// REFUSED RATHER THAN REPAIRED. Every one of these used
+    /// `String::from_utf8_lossy`, which substitutes U+FFFD for each bad byte and
+    /// hands back a string that parses cleanly — so a corrupt name arrived
+    /// looking like a slightly odd name, and, worse, any RULE APPLIED
+    /// AFTERWARDS was applied to the repaired text rather than to the bytes the
+    /// engine actually wrote. That is the same "a format we do not fully
+    /// understand is a miss, not a best effort" rule the DDC states outright,
+    /// and lossy decoding is the definition of a best effort.
+    BadUtf8 { what: &'static str, at: usize, preview: String },
 }
 
 impl std::fmt::Display for ReadError {
@@ -110,6 +121,13 @@ impl std::fmt::Display for ReadError {
             ),
             ReadError::UnknownFormat(v) => write!(f, "unknown enum id {v}"),
             ReadError::Manifest(m) => write!(f, "ddc manifest: {m}"),
+            ReadError::BadUtf8 { what, at, preview } => write!(
+                f,
+                "{what} at byte {at} is not valid UTF-8 ({preview:?} after lossy \
+                 repair) — refused rather than repaired, because every check \
+                 after this one would otherwise run against text the engine \
+                 never wrote"
+            ),
         }
     }
 }
@@ -122,10 +140,22 @@ fn f32_at(b: &[u8], off: usize) -> f32 {
 }
 /// A fixed-width NUL-padded char array. Stops at the first NUL; anything after
 /// it is padding the writer did not clear and is not content.
-fn cstr_at(b: &[u8], off: usize, cap: usize) -> String {
+fn cstr_at(b: &[u8], off: usize, cap: usize, what: &'static str)
+        -> Result<String, ReadError> {
     let s = &b[off..off + cap];
     let end = s.iter().position(|&c| c == 0).unwrap_or(cap);
-    String::from_utf8_lossy(&s[..end]).into_owned()
+    utf8(&s[..end], off, what)
+}
+
+/// Bytes to `String`, refusing rather than repairing. The lossy preview goes in
+/// the error because "not valid UTF-8" with no hint is a message that sends
+/// someone to a hex editor.
+pub(crate) fn utf8(b: &[u8], at: usize, what: &'static str) -> Result<String, ReadError> {
+    std::str::from_utf8(b).map(str::to_owned).map_err(|_| ReadError::BadUtf8 {
+        what,
+        at,
+        preview: String::from_utf8_lossy(b).chars().take(48).collect(),
+    })
 }
 
 pub fn read_header(bytes: &[u8]) -> Result<MeshHeader, ReadError> {
@@ -184,8 +214,8 @@ pub fn read_materials(bytes: &[u8]) -> Result<Vec<CookedMaterial>, ReadError> {
             roughness: f32_at(bytes, m + 16),
             metallic: f32_at(bytes, m + 20),
             flags: u32_at(bytes, m + 24),
-            base_color_path: cstr_at(bytes, m + 28, 512),
-            normal_map_path: cstr_at(bytes, m + 540, 512),
+            base_color_path: cstr_at(bytes, m + 28, 512, "material baseColor path")?,
+            normal_map_path: cstr_at(bytes, m + 540, 512, "material normalMap path")?,
         });
     }
     Ok(out)

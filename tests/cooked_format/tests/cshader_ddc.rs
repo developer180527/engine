@@ -264,6 +264,73 @@ fn manifest_member_names_cannot_escape_their_directory() {
     assert!(fmt::read_manifest("ddc-manifest-v1\naaaa\t@\nbbbb\tfine_name-1.ctex\n").is_ok());
 }
 
+/// Invalid UTF-8 is REFUSED, not repaired — in all four places this crate turns
+/// bytes into text.
+///
+/// `String::from_utf8_lossy` substitutes U+FFFD per bad byte and returns a string
+/// that parses cleanly, so a corrupt field arrived looking like a slightly odd
+/// field. In the manifest it was worse than cosmetic: the repair ran BEFORE
+/// `is_plain_filename`, so the check that decides whether a member name can
+/// escape its directory was inspecting text the engine had never written, while
+/// the C++ validates the raw bytes.
+#[test]
+fn text_fields_are_refused_rather_than_repaired() {
+    // ── the manifest ────────────────────────────────────────────────────────
+    // 0xFF is not valid UTF-8 anywhere. Lossily repaired it becomes U+FFFD —
+    // three bytes, none a separator, none a control character — so the repair
+    // can only ever make a name look SAFER than the bytes really are.
+    let mut m = b"ddc-manifest-v1\naaaa\t@\nbbbb\tbad".to_vec();
+    m.push(0xFF);
+    m.extend_from_slice(b"name.ctex\n");
+    match fmt::ddc_manifest::read_manifest_bytes(&m) {
+        Err(fmt::ddc_manifest::ManifestError::NotUtf8 { .. }) => {}
+        other => panic!("a non-UTF-8 manifest must be refused, got {other:?}"),
+    }
+    // And the same bytes WITHOUT the bad byte still parse, so the rule is not
+    // simply "reject".
+    assert!(fmt::ddc_manifest::read_manifest_bytes(
+        b"ddc-manifest-v1\naaaa\t@\nbbbb\tbadname.ctex\n").is_ok());
+
+    // ── .cshader ────────────────────────────────────────────────────────────
+    // A shader whose NAME field carries an invalid byte.
+    let mut sh = Vec::new();
+    sh.extend_from_slice(&fmt::shader::CSHD_MAGIC.to_le_bytes());
+    sh.extend_from_slice(&fmt::shader::CSHD_VERSION.to_le_bytes());
+    let name = b"stan\xffdard";
+    sh.extend_from_slice(&(name.len() as u32).to_le_bytes());
+    sh.extend_from_slice(name);
+    match fmt::read_shader(&sh) {
+        Err(fmt::ReadError::BadUtf8 { what, .. }) =>
+            assert!(what.contains("cshader"), "the error should name the format: {what}"),
+        other => panic!("a non-UTF-8 .cshader name must be refused, got {other:?}"),
+    }
+
+    // ── the mesh's NUL-padded fixed-width paths ─────────────────────────────
+    // A different code path from the length-prefixed strings above: 512 bytes,
+    // read up to the first NUL. An empty mesh with one embedded material whose
+    // baseColor path carries an invalid byte.
+    let mut mesh = vec![0u8; 80 + fmt::COOKED_MATERIAL_BYTES];
+    mesh[0..4].copy_from_slice(&fmt::MESH_MAGIC.to_le_bytes());
+    mesh[4..8].copy_from_slice(&1u32.to_le_bytes());          // version
+    mesh[72..76].copy_from_slice(&1u32.to_le_bytes());        // materialCount
+    let path = b"art/rock\xffalbedo.png";                     // baseColor path at +28
+    mesh[80 + 28..80 + 28 + path.len()].copy_from_slice(path);
+    match fmt::read_materials(&mesh) {
+        Err(fmt::ReadError::BadUtf8 { what, .. }) =>
+            assert!(what.contains("baseColor"),
+                    "the error should name the field: {what}"),
+        other => panic!("a non-UTF-8 embedded texture path must be refused, got {other:?}"),
+    }
+
+    // The same mesh with a clean path parses, so this is a rule and not a
+    // blanket refusal.
+    let mut ok_mesh = mesh.clone();
+    ok_mesh[80 + 28..80 + 28 + path.len()].fill(0);
+    ok_mesh[80 + 28..80 + 28 + 8].copy_from_slice(b"rock.png");
+    let mats = fmt::read_materials(&ok_mesh).expect("a clean path must parse");
+    assert_eq!(mats[0].base_color_path, "rock.png");
+}
+
 #[test]
 fn manifest_rejects_malformed_structure() {
     // Wrong magic — including the near-miss of a version bump nobody taught
