@@ -1,10 +1,21 @@
 name: CI
 
-# The engine is developed on macOS and has never been built on Linux, and only
-# once (badly) on Windows. The point of this workflow is to turn "it's broken
-# on the other platforms" into a specific, incrementally fixable list of
-# compiler errors — so the Linux and Windows lanes are EXPECTED to fail at
-# first. See `experimental` in the matrix below.
+# FIVE PLATFORMS, because "runs everywhere" is a claim and this is the evidence:
+#
+#   macOS   arm64            gating
+#   Linux   x86_64, arm64    GCC and Clang on x64, GCC on arm64
+#   Windows x86_64, arm64    MSVC
+#
+# Both ARCHITECTURES of Linux and Windows are here on purpose, not for symmetry.
+# The bugs this catches are the ones a single arch cannot: the decimator's
+# `(int32_t)floor(NaN)` is INT_MIN on x86-64 and 0 on arm64, which made two
+# machines cook different LOD levels from one mesh — a difference no amount of
+# testing on one arch would ever have shown. Anything that reaches the DDC has
+# to agree across ISAs or the shared cache is a liability.
+#
+# `experimental` marks a leg as non-fatal. It is a LADDER, not a resting place:
+# flip it to false the moment a platform first goes green, so it cannot regress
+# back to broken while still looking amber.
 
 on:
   push:
@@ -56,15 +67,25 @@ jobs:
             experimental: false
 
           - name: Linux (x64, GCC)
-            slug: linux-gcc
+            slug: linux-x64-gcc
             os: ubuntu-latest
             experimental: true
 
           - name: Linux (x64, Clang)
-            slug: linux-clang
+            slug: linux-x64-clang
             os: ubuntu-latest
             cc: clang
             cxx: clang++
+            experimental: true
+
+          # arm64 Linux. Not redundant with macOS-arm64: same ISA, completely
+          # different libc and C++ standard library (glibc + libstdc++ against
+          # Apple's libc + libc++). The missing <cstring> includes that broke the
+          # x64 Linux legs were invisible on macOS for exactly that reason —
+          # libc++ pulls it in transitively and libstdc++ does not.
+          - name: Linux (arm64, GCC)
+            slug: linux-arm64-gcc
+            os: ubuntu-24.04-arm
             experimental: true
 
           # This leg is also the ONLY thing that compiles
@@ -72,8 +93,20 @@ jobs:
           # without a Windows toolchain to check it against. Its first green
           # run is what turns that file from a proposal into code.
           - name: Windows (x64, MSVC)
-            slug: windows-msvc
+            slug: windows-x64-msvc
             os: windows-latest
+            msvc_arch: x64
+            experimental: true
+
+          # arm64 Windows — the platform combination with the least prior art in
+          # this tree and the most ways to be wrong: MSVC targeting aarch64, a
+          # Rust host triple that is not the default, and bgfx's D3D tooling on
+          # an arch its CI does not cover.
+          - name: Windows (arm64, MSVC)
+            slug: windows-arm64-msvc
+            os: windows-11-arm
+            msvc_arch: arm64
+            rust_target: aarch64-pc-windows-msvc
             experimental: true
 
     steps:
@@ -129,19 +162,57 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: x64
+          arch: ${{ matrix.msvc_arch }}
+
+      # Ninja is preinstalled on the x64 Windows image but not guaranteed on
+      # windows-11-arm, and the generator has to match what developers run
+      # locally or the build diverges in ways this workflow exists to catch.
+      - name: Ensure Ninja (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Get-Command ninja -ErrorAction SilentlyContinue) {
+            Write-Host "ninja already present:"; ninja --version; exit 0
+          }
+          choco install ninja -y --no-progress
 
       # Assimp and bgfx dominate build time and rarely change. The cache is
       # keyed per matrix leg so compilers never share entries.
       # Cache keys may not contain commas, and the display names do
       # ("macOS (arm64, AppleClang)") — hence the separate slug. This failed
       # every leg before Configure, so nothing had ever compiled.
+      # NON-FATAL. windows-11-arm has no prebuilt sccache in every action release,
+      # and a missing CACHE must never fail a leg whose job is to report whether
+      # the CODE compiles. The Configure step below detects what actually landed
+      # on PATH rather than assuming this succeeded.
       - name: Compiler cache
+        id: ccache
+        continue-on-error: true
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ matrix.slug }}
           variant: ${{ runner.os == 'Windows' && 'sccache' || 'ccache' }}
           max-size: 1G
+
+      # Resolve the launcher ONCE, from what exists, and pass it (or nothing) to
+      # CMake. Hard-coding -DCMAKE_CXX_COMPILER_LAUNCHER=sccache on a runner
+      # without sccache makes every compile fail with a confusing "failed to run
+      # launcher" that looks like a code error.
+      - name: Resolve compiler launcher
+        id: launcher
+        shell: bash
+        run: |
+          tool=""
+          for candidate in sccache ccache; do
+            if command -v "$candidate" >/dev/null 2>&1; then tool="$candidate"; break; fi
+          done
+          if [ -n "$tool" ]; then
+            echo "flags=-DCMAKE_C_COMPILER_LAUNCHER=$tool -DCMAKE_CXX_COMPILER_LAUNCHER=$tool" >> "$GITHUB_OUTPUT"
+            echo "Using compiler launcher: $tool"
+          else
+            echo "flags=" >> "$GITHUB_OUTPUT"
+            echo "No compiler cache available — building without one."
+          fi
 
       - name: Select compiler
         if: matrix.cc != ''
@@ -156,6 +227,8 @@ jobs:
       # the build would still go green having quietly tested nothing.
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target || '' }}
 
       # NO `shell: bash` here, and that is the fix rather than a style choice.
       # Git-for-Windows' bash puts C:\Program Files\Git\usr\bin ahead of the
@@ -175,8 +248,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DCMAKE_C_COMPILER_LAUNCHER=${{ runner.os == 'Windows' && 'sccache' || 'ccache' }} \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=${{ runner.os == 'Windows' && 'sccache' || 'ccache' }}
+            ${{ steps.launcher.outputs.flags }}
 
       # Tee'd so a failing leg can publish the actual errors to the job SUMMARY.
       # The whole point of the experimental legs is to turn "broken on Windows"

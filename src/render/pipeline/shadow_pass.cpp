@@ -2,6 +2,9 @@
 // Light matrices, the light-space visible set (culled AND sorted — the sort is
 // what lets casters batch), instanced runs, and the per-item fallback for skinned
 // casters and submeshes.
+#include <cstring>   // std::memcpy/std::strlen — libc++ pulls these in
+                     // transitively, libstdc++ does not, so the Linux legs
+                     // are where a missing one surfaces
 #include "render/forward_pipeline.h"
 #include "render/world/frustum.h"   // extractFrustumPlanes for the LIGHT frustum
 

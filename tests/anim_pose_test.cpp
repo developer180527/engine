@@ -10,6 +10,9 @@
 // sane character (an exploded pose fails loudly). CPU-only, no window/bgfx —
 // but remember: CPU-correct does not imply GPU-correct (see animation/info.md,
 // palette layout contract); pair with an on-screen look when touching this.
+#include <cstring>   // std::memcpy/std::strlen — libc++ pulls these in
+                     // transitively, libstdc++ does not, so the Linux legs
+                     // are where a missing one surfaces
 #include "animation/assimp_skeleton_loader.h"
 #include "animation/clip_library.h"
 #include "animation/clip_registry.h"

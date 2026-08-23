@@ -387,8 +387,23 @@ pub unsafe fn run_playback(p: &ProviderV1) -> Report {
                 sp, &up, 1, std::mem::size_of::<EmitterUpdate>() as u32);
             r.check(true, "a LIVE voice survives a bulk emitter update");
 
-            std::thread::sleep(std::time::Duration::from_millis(120));
-            let s1 = stats(sp);
+            // POLLED, NOT SLEPT. This assertion means "the device clock
+            // advances while audio plays"; it never meant "at least one sample
+            // arrives within exactly 120 ms". A provider's real-time thread is
+            // scheduled by the OS, and on a 3-core CI runner with the Rust
+            // harness running several tests at once it can miss a fixed window
+            // entirely. That is what made this fail on GitHub's macOS runners
+            // while passing 15/15 locally — a test encoding the developer's
+            // machine into its pass condition. A healthy provider still finishes
+            // in milliseconds; a broken one now takes 3 s to say so, which is a
+            // fair trade for a lane that does not lie.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            let mut s1 = stats(sp);
+            while s1.samplesPlayed <= s0.samplesPlayed
+                    && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                s1 = stats(sp);
+            }
             r.check(s1.samplesPlayed > s0.samplesPlayed,
                 format!("the device clock advances while audio plays ({} -> {})",
                         s0.samplesPlayed, s1.samplesPlayed));
@@ -631,6 +646,48 @@ mod dl {
     }
 }
 #[cfg(unix)]
+pub use dl::load;
+
+// ── The same thing on Windows ───────────────────────────────────────────────
+// Without this the crate does not COMPILE on Windows: `conf::load` simply would
+// not exist, and `native_provider_conforms` calls it unconditionally. A test
+// suite that cannot be built on a platform is a test suite that platform does
+// not have — which is how "the provider ABI is portable C" stays an untested
+// claim on the one toolchain most likely to break it.
+//
+// Same lifetime rule as the Unix side: the module is deliberately never freed,
+// because the suite holds function pointers into it for the life of the process.
+#[cfg(windows)]
+mod dl {
+    use super::*;
+    extern "system" {
+        fn LoadLibraryA(name: *const c_char) -> *mut c_void;
+        fn GetProcAddress(module: *mut c_void, name: *const c_char) -> *mut c_void;
+        fn GetLastError() -> u32;
+    }
+
+    pub fn load(path: &str) -> Result<&'static ProviderV1, String> {
+        let cpath = std::ffi::CString::new(path).map_err(|e| e.to_string())?;
+        unsafe {
+            let h = LoadLibraryA(cpath.as_ptr());
+            if h.is_null() {
+                return Err(format!("LoadLibrary failed (GetLastError {})", GetLastError()));
+            }
+            let name = std::ffi::CString::new("engineAudioProviderV1").unwrap();
+            let sym = GetProcAddress(h, name.as_ptr());
+            if sym.is_null() {
+                return Err("module exports no engineAudioProviderV1".into());
+            }
+            let getter: extern "C" fn() -> *const ProviderV1 = std::mem::transmute(sym);
+            let p = getter();
+            if p.is_null() {
+                return Err("engineAudioProviderV1 returned null".into());
+            }
+            Ok(&*p)
+        }
+    }
+}
+#[cfg(windows)]
 pub use dl::load;
 
 // ── The suite ───────────────────────────────────────────────────────────────
@@ -1005,10 +1062,36 @@ pub unsafe fn run(p: &ProviderV1) -> Report {
             (p.setListener.unwrap())(self_ptr, &l);
             (p.setParam.unwrap())(self_ptr, 0, i, i as f32);
         }
-        std::thread::sleep(std::time::Duration::from_millis(120));
-
+        // Same reasoning as above, and it matters more here: the clock-agreement
+        // check below divides elapsed SAMPLES by elapsed HOST TIME and demands a
+        // ratio within 0.5x-2.0x. A fixed sleep makes the host side of that
+        // fraction a constant while the sample side depends on whether the
+        // provider's thread ran — so a starved thread does not merely produce a
+        // smaller number, it produces a WRONG RATIO and fails an assertion about
+        // correctness using evidence about scheduling. Waiting for real progress
+        // makes both sides measure the same interval.
+        // Wait for a MEANINGFUL amount of progress, not merely for any. Breaking
+        // out on the first tick was the first attempt and it failed immediately
+        // ("2.7 ms of samples vs 6.3 ms of host", a ratio of 0.43): a provider
+        // advances the clock in buffer-sized chunks, so over a window of one or
+        // two buffers the quantisation IS the measurement. That trades a
+        // starvation failure for a quantisation failure and is no better.
+        //
+        // 100 ms of audio makes a typical 5-20 ms buffer a small fraction of the
+        // window, and the deadline is generous enough that a merely SLOW machine
+        // waits rather than fails. A provider that cannot produce 100 ms of audio
+        // in five seconds is broken, and failing then is correct.
+        let want = (s0.sampleRate.max(1) / 10) as u64;          // 100 ms of audio
+        let clock_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let mut s1 = Stats { structSize: std::mem::size_of::<Stats>() as u32, ..Default::default() };
-        (p.getStats.unwrap())(self_ptr, &mut s1);
+        loop {
+            (p.getStats.unwrap())(self_ptr, &mut s1);
+            if s1.samplesPlayed.saturating_sub(s0.samplesPlayed) >= want
+                    || std::time::Instant::now() >= clock_deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         r.check(
             s1.callbackOverruns == 0,
             format!(

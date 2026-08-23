@@ -16,6 +16,9 @@ fn reference_stride_is_walked_by_stride() {
     //
     // Read back through a test-fixture accessor, not the ABI — a native provider
     // has no such channel, which is why the in-crate reference exists.
+    // Held across BOTH the run and the read: LAST_WELL_FORMED is process-global
+    // and the other reference test drives the same counter on another thread.
+    let _guard = conf::reference::REFERENCE_LOCK.lock().unwrap();
     let report = unsafe { conf::run(&conf::reference::REFERENCE) };
     assert_eq!(report.failures(), 0, "reference must pass its own contract first");
     let seen = conf::reference::LAST_WELL_FORMED.load(std::sync::atomic::Ordering::Relaxed);
@@ -51,6 +54,7 @@ fn hash_matches_the_c_header() {
 
 #[test]
 fn reference_provider_conforms() {
+    let _guard = conf::reference::REFERENCE_LOCK.lock().unwrap();
     let report = unsafe { conf::run(&conf::reference::REFERENCE) };
     report.print("rust reference provider");
     assert_eq!(

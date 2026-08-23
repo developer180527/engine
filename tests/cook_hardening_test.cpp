@@ -25,6 +25,9 @@
 //      passed the entire suite.
 //
 // Hermetic: no GPU, no project, no cooker. Temp dirs only.
+#include <cstring>   // std::memcpy/std::strlen — libc++ pulls these in
+                     // transitively, libstdc++ does not, so the Linux legs
+                     // are where a missing one surfaces
 #include <cstdio>
 #include <filesystem>
 #include <fstream>

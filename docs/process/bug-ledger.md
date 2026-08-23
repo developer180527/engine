@@ -282,6 +282,35 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **The reference audio provider's clock ran slow under load, and blamed the
+  suite for it.** Its stand-in driver thread was `sleep(period); samples +=
+  frames;` — so the effective sample rate was `frames / however long that sleep
+  ACTUALLY took`, and `sleep` guarantees only a lower bound. On GitHub's 3-core
+  macOS runner, with the Rust harness running several tests at once, the clock
+  advanced at under half real time and the suite's own "the sample clock and the
+  host clock agree within 0.5x-2.0x" check failed — taking two tests down with
+  it, on the GATING leg, while passing 15/15 on a 12-core laptop.
+
+  The assertion was right and the reference was wrong. It now derives
+  `samplesPlayed` from `Instant::elapsed()`, which is what real hardware does:
+  the device clock keeps running whether or not the callback thread was
+  scheduled promptly — that is what an underrun IS. Reproduced deterministically
+  by injecting a 3x sleep overshoot (identical failure, identical message), and
+  the fix passes 3/3 under the same injection.
+
+  Two lessons worth keeping. A fixed sleep followed by an assertion about what
+  happened during it encodes the developer's machine into the pass condition.
+  And the first attempted fix — poll until the clock moves AT ALL — traded a
+  starvation failure for a QUANTISATION one (2.7 ms of samples vs 6.3 ms of
+  host): a provider advances in buffer-sized chunks, so over a one-buffer window
+  the quantisation is the measurement.
+
+- **Four files used `std::memcpy`/`std::strlen` without `<cstring>`.** libc++
+  pulls it in transitively and libstdc++ does not, so both Linux legs failed to
+  compile while macOS never noticed. CI only ever reported the FIRST one, since
+  the build stops there — the other three were found by grepping for the pattern
+  rather than by waiting for three more red runs.
+
 - **The backfill is incomplete.** Twelve `issues.md` files hold roughly 2,400
   lines of documented, already-fixed defects. The entries above are today's
   findings plus the recent ABI and audio work. Older subsystems — the renderer's

@@ -6,6 +6,9 @@
 // the last month landed — instancing, the draw ceiling, the submit counters. It is
 // its own unit now so that reading "how does a frame get submitted" does not mean
 // reading program creation and shadow matrices first.
+#include <cstring>   // std::memcpy/std::strlen — libc++ pulls these in
+                     // transitively, libstdc++ does not, so the Linux legs
+                     // are where a missing one surfaces
 #include "render/forward_pipeline.h"
 
 #include "core/profiler.h"

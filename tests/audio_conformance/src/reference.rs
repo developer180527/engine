@@ -83,16 +83,34 @@ unsafe extern "C" fn create(
     // Stand-in for the driver callback: advances the clock on its own thread,
     // exactly as a real device does, so nothing about timing is faked at the
     // point the suite reads it.
+    // DERIVED FROM ELAPSED TIME, not accumulated per wake-up. The first version
+    // was `sleep(period); samples += frames;`, which makes the effective sample
+    // rate `frames / however long that sleep ACTUALLY took`. `sleep` guarantees
+    // only a lower bound, so on a loaded machine the clock ran slow — and the
+    // suite's own check that the sample clock and the host clock agree within
+    // 0.5x-2.0x then failed, on a 3-core CI runner, for two tests at once, while
+    // passing 15/15 on a 12-core laptop. The assertion was right and the
+    // reference was wrong.
+    //
+    // A real device behaves the way this now does: the hardware clock keeps
+    // running whether or not the callback thread was scheduled promptly. If the
+    // thread is late, the audio still played — that is what an underrun IS.
     {
         let (r, s) = (running.clone(), samples.clone());
-        let step = frames as u64;
+        let rate64 = rate.max(1) as u64;
         let period = std::time::Duration::from_micros(
             (1_000_000u64 * frames as u64 / rate.max(1) as u64).max(1),
         );
+        let start = std::time::Instant::now();
         std::thread::spawn(move || {
             while r.load(Ordering::Relaxed) {
                 std::thread::sleep(period);
-                s.fetch_add(step, Ordering::Relaxed);
+                let played = (start.elapsed().as_nanos() as u64)
+                    .saturating_mul(rate64) / 1_000_000_000;
+                // Monotonic by construction (Instant is), so a plain store keeps
+                // the counter exact instead of drifting the way a running total
+                // of missed wake-ups does.
+                s.store(played, Ordering::Relaxed);
             }
         });
     }
@@ -277,6 +295,22 @@ unsafe extern "C" fn stop(p: *mut c_void, v: EngineVoiceId, _fade: u32) {
 /// between rows and rejects them, so this count drops.
 pub static LAST_WELL_FORMED: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0);
+
+/// Serialises tests that run the REFERENCE provider, because `LAST_WELL_FORMED`
+/// above is process-global.
+///
+/// Rust runs `#[test]`s on parallel threads. Two tests both calling
+/// `conf::run(&REFERENCE)` therefore both drive `update_emitters`, and the last
+/// store wins: `run` ends with the wide-stride call (8 well-formed rows) but also
+/// makes an ordinary single-row call (1), so an interleaving lets the stride test
+/// read `1` and report that the reference walked the array wrong. It would have
+/// been a genuine-looking failure with an entirely fictional cause.
+///
+/// Any test that runs the reference AND anything that reads the counter must hold
+/// this. A per-run counter would be better still, but it is a test-fixture
+/// read-back with no channel through the ABI to return it — which is the reason
+/// it is global in the first place.
+pub static REFERENCE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 unsafe extern "C" fn update_emitters(
     p: *mut c_void,
