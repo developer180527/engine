@@ -181,33 +181,32 @@ static MaterialHandle importMaterial(const aiScene*    scene,
                                      const std::filesystem::path& dir,
                                      const std::string& baseName,
                                      AssetStorage&     storage) {
-    Material mat;
-    mat.baseColorFactor[0] = mat.baseColorFactor[1] =
-    mat.baseColorFactor[2] = mat.baseColorFactor[3] = 1.0f;
+    float factor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 
     // Diffuse / base color factor
     aiColor4D col;
     if (AI_SUCCESS == aiGetMaterialColor(aiMat, AI_MATKEY_COLOR_DIFFUSE, &col)) {
-        mat.baseColorFactor[0] = col.r;
-        mat.baseColorFactor[1] = col.g;
-        mat.baseColorFactor[2] = col.b;
-        mat.baseColorFactor[3] = col.a;
+        factor[0] = col.r; factor[1] = col.g; factor[2] = col.b; factor[3] = col.a;
     }
 
     // Diffuse / base color texture (try DIFFUSE then BASE_COLOR for PBR FBX)
+    TextureHandle base;
     aiString texPath;
     if (AI_SUCCESS == aiMat->GetTexture(aiTextureType_DIFFUSE, 0, &texPath) ||
         AI_SUCCESS == aiMat->GetTexture(aiTextureType_BASE_COLOR, 0, &texPath)) {
-        mat.baseColorTexture = importTexture(scene, texPath.C_Str(), dir, storage);
+        base = importTexture(scene, texPath.C_Str(), dir, storage);
     }
     // FBX exported without texture paths — discover by naming convention
-    if (!mat.baseColorTexture.valid() && !baseName.empty()) {
+    if (!base.valid() && !baseName.empty()) {
         std::string discovered = discoverTexture(dir, baseName);
         if (!discovered.empty())
-            mat.baseColorTexture = importTexture(scene, discovered.c_str(), dir, storage);
+            base = importTexture(scene, discovered.c_str(), dir, storage);
     }
 
-    return storage.materials.addMaterial(std::move(mat));
+    // The defaults the fixed path used to apply implicitly (0.7 / 0.0) are now
+    // written explicitly, because a block is never sparse.
+    return storage.materials.addMaterial(
+        Material::standard(factor, 0.7f, 0.0f, base));
 }
 
 // A running AABB grown vertex-by-vertex while submeshes are appended.

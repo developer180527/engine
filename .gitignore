@@ -65,3 +65,4 @@ Icon?
 # tests/audio_conformance/ was one `git add -A` away from.
 modules/net/target/
 tests/audio_conformance/target/
+tests/cooked_format/target/

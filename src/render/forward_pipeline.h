@@ -62,17 +62,36 @@ private:
     // feature mask. Cached per (path, mask, profile) by ShaderLibrary, so this
     // is a hash lookup after the first draw and not a per-draw load.
     bgfx::ProgramHandle programFor(const Material& mat, RenderContext& ctx) {
-        if (!ctx.shaders || mat.shaderName.empty()) return BGFX_INVALID_HANDLE;
+        // No named shader — a material synthesized from mesh-embedded values.
+        // Its blocks are the STANDARD shader's declared interface, which the
+        // compiled-in program declares too (standard.shader *is* fs_triangle.sc),
+        // so the same uniform upload works against either.
+        if (!ctx.shaders || mat.shaderName.empty()) return m_program;
+
         const auto path = ctx.shaders->resolveByName(mat.shaderName);
         if (path.empty()) {
             if (m_missingShaders.insert(mat.shaderName).second)
                 LOG_WARN("Renderer",
                          "material wants shader \"%s\", which is not in the cooked "
-                         "cache — falling back to the fixed path",
+                         "cache — using the built-in program",
                          mat.shaderName.c_str());
-            return BGFX_INVALID_HANDLE;
+            // Was BGFX_INVALID_HANDLE, which fell through to a second, FIXED
+            // upload path. That path is gone (Phase 5 step 4), so a miss now
+            // degrades to the built-in program rather than to a different way of
+            // drawing — the uniforms are the same either way.
+            return m_program;
         }
         return ctx.shaders->program(path, mat.featureMask);
+    }
+
+    // True when this material draws with a program of its OWN, from the cooked
+    // shader cache — which is not the instanced variant, so such a draw cannot
+    // join an instanced run. Materials on the built-in program still instance,
+    // which is what keeps the R18/R5 submission win (3 067 draws -> 299) intact
+    // after every material became block-shaped.
+    bool usesOwnProgram(const Material& mat, RenderContext& ctx) const {
+        return ctx.shaders && !mat.shaderName.empty()
+            && !ctx.shaders->resolveByName(mat.shaderName).empty();
     }
 
     void renderShadow(const RenderView& v, RenderContext& ctx,

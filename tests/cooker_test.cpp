@@ -141,8 +141,19 @@ int main() {
         static const char* tab =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         std::string b64;
+        // 80 % 3 == 2, so the final group is SHORT. Reading buf[i+1]/buf[i+2]
+        // unconditionally walked one byte past the array — caught by ASan and
+        // UBSan the first time those lanes ran (BUG-0002).
+        //
+        // Zero-filling the missing byte is also the correct encoding: the third
+        // base64 character of a 2-byte group takes its low 2 bits from the byte
+        // that is not there, so the old code emitted a character derived from
+        // stack garbage. It round-tripped only because the decoder discards
+        // that byte as padding.
         for (int i = 0; i < 80; i += 3) {
-            unsigned v = buf[i] << 16 | buf[i+1] << 8 | buf[i+2];
+            const unsigned b1 = (i + 1 < 80) ? buf[i+1] : 0u;
+            const unsigned b2 = (i + 2 < 80) ? buf[i+2] : 0u;
+            unsigned v = buf[i] << 16 | b1 << 8 | b2;
             b64 += tab[(v >> 18) & 63]; b64 += tab[(v >> 12) & 63];
             b64 += tab[(v >> 6) & 63];  b64 += tab[v & 63];
         }

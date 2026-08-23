@@ -188,26 +188,40 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                 // no validation — all of that happened offline against the
                 // shader's declared interface, and repeating it here would be a
                 // second source of truth that can drift from the first.
-                if (mat && mat->dataDriven && ctx.shaders) {
+                if (mat) {
                     const bgfx::ProgramHandle mp = programFor(*mat, ctx);
                     if (bgfx::isValid(mp)) {
-                        // NOT deduped, deliberately: a data-driven material's
-                        // uniform blocks and sampler set are variable-length, so
-                        // caching them means caching a vector per material and
-                        // invalidating it correctly. The fixed path is what cooked
-                        // geometry uses and where the measured win is; this stays a
-                        // full bind per draw until something measures it as a cost.
-                        ++m_submitStats.materialBinds;
-                        for (const auto& b : mat->blocks) {
-                            if (b.values.empty()) continue;
-                            const bgfx::UniformHandle u = ctx.shaders->uniform(
-                                b.name, bgfx::UniformType::Vec4,
-                                (uint16_t)(b.values.size() / 4));
-                            bgfx::setUniform(u, b.values.data(),
-                                             (uint16_t)(b.values.size() / 4));
+                        // ── R7 dedup, carried over to the one path ──────
+                        // Only the UNIFORM uploads are skippable: in bgfx a
+                        // uniform VALUE persists until something overwrites it,
+                        // whereas setTexture/setState/setTransform/
+                        // setVertexBuffer are per-draw encoder state that
+                        // submit() discards — so those are re-issued below every
+                        // draw regardless.
+                        //
+                        // The old data-driven path deliberately did NOT dedup,
+                        // on the grounds that R7 had measured as saving nothing.
+                        // That measurement came from a scene where binds were
+                        // already 1:1 with draws. On a scene with real content
+                        // (a submeshed car + pistol) the pre-migration fixed
+                        // path did 2 binds for 6 draws and this path did 6 —
+                        // so it does work, and the earlier conclusion was drawn
+                        // from a scene that could not show it.
+                        const bool matChanged = !m_boundMat.holds(mh.id);
+                        if (matChanged) {
+                            ++m_submitStats.materialBinds;
+                            for (const auto& b : mat->blocks) {
+                                if (b.values.empty()) continue;
+                                const bgfx::UniformHandle u = ctx.shaders->uniform(
+                                    b.name, bgfx::UniformType::Vec4,
+                                    (uint16_t)(b.values.size() / 4));
+                                bgfx::setUniform(u, b.values.data(),
+                                                 (uint16_t)(b.values.size() / 4));
+                            }
                         }
                         // Every DECLARED sampler binds, set or not: an unbound
                         // stage keeps whatever the previous draw left there.
+                        // Re-issued per draw because setTexture is encoder state.
                         float texFlags[4] = { 0, 0, 0, 0 };
                         for (const auto& tb : mat->textureBinds) {
                             const Texture* t = tb.texture.valid()
@@ -226,7 +240,13 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                             if (t && tb.stage == 0) texFlags[0] = 1.0f;
                             if (t && tb.stage == 1) texFlags[1] = 1.0f;
                         }
-                        bgfx::setUniform(m_uTexFlags, texFlags);
+                        // A uniform, so it rides with the material — but it is
+                        // computed from the walk above, which has to happen
+                        // anyway for setTexture.
+                        if (matChanged) {
+                            bgfx::setUniform(m_uTexFlags, texFlags);
+                            m_boundMat.id = mh.id;
+                        }
                         bgfx::setTexture(2, m_sShadowMap, m_shadowMap);
                         bgfx::setState(mat->doubleSided
                             ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
@@ -249,35 +269,33 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                         drawProgram = mp;
                         return;
                     }
-                    // Program missing (wrong backend, uncooked variant) —
-                    // ShaderLibrary already said which, once. Fall through to
-                    // the fixed path rather than dropping the draw entirely.
+                    // programFor() cannot fail any more: it falls back to the
+                    // compiled-in program, which declares the same uniforms. The
+                    // branch stays because an invalid handle would otherwise
+                    // submit a draw with no program at all.
                 }
 
-                // ── Fixed path: materials embedded in cooked geometry ───────
-                // R7. The uniform uploads happen only when the material actually
-                // changed since the last draw; the resolved texture handles are
-                // cached alongside so an unchanged material costs no registry
-                // lookups either. The per-draw state below is re-issued always.
-                if (!m_boundMat.holds(mh.id)) {
-                    const Texture*  tex = (mat && mat->hasTexture())
-                                        ? ctx.textures.getTexture(mat->baseColorTexture) : nullptr;
-                    const Texture*  nm  = (mat && mat->normalMapTexture.valid())
-                                        ? ctx.textures.getTexture(mat->normalMapTexture) : nullptr;
-                    const float rough = mat ? mat->roughness : 0.7f;
-                    const float metal = mat ? mat->metallic  : 0.0f;
-                    float params[4] = { 0.0f, rough, metal, 0.0f };
-                    float texFlags[4] = { tex ? 1.0f : 0.0f, nm ? 1.0f : 0.0f, 0, 0 };
-                    float factor[4] = { 1, 1, 1, 1 };
-                    if (mat) { factor[0]=mat->baseColorFactor[0]; factor[1]=mat->baseColorFactor[1];
-                               factor[2]=mat->baseColorFactor[2]; factor[3]=mat->baseColorFactor[3]; }
+                // Reached only when there is no material at all — an entity
+                // whose MaterialHandle never resolved. Bind the defaults so the
+                // draw renders as untextured white rather than inheriting
+                // whatever the previous draw left in the registers.
+                //
+                // THIS IS NOT THE OLD FIXED PATH. That path uploaded a material's
+                // values from dedicated struct fields, in parallel with the
+                // block path, and which of the two ran depended on where the
+                // material came from. There is one upload path now; this is its
+                // null case.
+                if (!m_boundMat.holds(UINT32_MAX - 1)) {
+                    const float params[4]   = { 0.0f, 0.7f, 0.0f, 0.0f };
+                    const float texFlags[4] = { 0, 0, 0, 0 };
+                    const float factor[4]   = { 1, 1, 1, 1 };
                     bgfx::setUniform(m_uTexFlags, texFlags);
                     bgfx::setUniform(m_uParams, params);
                     bgfx::setUniform(m_uColorFactor, factor);
-                    m_boundMat.id   = mh.id;
-                    m_boundMat.base = tex ? tex->handle : ctx.whiteTex;
-                    m_boundMat.norm = nm  ? nm->handle  : ctx.flatNormalTex;
-                    ++m_submitStats.materialBinds;   // now counts REAL binds
+                    m_boundMat.id   = UINT32_MAX - 1;
+                    m_boundMat.base = ctx.whiteTex;
+                    m_boundMat.norm = ctx.flatNormalTex;
+                    ++m_submitStats.materialBinds;
                 }
                 bindDrawState(m_boundMat.base, m_boundMat.norm, state, it);
             };
@@ -300,7 +318,7 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
             // never instanced.
             const bool instanceable =
                    caps && runLen > 1 && !skinned
-                && !(runMat && runMat->dataDriven)
+                && !(runMat && usesOwnProgram(*runMat, ctx))
                 && bgfx::isValid(m_instancedProgram);
 
             // The index range this draw covers, and the material that owns it.

@@ -1,81 +1,180 @@
-input: the header that linked GLFW into every build, including the SDL3 ones
+engine: the lanes that were never run, one material path, and a reader from outside
 
-engine_runtime linked GLFW unconditionally, in both window backends. The cause
-was one line: input_system.h did `#include <GLFW/glfw3.h>` and branched on
-ENGINE_WINDOW_BACKEND_SDL3 in six places. Because input.h, input_map.h,
-input_sources.h, runtime.cpp and the editor all include that header, a single
-include decided the link line for the whole engine — an SDL3 build linked GLFW,
-and so did a host that supplies its own window. A Qt or Rust editor dragged in a
-windowing library it had no use for, which is exactly the vendor-lock the SDK
-exists to avoid.
+Large, and coherent: the test infrastructure that had never executed is what
+found everything else here, including two mistakes of mine.
 
-It was also the ONLY header in the tree leaking a window library. Everything
-else was already isolated in backend TUs, which is why this reads as one knot
-rather than a sweep.
+Suggested exclusion: c.txt is your scratch file.
 
-── the seam already existed ────────────────────────────────────────────────
-wsi:: (hoisted out of src/editor/ last commit) was already 80% of what the
-input source needed — isFocused and cursorPos were sitting right there. So this
-extends that seam rather than inventing a second abstraction beside it:
+═══ 1 — running what was already written ════════════════════════════════════
 
-  pollKeyboard / pollMouseButtons   bulk, writing into the ENGINE's code space.
-      Per-key isKeyDown would be ~350 out-of-line calls per frame, which makes
-      the input system's per-frame cost a property of how the seam is compiled.
-      That is the wrong thing to leave to a linker.
+── the sanitizer lanes had never run once ──────────────────────────────────
+ENGINE_SANITIZE was wired into CMake, documented at the top of
+tests/CMakeLists.txt, and invoked by nothing. First execution, three real
+defects in code that had been passing its tests for weeks:
 
-  InputSink / installInputSink / feedNativeEvent
-      Scroll and text — the two inputs NEITHER backend can poll, and therefore
-      the entire reason that #ifdef existed. GLFW delivers them as callbacks and
-      SDL as events; both reduce to "call me when this happens", so the sink
-      reconciles them and no consumer learns which it is behind.
+  BUG-0001  heap-buffer-overflow in UndoStack::push. `begin() + m_index + 1`
+            parses as `(begin() + m_index) + 1`, and m_index is -1 once
+            everything is undone — so the INTERMEDIATE deque iterator is
+            begin() - 1, and a deque iterator computes eagerly: operator+=
+            walked the block-pointer map 8 bytes before the allocation. The
+            final value was correct, which is exactly why nothing noticed.
 
-Text crosses as CODEPOINTS, because GLFW's char callback already provides them.
-The SDL backend's UTF-8 decode moved into window_ops_sdl3.cpp where it belongs,
-so no consumer ever sees an encoding.
+  BUG-0002  stack-buffer-overflow in cooker_test's base64 helper. 80 % 3 == 2,
+            so the final group is short and the loop read buf[i+2] anyway.
 
-The GLFW/Key static_asserts moved to window_ops_glfw.cpp. They are a claim ABOUT
-THE GLFW BACKEND, and asserting them in the one TU that relies on the
-equivalence is both more accurate and free of consequence for everyone else —
-whereas stating them in a shared header is what forced that header to include
-GLFW in the first place.
+  BUG-0003  a LIVELOCK in engine::jobs, and the serious one. enkiTS indexes
+            per-thread state by thread number and returns 0 for "the thread that
+            initialised the scheduler AND all unregistered threads". The engine
+            never called RegisterExternalTaskThread, so every kit or provider
+            thread calling parallelFor drove slot 0 CONCURRENTLY WITH THE MAIN
+            THREAD. ~1 run in 5 under TSan, stuck at 180s — starvation, not
+            slowness. Mutation-verified: pre-fix behaviour hung on run 2 of 12,
+            reverted 12/12 passed.
 
-input_system.h: 289 -> 158 lines, zero #ifdef, no backend named anywhere except
-in comments. There is now a note at the top saying why that matters, because the
-next person to add an #include there would silently re-couple every consumer.
+            Live on a path published two commits earlier: the audio provider ABI
+            tells providers to use services->parallelFor from THEIR workers.
 
-── proven, not asserted ────────────────────────────────────────────────────
-Stashed the change, reconfigured, read the link line:
+I expected TSan to need triage and was wrong — the whole unit lane is clean
+under it, so it gates from the start rather than reporting.
 
-  BEFORE  SDL3 build, engine_player link line:  libglfw3.a
-  AFTER   GLFW build: libglfw3.a      SDL3 build: absent
+── CI HAD NEVER RUN THE UNIT TESTS ─────────────────────────────────────────
+Three platforms built; only the docs contract executed. 63 test binaries had
+only ever run on a developer's laptop. Both `-L unit` and `-L fuzz-regress` now
+run on EVERY matrix leg — the point of a matrix is catching what differs per
+platform, and a test that only runs on macOS cannot. The fuzz corpus's own
+comment has been saying "the regression lane above catches it forever" about a
+step that did not exist.
 
-Zero undefined glfw symbols in the SDL3 engine_runtime. Each windowing library
-is now reachable from exactly two TUs — its IPlatform and its window_ops — both
-already selected by the one CMake branch that picks the backend.
+  BUG-0010  kit_lifecycle_test could never pass in CI: it registered whenever
+            fps_shooter/project.json existed (committed) but its fixture is a kit
+            module from a gitignored repo. Harmless while nothing ran it; fatal
+            to the first gating lane.
 
-── a landmine defused rather than reproduced ───────────────────────────────
-Moving the chained callbacks into file-statics meant a second installInputSink
-on the same window would store OUR OWN function as the one to chain to, and the
-next scroll event would recurse until the stack ran out. Not reachable today
-(the editor calls init() once, and there is no project close/reopen cycle) and
-the same latent shape existed before. But the failure mode is a stack overflow
-far from its cause, so it is guarded: keep the original previous callback if
-GLFW hands back our own.
+── the bug ledger ──────────────────────────────────────────────────────────
+The practice existed in prose — "reintroduce the bug, watch the test fail,
+restore" — with no enforcement. Fixed bugs were ✅ marks across twelve issues.md
+files naming their tests in sentences, so deleting a test silently orphaned the
+proof and nothing could answer "which bugs have no regression test?".
+
+docs/process/bug-ledger.md plus a check in engine_doctor.py. The load-bearing
+field is `pinned-by`, and AN ORPHANED PROOF IS AN ERROR. Mutation-tested three
+ways: a pinned-by pointing at a deleted test, a duplicate id, an unknown class.
+
+`class` answers "what kind of test do I write?" mechanically: memory -> ASan,
+threading -> TSan, abi -> offset test, parse -> a corpus seed, build -> assert on
+the artifact. 14 entries, three recorded as OPEN rather than tidied away.
+
+═══ 2 — Phase 5 step 4: one material representation ═════════════════════════
+
+Material carried BOTH forms — dedicated fields for mesh-embedded materials and
+uniform blocks for cooked .cmat assets, with the pipeline branching on a
+`dataDriven` flag. The hazard was never performance: TWO UPLOAD PATHS EXISTED
+AND EITHER COULD BE THE ONE THAT RUNS, decided by where a material came from
+(BUG-0011).
+
+Material::standard() synthesizes the declared form at load, applied at FIVE
+sites rather than the one the roadmap named — sync cooked load, async cooked
+drain, source-import upload, and both importers. Missing any would have left the
+dual shape alive for a scene mixing .fbx and .cooked.
+
+Two things the roadmap did not anticipate:
+
+  THE EDITOR INSPECTOR EDITED THOSE FIELDS DIRECTLY. The tempting fix — keep the
+  fields, sync them into the blocks — rebuilds the two sources of truth being
+  removed. So Material grew typed accessors that are a WINDOW onto the blocks:
+  the slider moves the exact bytes the renderer uploads.
+
+  A SYNTHESIZED MATERIAL NAMES NO SHADER, ON PURPOSE. Setting shaderName =
+  "standard" reads as obviously correct and is a regression: the pipeline would
+  resolve the cooked shader asset, which is not the instanced variant, so every
+  mesh-embedded material would leave instanced runs the moment that shader was
+  cooked — the R18/R5 win (3 067 draws -> 299) vanishing on the presence of a
+  file.
+
+═══ 3 — what verifying on real content actually caught ══════════════════════
+
+engine_host submit stats, before vs after, on a scene with a car and a pistol:
+
+  MATERIAL BINDS 2 -> 6, the only metric that moved. I had skipped porting R7's
+  dedup because it "measured as saving nothing" — measured on a scene where
+  binds were already 1:1 with draws. On real content it is 3:1. Ported: uniform
+  uploads skip when the material is unchanged, textures and state re-issue per
+  draw because bgfx discards those at submit(). Back to 2, and the full report
+  is then IDENTICAL — items, culling, draws, submesh draws, instancing, LOD,
+  bone uploads, shadow, texture census, VRAM, handles, churn.
+
+  BUG-0014, MINE. I had also changed the direct glTF importer to pass
+  pbr.roughness_factor / pbr.metallic_factor, which it had never read, and called
+  it an improvement — inside a change whose entire requirement was preserving
+  behaviour. Reverted. The defaults are now NAMED CONSTANTS, because three import
+  paths relied on them implicitly by never assigning the members, which is
+  exactly how it survived review.
+
+── and a diagnosis that was wrong ──────────────────────────────────────────
+The editor showed the pistol at Roughness 1.00 / Metallic 1.00 and I blamed that
+importer change. Reading the cooked file settled it: the .cooked ALREADY held
+1.0/1.0, and the scene loads the pistol through cookedPath — a path the direct
+importer never touches.
+
+The real BUG-0012: the glTF omits both factors, glTF defines an absent factor as
+1.0, cgltf reports it and the mesh cooker records it faithfully. The defect is
+downstream — those factors MULTIPLY a metallicRoughness texture and the forward
+pipeline samples only baseColor and normal. A renderer gap, not a cook error,
+and it predates all of this. The wrong diagnosis is kept in the ledger, because
+the correction is the useful part.
+
+═══ 4 — reading the cooked formats from outside C++ ═════════════════════════
+
+tests/cooked_format/ — a crate that parses .cooked, .cmat and .ctex with no
+engine code, and drives the real cookers through engine_cook_worker's PROCESS
+CLI.
+
+A cooked file is what a SHIPPED GAME reads, which makes its byte layout an ABI,
+and every one of them was checked only by the C++ that writes it. A save/load
+round-trip proves the writer and reader agree WITH EACH OTHER — both can move
+together and stay green forever. This is the other half, the same relationship
+audio_abi_check.c has with the Rust audio suite, pointed the other way.
+
+Two failure modes are specific to these formats and invisible to a round-trip:
+
+  .cmat is fully variable-length — every string is a u32 length plus
+  unterminated bytes, so a field inserted in the middle shifts everything after
+  it. The reader bounds-checks every length before allocating, refuses unknown
+  versions rather than guessing at a layout, and reports TRAILING BYTES, which
+  is what a forgotten version bump looks like.
+
+  .ctex is one flat blob whose meaning depends on BLOCK geometry. texture_asset.h
+  records that the original math hard-coded 4x4 and that getting it wrong "reads
+  a neighbouring mip as pixel data" — a plausible-looking wrong image, not a
+  crash. The reader recomputes the chain and compares against the bytes present.
+
+Mutation-verified ACROSS THE LANGUAGE BOUNDARY: changing the C++ cooker to write
+mipCount + 1 fails the Rust assertion with "Bc1 4x4 mips=4 implies 32 payload
+bytes, file has 24". That check did not exist before. Also: clamping the mesh
+cooker to 0.7/0.0 fails the BUG-0012 pin.
+
+Both fixture legs genuinely run — MaterialCooker emits 2 blocks / 8 floats,
+TextureCooker a 4x4 BC1 with 3 mips — rather than skipping quietly.
+
+── the rule this sets ──────────────────────────────────────────────────────
+New tests go in Rust WHEREVER A STABLE BOUNDARY ALREADY EXISTS: a C ABI, a file
+format, a process CLI. Those are the surfaces a third party would use, so
+testing them in another language proves they are real. C++ tests stay for C++
+internals — reaching those from Rust means writing a C shim first, which ADDS
+untested C++ for the privilege.
+
+Worth noting for the memory-safety argument: BUG-0001 and BUG-0002 were both C++
+out-of-bounds reads, and neither was found by a test being careful. ASan found
+them. The lane catches that class; the test's language does not.
+
+── .gitignore ──────────────────────────────────────────────────────────────
+tests/cooked_format/target/. The file already said "ONE RULE PER CRATE … add a
+line when you add a crate — the cost of forgetting is 17 MB of build output in a
+commit." I added the crate and forgot the line, which is precisely what
+happened.
 
 ── verification ────────────────────────────────────────────────────────────
-Both backends build clean. GLFW ctest 72/73; SDL3 unit lane the same single
-failure — kit_lifecycle_test, which wants Kit .so files from separate gitignored
-repos and failed before any of this. input_test and input_config_test pass.
-Docs gate 0 errors, warning set unchanged.
+Unit lane 53/53. ASan+UBSan and TSan clean. Deterministic render metrics
+identical to pre-migration on real content. Docs gate 0 errors, ENGINE_STATUS
+current. Ledger 14 entries.
 
-── what this finishes ──────────────────────────────────────────────────────
-docs/architecture/extension-model.md §4b now says the SDK offers a host three
-things independently: a GPU-free layer for tools (engine_core), a runtime that
-links ONE windowing library of its choosing, and a per-window seam for driving
-more than one window. None of them requires ImGui, and none requires the editor.
-
-The custom-editor story has no remaining structural blocker.
-
-Related, and now a smaller job than it was: gamepads still do not reach the raw
-HID path (HidSource::init passes {.gamepad = false}, pending curation, backlog
-#13). The window/input coupling that tangled it is gone.

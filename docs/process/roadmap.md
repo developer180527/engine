@@ -107,14 +107,33 @@ Verified in a shipped `fps_shooter` dist: `standard program: cooked .cshader`,
 2. ~~`ForwardPipeline` consumes `ShaderLibrary`.~~ **done** — verified in a dist
 3. ~~`AssetService` loads `.cmat`; the pipeline uploads prebuilt blocks.~~
    **done** — materials resolve by authored name, verified in a dist.
-4. **The remaining step.** Mesh-EMBEDDED materials (`CookedMaterial` inside
-   cooked geometry) still fill the fixed struct, and that is what every surface
-   in `fps_shooter` currently renders through — so this is a MIGRATION, not a
-   deletion: `AssetService` must synthesize a data-driven Material against the
-   standard shader at mesh load, and only then do the fixed fields have no
-   writer and delete cleanly. Same for the compiled-in program fallback.
-   **Phase 5 is not finished until both are gone** — until then two paths exist
-   and either could be the one that runs.
+4. ~~Mesh-EMBEDDED materials fill the fixed struct.~~ **done** — every
+   material is now blocks. `Material::standard()` synthesizes the standard
+   shader's declared form at load, applied at all five sites that used to build
+   the fixed struct (sync cooked load, async cooked drain, source-import upload,
+   the glTF importer, the Assimp importer). The fixed fields, the `dataDriven`
+   flag and the pipeline's second bind path are deleted; pinned by
+   `tests/material_form_test.cpp`.
+
+   Two things the original entry did not anticipate, both handled:
+   - **The editor inspector edited those fields directly** (`ColorEdit4` on
+     `mat->baseColorFactor`, sliders on `&mat->roughness`). Deleting them would
+     have silently removed live material editing, so `Material` grew typed
+     accessors that are a *window onto the blocks* — the slider now moves the
+     bytes the renderer uploads instead of a shadow copy.
+   - **A synthesized material names no shader on purpose.** Naming `"standard"`
+     would resolve the cooked shader asset, which is not the instanced variant,
+     so every mesh-embedded material would drop out of instanced runs the moment
+     that shader was cooked — the R18/R5 win (3 067 draws → 299) vanishing based
+     on whether a file exists. The blocks are the standard interface; the
+     program is the built-in one.
+
+   **Remaining:** the compiled-in program is still the fallback, and is now the
+   program every mesh-embedded material draws with. Retiring it needs the cooked
+   standard shader to gain an instanced variant, and a cooked shader cache to be
+   a hard prerequisite of running at all — a deployment decision, not a
+   refactor. That is the last sliver of "same for the compiled-in program
+   fallback"; the *two-material-paths* hazard it was grouped with is gone.
 5. Live-verify `fps_shooter` renders identically.
 
 *Unlocks:* the stated goal — a game defines its look without rebuilding the

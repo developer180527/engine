@@ -337,21 +337,23 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
 
     for (uint32_t mi = 0; mi < static_cast<uint32_t>(asset.materials.size()); ++mi) {
         const auto& cm = asset.materials[mi];
-        Material mat;
-        std::memcpy(mat.baseColorFactor, cm.baseColorFactor,
-                    sizeof(mat.baseColorFactor));
-        mat.roughness   = cm.roughness;
-        mat.metallic    = cm.metallic;
-        mat.doubleSided = false;
-
+        // Phase 5 step 4: a mesh-embedded material becomes the standard
+        // shader's DECLARED form right here, so nothing downstream has to know
+        // it came from geometry rather than a .cmat.
+        TextureHandle base, norm;
+        std::string   baseName, normName;
         if (cm.flags & assetlib::kMatFlag_HasBaseColor) {
-            mat.baseColorTexture = resolveTexture(cm.baseColorPath, sourceDir);
-            mat.baseColorName    = cm.baseColorPath;
+            base     = resolveTexture(cm.baseColorPath, sourceDir);
+            baseName = cm.baseColorPath;
         }
         if (cm.flags & assetlib::kMatFlag_HasNormalMap) {
-            mat.normalMapTexture = resolveTexture(cm.normalMapPath, sourceDir);
-            mat.normalMapName    = cm.normalMapPath;
+            norm     = resolveTexture(cm.normalMapPath, sourceDir);
+            normName = cm.normalMapPath;
         }
+        Material mat = Material::standard(cm.baseColorFactor, cm.roughness,
+                                          cm.metallic, base, norm);
+        mat.baseColorName = std::move(baseName);
+        mat.normalMapName = std::move(normName);
         matHandles.push_back(m_materials.addMaterial(std::move(mat)));
     }
 
@@ -575,7 +577,9 @@ MaterialHandle AssetService::loadMaterialAsset(const char* name) {
     }
 
     Material mat;
-    mat.dataDriven  = true;
+    // No `dataDriven` flag any more — every material is. What distinguishes a
+    // .cmat is that it NAMES its shader, which is what routes it to a program
+    // of its own rather than the built-in one.
     mat.shaderName  = ma.shaderName;
     mat.featureMask = ma.featureMask;
     mat.doubleSided = ma.doubleSided;
@@ -1154,25 +1158,22 @@ bool AssetService::drainUploads() {
         std::unordered_map<std::string, TextureHandle> texByName;
 
         for (auto& mg : item.materials) {
-            Material mat;
-            std::memcpy(mat.baseColorFactor, mg.baseColorFactor,
-                        sizeof(mat.baseColorFactor));
-            mat.roughness     = mg.roughness;
-            mat.metallic      = mg.metallic;
-            mat.baseColorName = mg.baseColorName;
-            mat.normalMapName = mg.normalMapName;
+            // Texture resolution is unchanged — including the dedup that lets a
+            // material share an image another material in the same mesh already
+            // uploaded. Only the SHAPE of the result changed.
+            TextureHandle base, norm;
 
             if (mg.baseColor.mem) {
                 auto th = createTexFromGPU(mg.baseColor);   // format-aware
                 if (bgfx::isValid(th)) {
-                    mat.baseColorTexture = m_textures.addTexture(
+                    base = m_textures.addTexture(
                         Texture(th, mg.baseColor.w, mg.baseColor.h));
                     if (!mg.baseColorName.empty())
-                        texByName[mg.baseColorName] = mat.baseColorTexture;
+                        texByName[mg.baseColorName] = base;
                 }
             } else if (!mg.baseColorName.empty()) {
                 auto it = texByName.find(mg.baseColorName);
-                if (it != texByName.end()) mat.baseColorTexture = it->second;
+                if (it != texByName.end()) base = it->second;
                 // A miss means the FIRST user failed to load; leaving the
                 // handle invalid falls back to the white texture, which is
                 // the same behaviour as before.
@@ -1181,16 +1182,20 @@ bool AssetService::drainUploads() {
             if (mg.normalMap.mem) {
                 auto th = createTexFromGPU(mg.normalMap);
                 if (bgfx::isValid(th)) {
-                    mat.normalMapTexture = m_textures.addTexture(
+                    norm = m_textures.addTexture(
                         Texture(th, mg.normalMap.w, mg.normalMap.h));
                     if (!mg.normalMapName.empty())
-                        texByName[mg.normalMapName] = mat.normalMapTexture;
+                        texByName[mg.normalMapName] = norm;
                 }
             } else if (!mg.normalMapName.empty()) {
                 auto it = texByName.find(mg.normalMapName);
-                if (it != texByName.end()) mat.normalMapTexture = it->second;
+                if (it != texByName.end()) norm = it->second;
             }
 
+            Material mat = Material::standard(mg.baseColorFactor, mg.roughness,
+                                              mg.metallic, base, norm);
+            mat.baseColorName = mg.baseColorName;
+            mat.normalMapName = mg.normalMapName;
             matHandles.push_back(m_materials.addMaterial(std::move(mat)));
         }
 

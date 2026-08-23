@@ -175,6 +175,11 @@ endif()
 engine_test(input_config_test)
 engine_test(asset_ready_test)
 engine_test(material_name_test)   # by-name addressing + the slot-reuse alias
+# Phase 5 step 4: Material has ONE representation. Pins the synthesized standard
+# form against shaders/standard.shader's declared interface, and that the typed
+# accessors are a window onto the blocks rather than a second copy — which is the
+# property that stops an inspector slider editing something the renderer ignores.
+engine_test(material_form_test LIB engine_core)
 engine_test(sim_world_test)
 engine_test(keymap_test)
 engine_test(nav_test)
@@ -295,9 +300,26 @@ engine_test(mesh_dedup_test)   # cooks its own fixture via MeshCooker
 endif()
 
 # ── kit lifecycle — loads the project's real combat kit mid-play ─────────────
+# The kit MODULES are the fixture, and they are built from separate, gitignored
+# repos under Kits/ — so project.json existing was never the right condition.
+# It is committed, which meant the test registered everywhere (CI included) and
+# then failed on a fixture that could not possibly be there. Nobody noticed
+# because CI ran only the docs lane; the moment any lane gates on `-L unit`, a
+# permanently-red test makes the gate worthless.
+#
+# Same rule the asset lane already uses: registered only when present.
 set(KIT_TEST_PROJECT ${CMAKE_SOURCE_DIR}/fps_shooter)
-if(EXISTS ${KIT_TEST_PROJECT}/project.json)
+set(KIT_TEST_MODULE
+    ${CMAKE_SOURCE_DIR}/Kits/CombatKit/build/libcombat_kit_module.so)
+if(EXISTS ${KIT_TEST_PROJECT}/project.json AND EXISTS ${KIT_TEST_MODULE})
     engine_test(kit_lifecycle_test EXPORTS ARGS ${KIT_TEST_PROJECT})
+elseif(EXISTS ${KIT_TEST_PROJECT}/project.json)
+    message(STATUS "kit_lifecycle_test: built but NOT registered — no kit module at "
+                   "${KIT_TEST_MODULE} (build the Kits repos to enable it)")
+    add_executable(kit_lifecycle_test kit_lifecycle_test.cpp)
+    target_link_libraries(kit_lifecycle_test PRIVATE engine_runtime)
+    set_target_properties(kit_lifecycle_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} ENABLE_EXPORTS ON)
 else()
     # Still build it (catches API drift) even when the project is absent.
     add_executable(kit_lifecycle_test kit_lifecycle_test.cpp)
@@ -364,6 +386,29 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(docs_status_current PROPERTIES LABELS docs TIMEOUT 120)
 endif()
 
+# ── Cooked-format conformance (Rust) ────────────────────────────────────────
+# A .cooked file is what a SHIPPED GAME reads, which makes its byte layout an ABI
+# — and it had only ever been checked by the C++ that writes it. A
+# saveMesh/loadMesh round-trip proves the two agree with each other; both could
+# move together and nothing would notice.
+#
+# This crate parses the layout from outside, with no engine code, and drives the
+# real cooker through engine_cook_worker's PROCESS CLI. Both are genuine
+# boundaries, so no C shim exists purely to be tested — which is the condition
+# that makes a Rust test the right choice here rather than a preference.
+if(ENGINE_WITH_RUST AND NOT ENGINE_SANITIZE AND TARGET engine_cook_worker)
+    find_program(CARGO_EXECUTABLE cargo)
+    if(CARGO_EXECUTABLE)
+        add_test(NAME cooked_format_conformance
+                 COMMAND ${CMAKE_COMMAND} -E env
+                         ENGINE_BUILD_DIR=$<TARGET_FILE_DIR:engine_cook_worker>
+                         ${CARGO_EXECUTABLE} test --quiet
+                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/tests/cooked_format)
+        set_tests_properties(cooked_format_conformance PROPERTIES
+                             LABELS unit TIMEOUT 300)
+    endif()
+endif()
+
 # ── The C half of the audio ABI freeze ───────────────────────────────────────
 # The header's ENGINE_AUDIO_FROZEN static asserts fire only in a TU that
 # INCLUDES it, and until this target existed no TU in the tree did — so they had
@@ -391,7 +436,13 @@ set_tests_properties(audio_abi_check PROPERTIES LABELS unit TIMEOUT 30)
 # Optional in the same way as modules/net — Rust is a real dependency for every
 # contributor, so a tree without cargo must still configure and test. The
 # difference from a skipped test is visible: cmake says so at configure time.
-if(ENGINE_WITH_RUST)
+# Excluded from the sanitizer lanes, deliberately. The suite is a CARGO-built
+# binary, so it never gets CMake's -fsanitize flags — and it dlopens a provider
+# module that DOES have them. ASan then reports "Interceptors are not working…
+# loaded too late (e.g. via dlopen)" and aborts, which is a fact about the
+# harness rather than about the engine. Instrumenting the Rust side needs
+# nightly's -Zsanitizer; the C provider is covered by the C++ lanes instead.
+if(ENGINE_WITH_RUST AND NOT ENGINE_SANITIZE)
     find_program(CARGO_EXECUTABLE cargo)
     if(CARGO_EXECUTABLE)
         add_test(NAME audio_abi_conformance

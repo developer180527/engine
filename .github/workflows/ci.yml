@@ -214,6 +214,34 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # ── The unit lane ────────────────────────────────────────────────────
+      # THIS HAD NEVER RUN. CI built three platforms and executed only the docs
+      # contract, so 63 test binaries had only ever been run on a developer's
+      # laptop — including the ones written specifically to pin a bug that had
+      # already shipped once. A test nothing runs is a comment with a build cost.
+      #
+      # Run on EVERY leg, not just the gating one: the whole reason a matrix
+      # exists is to catch what differs per platform, and a correctness test
+      # that only ever runs on macOS cannot do that. The experimental legs are
+      # already non-fatal, so this reports there rather than blocking.
+      #
+      # Kept ahead of the docs contract deliberately — when both are broken, the
+      # code failure is the one worth reading first.
+      - name: Test (unit lane)
+        shell: bash
+        run: ctest --test-dir build -L unit --output-on-failure --timeout 600
+
+      # The seeded regression corpus: every input that has ever broken a parser,
+      # replayed deterministically. 65 seeds across 5 domains, and it is the
+      # oldest piece of institutional memory in the repo — see
+      # tests/fuzz/corpus/*/regressions.seeds and docs/process/bug-ledger.md.
+      #
+      # The comment below about "the regression lane above catches it forever"
+      # has been describing this step since before it existed.
+      - name: Test (fuzz regression corpus)
+        shell: bash
+        run: ctest --test-dir build -L fuzz-regress --output-on-failure --timeout 600
+
       # Documentation/maturity contract (docs/process/engineering-standards.md): doc
       # front-matter must match the tree, tier claims must have evidence, and
       # ENGINE_STATUS.md must be regenerated. Platform-independent, so it runs
@@ -294,3 +322,101 @@ jobs:
             exit 1
           fi
           echo "OK: no Assimp symbols in engine_player"
+
+  # ── Sanitizers ──────────────────────────────────────────────────────────────
+  # ENGINE_SANITIZE had been wired into CMake for a long time and NOTHING EVER
+  # RAN IT. The first time this lane was executed it found two real defects in
+  # code that had been passing its tests for weeks:
+  #
+  #   * a heap-buffer-overflow in UndoStack::push — `begin() + m_index + 1`
+  #     parses as `(begin() + m_index) + 1`, so with m_index == -1 the
+  #     intermediate deque iterator read 8 bytes before the block map
+  #   * a stack-buffer-overflow in cooker_test's base64 helper (80 % 3 == 2, and
+  #     the loop read buf[i+2] on the short final group)
+  #   * a LIVELOCK in engine::jobs — external threads never registered with
+  #     enkiTS, so every one of them shared thread-slot 0 with the main thread.
+  #     TSan's timing exposed it ~1 run in 5; without a sanitizer it is rare
+  #     enough to ship. jobs::parallelFor is documented as callable from kit
+  #     threads, and the audio provider ABI tells providers to use it from
+  #     theirs, so this was live on a path we had just published.
+  #
+  # None of the three is reachable through ordinary test failure: two produced
+  # correct results while reading out of bounds, and the third only appeared
+  # under timing the normal lane never produces. That is the entire argument for
+  # this lane, and the reason it gates rather than merely reports.
+  #
+  # Separate build dirs per lane because the two are mutually exclusive: TSan
+  # cannot be combined with ASan. Debug, because sanitizer stacks in an
+  # optimized build are much harder to read.
+  sanitizers:
+    name: Sanitizers (${{ matrix.san }})
+    runs-on: macos-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - san: address,undefined
+            slug: asan
+            # ASan+UBSan gates: both findings above came from here.
+            experimental: false
+          - san: thread
+            slug: tsan
+            # I expected a noisy first pass — enkiTS, flecs and bgfx all carry
+            # their own synchronisation — and was wrong: the whole unit lane is
+            # CLEAN under TSan, zero warnings, including jobs_test. So it gates
+            # from the start rather than reporting. If it ever goes red, that is
+            # a real race and not a backlog of untriaged noise.
+            experimental: false
+    continue-on-error: ${{ matrix.experimental }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Apply third-party patches
+        if: hashFiles('third_party/patches/*.patch') != ''
+        shell: bash
+        run: ./scripts/apply_third_party_patches.sh
+
+      - run: brew install ninja
+
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: san-${{ matrix.slug }}-macos
+          max-size: 2G
+
+      # Editor OFF: it needs ImGui + a window, contributes no coverage the unit
+      # lane does not already have, and doubles the instrumented build.
+      - name: Configure
+        run: |
+          cmake -B build-${{ matrix.slug }} -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DENGINE_SANITIZE=${{ matrix.san }} \
+            -DENGINE_BUILD_EDITOR=OFF \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build-${{ matrix.slug }} --parallel
+
+      # halt_on_error keeps the first report as the failure rather than letting
+      # a later, unrelated one become the visible one.
+      - name: Test (unit lane)
+        working-directory: build-${{ matrix.slug }}
+        env:
+          ASAN_OPTIONS: halt_on_error=1:abort_on_error=1:detect_leaks=0
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          TSAN_OPTIONS: halt_on_error=0:second_deadlock_stack=1
+        run: ctest -L unit --output-on-failure --timeout 600
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-${{ matrix.slug }}-logs
+          path: build-${{ matrix.slug }}/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14

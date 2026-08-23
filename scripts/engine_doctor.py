@@ -276,6 +276,117 @@ class Finding:
     msg: str
 
 
+# ── The bug ledger ───────────────────────────────────────────────────────────
+# Every bug that has ever been found, and the test that stops it coming back.
+#
+# The practice already existed in prose: engineering-standards.md §4.2 says "a
+# regression proof for bug fixes — reintroduce the bug, watch the test fail,
+# restore." What it lacked was ENFORCEMENT. Fixed bugs were recorded as ✅ marks
+# scattered across twelve issues.md files, naming their tests in sentences, so
+# deleting a test silently orphaned the proof and nothing anywhere could answer
+# "which bugs have no regression test?".
+#
+# This is the CAD-kernel discipline applied to the whole engine rather than only
+# to the parsers: tests/fuzz/corpus/*/regressions.seeds already pins every bug
+# the fuzzers found, forever, and it works. The difference is that a seed only
+# exists for bugs reachable by feeding bytes to a parser — which is a minority.
+# ABI breaks, races, lifetime errors and build-graph mistakes need the same
+# permanence and had nowhere to live.
+#
+# The load-bearing field is `pinned-by`. A ledger entry naming a test that does
+# not exist is an ERROR, which is what turns "we should write a test" into a
+# gate.
+BUG_LEDGER = REPO / "docs" / "process" / "bug-ledger.md"
+
+# The class decides the SHAPE of the pinning test, which is the practical value
+# of recording it: it answers "what kind of test do I write?" mechanically
+# instead of leaving it to judgement each time.
+BUG_CLASSES = {
+    "memory":    "out-of-bounds, use-after-free, leak     -> ASan/UBSan lane + a targeted test",
+    "threading": "race, deadlock, livelock                -> TSan lane + stress",
+    "abi":       "layout, versioning, symbol contract     -> static asserts + an OFFSET test",
+    "parse":     "malformed or hostile input              -> a corpus seed",
+    "numeric":   "determinism, precision, overflow        -> golden-value test",
+    "perf":      "a regression in time or memory          -> perf test with a threshold",
+    "build":     "link graph, target wiring, packaging    -> assert on the built artifact",
+    "logic":     "plain wrong behaviour                   -> ordinary unit test",
+    "coverage":  "a check that silently never ran         -> make it run, then assert it",
+}
+
+BUG_REQUIRED = ("found", "class", "where", "symptom", "cause", "pinned-by")
+
+_BUG_HEAD = re.compile(r"^##\s+(BUG-\d{4})\b\s*(?:—|-)?\s*(.*)$")
+_BUG_FIELD = re.compile(r"^-\s+([a-z-]+):\s*(.*)$")
+
+
+def parse_bug_ledger() -> list[dict]:
+    """Entries as dicts. Format is deliberately stdlib-parseable — this script
+    has no third-party dependencies and adding one for a bug list would be a
+    poor trade."""
+    if not BUG_LEDGER.exists():
+        return []
+    entries: list[dict] = []
+    cur: dict | None = None
+    for lineno, raw in enumerate(BUG_LEDGER.read_text(encoding="utf-8").splitlines(), 1):
+        head = _BUG_HEAD.match(raw)
+        if head:
+            cur = {"id": head.group(1), "title": head.group(2).strip(), "line": lineno}
+            entries.append(cur)
+            continue
+        if cur is None:
+            continue
+        fld = _BUG_FIELD.match(raw)
+        if fld:
+            cur[fld.group(1)] = fld.group(2).strip()
+    return entries
+
+
+def check_bugs() -> list[Finding]:
+    f: list[Finding] = []
+    rel = str(BUG_LEDGER.relative_to(REPO))
+    entries = parse_bug_ledger()
+    if not entries:
+        return [Finding("warn", rel, "no ledger entries found")]
+
+    seen: dict[str, int] = {}
+    for e in entries:
+        bid = e["id"]
+        if bid in seen:
+            f.append(Finding("error", rel,
+                             f"{bid} declared twice (lines {seen[bid]} and {e['line']}) "
+                             f"— ids are permanent, never reused"))
+        seen[bid] = e["line"]
+
+        for key in BUG_REQUIRED:
+            if not e.get(key):
+                f.append(Finding("error", rel, f"{bid}: missing `{key}:`"))
+
+        cls = e.get("class", "")
+        if cls and cls not in BUG_CLASSES:
+            f.append(Finding("error", rel,
+                             f"{bid}: unknown class `{cls}` "
+                             f"(want: {'/'.join(sorted(BUG_CLASSES))})"))
+
+        # THE GATE. A regression proof that does not exist is not a proof, and a
+        # ledger of unenforced good intentions is worse than no ledger — it
+        # reads as coverage that is not there.
+        for field in ("pinned-by", "where"):
+            spec = e.get(field, "")
+            if not spec or spec.lower() in ("none", "n/a"):
+                continue
+            for item in (p.strip() for p in spec.split(",")):
+                path = item.split("::", 1)[0].strip()   # allow file::case
+                if not path:
+                    continue
+                if not (REPO / path).exists():
+                    lvl = "error" if field == "pinned-by" else "warn"
+                    f.append(Finding(lvl, rel,
+                                     f"{bid}: `{field}: {path}` does not exist"
+                                     + (" — the regression proof is orphaned"
+                                        if field == "pinned-by" else "")))
+    return f
+
+
 def check_docs(docs: list[Doc], strict_missing: bool) -> list[Finding]:
     f: list[Finding] = []
     today = date.today().isoformat()
@@ -530,11 +641,31 @@ def main() -> int:
 
     sub.add_parser("bootstrap", help="add placeholder front-matter where missing")
 
+    b = sub.add_parser("bugs", help="summarise the bug ledger")
+    b.add_argument("--class", dest="klass", help="filter by class")
+
     args = ap.parse_args()
     docs = find_docs()
 
     if args.cmd == "bootstrap":
         return bootstrap(docs)
+
+    if args.cmd == "bugs":
+        entries = parse_bug_ledger()
+        if args.klass:
+            entries = [e for e in entries if e.get("class") == args.klass]
+        by_class: dict[str, int] = {}
+        for e in entries:
+            by_class[e.get("class", "?")] = by_class.get(e.get("class", "?"), 0) + 1
+            print(f"{e['id']}  {e.get('class','?'):<10} {e.get('title','')}")
+            print(f"          pinned-by: {e.get('pinned-by','(none)')}")
+        print(f"\n{len(entries)} bug(s)")
+        for k in sorted(by_class):
+            print(f"  {k:<10} {by_class[k]}")
+        problems = check_bugs()
+        for f in problems:
+            print(f"{f.level.upper():<5}  {f.msg}")
+        return 1 if any(f.level == "error" for f in problems) else 0
 
     if args.cmd == "status":
         text = render_status(docs)
@@ -555,6 +686,7 @@ def main() -> int:
         return 0
 
     findings = check_docs(docs, strict_missing=args.strict_missing)
+    findings += check_bugs()
     errs = [f for f in findings if f.level == "error"]
     warns = [f for f in findings if f.level == "warn"]
 

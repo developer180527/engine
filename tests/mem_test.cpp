@@ -166,10 +166,28 @@ int main() {
     }
 
     // ── Global new routing (this binary links the routed overrides) ─────────
+    // ENGINE_MEM_ROUTE is 0 in the heap-sanitizer lanes: ASan/LSan need
+    // allocations to keep SYSTEM provenance, or a use-after-free inside a
+    // recycled TLSF pool block is invisible to them. The root CMakeLists flips
+    // it automatically, so this assertion has to know which world it is in —
+    // it FAILED the first time the ASan lane was ever run, which is the whole
+    // argument for running the lane.
+    //
+    // Both branches assert something real. Routed: the container's storage is
+    // registry-owned, which is what makes std containers land in tagged heaps
+    // with zero rewrites. Unrouted: the pointer is FOREIGN and mem::free must
+    // still accept it, which is the property that lets the switch be flipped at
+    // all without mismatching an existing pointer.
     {
         auto* v = new std::vector<int>();
         v->resize(100000);
+#if defined(ENGINE_MEM_ROUTE) && ENGINE_MEM_ROUTE == 0
+        CHECK(!mem::owns(v->data()),
+              "ENGINE_MEM_ROUTE=0: std::vector storage is FOREIGN, so the heap "
+              "sanitizer owns it");
+#else
         CHECK(mem::owns(v->data()), "std::vector storage routed to mem::");
+#endif
         delete v;
     }
 

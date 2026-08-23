@@ -1,0 +1,15 @@
+[package]
+name    = "engine_cooked_format"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Reads the engine's cooked asset formats from outside C++, and pins what the cookers write."
+
+[lib]
+name = "engine_cooked_format"
+path = "src/lib.rs"
+
+# Deliberately none. A cooked file is what a SHIPPED GAME reads, so the useful
+# property is that it can be parsed from a fixed layout with no engine code —
+# a dependency that pulled in a generated binding would hide exactly that.
+[dependencies]

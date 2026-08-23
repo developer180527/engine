@@ -53,23 +53,50 @@ inline void drawMeshMaterialSection(EngineContext& ctx, flecs::entity e) {
         if (ImGui::SmallButton("Revert")) { mrMut.materialOverride = {}; }
     }
 
+    // ── Editing the BLOCKS, not a parallel set of fields ────────────────────
+    // These used to be `&mat->roughness` etc. — dedicated struct members that
+    // the renderer read on one code path while cooked materials used another.
+    // Phase 5 step 4 removed that split, so the widgets now write into the same
+    // uniform block the renderer uploads: one source of truth, and a slider
+    // moves what is actually on screen rather than a shadow copy of it.
+    //
+    // A null means this material's shader does not DECLARE that parameter — a
+    // material on somebody else's shader is not editable by a panel hard-coded
+    // to the standard one. Showing it greyed is the honest rendering of that,
+    // and is why each is checked rather than assumed.
+    float* color = mat->baseColorFactor();
+    float* rough = mat->roughness();
+    float* metal = mat->metallic();
+
     ImGui::Text("Base Color");
     ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
-    ImGui::ColorEdit4("##baseColor", mat->baseColorFactor,
-        ImGuiColorEditFlags_Float | ImGuiColorEditFlags_AlphaBar);
-    if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+    if (color) {
+        ImGui::ColorEdit4("##baseColor", color,
+            ImGuiColorEditFlags_Float | ImGuiColorEditFlags_AlphaBar);
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+    } else {
+        ImGui::TextDisabled("not declared by \"%s\"", mat->shaderName.c_str());
+    }
 
     ImGui::Text("Roughness"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
-    ImGui::SliderFloat("##rough", &mat->roughness, 0.0f, 1.0f, "%.2f");
-    if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+    if (rough) {
+        ImGui::SliderFloat("##rough", rough, 0.0f, 1.0f, "%.2f");
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+    } else {
+        ImGui::TextDisabled("not declared");
+    }
 
     ImGui::Text("Metallic"); ImGui::SameLine(90.0f); ImGui::SetNextItemWidth(-1);
-    ImGui::SliderFloat("##metal", &mat->metallic, 0.0f, 1.0f, "%.2f");
-    if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+    if (metal) {
+        ImGui::SliderFloat("##metal", metal, 0.0f, 1.0f, "%.2f");
+        if (ImGui::IsItemDeactivatedAfterEdit()) ctx.editor.sceneDirty = true;
+    } else {
+        ImGui::TextDisabled("not declared");
+    }
 
     ImGui::Spacing(); ImGui::TextDisabled("Textures"); ImGui::Separator();
-    bool hasAlbedo = mat->baseColorTexture.valid();
-    bool hasNormal = mat->normalMapTexture.valid();
+    bool hasAlbedo = mat->textureAt(0).valid();
+    bool hasNormal = mat->textureAt(1).valid();
     texRow("Albedo",     hasAlbedo, false, mat->baseColorName);
     texRow("Normal Map", hasNormal, true,  mat->normalMapName);
 }

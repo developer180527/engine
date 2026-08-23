@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-18
+verified: 2026-08-23
 parses-external-input: true
 covers:
   - src/assets/
@@ -131,6 +131,28 @@ fails because a search did not converge is not.
 
 Skinned meshes are skipped: clustering merges vertices across the mesh and would
 have to reconcile bone indices and weights, which is a different algorithm.
+
+#### The importers do not read glTF's roughness/metallic factors — on purpose
+Both importers build materials through `Material::standard()`, and both pass the
+engine defaults (0.7 / 0.0) rather than the source file's PBR factors.
+
+For glTF that looks like a bug and is not. `roughnessFactor` and
+`metallicFactor` default to **1.0** when absent, which most exporters omit, so
+cgltf hands back 1.0/1.0 — and the forward pipeline samples only baseColor and
+normal, never a metallicRoughness/ARM texture. glTF's factors are defined to
+MULTIPLY that texture, so using them unmultiplied is not "the authored value",
+it is a stand-in for a map nobody reads.
+
+The MESH COOKER does read them, deliberately: a cooked asset records what the
+source authored. So `fps_shooter`'s pistol is 1.0/1.0 in its `.cooked` and shades
+fully metallic and fully rough — pinned by
+`tests/cooked_format/tests/gltf_pbr_factors.rs` so the value is deliberate rather
+than surprising (BUG-0012). The importers keeping the defaults while the cooker
+records the source is a known inconsistency, and both are waiting on the same
+thing: a renderer that samples MR/ARM.
+
+Honouring them correctly means sampling the MR/ARM texture first. That is a
+rendering feature, not an importer fix, and the defaults stay until it exists.
 
 #### Material textures reach a shipped game
 A `.material` names its textures by SOURCE path — the way an author types it —

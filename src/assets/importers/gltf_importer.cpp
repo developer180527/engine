@@ -154,15 +154,32 @@ MeshImportResult GltfImporter::load(const std::string& path,
     auto resolveMaterial = [&](const cgltf_material* cm) -> MaterialHandle {
         if (!cm) return {};
         for (auto& e : matCache) if (e.first == cm) return e.second;
-        Material mat;
-        mat.doubleSided = cm->double_sided;
         const auto& pbr = cm->pbr_metallic_roughness;
-        mat.baseColorFactor[0] = pbr.base_color_factor[0];
-        mat.baseColorFactor[1] = pbr.base_color_factor[1];
-        mat.baseColorFactor[2] = pbr.base_color_factor[2];
-        mat.baseColorFactor[3] = pbr.base_color_factor[3];
+        const float factor[4] = { pbr.base_color_factor[0], pbr.base_color_factor[1],
+                                  pbr.base_color_factor[2], pbr.base_color_factor[3] };
+        TextureHandle base;
         if (pbr.base_color_texture.texture)
-            mat.baseColorTexture = loadTexture(pbr.base_color_texture.texture, gltfDir, storage);
+            base = loadTexture(pbr.base_color_texture.texture, gltfDir, storage);
+        // NOT pbr.roughness_factor / pbr.metallic_factor, deliberately.
+        //
+        // This importer has never read them: before Phase 5 step 4 it assigned
+        // only baseColorFactor and the rest of the material kept the struct's
+        // defaults. Passing the real factors through looks like a free
+        // improvement and is a VISIBLE CHANGE — glTF defaults both to 1.0 when
+        // absent, which most exporters omit, so cgltf hands back 1.0/1.0 and
+        // every glTF surface becomes fully metallic and fully rough. Caught on
+        // fps_shooter's pistol, which went 0.7/0.0 -> 1.0/1.0 (BUG-0012).
+        //
+        // It would also be wrong for this renderer specifically: glTF's factors
+        // MULTIPLY a metallicRoughness texture, and the forward pipeline samples
+        // only baseColor and normal — so 1.0/1.0 is not "the authored value", it
+        // is an unmultiplied factor standing in for a texture nobody reads.
+        //
+        // Honouring them properly means sampling the MR/ARM texture first. That
+        // is a rendering feature, not a refactor.
+        Material mat = Material::standard(factor, Material::kStdDefaultRoughness,
+                                          Material::kStdDefaultMetallic, base);
+        mat.doubleSided = cm->double_sided;
         MaterialHandle h = storage.materials.addMaterial(std::move(mat));
         matCache.emplace_back(cm, h);
         return h;

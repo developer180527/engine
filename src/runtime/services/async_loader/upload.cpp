@@ -56,8 +56,6 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
     std::vector<MaterialHandle> matHandles(req.asset.materials.size());
     for (size_t i = 0; i < req.asset.materials.size(); ++i) {
         const MaterialGPUData& mg = req.asset.materials[i];
-        Material mat;
-        std::memcpy(mat.baseColorFactor, mg.baseColorFactor, 16);
         // Format-aware creates: BC7/BC5 blocks + pre-built mips upload
         // exactly as cooked (mem already copied — instant).
         auto createTex = [](const TextureGPUData& t) {
@@ -65,20 +63,36 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
                                          cookedTexBgfxFormat(t.format),
                                          0, t.mem);
         };
+        TextureHandle base, norm;
         if (mg.baseColorTexture.mem) {
             bgfx::TextureHandle th = createTex(mg.baseColorTexture);
             if (bgfx::isValid(th)) {
                 Texture tex; tex.handle = th;
-                mat.baseColorTexture = storage.textures.addTexture(std::move(tex));
+                base = storage.textures.addTexture(std::move(tex));
             }
         }
         if (mg.normalMapTexture.mem) {
             bgfx::TextureHandle th = createTex(mg.normalMapTexture);
             if (bgfx::isValid(th)) {
                 Texture tex; tex.handle = th;
-                mat.normalMapTexture = storage.textures.addTexture(std::move(tex));
+                norm = storage.textures.addTexture(std::move(tex));
             }
         }
+        // Phase 5 step 4 — the SOURCE-format import path lands in the same
+        // declared form as the cooked one. Otherwise a scene mixing .fbx and
+        // .cooked meshes would still have had two material shapes alive at once.
+        // mg.roughness / mg.metallic are carried here but were NEVER APPLIED:
+        // this path only ever memcpy'd baseColorFactor, so the material kept the
+        // struct defaults. Applying them now would change how every
+        // source-imported mesh shades, which this migration must not do.
+        //
+        // That the cooked values are dropped on this path looks like a real
+        // defect and is recorded as one (BUG-0013) rather than fixed in passing
+        // — it needs its own before/after on real content.
+        Material mat = Material::standard(mg.baseColorFactor,
+                                          Material::kStdDefaultRoughness,
+                                          Material::kStdDefaultMetallic,
+                                          base, norm);
         mat.baseColorName = mg.baseColorName;
         mat.normalMapName = mg.normalMapName;
         matHandles[i] = storage.materials.addMaterial(std::move(mat));

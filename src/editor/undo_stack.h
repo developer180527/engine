@@ -33,7 +33,17 @@ public:
 
     void push(UndoCommand cmd) {
         if (m_index < (int)m_history.size() - 1)
-            m_history.erase(m_history.begin() + m_index + 1, m_history.end());
+            // PARENTHESES ARE LOAD-BEARING. `begin() + m_index + 1` parses as
+            // `(begin() + m_index) + 1`, and after undoing everything m_index
+            // is -1 — so the INTERMEDIATE iterator is begin() - 1. The final
+            // value is right, but a deque iterator computes eagerly: operator+=
+            // walks the block-pointer map on the spot, reading 8 bytes before
+            // the map allocation. Undefined behaviour that happens to work on
+            // libc++ today.
+            //
+            // Found by AddressSanitizer the first time that lane was ever run,
+            // in a test that had been passing for weeks (BUG-0001).
+            m_history.erase(m_history.begin() + (m_index + 1), m_history.end());
         m_history.push_back(std::move(cmd));
         m_index = (int)m_history.size() - 1;
         while ((int)m_history.size() > kMaxDepth) {

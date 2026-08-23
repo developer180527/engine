@@ -24,6 +24,48 @@ enki::TaskScheduler g_ts;
 std::atomic<bool>   g_init{false};
 std::thread::id     g_mainThread;
 
+// ── External threads must claim a slot before touching the scheduler ────────
+// enkiTS gives every thread a thread number and indexes PER-THREAD state with
+// it. From its own header:
+//
+//   "Will return 0 for thread which initialized the task scheduler, and all
+//    other non-enkiTS threads which have not been registered"
+//
+// So an unregistered external thread silently shares slot 0 WITH THE MAIN
+// THREAD. Two threads driving one slot corrupt the scheduler's per-thread pipe
+// state, and the symptom is a livelock: workers spin in the lock-free pipe
+// forever while the caller blocks in WaitforTask.
+//
+// This was live. jobs::parallelFor is documented as callable from a kit's own
+// threads (api_primitives_test proves it), and the audio provider ABI tells
+// providers to send decode, streaming and ray-tracing work to
+// services->parallelFor from THEIR workers. Every one of those was an
+// unregistered external thread. It reproduced about 1 run in 5 under TSan and
+// is rare enough without it to have gone unnoticed — which is exactly the
+// profile of a bug that ships (BUG-0003).
+constexpr uint32_t kExternalThreadSlots = 8;
+
+// Deregisters on thread exit so a transient thread returns its slot. Guarded on
+// g_init because a thread outliving shutdown must not touch a dead scheduler.
+struct ExternalSlot {
+    bool held = false;
+    ~ExternalSlot() {
+        if (held && g_init.load()) g_ts.DeRegisterExternalTaskThread();
+    }
+};
+
+// True when this thread may safely call the enkiTS API.
+bool ensureThreadRegistered() {
+    if (std::this_thread::get_id() == g_mainThread) return true;
+    // Non-zero means a pool thread, or an external thread already registered —
+    // both own their slot.
+    if (g_ts.GetThreadNum() != 0) return true;
+
+    thread_local ExternalSlot slot;
+    if (!slot.held) slot.held = g_ts.RegisterExternalTaskThread();
+    return slot.held;
+}
+
 // run() control block. Shared between the in-flight registry below and any
 // caller-held JobHandles: pumpMain()'s sweep drops the REGISTRY's reference
 // once complete, but a stashed handle keeps the block alive, so wait() on
@@ -71,6 +113,10 @@ void init(uint32_t numWorkers) {
 
     enki::TaskSchedulerConfig cfg;
     if (numWorkers > 0) cfg.numTaskThreadsToCreate = numWorkers;
+    // Slots for threads the engine does not own: kit threads, and a provider's
+    // decode/streaming/propagation workers. Must be reserved HERE — enkiTS
+    // sizes its per-thread arrays at Initialize and cannot grow them later.
+    cfg.numExternalTaskThreads = kExternalThreadSlots;
     cfg.customAllocator.alloc =
         [](size_t align, size_t size, void*, const char*, int) {
             return mem::alloc(size, align, mem::Tag::Jobs);
@@ -110,6 +156,11 @@ JobHandle run(const char* name, std::function<void()> fn) {
     // "already complete", so callers' wait() is still correct.
     if (!g_init.load()) { fn(); return {}; }
 
+    // An unregistered external thread would share slot 0 with the main thread.
+    // Running inline is the honest degradation: the work still happens, on this
+    // thread, and a default handle reads as already-complete.
+    if (!ensureThreadRegistered()) { fn(); return {}; }
+
     auto task = std::make_shared<RunTask>(name, std::move(fn));
     {
         std::lock_guard<std::mutex> lk(g_inflightMu);
@@ -125,6 +176,9 @@ void parallelFor(const char* name, uint32_t count, uint32_t grain,
     const uint32_t g = grain > 0 ? grain : 1;
     // Not worth a dispatch (or no pool): run the whole range inline.
     if (!g_init.load() || count <= g) { fn(0, count); return; }
+    // Out of external slots: run inline rather than corrupt slot 0. Slower for
+    // this caller, correct for everyone.
+    if (!ensureThreadRegistered()) { fn(0, count); return; }
 
     ForTask t;
     t.name       = name;
@@ -137,6 +191,13 @@ void parallelFor(const char* name, uint32_t count, uint32_t grain,
 
 void wait(JobHandle h) {
     if (!h.valid() || !g_init.load()) return;
+    // WaitforTask makes the calling thread help run tasks, so it needs a slot
+    // for the same reason. Without one, spin here rather than corrupt slot 0.
+    if (!ensureThreadRegistered()) {
+        auto* t = static_cast<RunTask*>(h.opaque.get());
+        while (!t->GetIsComplete()) std::this_thread::yield();
+        return;
+    }
     // h co-owns the RunTask: even if pumpMain() swept it from g_inflight
     // long ago, the block is alive and WaitforTask on a completed task
     // returns immediately.
