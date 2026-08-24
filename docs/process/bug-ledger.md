@@ -355,6 +355,48 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **`maRealloc` copied the NEW size out of the OLD block — a heap over-read on
+  every sound decode.** The host services interface has no realloc, deliberately,
+  so the shim did alloc + copy + free and bounded the copy by the new size. Its
+  own comment said that was "safe only while miniaudio uses this path to GROW",
+  which is exactly inverted: growing is the unsafe direction. 64 KB → 128 KB read
+  64 KB past the end.
+
+  On macOS the over-read landed inside the tagged heap's mapped region and
+  nothing ever went wrong. In a Linux container it hit an unmapped page and
+  SIGSEGV'd inside `ma_decoder__full_decode_and_uninit`. Every block now carries
+  its size in a 16-byte prefix and the copy is bounded by the MINIMUM, which is
+  the only bound correct in both directions. Mutation-verified: restoring the old
+  bound brings the segfault straight back.
+
+  **Why it survived so long is the more useful part.** ASan runs on every push
+  and would have caught this instantly — but `audio_abi_conformance` is excluded
+  from sanitizer builds, so the one test that exercises this code is the one test
+  the sanitizer cannot see. A comment two lines above the bug described the
+  hazard correctly and drew the wrong conclusion from it; nothing executable
+  disagreed.
+
+- **The overrun counter measured the CI runner, not the mixer.** A Linux runner
+  has no sound card: ALSA prints "cannot find card '0'" and then returns a
+  working 48 kHz device anyway. Its callback cadence is whatever the scheduler
+  felt like, so `now - last > period * 2` fired 9 times and failed "NO callback
+  overruns under a 2000-command burst" — an assertion about our mixer, failing on
+  a fact about the machine. An overrun means "we missed a HARDWARE deadline", so
+  with no hardware there is nothing to miss. `ENGINE_AUDIO_NO_HARDWARE=1` (set by
+  ctest, never by a shipped game) both permits the null-backend fallback and
+  stops the timing assertions. The first attempt at this flag meant "we used the
+  null backend" and was too narrow to ever trigger — ALSA had already succeeded.
+
+- **`verified:` dates from a UTC+5:30 machine are "in the future" to a UTC
+  runner.** Three docs stamped 2026-08-25 from a machine where it was, failing on
+  a runner where it was still the 24th — a hard error, on the gating leg, for a
+  timezone. The check now compares against UTC with a day of slack; it exists to
+  catch a transposed year, not to police which side of midnight someone lives on,
+  and a 2027 stamp is still rejected. The same clock skew flipped `Contract
+  errors: 0` to `3` inside the generated ENGINE_STATUS.md, which is why the
+  status gate failed too — live-check counts are now excluded from that
+  comparison for the same reason the stale count already was.
+
 - **The miniaudio provider published `engineInit` as a plain `bool` and the audio
   callback read it.** TSan caught it on the CoreAudio callback thread against the
   write in `maCreate`. The ORDERING was already correct — the flag is set before

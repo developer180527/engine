@@ -475,11 +475,15 @@ if(ENGINE_WITH_RUST AND NOT ENGINE_SANITIZE)
         add_test(NAME audio_abi_conformance
                  COMMAND ${CMAKE_COMMAND} -E env
                          ENGINE_AUDIO_PROVIDER=$<TARGET_FILE:engine_audio_miniaudio_module>
-                         # A CI runner has no sound card, so without this the
-                         # ONLY test of the shipping audio backend is unrunnable
-                         # on every Linux leg. miniaudio's null backend runs a
-                         # real thread with a real clock — see maCreate.
-                         ENGINE_AUDIO_NULL_DEVICE=1
+                         # No CI runner has dependable audio hardware. On Linux
+                         # ALSA finds no card and hands back a working 48 kHz
+                         # dummy device anyway, whose callback cadence is whatever
+                         # the scheduler felt like — so the provider must not
+                         # assert hardware TIMING there, and must be allowed to
+                         # fall back to miniaudio's null backend where there is
+                         # no device at all. See maCreate. A shipped game never
+                         # sets this: a real device failure must stay visible.
+                         ENGINE_AUDIO_NO_HARDWARE=1
                          ${CARGO_EXECUTABLE} test --quiet
                  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/tests/audio_conformance)
         # Pointed at the REAL provider, not just the Rust reference. Without

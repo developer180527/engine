@@ -43,6 +43,7 @@
 // exactly the transitive dependency that builds on libc++ and fails on
 // libstdc++. scripts/check_std_includes.py flagged these the moment they were
 // written, which is the whole point of having it.
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 
@@ -131,10 +132,18 @@ struct Provider {
     //   * desc->bufferFrames is actually honoured
     ma_device  device{};
     bool       deviceInit = false;
-    // True when we fell back to miniaudio's NULL backend because the machine has
-    // no sound card. Written before the release store below, so the callback's
-    // acquire makes it visible.
-    bool       nullDevice = false;
+    // True when this host has no DEPENDABLE audio hardware, so timing-based
+    // assertions mean nothing. Written before the release store below, so the
+    // callback's acquire makes it visible.
+    //
+    // Covers two situations that look different and are the same: we fell back to
+    // miniaudio's null backend, OR the OS handed us a device that is not backed
+    // by real hardware. The second is what a Linux CI runner actually does —
+    // ALSA has no card, spews "cannot find card '0'", and then returns a working
+    // 48 kHz device anyway. So a flag meaning "we used the null backend" was too
+    // narrow: it never triggered, and the callback counted 9 phantom overruns
+    // against a dummy device's irregular cadence.
+    bool       noHardware = false;
     ma_engine  engine{};
     // ATOMIC, and published with RELEASE as the last step of create.
     //
@@ -174,30 +183,65 @@ struct Provider {
 inline Provider* prov(void* p) { return static_cast<Provider*>(p); }
 
 // ── Host-backed allocation for miniaudio ────────────────────────────────────
+// Every block carries its SIZE in a 16-byte prefix, because realloc cannot be
+// implemented correctly without it.
+//
+// THE BUG THIS FIXES was a heap over-read on every sound decode. The host
+// interface has no realloc — deliberately, one fewer thing every host and every
+// provider must agree on — so this shim did alloc + copy + free, and copied the
+// NEW size out of the OLD block:
+//
+//     memcpy(n, ptr, sz);   // sz is the NEW size
+//
+// The comment above it claimed that was "safe only while miniaudio uses this
+// path to GROW". That reasoning is inverted: growing is exactly the unsafe case.
+// Going from 64 KB to 128 KB read 64 KB past the end of the old allocation. On
+// macOS the over-read landed inside the tagged heap's mapped region and nothing
+// ever went wrong; in a Linux container it hit an unmapped page and SIGSEGV'd
+// inside ma_decoder__full_decode_and_uninit.
+//
+// Worth noting how long it hid: ASan runs on every CI push and would have caught
+// this instantly, but audio_abi_conformance is excluded from sanitizer builds
+// (see tests/CMakeLists.txt — the Rust harness aborts under a dlopen'd
+// instrumented library). The one test that exercises this code is the one test
+// the sanitizer cannot see.
+struct alignas(16) MaBlockHeader {
+    uint64_t size;
+    uint64_t _pad;
+};
+static_assert(sizeof(MaBlockHeader) == 16,
+              "the prefix must keep the payload 16-byte aligned");
+
 void* maMalloc(size_t sz, void* ud) {
     auto* pv = static_cast<Provider*>(ud);
-    return pv->host.alloc(pv->host.userData, (uint64_t)sz, 16);
+    void* base = pv->host.alloc(pv->host.userData,
+                                (uint64_t)sz + sizeof(MaBlockHeader), 16);
+    if (!base) return nullptr;
+    static_cast<MaBlockHeader*>(base)->size = (uint64_t)sz;
+    return static_cast<char*>(base) + sizeof(MaBlockHeader);
 }
-void* maRealloc(void* ptr, size_t sz, void* ud) {
-    // The host interface has no realloc — one fewer thing every host and every
-    // provider must agree on — so this is alloc + copy + free.
-    //
-    // The OLD size is not recoverable here, so the copy is bounded by the NEW
-    // size. That is safe only while miniaudio uses this path to GROW; copying
-    // `sz` bytes out of a smaller old block would read past it. miniaudio does
-    // not shrink through realloc.
-    auto* pv = static_cast<Provider*>(ud);
-    if (!ptr)   return pv->host.alloc(pv->host.userData, (uint64_t)sz, 16);
-    if (sz == 0) { pv->host.free(pv->host.userData, ptr); return nullptr; }
-    void* n = pv->host.alloc(pv->host.userData, (uint64_t)sz, 16);
-    if (!n) return nullptr;
-    memcpy(n, ptr, sz);
-    pv->host.free(pv->host.userData, ptr);
-    return n;
-}
+
 void maFreeCb(void* ptr, void* ud) {
+    if (!ptr) return;
     auto* pv = static_cast<Provider*>(ud);
-    pv->host.free(pv->host.userData, ptr);
+    pv->host.free(pv->host.userData,
+                  static_cast<char*>(ptr) - sizeof(MaBlockHeader));
+}
+
+void* maRealloc(void* ptr, size_t sz, void* ud) {
+    if (!ptr)    return maMalloc(sz, ud);
+    if (sz == 0) { maFreeCb(ptr, ud); return nullptr; }
+
+    const uint64_t oldSize = reinterpret_cast<const MaBlockHeader*>(
+        static_cast<char*>(ptr) - sizeof(MaBlockHeader))->size;
+
+    void* n = maMalloc(sz, ud);
+    if (!n) return nullptr;
+    // The MINIMUM of the two, which is the only bound that is correct in both
+    // directions — and the whole point of tracking the old size.
+    std::memcpy(n, ptr, (size_t)(oldSize < (uint64_t)sz ? oldSize : (uint64_t)sz));
+    maFreeCb(ptr, ud);
+    return n;
 }
 
 // ── The real-time callback ──────────────────────────────────────────────────
@@ -224,15 +268,14 @@ void onDeviceData(ma_device* dev, void* out, const void* /*in*/, ma_uint32 frame
     // player notices instantly. Two periods late means the previous callback
     // did not return in time — count it. First callback has no predecessor.
     //
-    // NOT ON THE NULL BACKEND. An overrun means "we missed a HARDWARE deadline",
-    // and the null backend has no hardware and no deadline — miniaudio simulates
-    // the timing in software, so a gap wider than two periods there measures the
-    // OS scheduler and nothing else. Counting it produced exactly one phantom
-    // overrun on a CI runner and failed "no overruns while actually mixing",
-    // which is an assertion about our mixer reporting a fact about the runner.
-    // The counter stays fully live on real devices, which is where it means
-    // something.
-    if (!pv->nullDevice && pv->lastCallbackNs != 0 && period != 0 &&
+    // NOT WITHOUT REAL HARDWARE. An overrun means "we missed a HARDWARE
+    // deadline". With no hardware there is no deadline — the cadence is whatever
+    // the OS scheduler and a dummy device felt like — so a gap wider than two
+    // periods measures the runner and nothing else. Counting it failed "no
+    // overruns while actually mixing", which is an assertion about our mixer
+    // reporting a fact about the machine. The counter stays fully live on real
+    // devices, which is the only place it means anything.
+    if (!pv->noHardware && pv->lastCallbackNs != 0 && period != 0 &&
         (now - pv->lastCallbackNs) > period * 2) {
         pv->overruns.fetch_add(1, std::memory_order_relaxed);
     }
@@ -399,19 +442,26 @@ static EngineAudioResult maCreate(const EngineAudioDeviceDesc* desc,
     // audio device failed must say so and not pretend it is playing: the whole
     // point of E_NO_DEVICE is that the caller gets to decide. CI sets this; a
     // shipped player does not.
+    // ENGINE_AUDIO_NO_HARDWARE is the host telling us "there is no dependable
+    // audio device here" — which is the truth on every CI runner. It does two
+    // things, and they are one idea: allow the null-backend fallback, and stop
+    // asserting hardware-timing properties. A shipped game never sets it, so a
+    // real device failure still surfaces as E_NO_DEVICE rather than silently
+    // pretending to play.
+    const char* noHw = std::getenv("ENGINE_AUDIO_NO_HARDWARE");
+    pv->noHardware = noHw && *noHw && noHw[0] != '0';
+
     bool deviceOk = ma_device_init(nullptr, &dcfg, &pv->device) == MA_SUCCESS;
-    if (!deviceOk) {
-        const char* allowNull = std::getenv("ENGINE_AUDIO_NULL_DEVICE");
-        if (allowNull && *allowNull && allowNull[0] != '0') {
-            const ma_backend nullBackend[] = { ma_backend_null };
-            deviceOk = ma_device_init_ex(nullBackend, 1, nullptr, &dcfg,
-                                         &pv->device) == MA_SUCCESS;
-            if (deviceOk) {
-                pv->nullDevice = true;
-                std::fprintf(stderr, "[miniaudio] no real device; running on the "
-                                     "NULL backend (ENGINE_AUDIO_NULL_DEVICE)\n");
-            }
-        }
+    if (!deviceOk && pv->noHardware) {
+        // A FAILED ma_device_init may have partly written the struct; miniaudio
+        // expects a zeroed device for a fresh attempt.
+        std::memset(&pv->device, 0, sizeof(pv->device));
+        const ma_backend nullBackend[] = { ma_backend_null };
+        deviceOk = ma_device_init_ex(nullBackend, 1, nullptr, &dcfg,
+                                     &pv->device) == MA_SUCCESS;
+        if (deviceOk)
+            std::fprintf(stderr, "[miniaudio] no device; running on the NULL "
+                                 "backend (ENGINE_AUDIO_NO_HARDWARE)\n");
     }
     if (!deviceOk) {
         // The expected outcome on CI and dedicated servers. Not an error to
