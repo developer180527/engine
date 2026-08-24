@@ -40,6 +40,7 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 
 #include "runtime/scripting/script_services.h"
+#include <algorithm>
 
 // ── Physics layers ─────────────────────────────────────────────────────────
 namespace PhysLayers {

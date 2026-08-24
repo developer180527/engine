@@ -30,6 +30,7 @@
 #include <assetlib/texture_asset.h>
 #include <assetlib/cook_pipeline.h>
 #include <vector>
+#include <cmath>
 
 namespace fs = std::filesystem;
 namespace { int g_failures = 0; }

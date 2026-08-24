@@ -8,6 +8,7 @@
 #include <filesystem>
 #include "mesh_importer.h"
 #include "assets/asset_storage.h"
+#include <cstdio>
 
 class ImporterRegistry {
 public:

@@ -38,6 +38,7 @@
 #include <assetlib/asset_registry.h>
 #include <assetlib/cook_result_file.h>
 #include <assetlib/ddc.h>
+#include <chrono>
 
 namespace fs = std::filesystem;
 namespace { int g_failures = 0; }

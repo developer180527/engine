@@ -3,6 +3,9 @@
 #include <assetlib/mesh_asset.h>
 #include <assimp/matrix3x3.h>
 #include <assimp/matrix4x4.h>
+#include <filesystem>
+#include <string>
+#include <vector>
 
 class MeshCooker : public assetlib::ICooker {
 public:

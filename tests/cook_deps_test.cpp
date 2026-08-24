@@ -33,6 +33,7 @@
 #include "assets/cookers/texture/texture_cooker.h"
 #include "assets/cookers/shader/shader_cooker.h"
 #include "assets/cookers/material/material_cooker.h"
+#include <memory>
 
 namespace fs = std::filesystem;
 namespace { int g_failures = 0; }

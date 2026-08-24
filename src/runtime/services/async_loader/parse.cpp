@@ -37,6 +37,7 @@
 #include <cstring>
 #include <cstdio>
 #include "runtime/services/async_loader/loader_internal.h"
+#include <cstdlib>
 
 // -----------------------------------------------------------------------
 // Worker thread helpers — zero main-thread calls, bgfx::copy() IS

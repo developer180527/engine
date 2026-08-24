@@ -384,6 +384,24 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/scripts/engine_doctor.py status --check)
     set_tests_properties(docs_status_current PROPERTIES LABELS docs TIMEOUT 120)
+
+    # ── Missing standard headers, caught here instead of on a Linux runner ────
+    # libc++ (macOS) pulls much of the standard library in transitively;
+    # libstdc++ (Linux) does not. So `std::memcpy` with no <cstring>, or
+    # `std::string` with no <string>, builds fine on the development machine and
+    # fails on every Linux leg. Three separate CI round-trips went to exactly
+    # that, ONE ERROR AT A TIME, because a build stops at the first failure:
+    # four files missing <cstring>, then <string> in gpu_budget.cpp, and no
+    # reason to think that was the last. The next 25 were found by this script in
+    # one pass.
+    #
+    # `unit`, not `docs`: it guards whether the tree COMPILES, and it runs on
+    # every leg because that is nearly free and the gating leg is the one that
+    # cannot see the problem it protects against.
+    add_test(NAME std_includes
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/scripts/check_std_includes.py)
+    set_tests_properties(std_includes PROPERTIES LABELS unit TIMEOUT 120)
 endif()
 
 # ── Cooked-format conformance (Rust) ────────────────────────────────────────

@@ -20,6 +20,7 @@ namespace assetlib { class AssetRegistry; }
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
+#include <mutex>
 
 // ---------------------------------------------------------------------------
 // AssetService — flat, FFI-friendly API for loading and unloading cooked

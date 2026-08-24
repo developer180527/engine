@@ -39,6 +39,7 @@
 #include "core/transform.h"
 #include "core/transform_utils.h"
 #include "components/prev_transform.h"
+#include <algorithm>
 
 namespace { int g_failures = 0; }
 #define CHECK(cond, ...) do {                                       \

@@ -42,6 +42,7 @@
 #include "components/skinned_mesh.h"
 #include "runtime/jobs/jobs.h"
 #include "runtime/world_query_cache.h"
+#include <algorithm>
 
 class AnimatorSystem {
 public:

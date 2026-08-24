@@ -9,6 +9,7 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <chrono>
 
 // CookService — runs the cook pipeline on a background thread so the
 // editor opens immediately. Opens its own DB connection (WAL mode allows

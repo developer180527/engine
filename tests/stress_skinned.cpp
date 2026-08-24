@@ -33,6 +33,7 @@
 #include "components/animator.h"
 #include "core/transform.h"
 #include "components/mesh_renderer.h"
+#include <cstdlib>
 
 using Clock = std::chrono::steady_clock;
 static double ms(Clock::time_point a, Clock::time_point b) {

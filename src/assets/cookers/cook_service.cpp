@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <optional>
 #include <utility>
+#include <memory>
 
 std::filesystem::path CookService::defaultEngineAssetsRoot() {
     namespace fs = std::filesystem;

@@ -23,6 +23,7 @@
 
 #include <string>
 #include <vector>
+#include <filesystem>
 
 class ShaderCooker : public assetlib::ICooker {
 public:

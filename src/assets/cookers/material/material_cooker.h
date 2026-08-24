@@ -14,6 +14,7 @@
 
 #include <string>
 #include <vector>
+#include <filesystem>
 
 class MaterialCooker : public assetlib::ICooker {
 public:

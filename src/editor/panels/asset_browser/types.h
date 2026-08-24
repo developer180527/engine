@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <imgui.h>
 #include <assetlib/asset_registry.h>
+#include <cstdio>
+#include <filesystem>
 
 namespace ab {
 

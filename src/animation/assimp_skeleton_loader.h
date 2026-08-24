@@ -9,6 +9,7 @@
 
 #include "animation/skeleton.h"
 #include "animation/animation_clip.h"
+#include <cstdio>
 
 namespace anim {
 

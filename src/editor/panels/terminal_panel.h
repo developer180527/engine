@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include "core/logger.h"
+#include <algorithm>
 
 // Simple popen-based terminal rooted at the project directory.
 // Not a full PTY — commands run, output is captured, shown in panel.

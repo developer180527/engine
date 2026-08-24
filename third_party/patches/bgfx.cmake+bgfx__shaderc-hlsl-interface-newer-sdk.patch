@@ -1,21 +1,34 @@
 diff --git a/tools/shaderc/shaderc_hlsl.cpp b/tools/shaderc/shaderc_hlsl.cpp
-index 39676fa6f..727972a63 100644
+index 39676fa6f..ca2a50a85 100644
 --- a/tools/shaderc/shaderc_hlsl.cpp
 +++ b/tools/shaderc/shaderc_hlsl.cpp
-@@ -14,6 +14,16 @@
+@@ -13,11 +13,28 @@
+ #	define __out
  #endif // defined(__MINGW32__)
  
- #define COM_NO_WINDOWS_H
+-#define COM_NO_WINDOWS_H
 +// COM_NO_WINDOWS_H suppresses the <windows.h> pull-in, and on Windows SDK
-+// 10.0.26100 (shipped with VS 18) that path no longer leaves `interface`
-+// defined. d3dcommon.h line 58 is `typedef interface ID3D10Blob ID3D10Blob;`,
-+// so every COM forward-declaration in d3dcommon.h / oaidl.h / objidl.h becomes
-+// "error C2146: syntax error: missing ';'" and the compile stops at 100 errors.
-+// `interface` is a plain `struct` alias in the SDK; defining it here is what
-+// combaseapi.h would have done. Guarded, so an SDK that still defines it wins.
-+#if defined(_MSC_VER) && !defined(interface)
-+#	define interface struct
++// 10.0.26100 (the VS 18 image) that path no longer supplies the COM macro set at
++// all: not `interface` (d3dcommon.h:58 is `typedef interface ID3D10Blob ...`),
++// and not `STDMETHOD` / `PURE` / `THIS_` either, which d3d11shader.h needs for
++// every method declaration. The result is hundreds of C2146/C2065 errors inside
++// SDK headers and a compile that stops at the 100-error limit.
++//
++// Defining `interface` alone was tried first and moved the failure from
++// d3dcommon.h to d3d11shader.h — the macros come as a SET, from <objbase.h>, and
++// patching them one at a time is chasing symptoms. So on MSVC we simply let
++// <objbase.h> in, which is what every other D3D consumer on Windows does.
++//
++// The Linux/macOS cross-compile path keeps COM_NO_WINDOWS_H: it uses d3d4linux's
++// own shims, where pulling in a real <objbase.h> is neither possible nor wanted.
++#if !defined(_MSC_VER)
++#	define COM_NO_WINDOWS_H
 +#endif
  #if BX_PLATFORM_LINUX || BX_PLATFORM_OSX
  #	include <wsl/winadapter.h>
  #	include <d3d4linux.h>
+ #else
++#	include <objbase.h>
+ #	include <d3dcompiler.h>
+ #	include <d3d11shader.h>
+ #endif // BX_PLATFORM_LINUX || BX_PLATFORM_OSX

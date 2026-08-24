@@ -24,6 +24,8 @@
 #include <cstring>
 #include <filesystem>
 #include <vector>
+#include <cmath>
+#include <cstdlib>
 
 // -----------------------------------------------------------------------
 // Internal helpers — file-scope only

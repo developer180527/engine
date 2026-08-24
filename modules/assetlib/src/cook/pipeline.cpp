@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <ctime>
 #include <unordered_map>
+#include <memory>
 
 namespace assetlib {
 

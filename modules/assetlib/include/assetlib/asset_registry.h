@@ -5,6 +5,7 @@
 #include <optional>
 #include <filesystem>
 #include <cstdint>
+#include <unordered_map>
 
 namespace assetlib {
 
