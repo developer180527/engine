@@ -199,6 +199,108 @@ fn cshader_reader_refuses_what_it_cannot_understand() {
 // ── DDC manifest ────────────────────────────────────────────────────────────
 
 #[test]
+fn bounds_checks_survive_the_most_out_of_bounds_value_representable() {
+    // BUG-0015. `params_fit_their_uniforms` computed `offset + components` in
+    // u32, on an offset read RAW FROM THE FILE. At offset u32::MAX that
+    // overflows: a debug build panicked ("attempt to add with overflow") and a
+    // RELEASE build wrapped to a small number and returned Ok — the bounds check
+    // ACCEPTING the most out-of-bounds value it can be handed, which is exactly
+    // the input it exists to reject.
+    //
+    // The shape of the defect is the reason this test covers BOTH functions.
+    // `variant_ranges_in_bounds`, two functions above in the same file, had
+    // already been widened to u64; `params_fit_their_uniforms` had not. Nothing
+    // held the pair together, so they drifted apart in a single sitting. Pinning
+    // only the one that broke would leave the same drift free to happen in the
+    // other direction.
+    //
+    // Correct in either profile: post-fix both return Err. Pre-fix, debug
+    // panicked on the overflow and release failed this assertion — so a run in
+    // either profile reports something, rather than one of them passing quietly.
+    use fmt::shader::{ParamType, ShaderParam, ShaderVariant};
+
+    let base = fmt::ShaderAsset {
+        version: fmt::shader::CSHD_VERSION,
+        name: "overflow_probe".into(),
+        features: vec![],
+        params: vec![],
+        samplers: vec![],
+        variants: vec![],
+        blob_size: 16,
+    };
+
+    // ── The param side ──────────────────────────────────────────────────────
+    for ty in [ParamType::Float, ParamType::Vec2, ParamType::Vec3,
+               ParamType::Vec4, ParamType::Color] {
+        let a = fmt::ShaderAsset {
+            params: vec![ShaderParam {
+                name: "hostile".into(), ty,
+                uniform: "u_params".into(),
+                offset: u32::MAX,
+                defaults: [0.0; 4],
+            }],
+            ..base.clone()
+        };
+        assert!(
+            a.params_fit_their_uniforms().is_err(),
+            "offset u32::MAX with {ty:?} must be REJECTED — if this passes, the \
+             addition wrapped and the check accepted the worst possible input"
+        );
+    }
+
+    // The boundary either side of the vec4, so the fix cannot be "reject
+    // everything", which would pass the case above while breaking every real
+    // shader.
+    let fits = fmt::ShaderAsset {
+        params: vec![ShaderParam {
+            name: "last_component".into(), ty: ParamType::Float,
+            uniform: "u_params".into(), offset: 3, defaults: [0.0; 4],
+        }],
+        ..base.clone()
+    };
+    assert!(fits.params_fit_their_uniforms().is_ok(),
+            "a float at component 3 occupies exactly the last slot of a vec4");
+
+    let spills = fmt::ShaderAsset {
+        params: vec![ShaderParam {
+            name: "one_past".into(), ty: ParamType::Float,
+            uniform: "u_params".into(), offset: 4, defaults: [0.0; 4],
+        }],
+        ..base.clone()
+    };
+    assert!(spills.params_fit_their_uniforms().is_err(),
+            "component 4 is past the end of a vec4");
+
+    // ── The variant side, held to the same rule ─────────────────────────────
+    // Already u64 when the param check was not. Pinned so the two cannot drift
+    // apart again — which is the actual defect, not the arithmetic.
+    let v = fmt::ShaderAsset {
+        variants: vec![ShaderVariant {
+            feature_mask: 0, profile: 0,
+            vs_offset: u32::MAX, vs_size: u32::MAX,
+            fs_offset: 0, fs_size: 8,
+        }],
+        ..base.clone()
+    };
+    assert!(
+        v.variant_ranges_in_bounds().is_err(),
+        "vs_offset + vs_size at u32::MAX each must be REJECTED — in u32 that \
+         wraps to -2 and reads as comfortably inside a 16-byte blob"
+    );
+
+    // And the boundary: a range ending exactly at the blob's last byte is legal.
+    let exact = fmt::ShaderAsset {
+        variants: vec![ShaderVariant {
+            feature_mask: 0, profile: 0,
+            vs_offset: 0, vs_size: 8, fs_offset: 8, fs_size: 8,
+        }],
+        ..base.clone()
+    };
+    assert!(exact.variant_ranges_in_bounds().is_ok(),
+            "ranges ending exactly at blob_size are in bounds");
+}
+
+#[test]
 fn manifest_accepts_what_the_engine_writes() {
     // Exactly the shape ddcStoreRecord emits: magic line, primary "@" first,
     // then siblings by filename.

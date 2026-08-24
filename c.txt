@@ -1,180 +1,55 @@
-engine: the lanes that were never run, one material path, and a reader from outside
+tests: pin the overflow, and record the seven defects that were fixed
 
-Large, and coherent: the test infrastructure that had never executed is what
-found everything else here, including two mistakes of mine.
+Two follow-ups to the last three commits, both small and both closing loops
+those commits left open.
 
-Suggested exclusion: c.txt is your scratch file.
+── the overflow had no regression test ─────────────────────────────────────
+params_fit_their_uniforms was widened to u64 and nothing pinned it, which by
+this repo's own rule means it is not fixed yet: a bug is fixed when a test fails
+without the change and passes with it.
 
-═══ 1 — running what was already written ════════════════════════════════════
+The test covers BOTH bounds checks, because the defect was never the arithmetic
+— it was two sibling functions drifting apart in one sitting, one widened and
+one not. Pinning only the one that broke leaves the drift free to run the other
+way. Boundaries either side are asserted too (a float at component 3 fits
+exactly, component 4 spills), so the fix cannot degrade into "reject
+everything".
 
-── the sanitizer lanes had never run once ──────────────────────────────────
-ENGINE_SANITIZE was wired into CMake, documented at the top of
-tests/CMakeLists.txt, and invoked by nothing. First execution, three real
-defects in code that had been passing its tests for weeks:
+Mutation-proven in BOTH profiles, with the two distinct signatures that made
+this dangerous:
 
-  BUG-0001  heap-buffer-overflow in UndoStack::push. `begin() + m_index + 1`
-            parses as `(begin() + m_index) + 1`, and m_index is -1 once
-            everything is undone — so the INTERMEDIATE deque iterator is
-            begin() - 1, and a deque iterator computes eagerly: operator+=
-            walked the block-pointer map 8 bytes before the allocation. The
-            final value was correct, which is exactly why nothing noticed.
+  debug     attempt to add with overflow            (shader.rs:177)
+  release   offset u32::MAX with Float must be REJECTED
 
-  BUG-0002  stack-buffer-overflow in cooker_test's base64 helper. 80 % 3 == 2,
-            so the final group is short and the loop read buf[i+2] anyway.
+Release is the one that mattered — pre-fix it returned Ok.
 
-  BUG-0003  a LIVELOCK in engine::jobs, and the serious one. enkiTS indexes
-            per-thread state by thread number and returns 0 for "the thread that
-            initialised the scheduler AND all unregistered threads". The engine
-            never called RegisterExternalTaskThread, so every kit or provider
-            thread calling parallelFor drove slot 0 CONCURRENTLY WITH THE MAIN
-            THREAD. ~1 run in 5 under TSan, stuck at 180s — starvation, not
-            slowness. Mutation-verified: pre-fix behaviour hung on run 2 of 12,
-            reverted 12/12 passed.
+── seven fixes, no ledger entries ──────────────────────────────────────────
+BUG-0015 the overflow · BUG-0016 four cooked-asset lanes that never ran and
+reported ok · BUG-0017 assertions that disarmed instead of failing · BUG-0018
+lossy UTF-8 repair running BEFORE the name-safety check · BUG-0019 the reference
+audio clock that failed the gating leg · BUG-0020 the LAST_WELL_FORMED race ·
+BUG-0021 std::memcpy without <cstring> in four files.
 
-            Live on a path published two commits earlier: the audio provider ABI
-            tells providers to use services->parallelFor from THEIR workers.
+Ledger at 21: memory 4, logic 6, coverage 4, threading 3, abi 2, build 2.
 
-I expected TSan to need triage and was wrong — the whole unit lane is clean
-under it, so it gates from the start rather than reporting.
+Two are written to be uncomfortable rather than tidy. BUG-0016 is BUG-0004's
+exact shape three weeks later — a check that exists, is believed to run, and
+does not — and its note records that I verified two of those four lanes by hand
+with --nocapture and then failed to make the check mechanical. BUG-0017 is the
+self-agreeing-check pattern this crate exists to replace, reintroduced inside it.
 
-── CI HAD NEVER RUN THE UNIT TESTS ─────────────────────────────────────────
-Three platforms built; only the docs contract executed. 63 test binaries had
-only ever run on a developer's laptop. Both `-L unit` and `-L fuzz-regress` now
-run on EVERY matrix leg — the point of a matrix is catching what differs per
-platform, and a test that only runs on macOS cannot. The fuzz corpus's own
-comment has been saying "the regression lane above catches it forever" about a
-step that did not exist.
+BUG-0021's proof records the METHOD: found by grepping for the pattern rather
+than waiting for CI. The build stops at the first error, so CI could only ever
+report one of four — three more red runs to find them one at a time.
 
-  BUG-0010  kit_lifecycle_test could never pass in CI: it registered whenever
-            fps_shooter/project.json existed (committed) but its fixture is a kit
-            module from a gitignored repo. Harmless while nothing ran it; fatal
-            to the first gating lane.
-
-── the bug ledger ──────────────────────────────────────────────────────────
-The practice existed in prose — "reintroduce the bug, watch the test fail,
-restore" — with no enforcement. Fixed bugs were ✅ marks across twelve issues.md
-files naming their tests in sentences, so deleting a test silently orphaned the
-proof and nothing could answer "which bugs have no regression test?".
-
-docs/process/bug-ledger.md plus a check in engine_doctor.py. The load-bearing
-field is `pinned-by`, and AN ORPHANED PROOF IS AN ERROR. Mutation-tested three
-ways: a pinned-by pointing at a deleted test, a duplicate id, an unknown class.
-
-`class` answers "what kind of test do I write?" mechanically: memory -> ASan,
-threading -> TSan, abi -> offset test, parse -> a corpus seed, build -> assert on
-the artifact. 14 entries, three recorded as OPEN rather than tidied away.
-
-═══ 2 — Phase 5 step 4: one material representation ═════════════════════════
-
-Material carried BOTH forms — dedicated fields for mesh-embedded materials and
-uniform blocks for cooked .cmat assets, with the pipeline branching on a
-`dataDriven` flag. The hazard was never performance: TWO UPLOAD PATHS EXISTED
-AND EITHER COULD BE THE ONE THAT RUNS, decided by where a material came from
-(BUG-0011).
-
-Material::standard() synthesizes the declared form at load, applied at FIVE
-sites rather than the one the roadmap named — sync cooked load, async cooked
-drain, source-import upload, and both importers. Missing any would have left the
-dual shape alive for a scene mixing .fbx and .cooked.
-
-Two things the roadmap did not anticipate:
-
-  THE EDITOR INSPECTOR EDITED THOSE FIELDS DIRECTLY. The tempting fix — keep the
-  fields, sync them into the blocks — rebuilds the two sources of truth being
-  removed. So Material grew typed accessors that are a WINDOW onto the blocks:
-  the slider moves the exact bytes the renderer uploads.
-
-  A SYNTHESIZED MATERIAL NAMES NO SHADER, ON PURPOSE. Setting shaderName =
-  "standard" reads as obviously correct and is a regression: the pipeline would
-  resolve the cooked shader asset, which is not the instanced variant, so every
-  mesh-embedded material would leave instanced runs the moment that shader was
-  cooked — the R18/R5 win (3 067 draws -> 299) vanishing on the presence of a
-  file.
-
-═══ 3 — what verifying on real content actually caught ══════════════════════
-
-engine_host submit stats, before vs after, on a scene with a car and a pistol:
-
-  MATERIAL BINDS 2 -> 6, the only metric that moved. I had skipped porting R7's
-  dedup because it "measured as saving nothing" — measured on a scene where
-  binds were already 1:1 with draws. On real content it is 3:1. Ported: uniform
-  uploads skip when the material is unchanged, textures and state re-issue per
-  draw because bgfx discards those at submit(). Back to 2, and the full report
-  is then IDENTICAL — items, culling, draws, submesh draws, instancing, LOD,
-  bone uploads, shadow, texture census, VRAM, handles, churn.
-
-  BUG-0014, MINE. I had also changed the direct glTF importer to pass
-  pbr.roughness_factor / pbr.metallic_factor, which it had never read, and called
-  it an improvement — inside a change whose entire requirement was preserving
-  behaviour. Reverted. The defaults are now NAMED CONSTANTS, because three import
-  paths relied on them implicitly by never assigning the members, which is
-  exactly how it survived review.
-
-── and a diagnosis that was wrong ──────────────────────────────────────────
-The editor showed the pistol at Roughness 1.00 / Metallic 1.00 and I blamed that
-importer change. Reading the cooked file settled it: the .cooked ALREADY held
-1.0/1.0, and the scene loads the pistol through cookedPath — a path the direct
-importer never touches.
-
-The real BUG-0012: the glTF omits both factors, glTF defines an absent factor as
-1.0, cgltf reports it and the mesh cooker records it faithfully. The defect is
-downstream — those factors MULTIPLY a metallicRoughness texture and the forward
-pipeline samples only baseColor and normal. A renderer gap, not a cook error,
-and it predates all of this. The wrong diagnosis is kept in the ledger, because
-the correction is the useful part.
-
-═══ 4 — reading the cooked formats from outside C++ ═════════════════════════
-
-tests/cooked_format/ — a crate that parses .cooked, .cmat and .ctex with no
-engine code, and drives the real cookers through engine_cook_worker's PROCESS
-CLI.
-
-A cooked file is what a SHIPPED GAME reads, which makes its byte layout an ABI,
-and every one of them was checked only by the C++ that writes it. A save/load
-round-trip proves the writer and reader agree WITH EACH OTHER — both can move
-together and stay green forever. This is the other half, the same relationship
-audio_abi_check.c has with the Rust audio suite, pointed the other way.
-
-Two failure modes are specific to these formats and invisible to a round-trip:
-
-  .cmat is fully variable-length — every string is a u32 length plus
-  unterminated bytes, so a field inserted in the middle shifts everything after
-  it. The reader bounds-checks every length before allocating, refuses unknown
-  versions rather than guessing at a layout, and reports TRAILING BYTES, which
-  is what a forgotten version bump looks like.
-
-  .ctex is one flat blob whose meaning depends on BLOCK geometry. texture_asset.h
-  records that the original math hard-coded 4x4 and that getting it wrong "reads
-  a neighbouring mip as pixel data" — a plausible-looking wrong image, not a
-  crash. The reader recomputes the chain and compares against the bytes present.
-
-Mutation-verified ACROSS THE LANGUAGE BOUNDARY: changing the C++ cooker to write
-mipCount + 1 fails the Rust assertion with "Bc1 4x4 mips=4 implies 32 payload
-bytes, file has 24". That check did not exist before. Also: clamping the mesh
-cooker to 0.7/0.0 fails the BUG-0012 pin.
-
-Both fixture legs genuinely run — MaterialCooker emits 2 blocks / 8 floats,
-TextureCooker a 4x4 BC1 with 3 mips — rather than skipping quietly.
-
-── the rule this sets ──────────────────────────────────────────────────────
-New tests go in Rust WHEREVER A STABLE BOUNDARY ALREADY EXISTS: a C ABI, a file
-format, a process CLI. Those are the surfaces a third party would use, so
-testing them in another language proves they are real. C++ tests stay for C++
-internals — reaching those from Rust means writing a C shim first, which ADDS
-untested C++ for the privilege.
-
-Worth noting for the memory-safety argument: BUG-0001 and BUG-0002 were both C++
-out-of-bounds reads, and neither was found by a test being careful. ASan found
-them. The lane catches that class; the test's language does not.
-
-── .gitignore ──────────────────────────────────────────────────────────────
-tests/cooked_format/target/. The file already said "ONE RULE PER CRATE … add a
-line when you add a crate — the cost of forgetting is 17 MB of build output in a
-commit." I added the crate and forgot the line, which is precisely what
-happened.
+── the gate's blind spot, now written down ─────────────────────────────────
+engine_doctor validates entries that EXIST and structurally cannot notice one
+that should exist and does not. Three commits fixing seven defects landed before
+anyone spotted it, and only because someone went looking. "A fix and its entry
+land together" is a human rule and nothing will ever tell you it was skipped.
 
 ── verification ────────────────────────────────────────────────────────────
-Unit lane 53/53. ASan+UBSan and TSan clean. Deterministic render metrics
-identical to pre-migration on real content. Docs gate 0 errors, ENGINE_STATUS
-current. Ledger 14 entries.
+Full ctest 74/74 — unit 53, stress 6, fuzz-explore 5, fuzz-regress 5, docs 2,
+asset 2, soak 1. ASan+UBSan 51/51 on a fresh instrumented build. Docs gate 0
+errors, ENGINE_STATUS current, every pinned-by resolves.
 
