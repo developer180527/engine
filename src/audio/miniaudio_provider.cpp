@@ -39,6 +39,13 @@
 
 #include "miniaudio.h"
 
+// Explicit, not inherited: miniaudio.h happens to pull both in, which is
+// exactly the transitive dependency that builds on libc++ and fails on
+// libstdc++. scripts/check_std_includes.py flagged these the moment they were
+// written, which is the whole point of having it.
+#include <cstdio>
+#include <cstdlib>
+
 #include <atomic>     // the device clock, published from the real-time thread
 #include <chrono>     // provider-private monotonic clock (NOT a host call)
 #include <new>        // placement new for the single host-allocated block
@@ -124,8 +131,22 @@ struct Provider {
     //   * desc->bufferFrames is actually honoured
     ma_device  device{};
     bool       deviceInit = false;
+    // True when we fell back to miniaudio's NULL backend because the machine has
+    // no sound card. Written before the release store below, so the callback's
+    // acquire makes it visible.
+    bool       nullDevice = false;
     ma_engine  engine{};
-    bool       engineInit = false;
+    // ATOMIC, and published with RELEASE as the last step of create.
+    //
+    // It was a plain bool, and TSan caught the read on CoreAudio's callback
+    // thread against the write in maCreate. The ORDERING was already right —
+    // engineInit is set before ma_device_start, exactly as the comment there
+    // says — but ordering in the source is not a happens-before edge, and the
+    // audio callback thread already exists by then (ma_device_init creates it),
+    // so there was nothing making the write visible to it. Benign in practice on
+    // arm64 with an opaque call in between; still undefined, and still the kind
+    // of thing that stops being benign when a compiler inlines more.
+    std::atomic<bool> engineInit{false};
     ma_uint32  sampleRate   = 0;
     ma_uint32  bufferFrames = 0;
     ma_uint32  channels     = 0;
@@ -133,9 +154,16 @@ struct Provider {
     // Written on the real-time thread, read on any thread by getStats.
     std::atomic<uint64_t> framesPlayed{0};
     std::atomic<uint64_t> overruns{0};
-    // Callback-local, touched only by the audio thread.
+    // lastCallbackNs really is callback-local: written and read only on the
+    // audio thread.
     uint64_t   lastCallbackNs = 0;
-    uint64_t   expectedPeriodNs = 0;
+    // expectedPeriodNs is NOT, and the comment that used to cover both claimed it
+    // was. It is computed in maCreate on the creating thread and read in the
+    // callback on the audio thread — a second race in the same function, hidden
+    // behind a sentence that said it could not happen. Grouping a
+    // cross-thread field under a "callback-local" comment is how it stayed
+    // invisible.
+    std::atomic<uint64_t> expectedPeriodNs{0};
 
     Sound sounds[kMaxSounds];
     Voice voices[kMaxVoices];
@@ -185,11 +213,27 @@ void onDeviceData(ma_device* dev, void* out, const void* /*in*/, ma_uint32 frame
     const uint64_t now = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
 
+    // ACQUIRE FIRST. This pairs with the release store at the end of maCreate
+    // and is what makes everything that function published — the engine, the
+    // period, the rates — visible on this thread. Reading it up here rather than
+    // at the point of use is deliberate: it orders the whole callback body.
+    const bool ready = pv->engineInit.load(std::memory_order_acquire);
+    const uint64_t period = pv->expectedPeriodNs.load(std::memory_order_relaxed);
+
     // A missed deadline is an audible click, and it is the only audio failure a
     // player notices instantly. Two periods late means the previous callback
     // did not return in time — count it. First callback has no predecessor.
-    if (pv->lastCallbackNs != 0 && pv->expectedPeriodNs != 0 &&
-        (now - pv->lastCallbackNs) > pv->expectedPeriodNs * 2) {
+    //
+    // NOT ON THE NULL BACKEND. An overrun means "we missed a HARDWARE deadline",
+    // and the null backend has no hardware and no deadline — miniaudio simulates
+    // the timing in software, so a gap wider than two periods there measures the
+    // OS scheduler and nothing else. Counting it produced exactly one phantom
+    // overrun on a CI runner and failed "no overruns while actually mixing",
+    // which is an assertion about our mixer reporting a fact about the runner.
+    // The counter stays fully live on real devices, which is where it means
+    // something.
+    if (!pv->nullDevice && pv->lastCallbackNs != 0 && period != 0 &&
+        (now - pv->lastCallbackNs) > period * 2) {
         pv->overruns.fetch_add(1, std::memory_order_relaxed);
     }
     pv->lastCallbackNs = now;
@@ -198,7 +242,7 @@ void onDeviceData(ma_device* dev, void* out, const void* /*in*/, ma_uint32 frame
     // (miniaudio's own comment on the pDevice field names a "ma_engine_data_
     // callback" that is not a public symbol — ma_engine_read_pcm_frames is what
     // its internal callback actually calls.)
-    if (pv->engineInit)
+    if (ready)
         ma_engine_read_pcm_frames(&pv->engine, out, frameCount, nullptr);
 
     // Published last: a reader seeing this count knows the frames are mixed.
@@ -335,7 +379,41 @@ static EngineAudioResult maCreate(const EngineAudioDeviceDesc* desc,
     dcfg.dataCallback = onDeviceData;
     dcfg.pUserData    = pv;
 
-    if (ma_device_init(nullptr, &dcfg, &pv->device) != MA_SUCCESS) {
+    // ── The device, and the headless machine that has none ──────────────────
+    // A CI runner has no sound card. ALSA fails to even find a config
+    // ("snd_func_card_id ... No such file or directory"), ma_device_init
+    // returns an error, and this correctly reports E_NO_DEVICE — at which point
+    // the conformance suite cannot exercise a single line of the real provider,
+    // on every Linux leg, forever. Skipping that leg would leave the ONLY test
+    // of the shipping backend permanently unrun; asserting through it would
+    // demand hardware no runner has.
+    //
+    // miniaudio's NULL backend is the answer, and it is a real answer rather
+    // than a stub: it runs its own thread, honours the period, advances the
+    // clock and mixes into a discarded buffer. Every contract obligation the
+    // suite checks — a free-running device clock, measurable overruns, honoured
+    // bufferFrames — is exercised for real. What it cannot check is that sound
+    // is audible, which no headless test could anyway.
+    //
+    // OPT-IN, via the environment, and never a silent fallback. A game whose
+    // audio device failed must say so and not pretend it is playing: the whole
+    // point of E_NO_DEVICE is that the caller gets to decide. CI sets this; a
+    // shipped player does not.
+    bool deviceOk = ma_device_init(nullptr, &dcfg, &pv->device) == MA_SUCCESS;
+    if (!deviceOk) {
+        const char* allowNull = std::getenv("ENGINE_AUDIO_NULL_DEVICE");
+        if (allowNull && *allowNull && allowNull[0] != '0') {
+            const ma_backend nullBackend[] = { ma_backend_null };
+            deviceOk = ma_device_init_ex(nullBackend, 1, nullptr, &dcfg,
+                                         &pv->device) == MA_SUCCESS;
+            if (deviceOk) {
+                pv->nullDevice = true;
+                std::fprintf(stderr, "[miniaudio] no real device; running on the "
+                                     "NULL backend (ENGINE_AUDIO_NULL_DEVICE)\n");
+            }
+        }
+    }
+    if (!deviceOk) {
         // The expected outcome on CI and dedicated servers. Not an error to
         // abort on — the engine simply runs silent.
         pv->~Provider();
@@ -346,8 +424,9 @@ static EngineAudioResult maCreate(const EngineAudioDeviceDesc* desc,
     pv->sampleRate   = pv->device.sampleRate;
     pv->channels     = pv->device.playback.channels;
     pv->bufferFrames = pv->device.playback.internalPeriodSizeInFrames;
-    pv->expectedPeriodNs = pv->sampleRate
-        ? (uint64_t)pv->bufferFrames * 1000000000ull / pv->sampleRate : 0;
+    pv->expectedPeriodNs.store(pv->sampleRate
+        ? (uint64_t)pv->bufferFrames * 1000000000ull / pv->sampleRate : 0,
+        std::memory_order_relaxed);   // ordered by the release store below
 
     ma_engine_config cfg = ma_engine_config_init();
     cfg.allocationCallbacks = pv->maAlloc;
@@ -358,7 +437,9 @@ static EngineAudioResult maCreate(const EngineAudioDeviceDesc* desc,
         services->free(services->userData, block);
         return ENGINE_AUDIO_E_NO_DEVICE;
     }
-    pv->engineInit = true;
+    // RELEASE: everything written above — the engine, the period, the rates —
+    // becomes visible to the audio thread that acquires this flag.
+    pv->engineInit.store(true, std::memory_order_release);
 
     // Started only now: the callback dereferences pv->engine, so starting
     // before ma_engine_init would race a half-built engine on the audio thread.
@@ -384,7 +465,10 @@ static void maDestroy(void* p) {
     for (uint32_t i = 0; i < kMaxVoices; ++i)
         if (pv->voices[i].inUse) releaseVoice(pv, pv->voices[i]);
     for (uint32_t i = 0; i < kMaxSounds; ++i) releaseSound(pv, i);
-    if (pv->engineInit) { ma_engine_uninit(&pv->engine); pv->engineInit = false; }
+    if (pv->engineInit.load(std::memory_order_acquire)) {
+        ma_engine_uninit(&pv->engine);
+        pv->engineInit.store(false, std::memory_order_release);
+    }
     if (pv->deviceInit) { ma_device_uninit(&pv->device); pv->deviceInit = false; }
     EngineAudioHostServices host = pv->host;   // copy: pv dies below
     pv->~Provider();
@@ -500,7 +584,8 @@ static EngineAudioResult maFindSound(void* p, uint64_t nameHash,
 
 static EngineVoiceId maPlay(void* p, const EngineAudioPlayDesc* desc) {
     auto* pv = prov(p);
-    if (!pv || !desc || !pv->engineInit) return ENGINE_AUDIO_NO_VOICE;
+    if (!pv || !desc || !pv->engineInit.load(std::memory_order_acquire))
+        return ENGINE_AUDIO_NO_VOICE;
 
     uint32_t soundIdx = 0;
     Sound* s = resolveSound(pv, desc->sound, &soundIdx);
@@ -604,7 +689,7 @@ static void maUpdateEmitters(void* p, const EngineAudioEmitterUpdate* ups,
 
 static void maSetListener(void* p, const EngineAudioListener* l) {
     auto* pv = prov(p);
-    if (!pv || !l || !pv->engineInit) return;
+    if (!pv || !l || !pv->engineInit.load(std::memory_order_acquire)) return;
     ma_engine_listener_set_position(&pv->engine, 0, l->position[0], l->position[1], l->position[2]);
     ma_engine_listener_set_velocity(&pv->engine, 0, l->velocity[0], l->velocity[1], l->velocity[2]);
     ma_engine_listener_set_direction(&pv->engine, 0, l->forward[0], l->forward[1], l->forward[2]);

@@ -355,6 +355,35 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **The miniaudio provider published `engineInit` as a plain `bool` and the audio
+  callback read it.** TSan caught it on the CoreAudio callback thread against the
+  write in `maCreate`. The ORDERING was already correct — the flag is set before
+  `ma_device_start`, exactly as its comment says — but ordering in the source is
+  not a happens-before edge, and the callback thread already exists by then
+  (`ma_device_init` creates it), so nothing made the write visible. Now a
+  release store paired with a single acquire load at the TOP of the callback,
+  which orders everything else `maCreate` published.
+
+  A second race hid behind a comment: `expectedPeriodNs` sat under
+  "Callback-local, touched only by the audio thread" and is computed in
+  `maCreate`. Grouping a cross-thread field under a comment asserting it cannot
+  be one is how it stayed invisible.
+
+- **`docs_status_current` could not be satisfied, and failed three runs in a
+  row.** `ENGINE_STATUS.md` carries git-derived data — a per-subsystem "code last
+  changed" column and a stale-doc count — so regenerating BEFORE a commit and
+  AFTER it give different answers by construction: the working-tree edits are not
+  in history yet, and the moment they are, every doc covering them moves. Stale
+  docs read 7 before the commit and 14 after, same tree, same script. Committing
+  the file invalidated it.
+
+  A generated file cannot be gated on content that changes because of the commit
+  that contains it. The gate now compares STRUCTURE — subsystems, tiers, docs,
+  test counts — and normalises dates away; freshness stays with `engine_doctor
+  check`, which computes it live. Two comments already in that function record
+  the same lesson from two other causes, which is a sign the check needed the
+  rule stated rather than patched a third time.
+
 - **The reference audio provider's clock ran slow under load, and blamed the
   suite for it.** Its stand-in driver thread was `sleep(period); samples +=
   frames;` — so the effective sample rate was `frames / however long that sleep

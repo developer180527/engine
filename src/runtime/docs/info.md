@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-23
+verified: 2026-08-25
 parses-external-input: true
 covers:
   - src/runtime/
@@ -394,3 +394,12 @@ The one case that CAN grow during play is a game calling `kitLoad`/`kitUnload`
 itself (the editor's Plug-in Manager does). Each cycle is one temp copy plus one
 permanently mapped image, so a game exposing kit toggling to players should not
 do it per level transition.
+
+**Standard headers are declared explicitly here, not inherited.** libc++ (macOS)
+pulls much of the standard library in transitively and libstdc++ (Linux) does
+not, so a file using `std::memcpy` with no `<cstring>` or `std::string` with no
+`<string>` builds on the development machine and fails on every Linux leg. That
+cost three CI round-trips one error at a time, because a build stops at the first
+failure. `scripts/check_std_includes.py` now finds them all in one local pass and
+runs as the `std_includes` unit test — it caught two of its author's own the
+moment they were written.

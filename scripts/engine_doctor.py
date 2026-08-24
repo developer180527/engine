@@ -671,11 +671,43 @@ def main() -> int:
         text = render_status(docs)
         if args.check:
             current = STATUS_FILE.read_text(encoding="utf-8") if STATUS_FILE.exists() else ""
-            # The generated-on line changes daily; compare everything else.
-            def strip_date(t: str) -> str:
-                return "\n".join(l for l in t.splitlines()
-                                 if not l.startswith("Generated "))
-            if strip_date(current) != strip_date(text):
+
+            # ── Why this comparison ignores every date ───────────────────────
+            # A GENERATED FILE CANNOT BE GATED ON CONTENT THAT CHANGES BECAUSE OF
+            # THE COMMIT THAT CONTAINS IT. Parts of this document are derived
+            # from git history — the per-subsystem "code last changed" column and
+            # the stale-doc count — so regenerating BEFORE a commit and
+            # regenerating AFTER it give different answers by construction: the
+            # working-tree edits are not in git history yet, and the moment they
+            # are, every doc covering them moves. Committing the file therefore
+            # invalidates it, and `--check` failed on the gating leg for three
+            # runs in a row while the file was, in every sense anyone cared
+            # about, up to date. (Stale docs read 7 before the commit and 14
+            # after — same tree, same script.)
+            #
+            # Two clauses above this function already record the same lesson
+            # from two other causes: a gate that cannot be satisfied is noise,
+            # not signal, and people learn to ignore the whole lane.
+            #
+            # So the gate keeps what it can actually enforce — the STRUCTURE: the
+            # set of subsystems, their tiers, their docs, their test counts. Add
+            # a subsystem, change a tier, or delete an info.md without
+            # regenerating and this still fails. Dates are normalised away, and
+            # freshness stays the job of `engine_doctor check`, which computes it
+            # live and reports it as warnings rather than freezing it into a file.
+            DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+            def stable(t: str) -> str:
+                keep = []
+                for l in t.splitlines():
+                    if l.startswith("Generated "):
+                        continue          # changes daily, and names the commit
+                    if l.startswith("- **Stale docs:**"):
+                        continue          # a function of git history, not tree
+                    keep.append(DATE_RE.sub("<date>", l))
+                return "\n".join(keep)
+
+            if stable(current) != stable(text):
                 print("ENGINE_STATUS.md is out of date — run: "
                       "python3 scripts/engine_doctor.py status", file=sys.stderr)
                 return 1

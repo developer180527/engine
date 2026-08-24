@@ -52,16 +52,41 @@ fn cshader_variants_point_inside_their_blob() {
     let src = dir.join("standard.shader");
     let out = dir.join("standard.cshader");
     let res = dir.join("standard.result.json");
-    let ok = Command::new(&worker)
+    // CAPTURED, not inherited. This reported only "the cook produced no output
+    // (shaderc unavailable?)" — a guess with a question mark — and that is all
+    // the Linux-arm64 leg could tell us while x64 Linux cooked the same shader
+    // fine. Whatever shaderc says about an arm64 Linux host is THE diagnosis,
+    // and it was being thrown away. One CI round-trip spent learning nothing is
+    // the cost of a message that speculates instead of reporting.
+    let run = Command::new(&worker)
         .arg(&src).arg(&out).arg(&res).arg("512")
-        .status().map(|s| s.success()).unwrap_or(false);
+        .output();
+    let ok = run.as_ref().map(|o| o.status.success()).unwrap_or(false);
     if !ok || !out.exists() {
-        // Shader cooking shells out to bgfx's shaderc. Running `cargo test` by
-        // hand on a host without it, the honest outcome is a skip rather than a
-        // failure about something this test is not examining. Under the CMake
-        // entry it is a failure: shaderc is built as part of bgfx, so if the
-        // cook did not produce output something is actually broken.
-        skip("cshader cook", "the cook produced no output (shaderc unavailable?)");
+        let detail = match &run {
+            Ok(o) => {
+                let mut d = format!("worker exited {:?}", o.status.code());
+                let so = String::from_utf8_lossy(&o.stdout);
+                let se = String::from_utf8_lossy(&o.stderr);
+                // Tail rather than head: shaderc's actual complaint is the last
+                // thing it says, after pages of profile chatter.
+                for (label, stream) in [("stdout", &so), ("stderr", &se)] {
+                    let tail: Vec<&str> = stream.lines().rev().take(25)
+                                                .collect::<Vec<_>>()
+                                                .into_iter().rev().collect();
+                    if !tail.is_empty() {
+                        d.push_str(&format!("\n--- {label} (last {} lines) ---\n{}",
+                                            tail.len(), tail.join("\n")));
+                    }
+                }
+                if !out.exists() {
+                    d.push_str(&format!("\n(no output at {})", out.display()));
+                }
+                d
+            }
+            Err(e) => format!("could not even spawn {}: {e}", worker.display()),
+        };
+        skip("cshader cook", &format!("the cook produced no output.\n{detail}"));
         return;
     }
 

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-18
+verified: 2026-08-25
 parses-external-input: true
 covers:
   - modules/assetlib/
@@ -222,3 +222,12 @@ on its stage sources, and keying materials on those would recook every material 
 the project on every shading-code edit. The cost is that a change does not
 propagate through two hops on its own; a cooker needing that must declare the far
 input too.
+
+**Standard headers are declared explicitly here, not inherited.** libc++ (macOS)
+pulls much of the standard library in transitively and libstdc++ (Linux) does
+not, so a file using `std::memcpy` with no `<cstring>` or `std::string` with no
+`<string>` builds on the development machine and fails on every Linux leg. That
+cost three CI round-trips one error at a time, because a build stops at the first
+failure. `scripts/check_std_includes.py` now finds them all in one local pass and
+runs as the `std_includes` unit test — it caught two of its author's own the
+moment they were written.

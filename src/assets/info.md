@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-23
+verified: 2026-08-25
 parses-external-input: true
 covers:
   - src/assets/
@@ -307,3 +307,12 @@ fake cooker per failure, because a determinism check that only ever passes canno
 be told apart from one that does nothing. It runs twice under ctest — once with
 the flag on, once off — since a check that fires when disabled would double every
 cook and the flag would be turned off and stay off.
+
+**Standard headers are declared explicitly here, not inherited.** libc++ (macOS)
+pulls much of the standard library in transitively and libstdc++ (Linux) does
+not, so a file using `std::memcpy` with no `<cstring>` or `std::string` with no
+`<string>` builds on the development machine and fails on every Linux leg. That
+cost three CI round-trips one error at a time, because a build stops at the first
+failure. `scripts/check_std_includes.py` now finds them all in one local pass and
+runs as the `std_includes` unit test — it caught two of its author's own the
+moment they were written.
