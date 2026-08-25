@@ -22,7 +22,7 @@
 //! primary member is well-formed by every rule a fuzzer knows.
 
 use engine_cooked_format as fmt;
-use fmt::harness::{cook_worker, repo, scratch, skip};
+use fmt::harness::{cook_worker_absence, cook_worker, repo, scratch, skip};
 use std::process::Command;
 
 // ── .cshader ────────────────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ use std::process::Command;
 #[test]
 fn cshader_variants_point_inside_their_blob() {
     let Some(worker) = cook_worker() else {
-        skip("cshader cook", "ENGINE_BUILD_DIR unset or engine_cook_worker missing");
+        skip("cshader cook", &cook_worker_absence());
         return;
     };
     let dir = scratch("cshader");

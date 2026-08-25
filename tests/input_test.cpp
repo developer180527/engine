@@ -10,6 +10,7 @@
 //     context stack resolution with blockLower;
 //   * LATE-LATCH: consumeLook drains everything pumped, including events
 //     newer than the last tick, then reads zero.
+#include <filesystem>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -272,7 +273,15 @@ int main() {
     testwd::phase("recorder round-trip");
     // ── Recorder round-trip: record -> replay -> bit-identical snapshots ────
     {
-        const char* recPath = "/tmp/input_test_session.irec";
+        // fs::temp_directory_path(), not "/tmp". The hardcoded POSIX path is why
+        // this test HUNG on Windows for 120 s: there is no /tmp, fopen returned
+        // nullptr, and fread on a null FILE* trips the debug CRT's invalid-
+        // parameter handler — which defaults to _CRTDBG_MODE_WNDW, a MODAL
+        // DIALOG, on a CI runner with nobody to click it. A wrong path became an
+        // unkillable wait rather than a failed assertion.
+        const std::string recPathStr =
+            (std::filesystem::temp_directory_path() / "input_test_session.irec").string();
+        const char* recPath = recPathStr.c_str();
         InputSnapshot recorded[2];
         {
             InputManager m;
@@ -291,6 +300,12 @@ int main() {
         {
             FILE* f = fopen(recPath, "rb");
             CHECK(f != nullptr, "recording file exists");
+            // BAIL, do not continue. Every fread below takes `f`, and fread on a
+            // null FILE* is undefined — on MSVC's debug CRT it is an invalid-
+            // parameter assertion, not a quiet return. A CHECK that records a
+            // failure and then walks into UB reports the wrong problem, if it
+            // manages to report anything at all.
+            if (!f) { testwd::end(); std::printf("input_test: 1 FAILURE(S)\n"); return 1; }
             uint32_t magic = 0, ver = 0;
             fread(&magic, 4, 1, f); fread(&ver, 4, 1, f);
             CHECK(magic == 0x43455249 && ver == 1, "IREC header valid");

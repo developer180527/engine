@@ -30,6 +30,10 @@
 #include <mutex>
 #include <thread>
 
+#if defined(_WIN32) && defined(_DEBUG)
+#  include <crtdbg.h>
+#endif
+
 namespace testwd {
 
 inline std::atomic<const char*> g_phase{"(before the first phase marker)"};
@@ -69,10 +73,39 @@ inline void arm(int seconds) {
     });
 }
 
-// Unbuffered stdout + the watchdog + a banner, in the order that matters:
-// unbuffering FIRST, so the banner itself cannot be lost.
+// ── Never let a CRT assertion open a dialog on a CI runner ──────────────────
+// MSVC's DEBUG CRT reports invalid parameters and failed assertions through
+// _CrtSetReportMode, whose default for _CRT_ASSERT is _CRTDBG_MODE_WNDW — a
+// MODAL DIALOG. On a runner there is nobody to click it, so the process waits
+// until ctest kills it: a wrong assumption becomes an unkillable 120-second
+// silence instead of a failure with a message.
+//
+// That is exactly how input_test presented. It used a hardcoded "/tmp" path,
+// fopen returned nullptr on Windows, and fread on a null FILE* tripped the
+// invalid-parameter handler. The bug was a one-line path assumption; the
+// 120-second hang was this default.
+//
+// Routed to stderr and made fatal instead. A test that violates a CRT
+// precondition should die loudly and immediately — that is diagnosable, and a
+// dialog is not. Also strips the abort() popup for the same reason.
+inline void quietenCrtDialogs() {
+#if defined(_WIN32) && defined(_DEBUG)
+    for (int report : {_CRT_WARN, _CRT_ERROR, _CRT_ASSERT}) {
+        _CrtSetReportMode(report, _CRTDBG_MODE_FILE);
+        _CrtSetReportFile(report, _CRTDBG_FILE_STDERR);
+    }
+    // KEEP the abort message, DROP the Windows Error Reporting handoff. Passing
+    // 0 for both would have suppressed the message too — silencing the one part
+    // that makes an abort diagnosable while fixing the part that hangs.
+    _set_abort_behavior(_WRITE_ABORT_MSG, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+}
+
+// Unbuffered stdout + no modal dialogs + the watchdog + a banner, in the order
+// that matters: unbuffering FIRST, so the banner itself cannot be lost.
 inline void begin(const char* testName, int watchdogSeconds = 60) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    quietenCrtDialogs();
     std::printf("%s\n", testName);
     arm(watchdogSeconds);
 }

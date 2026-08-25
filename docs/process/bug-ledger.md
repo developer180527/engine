@@ -417,6 +417,37 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **The instrumentation found it on its first run: a hardcoded `/tmp`.**
+  `input_test` reached all eight phases and hung in "recorder round-trip", which
+  used `const char* recPath = "/tmp/input_test_session.irec"`. There is no `/tmp`
+  on Windows, `fopen` returned nullptr, and the code walked straight into
+  `fread(&e, sizeof(e), 1, f)` on a null `FILE*`.
+
+  The 120-second hang was not the path bug. MSVC's DEBUG CRT reports invalid
+  parameters through `_CrtSetReportMode`, whose default for `_CRT_ASSERT` is
+  `_CRTDBG_MODE_WNDW` — a MODAL DIALOG. On a runner nobody clicks it, so a
+  one-line wrong assumption became an unkillable silence. Three fixes, because
+  they are three different faults: the path (`fs::temp_directory_path()`), the
+  `CHECK` that recorded a failure and then continued into UB (it returns now),
+  and the dialog default — `testwd::quietenCrtDialogs()` routes CRT reports to
+  stderr and drops the Windows Error Reporting handoff for every test. A test
+  that violates a CRT precondition should die loudly; a dialog is not loud, it is
+  just slow.
+
+  Getting `_set_abort_behavior` backwards on the first attempt is worth noting:
+  passing 0 for both arguments would have suppressed the abort MESSAGE too,
+  silencing the one part that makes an abort diagnosable while fixing the part
+  that hangs.
+
+- **`Path::exists()` on an extensionless name is false on Windows.**
+  `harness::cook_worker()` looked for `engine_cook_worker`; the binary is
+  `engine_cook_worker.exe`. Every cmat/ctex test then reported "ENGINE_BUILD_DIR
+  unset or engine_cook_worker missing" — a message naming two causes when the
+  truth was neither: the directory was right and the worker was present under a
+  name the function never asked for. `std::env::consts::EXE_SUFFIX` exists for
+  this and is `""` everywhere else. The message now distinguishes the two cases,
+  because an ambiguous diagnostic cost a round on its own.
+
 - **A 120-second silence is not evidence.** `input_test` timed out on Windows
   having printed NOTHING — not even the banner on the first line of `main()`.
   That absence was the clue, not the mystery: ctest redirects stdout, redirection

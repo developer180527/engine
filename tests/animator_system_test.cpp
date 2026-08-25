@@ -36,6 +36,7 @@
 #include "runtime/jobs/jobs.h"
 #include "systems/animator_system.h"
 #include "animation/skin_palette.h"
+#include "test_watchdog.h"
 
 // The palette moved out of the component into anim::skinPalettes(); the tests
 // assert on its CONTENTS, so they resolve the slot the same way the renderer
@@ -126,9 +127,14 @@ static bool isIdentity(const float* m) {
 }
 
 int main() {
-    setvbuf(stdout, nullptr, _IONBF, 0);
-    std::printf("animator_system_test: AnimatorSystem behavior\n");
+    // Watchdog + phase markers: this test SEGFAULTS on Windows x64 (arm64 passes)
+    // somewhere after section 4, and a crash reports no line number. With
+    // unbuffered output the last phase printed brackets the section that died —
+    // the same instrumentation that located input_test's hang in one run.
+    testwd::begin("animator_system_test: AnimatorSystem behavior", 60);
     jobs::init();   // stepAll dispatches through jobs::parallelFor
+
+    testwd::phase("1. The kMaxBones guard — the silent-corruption path");
 
     // ── 1. The kMaxBones guard — the silent-corruption path ─────────────────
     // A 129-bone skeleton must never produce a palette, on BOTH routes into
@@ -155,6 +161,8 @@ int main() {
               "129 bones, with clip -> NO palette written");
     }
 
+    testwd::phase("2. A legal skeleton at the boundary still works");
+
     // ── 2. A legal skeleton at the boundary still works ──────────────────────
     // The guard is `>` kMaxBones, so exactly 128 must be accepted — an
     // off-by-one here would silently disable skinning on max-size rigs.
@@ -170,6 +178,8 @@ int main() {
               "bind-pose palette is identity at first and last bone");
     }
 
+    testwd::phase("3. Bind-pose fallback when there is no clip");
+
     // ── 3. Bind-pose fallback when there is no clip ─────────────────────────
     {
         Skeleton s = makeSkeleton(4);
@@ -180,6 +190,8 @@ int main() {
         CHECK(isIdentity(&palette(f.skin())[2 * 16]),
               "bind-pose skin matrix is identity (IBM * bind world)");
     }
+
+    testwd::phase("4. Missing skeleton must not write a palette");
 
     // ── 4. Missing skeleton must not write a palette ────────────────────────
     {
@@ -193,6 +205,8 @@ int main() {
               "invalid skeleton handle -> palette flag CLEARED, not left stale");
     }
 
+    testwd::phase("5. Time advance honours speed");
+
     // ── 5. Time advance honours speed ───────────────────────────────────────
     {
         Skeleton s = makeSkeleton(4);
@@ -204,6 +218,8 @@ int main() {
         CHECK(std::fabs(f.anim().time - 0.2f) < 1e-5f,
               "time += dt * speed (0.1 * 2.0 = %.3f)", f.anim().time);
     }
+
+    testwd::phase("6. Paused animators do not advance");
 
     // ── 6. Paused animators do not advance ──────────────────────────────────
     {
@@ -219,6 +235,8 @@ int main() {
               "paused still samples a pose (frozen, not blank)");
     }
 
+    testwd::phase("7. Looping wraps instead of running past the end");
+
     // ── 7. Looping wraps instead of running past the end ────────────────────
     {
         Skeleton s = makeSkeleton(4);
@@ -231,6 +249,8 @@ int main() {
               "looping wraps via fmod (%.3f)", f.anim().time);
         CHECK(f.anim().playing, "looping clip keeps playing after the wrap");
     }
+
+    testwd::phase("8. Non-looping clamps at the end AND stops");
 
     // ── 8. Non-looping clamps at the end AND stops ──────────────────────────
     {
@@ -245,6 +265,8 @@ int main() {
         CHECK(!f.anim().playing, "non-looping auto-stops at the end");
         CHECK(f.skin().hasSkinMatrices, "final pose still written after stop");
     }
+
+    testwd::phase("9. Reverse playback clamps at zero AND stops");
 
     // ── 9. Reverse playback clamps at zero AND stops ────────────────────────
     // The negative branch is easy to get wrong (fmod of a negative would give
@@ -261,6 +283,8 @@ int main() {
               "reverse clamps to 0 (%.3f)", f.anim().time);
         CHECK(!f.anim().playing, "reverse auto-stops at the start");
     }
+
+    testwd::phase("10. Reverse + looping wraps to a POSITIVE time");
 
     // ── 10. Reverse + looping wraps to a POSITIVE time ──────────────────────
     // fmod(-0.1, 1.0) is -0.1 in C; the system must add duration back, or the
@@ -280,6 +304,7 @@ int main() {
     }
 
     jobs::shutdown();
+    testwd::end();
     if (g_failures) {
         std::printf("animator_system_test: FAIL — %d failure(s)\n", g_failures);
         return 1;

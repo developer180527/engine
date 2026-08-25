@@ -24,7 +24,7 @@
 //! `engine_cook_worker`'s process CLI, so what is parsed is what ships.
 
 use engine_cooked_format as fmt;
-use fmt::harness::{cook_worker, scratch, skip};
+use fmt::harness::{cook_worker_absence, cook_worker, scratch, skip};
 use std::path::Path;
 use std::process::Command;
 
@@ -107,7 +107,7 @@ fn tiny_png() -> Vec<u8> {
 #[test]
 fn ctex_mip_chain_length_matches_its_declared_format() {
     let Some(worker) = cook_worker() else {
-        skip("cmat/ctex cook", "ENGINE_BUILD_DIR unset or engine_cook_worker missing");
+        skip("cmat/ctex cook", &cook_worker_absence());
         return;
     };
     let dir = scratch("ctex");
@@ -158,7 +158,7 @@ fn ctex_block_math_is_ceiling_not_floor() {
 #[test]
 fn cmat_round_trips_through_an_independent_reader() {
     let Some(worker) = cook_worker() else {
-        skip("cmat/ctex cook", "ENGINE_BUILD_DIR unset or engine_cook_worker missing");
+        skip("cmat/ctex cook", &cook_worker_absence());
         return;
     };
     let dir = scratch("cmat");

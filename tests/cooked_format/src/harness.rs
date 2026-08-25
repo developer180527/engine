@@ -57,10 +57,29 @@ pub fn skip(what: &str, reason: &str) {
 }
 
 /// `engine_cook_worker` from the build directory CMake pointed us at.
+///
+/// EXE_SUFFIX, because on Windows the binary is `engine_cook_worker.exe` and
+/// `Path::exists()` on the extensionless name is simply false. Every cmat/ctex
+/// test then reported "ENGINE_BUILD_DIR unset or engine_cook_worker missing" —
+/// a message that named two causes and left the reader to guess which, when the
+/// truth was neither: the directory was right and the worker was there under a
+/// name this function did not ask for. `std::env::consts::EXE_SUFFIX` exists for
+/// precisely this and is "" everywhere else.
 pub fn cook_worker() -> Option<PathBuf> {
     let dir = std::env::var("ENGINE_BUILD_DIR").ok()?;
-    let p = Path::new(&dir).join("engine_cook_worker");
+    let p = Path::new(&dir)
+        .join(format!("engine_cook_worker{}", std::env::consts::EXE_SUFFIX));
     p.exists().then_some(p)
+}
+
+/// Why `cook_worker()` came back empty — so the skip message can say which.
+pub fn cook_worker_absence() -> String {
+    match std::env::var("ENGINE_BUILD_DIR") {
+        Err(_) => "ENGINE_BUILD_DIR is unset (running cargo test by hand?)".into(),
+        Ok(dir) => format!(
+            "no engine_cook_worker{} in ENGINE_BUILD_DIR={dir}",
+            std::env::consts::EXE_SUFFIX),
+    }
 }
 
 /// The repository root, from this crate's manifest directory.

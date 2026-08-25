@@ -37,7 +37,7 @@
 //! writing a C shim first, which ADDS untested C++ for the privilege of testing
 //! in Rust. The boundary has to already exist.
 
-use engine_cooked_format::harness::{cook_worker, skip};
+use engine_cooked_format::harness::{cook_worker_absence, cook_worker, skip};
 use std::process::Command;
 
 /// A minimal glTF with one material whose `pbrMetallicRoughness` is present but
@@ -112,7 +112,7 @@ fn gltf_without_pbr_factors_cooks_to_one_point_zero() {
         // from a shell has no engine to drive and skips rather than failing on
         // something that is not the test's subject. Under the CMake entry
         // (ENGINE_REQUIRE_COOK_TESTS=1) the same skip is a FAILURE.
-        skip("gltf cook", "ENGINE_BUILD_DIR unset or engine_cook_worker missing");
+        skip("gltf cook", &cook_worker_absence());
         return;
     };
 
