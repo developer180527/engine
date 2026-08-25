@@ -238,8 +238,34 @@ set(ASSIMP_BUILD_3DS_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_PLY_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_STL_IMPORTER     ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_BLEND_IMPORTER   ON CACHE BOOL "" FORCE)
+# Assimp compiles ITSELF with /W4 /WX (its own ASSIMP_WARNINGS_AS_ERRORS, default
+# ON, which prints "Treating all warnings as errors (for assimp library only)").
+# A vendored parser's warnings are not our contract, and a NEW compiler is all it
+# takes for a clean library to stop building — which is exactly what a five-
+# platform matrix keeps discovering. Ours stay errors; theirs do not.
+set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
 if(ENGINE_WITH_SOURCE_IMPORTERS)
     add_subdirectory(third_party/assimp)
+    if(MSVC)
+        # ── Winning the /Zi argument ─────────────────────────────────────────
+        # The top-level rewrite above turns /Zi into /Z7 in
+        # CMAKE_CXX_FLAGS_<CONFIG>, and then assimp's own CMakeLists.txt:357
+        # APPENDS /Zi right back inside its directory scope. MSVC takes the LAST
+        # debug-info flag, so /Zi won and the separate-PDB writes came back:
+        # "C1041: cannot open program database ... please use /FS", four TUs at
+        # once, on the x64 leg — even though /FS was on the command line, which
+        # is the part that makes this worth writing down rather than just fixing.
+        #
+        # target_compile_options lands AFTER the directory flags, so /Z7 is last
+        # and wins. Per-target rather than a patch to assimp: the flag order is
+        # the whole mechanism, and expressing it here keeps it visible next to
+        # the rewrite it is defending.
+        foreach(_t assimp zlibstatic)
+            if(TARGET ${_t})
+                target_compile_options(${_t} PRIVATE /Z7)
+            endif()
+        endforeach()
+    endif()
     # Assimp chews through multi-hundred-MB FBX/DAE during cooks; at Debug
     # -O0 the parse dominates cook time several-fold. It's a vendored parser
     # nobody steps through with the engine debugger — keep it optimized even
@@ -284,6 +310,22 @@ set(ozz_build_howtos   OFF CACHE BOOL "" FORCE)
 set(ozz_build_tests    OFF CACHE BOOL "" FORCE)
 set(ozz_build_postfix  OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/ozz-animation)
+if(MSVC)
+    # ozz's build-utils/cmake/compiler_settings.cmake does an unconditional
+    # add_compile_options(/WX) — no option to turn it off. On the arm64 Windows
+    # leg that turned one warning in blending_job.cc into "C2220: the following
+    # warning is treated as an error" and stopped the build. A vendored animation
+    # runtime's warnings on an architecture its own CI does not cover are not a
+    # signal we can act on.
+    #
+    # /WX- disables warnings-as-errors and, being a target option, comes after
+    # the directory-scope /WX — last flag wins, same mechanism as assimp's /Z7.
+    foreach(_t ozz_base ozz_animation ozz_animation_offline ozz_geometry)
+        if(TARGET ${_t})
+            target_compile_options(${_t} PRIVATE /WX-)
+        endif()
+    endforeach()
+endif()
 
 # ── enkiTS — task scheduler backing engine::jobs ──────────────────────────
 # Built directly (imgui-style) — its own CMakeLists declares a minimum too

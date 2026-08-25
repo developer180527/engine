@@ -508,7 +508,14 @@ def subsystem_rows(docs: list[Doc]) -> list[dict]:
             continue
         covers = d.get_list("covers") or [str(d.path.parent.relative_to(REPO))]
         tests = d.get_list("tests")
-        changed = last_change(covers)
+        # SHALLOW-AWARE, like check_docs is. It was not, and that was a real
+        # inconsistency rather than a cosmetic one: `git log` in a depth-1
+        # checkout can only see the tip, so every subsystem's "code last changed"
+        # came back as TODAY and the table sprouted a staleness warning on twenty
+        # rows that were not stale. The checker refused to make that claim; the
+        # renderer made it confidently. Refusing to answer beats emitting
+        # confident nonsense — which is what is_shallow()'s own docstring says.
+        changed = "" if SHALLOW else last_change(covers)
         verified = str(d.meta.get("verified", "") or "")
         stale = bool(changed and verified and changed > verified)
         rows.append({
@@ -712,7 +719,28 @@ def main() -> int:
 
             def stable(t: str) -> str:
                 keep = []
+                in_stale_section = False
                 for l in t.splitlines():
+                    # The per-subsystem stale LIST is freshness too; it appears
+                    # and disappears with history depth and with the commit
+                    # boundary, so it cannot be part of an equality gate.
+                    if l.startswith("## "):
+                        in_stale_section = l.startswith("## \u26a0\ufe0f Stale")
+                    if in_stale_section:
+                        continue
+                    # Table rows: blank the two FRESHNESS columns and the
+                    # staleness marker. Everything structural — subsystem, tier,
+                    # doc status, the test list — still has to match exactly.
+                    # Without this the gate was still shallow-sensitive: a
+                    # depth-1 CI checkout flips the marker on nearly every row,
+                    # which is not a date and so survived date normalisation.
+                    if l.startswith("| `"):
+                        cells = l.split("|")
+                        if len(cells) >= 7:
+                            cells[3] = cells[3].replace(" \u26a0\ufe0f", "")
+                            cells[4] = " <freshness> "
+                            cells[5] = " <freshness> "
+                            l = "|".join(cells)
                     if l.startswith("Generated "):
                         continue          # changes daily, and names the commit
                     if l.startswith(("- **Stale docs:**",

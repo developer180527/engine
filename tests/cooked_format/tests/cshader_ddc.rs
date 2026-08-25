@@ -58,14 +58,35 @@ fn cshader_variants_point_inside_their_blob() {
     // fine. Whatever shaderc says about an arm64 Linux host is THE diagnosis,
     // and it was being thrown away. One CI round-trip spent learning nothing is
     // the cost of a message that speculates instead of reporting.
+    // THE RESULT FILE IS THE VERDICT, not the exit code. engine_cook_worker
+    // returns 0 whenever it managed to WRITE its result file — `return f.good()
+    // ? 0 : 65` — because the cook's outcome travels in the file, which is what
+    // the real pipeline reads. Checking `status.success()` therefore asked "did
+    // the worker run?" while the test believed it was asking "did the cook
+    // succeed?". On Linux arm64 the worker exited 0, printed ten ordinary
+    // warnings and produced no .cshader, and the test could only report "no
+    // output (shaderc unavailable?)" — a guess, when the machine-readable
+    // diagnosis was sitting in a file three lines away.
     let run = Command::new(&worker)
         .arg(&src).arg(&out).arg(&res).arg("512")
         .output();
-    let ok = run.as_ref().map(|o| o.status.success()).unwrap_or(false);
+    let verdict = std::fs::read_to_string(&res).unwrap_or_default();
+    let cooked_ok = verdict.lines().any(|l| l.trim() == "RESULT ok");
+    let spawned_ok = run.as_ref().map(|o| o.status.success()).unwrap_or(false);
+    let ok = spawned_ok && cooked_ok;
     if !ok || !out.exists() {
         let detail = match &run {
             Ok(o) => {
-                let mut d = format!("worker exited {:?}", o.status.code());
+                let mut d = format!("worker exited {:?}, RESULT ok = {cooked_ok}",
+                                    o.status.code());
+                // The worker's own verdict, verbatim. This is the line that says
+                // WHY, and it is the whole reason the result file exists.
+                if verdict.is_empty() {
+                    d.push_str(&format!("\n--- no result file at {} ---", res.display()));
+                } else {
+                    d.push_str("\n--- cook result file ---\n");
+                    d.push_str(verdict.trim_end());
+                }
                 let so = String::from_utf8_lossy(&o.stdout);
                 let se = String::from_utf8_lossy(&o.stderr);
                 // Tail rather than head: shaderc's actual complaint is the last

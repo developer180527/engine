@@ -355,6 +355,43 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **`render_status` claimed staleness a shallow clone cannot know.** `check_docs`
+  already refused to (`changed = "" if SHALLOW`), and `is_shallow()`'s own
+  docstring says "refusing to make the claim beats emitting confident nonsense" —
+  but the status RENDERER computed it anyway. CI checks out `fetch-depth: 1`, so
+  `git log` sees only the tip and every subsystem's "code last changed" came back
+  as TODAY, flipping the ⚠️ marker on twenty rows that were not stale. Two halves
+  of one tool disagreeing about what it is allowed to know.
+
+  That marker is also why the status gate kept failing after dates were
+  normalised away: ⚠️ is git-derived but is not a DATE, so it survived date
+  normalisation. The gate now blanks both freshness columns and the marker, and
+  mutation-verified that it still catches real structural drift — a changed tier
+  and a dropped entry from a `tests:` list both fail it.
+
+- **The cook worker exits 0 when the COOK fails.** `return f.good() ? 0 : 65` —
+  the exit code reports whether the result FILE was written, because the verdict
+  travels inside that file, which is what the real pipeline reads. The
+  cooked-format test checked `status.success()` instead, so it was asking "did
+  the worker run?" while believing it asked "did the cook succeed?". On Linux
+  arm64 the worker exited 0, printed ten ordinary warnings and produced no
+  `.cshader`, and the best the test could say was "no output (shaderc
+  unavailable?)" — a guess, while the machine-readable answer sat in a file three
+  lines away. Verified by hand: a malformed `.shader` yields exit 0 with
+  `RESULT fail` and the real parse error.
+
+- **MSVC takes the LAST flag, and two vendored libraries relied on that.**
+  The top-level build rewrites `/Zi` to `/Z7` precisely to avoid PDB contention,
+  and assimp's own `CMakeLists.txt:357` appends `/Zi` back inside its directory
+  scope — so `/Zi` won and `C1041: cannot open program database ... please use
+  /FS` killed four TUs at once, **with `/FS` already on the command line**. Fixed
+  by a per-target `/Z7`, which lands after directory flags. ozz does an
+  unconditional `add_compile_options(/WX)` with no opt-out, which turned one
+  warning in `blending_job.cc` into a build failure on arm64 Windows; a
+  per-target `/WX-` disables it by the same mechanism. Both expressed in our own
+  CMakeLists rather than as patches, because the FLAG ORDER is the mechanism and
+  it belongs next to the rewrite it defends.
+
 - **`maRealloc` copied the NEW size out of the OLD block — a heap over-read on
   every sound decode.** The host services interface has no realloc, deliberately,
   so the shim did alloc + copy + free and bounded the copy by the new size. Its
@@ -375,6 +412,21 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   the sanitizer cannot see. A comment two lines above the bug described the
   hazard correctly and drew the wrong conclusion from it; nothing executable
   disagreed.
+
+  There was a second layer of luck: the engine's host allocator is TLSF over
+  large mappings, so a 64 KB over-read lands inside a 2 MB block and disturbs
+  nothing. Even with the sanitizer watching, the REAL allocator gives it nothing
+  to guard.
+
+  Now closed by `tests/audio_provider_asan_test.cpp`, which is C++ (so no
+  sanitizer exclusion), dlopens the same shipping module, and backs host `alloc`
+  with plain `malloc` so ASan has redzones. It asserts the decode actually GREW a
+  block — otherwise it would pass while exercising nothing — and that every
+  pointer freed was one it handed out, which is the invariant a size-prefixed
+  allocator can break. Verified both ways on macOS: clean with the fix, and with
+  the old bound restored it reports
+  `heap-buffer-overflow ... READ of size 65536 ... maRealloc` — the exact defect,
+  on the machine where it hid for months, with no Linux runner involved.
 
 - **The overrun counter measured the CI runner, not the mixer.** A Linux runner
   has no sound card: ALSA prints "cannot find card '0'" and then returns a

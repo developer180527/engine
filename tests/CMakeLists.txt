@@ -43,6 +43,41 @@ function(engine_test name)
         TIMEOUT ${ET_TIMEOUT})
 endfunction()
 
+# ── The audio provider's allocator, under the sanitizer ──────────────────────
+# `maRealloc` read past the end of every block it grew, on every sound decode,
+# for the provider's whole existence — and ASan, which runs on every push, never
+# saw it. Two reasons, both removed here:
+#
+#   * audio_abi_conformance is the only test that drives createSound, and it is
+#     EXCLUDED from sanitizer builds (the Rust harness aborts under a dlopen'd
+#     instrumented library, see the guard further down). The one test that
+#     exercised the code was the one test the sanitizer could not see.
+#   * The engine's host allocator is TLSF over large mappings, so a 64 KB
+#     over-read lands inside a 2 MB block and disturbs nothing. It took a Linux
+#     container with a different heap layout to turn it into a SIGSEGV.
+#
+# So: C++ (no Rust harness, therefore no exclusion) with a malloc-backed host
+# allocator, which gives ASan redzones to guard. It dlopens the SAME module the
+# conformance suite does, so it holds the shipping code rather than a copy.
+if(TARGET engine_audio_miniaudio_module)
+    add_executable(audio_provider_asan_test audio_provider_asan_test.cpp)
+    target_include_directories(audio_provider_asan_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/include)
+    target_compile_definitions(audio_provider_asan_test PRIVATE
+        ENGINE_AUDIO_MODULE_PATH="$<TARGET_FILE:engine_audio_miniaudio_module>")
+    add_dependencies(audio_provider_asan_test engine_audio_miniaudio_module)
+    set_target_properties(audio_provider_asan_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    if(UNIX)
+        target_link_libraries(audio_provider_asan_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME audio_provider_asan COMMAND audio_provider_asan_test)
+    # `unit`, so it runs on EVERY leg and in BOTH sanitizer lanes. Deliberately
+    # not gated on ENGINE_SANITIZE: it is a useful allocator-invariant test
+    # without a sanitizer, and the whole point is that it is present when one is.
+    set_tests_properties(audio_provider_asan PROPERTIES LABELS unit TIMEOUT 120)
+endif()
+
 # ── unit lane — fast, hermetic, no external assets ───────────────────────────
 # Null hid backend link gauntlet (target lives in modules/hid) — running it
 # proves the fallback backend still resolves the whole Context contract.
