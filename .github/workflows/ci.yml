@@ -69,14 +69,14 @@ jobs:
           - name: Linux (x64, GCC)
             slug: linux-x64-gcc
             os: ubuntu-latest
-            experimental: true
+            experimental: false   # GREEN since 32797762885 — must not regress
 
           - name: Linux (x64, Clang)
             slug: linux-x64-clang
             os: ubuntu-latest
             cc: clang
             cxx: clang++
-            experimental: true
+            experimental: false   # GREEN since 32797762885 — must not regress
 
           # arm64 Linux. Not redundant with macOS-arm64: same ISA, completely
           # different libc and C++ standard library (glibc + libstdc++ against
@@ -86,7 +86,7 @@ jobs:
           - name: Linux (arm64, GCC)
             slug: linux-arm64-gcc
             os: ubuntu-24.04-arm
-            experimental: true
+            experimental: false   # GREEN since 32797762885 — must not regress
 
           # This leg is also the ONLY thing that compiles
           # src/runtime/platform/title_bar_windows.cpp, which was written

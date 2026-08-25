@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-18
+verified: 2026-08-25
 covers:
   - src/core/
 tests:
@@ -233,3 +233,11 @@ claims otherwise. That omission was caught by an unrelated assertion in
 **What does not belong here:** per-item telemetry. Ten thousand "this draw did X"
 events a second is a trace, not a log — that is the profiler and the submit
 counters. `LOG_TRACE` compiles to nothing unless `ENGINE_LOG_TRACE` is defined.
+
+**Windows include hygiene.** The `#define WIN32_LEAN_AND_MEAN` / `NOMINMAX` pairs
+in this subsystem are `#ifndef`-guarded. `NOMINMAX` is imposed globally by the
+top-level CMakeLists (suppressing a macro is safe to force on anyone);
+`WIN32_LEAN_AND_MEAN` deliberately is NOT, because it changes what `<windows.h>`
+brings in and forcing a reduced header on third-party code broke bgfx's vendored
+PIX headers. Each translation unit that includes `<windows.h>` states its own
+choice, which is where that decision is visible.

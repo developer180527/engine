@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-16
+verified: 2026-08-25
 covers:
   - src/core/memory/
 tests:
@@ -162,3 +162,11 @@ even when almost nothing is live.
 
 Not fixed, deliberately: measuring what that striping actually costs. It is a
 number to collect on a device, not a claim to act on from a desktop.
+
+**Windows include hygiene.** The `#define WIN32_LEAN_AND_MEAN` / `NOMINMAX` pairs
+in this subsystem are `#ifndef`-guarded. `NOMINMAX` is imposed globally by the
+top-level CMakeLists (suppressing a macro is safe to force on anyone);
+`WIN32_LEAN_AND_MEAN` deliberately is NOT, because it changes what `<windows.h>`
+brings in and forcing a reduced header on third-party code broke bgfx's vendored
+PIX headers. Each translation unit that includes `<windows.h>` states its own
+choice, which is where that decision is visible.

@@ -355,6 +355,27 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **We forced a reduced `<windows.h>` on every third-party library.** The
+  top-level CMakeLists had `add_compile_definitions(NOMINMAX
+  WIN32_LEAN_AND_MEAN)`, and `add_compile_definitions` applies to every
+  subdirectory added afterwards — so bgfx compiled with our lean header. Its
+  vendored `directx-headers/pix3_win.h` calls `::SHGetKnownFolderPath` and uses
+  `KF_FLAG_DEFAULT` without including `<shlobj.h>`, because it expects the full
+  header, and `renderer_d3d12.cpp` failed with "C2039: 'SHGetKnownFolderPath' is
+  not a member of '`global namespace''".
+
+  The two defines are not the same kind of thing. `NOMINMAX` suppresses a MACRO
+  and is safe to impose on anyone; `WIN32_LEAN_AND_MEAN` changes WHAT GETS
+  INCLUDED, and a library gets to decide its own include surface. Ours now
+  states the choice per translation unit, next to the `<windows.h>` it applies
+  to — which is what the fifteen guarded `#define`s were already doing.
+
+- **`::getpid()` does not exist on Windows.** `shaderc_invoke.cpp` built a
+  unique scratch filename from the process id; MSVC has `_getpid()` in
+  `<process.h>` and no `<unistd.h>` at all. Wrapped in a `currentProcessId()`
+  helper rather than an ifdef at the call site: the caller wants "something
+  unique to this process", which is a capability rather than a platform question.
+
 - **Linux arm64 could not cook a single shader, because DXC is x86-64 only.**
   `profileCookableOnThisHost` allowed `dx12` on any Linux host — "d3d4linux covers
   DXIL" — but the DXC it loads is a VENDORED PREBUILT:

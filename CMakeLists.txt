@@ -57,10 +57,24 @@ if(MSVC)
     # The engine's own code is warning-clean elsewhere; keep MSVC's noisiest
     # non-actionable warnings from burying real ones on the first port pass.
     add_compile_options(/wd4244 /wd4267 /wd4305)   # narrowing conversions
-    # NOMINMAX / WIN32_LEAN_AND_MEAN globally: <windows.h> otherwise defines
-    # min/max macros that break std::min/std::max and drags in winsock.
-    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES
-                            _CRT_SECURE_NO_WARNINGS)
+    # NOMINMAX globally: <windows.h> otherwise defines min/max MACROS that break
+    # std::min/std::max everywhere they are used. Suppressing a macro is safe to
+    # impose on anyone.
+    #
+    # WIN32_LEAN_AND_MEAN IS NOT HERE, and that is the fix rather than an
+    # oversight. It changes WHAT GETS INCLUDED, and add_compile_definitions
+    # applies to every subdirectory added afterwards — so we were imposing a
+    # reduced <windows.h> on all of bgfx. bgfx's vendored
+    # directx-headers/pix3_win.h calls ::SHGetKnownFolderPath and uses
+    # KF_FLAG_DEFAULT without including <shlobj.h>, because it expects the full
+    # header; with our lean define it became "error C2039: 'SHGetKnownFolderPath'
+    # is not a member of '`global namespace''" in renderer_d3d12.cpp.
+    #
+    # Third-party code gets to decide its own include surface. Ours defines
+    # WIN32_LEAN_AND_MEAN per translation unit, where the file that includes
+    # <windows.h> can see the decision — which is where it belonged all along,
+    # and which those fifteen now-guarded #defines were already doing.
+    add_compile_definitions(NOMINMAX _USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS)
 endif()
 
 # ── Shipping posture: source importers in or out ────────────────────────────

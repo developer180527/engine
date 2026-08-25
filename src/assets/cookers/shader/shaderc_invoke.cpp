@@ -8,6 +8,12 @@
 #include <cstring>
 #include <fstream>
 
+#if defined(_WIN32)
+#  include <process.h>   // _getpid
+#else
+#  include <unistd.h>    // getpid
+#endif
+
 #if !defined(_WIN32)
 #  include <fcntl.h>
 #  include <spawn.h>
@@ -22,6 +28,20 @@ namespace shadercook {
 
 namespace {
 
+// ── The process id, which is not spelled the same everywhere ────────────────
+// POSIX has getpid() in <unistd.h>; Windows has _getpid() in <process.h> and no
+// <unistd.h> at all, so `::getpid()` is "error C2039: 'getpid': is not a member
+// of '`global namespace''" on MSVC. Wrapped in one function rather than an ifdef
+// at the call site: the CALLER wants "something unique to this process", and that
+// is a capability, not a platform question.
+int currentProcessId() {
+#if defined(_WIN32)
+    return (int)::_getpid();
+#else
+    return (int)::getpid();
+#endif
+}
+
 // A scratch path unique per process AND per call. Two variants of the same
 // shader compile concurrently under the task scheduler, so a name derived only
 // from the source would have them overwrite each other's output — producing
@@ -31,7 +51,7 @@ fs::path scratchPath(const char* tag) {
     const uint64_t n = counter.fetch_add(1, std::memory_order_relaxed);
     char buf[128];
     std::snprintf(buf, sizeof(buf), "engine_shaderc_%d_%llu_%s",
-                  (int)::getpid(), (unsigned long long)n, tag);
+                  currentProcessId(), (unsigned long long)n, tag);
     return fs::temp_directory_path() / buf;
 }
 
