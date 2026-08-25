@@ -1,0 +1,37 @@
+diff --git a/3rdparty/directx-headers/include/directx/pix3_win.h b/3rdparty/directx-headers/include/directx/pix3_win.h
+index 6171af00f..8519479a5 100644
+--- a/3rdparty/directx-headers/include/directx/pix3_win.h
++++ b/3rdparty/directx-headers/include/directx/pix3_win.h
+@@ -70,11 +70,32 @@ DEFINE_ENUM_FLAG_OPERATORS(PIXHUDOptions);
+ 
+ #if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP | WINAPI_PARTITION_SYSTEM | WINAPI_PARTITION_GAMES)
+ 
++// ── engine patch: the headers that actually DECLARE what this file calls ─────
++// This file calls ::SHGetKnownFolderPath and uses KF_FLAG_DEFAULT, and on Windows
++// SDK 10.0.26100 the arm64 leg reported both as undeclared from
++// renderer_d3d12.cpp — even though <shlobj.h> below is included and resolves.
++//
++// So the declarations are being gated out INSIDE the shell headers rather than
++// missing. <objbase.h> first (bgfx defines WIN32_LEAN_AND_MEAN across its own
++// sources, which keeps COM out of <windows.h>, and the same omission already
++// broke shaderc_hlsl.cpp), then the two specific headers that own these symbols
++// rather than relying on the <shlobj.h> umbrella.
++//
++// TWO PREVIOUS ATTEMPTS AT THIS FILE FAILED, so the probe below reports the
++// version macros the gate depends on. If this build still fails, the log answers
++// why instead of inviting a fourth guess. Delete the pragma once it is green.
++#include <objbase.h>
+ #include <shlobj.h>
++#include <shlobj_core.h>
++#include <shobjidl_core.h>
+ #include <strsafe.h>
+ #include <knownfolders.h>
+ #include <shellapi.h>
+ 
++#define ENGINE_PIX_STR2(x) #x
++#define ENGINE_PIX_STR(x) ENGINE_PIX_STR2(x)
++#pragma message("engine-probe pix3_win.h:"     " NTDDI_VERSION=" ENGINE_PIX_STR(NTDDI_VERSION)     " _WIN32_WINNT="  ENGINE_PIX_STR(_WIN32_WINNT)     " WINVER="        ENGINE_PIX_STR(WINVER)     " WINAPI_FAMILY=" ENGINE_PIX_STR(WINAPI_FAMILY))
++
+ #define PIXERRORCHECK(value)  do {                      \
+                                  if (FAILED(value))     \
+                                      return nullptr;    \

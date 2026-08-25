@@ -355,6 +355,22 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **The `/MTd` that appeared on no command line.** `engine_cook_worker.exe` died
+  with "LNK2038: mismatch detected for 'RuntimeLibrary': value 'MTd_StaticDebug'
+  doesn't match value 'MDd_DynamicDebug'", and grepping every compile command in
+  the build log for `/MTd` found ZERO — because with CMP0091 NEW the runtime comes
+  from a target PROPERTY, not a flag, so it never appears on a command line at
+  all. The only visible trace was assimp's `assimp-vc145-mtd.lib`, and that `mtd`
+  is merely assimp's naming convention — a red herring that cost a round.
+
+  The culprit was ozz: `ozz_build_msvc_rt_dll` defaults OFF, after which
+  `compiler_settings.cmake` does an unguarded
+  `set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")` in its
+  own directory scope, which SHADOWS a cache value pinned at the top level.
+  Pinning the cache is not enough when a subdirectory can set a plain variable
+  over it; the option has to be flipped as well. Two vendored libraries
+  (Jolt, ozz) do exactly this, which suggests treating it as the norm.
+
 - **`texture2D` inside flow control is a hard error on D3D.** `fs_triangle.sc`
   sampled the base colour inside a ternary and the normal map inside an `if`,
   both on uniform conditions. HLSL compiles `texture2D` to `Sample()`, which
@@ -368,9 +384,20 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   changes no result: the renderer ALWAYS binds a texture to those stages
   (`ctx.whiteTex` / `ctx.flatNormalTex`, see `opaque_pass.cpp`), so `u_texFlags`
   says whether the fetch is MEANINGFUL, not whether it is legal. `texture2DLod`
-  would have been the tidier fix and is not available: bgfx only defines it for
-  `BGFX_SHADER_LANGUAGE_GLSL >= 130`, and this build also compiles `--profile
-  120` and `100_es`, so it would have traded a D3D failure for a GLSL one.
+  would have been the tidier fix and is not available for the GL profiles: bgfx
+  defines it only for `BGFX_SHADER_LANGUAGE_GLSL >= 130`, and this build also
+  compiles `--profile 120` and `100_es`, so using it everywhere would have traded
+  a D3D failure for a GLSL one.
+
+  Hoisting fixed those two and revealed a sharper error underneath: "X3570:
+  gradient instruction used in a loop with varying iteration". That one is the
+  SHADOW fetch, inside the light loop — and the loop breaks on `i >= count`, which
+  the compiler treats as varying even though `count` is a uniform. Hoisting the
+  call out would cost nine taps per pixel with shadows off, and any branch around
+  it brings X3129 back, so the fetch itself is now explicit-LOD
+  (`SHADOW_FETCH`), guarded to HLSL where `texture2DLod` exists. That is also
+  more correct everywhere: a shadow map has no mip chain, so screen-space
+  derivatives were never meaningful.
 
 - **Jolt links against a different C runtime than everything else.**
   `USE_STATIC_MSVC_RUNTIME_LIBRARY` defaults to ON on MSVC and sets

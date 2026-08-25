@@ -42,6 +42,28 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     float f = pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
     return F0 + (vec3_splat(1.0) - F0) * f;
 }
+// ── The shadow fetch is EXPLICIT-LOD, and that is a portability requirement ──
+// This function is called from inside the light loop, for the one light that
+// casts. HLSL compiles texture2D to Sample(), a GRADIENT instruction, and
+// D3DCompile rejects gradients in a loop whose trip count is not compile-time
+// constant: "X3570: gradient instruction used in a loop with varying iteration,
+// attempting to unroll the loop". Our loop breaks on `i >= count` with count a
+// uniform, which is still "varying" to the compiler.
+//
+// Hoisting the CALL out of the loop would mean paying nine taps on every pixel
+// even with shadows off, and wrapping it in any branch reintroduces X3129. An
+// explicit LOD removes the gradient entirely, which is also what a shadow map
+// wants: it has no mip chain, so screen-space derivatives were never meaningful.
+//
+// HLSL-only because bgfx defines texture2DLod only for
+// BGFX_SHADER_LANGUAGE_GLSL >= 130, and this build also compiles --profile 120
+// and 100_es. Using it unconditionally would trade a D3D failure for a GLSL one.
+#if BGFX_SHADER_LANGUAGE_HLSL
+#	define SHADOW_FETCH(_s, _uv) texture2DLod(_s, _uv, 0.0)
+#else
+#	define SHADOW_FETCH(_s, _uv) texture2D(_s, _uv)
+#endif
+
 float sampleShadow(vec3 worldPos, float NdotL) {
     vec4 sc = mul(u_shadowMtx, vec4(worldPos, 1.0));
     vec3 uv = sc.xyz / sc.w;
@@ -51,7 +73,7 @@ float sampleShadow(vec3 worldPos, float NdotL) {
     float vis = 0.0;
     for (int x = -1; x <= 1; ++x)
         for (int y = -1; y <= 1; ++y) {
-            float d = texture2D(s_shadowMap, uv.xy + vec2(x, y) * texel).x;
+            float d = SHADOW_FETCH(s_shadowMap, uv.xy + vec2(x, y) * texel).x;
             vis += (uv.z - bias <= d) ? 1.0 : 0.0;
         }
     return vis / 9.0;

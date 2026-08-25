@@ -337,6 +337,17 @@ set(ozz_build_samples  OFF CACHE BOOL "" FORCE)
 set(ozz_build_howtos   OFF CACHE BOOL "" FORCE)
 set(ozz_build_tests    OFF CACHE BOOL "" FORCE)
 set(ozz_build_postfix  OFF CACHE BOOL "" FORCE)
+# ozz_build_msvc_rt_dll defaults OFF, and compiler_settings.cmake then does an
+# UNGUARDED `set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")`
+# — /MTd — in its own directory scope, which shadows the cache value pinned at the
+# top of this file. ozz_based/ozz_animationd/ozz_animation_offlined are all in
+# engine_cook_worker's link line, which is where "LNK2038: 'MTd_StaticDebug'
+# doesn't match 'MDd_DynamicDebug'" came from. Nothing in the build compiles with
+# an explicit /MTd flag — the log has zero — because with CMP0091 NEW the runtime
+# comes from a PROPERTY, so grepping command lines for /MTd finds nothing and the
+# only visible trace is assimp's `-mtd` library NAME, which is merely its naming
+# convention and a red herring.
+set(ozz_build_msvc_rt_dll ON CACHE BOOL "" FORCE)
 add_subdirectory(third_party/ozz-animation)
 if(MSVC)
     # ozz's build-utils/cmake/compiler_settings.cmake does an unconditional
