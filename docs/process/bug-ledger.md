@@ -292,6 +292,68 @@ eight classes had nowhere to go.
 - lane:      unit
 - proof:     found by GREPPING for the pattern rather than by waiting for CI. The build stops at the first error, so CI could only ever report one of the four — three more red runs to find them one at a time. Re-verified after the fix: zero files under src/ or modules/ use std::memcpy/memset/memcmp/strlen/strcmp without the include.
 
+## BUG-0022 — maRealloc read past the end of every block it grew
+- found:     2026-08-25
+- class:     memory
+- where:     src/audio/miniaudio_provider.cpp
+- symptom:   SIGSEGV on Linux inside ma_decoder__full_decode_and_uninit, i.e. on every sound decode. Nothing ever went wrong on macOS.
+- cause:     the host services interface has no realloc — deliberately — so the shim did alloc + copy + free and bounded the copy by the NEW size. Growing 64 KB -> 128 KB therefore read 64 KB past the end of the old block. On macOS the over-read landed inside the tagged heap's mapped region and was invisible.
+- pinned-by: tests/audio_conformance/tests/conformance.rs
+- lane:      unit
+- proof:     reproduced under Linux in a container with the provider built standalone (it is one self-contained TU by design, so no engine build is needed); gdb pointed straight at maRealloc. Mutation-verified — restoring the old bound brings the segfault straight back. Blocks now carry their size in a 16-byte alignas(16) prefix, static-asserted so the payload stays SIMD-aligned, and the copy is bounded by the MINIMUM, the only bound correct in both directions.
+- note:      MINE, and the comment is the worst part: it said the copy was "safe only while miniaudio uses this path to GROW", which is exactly inverted — growing is the unsafe direction. I identified the hazard and drew the opposite conclusion from it, which is worse than not considering it, because nothing executable disagreed with a comment that read as reasoned.
+
+## BUG-0023 — the one test that exercises the audio provider is the one ASan cannot see
+- found:     2026-08-25
+- class:     coverage
+- where:     tests/CMakeLists.txt
+- symptom:   BUG-0022 was a textbook heap over-read that ASan would have caught instantly, on a lane that runs on every push, and it survived to a Linux SIGSEGV.
+- cause:     audio_abi_conformance is EXCLUDED from sanitizer builds, because the Rust harness dlopens an instrumented module and ASan aborts with "interceptors are not working". The exclusion is correct in itself; its consequence was not noticed — the provider's only behavioural coverage lives in the excluded test, so that whole TU is outside the sanitizer's reach.
+- pinned-by: docs/process/bug-ledger.md
+- lane:      unit
+- proof:     NOT FIXED. Recorded rather than patched: the options (instrument the Rust side with nightly's -Zsanitizer, or add a C++ harness that links the provider directly) are both real work and the choice deserves its own pass. Until then the provider is the one engine TU with behavioural tests and no sanitizer coverage.
+
+## BUG-0024 — engineInit published without a happens-before edge
+- found:     2026-08-25
+- class:     threading
+- where:     src/audio/miniaudio_provider.cpp
+- symptom:   TSan reported a race between maCreate and the CoreAudio callback thread.
+- cause:     engineInit was a plain bool, written by the creating thread and read by the callback. The ORDERING in the source was already correct — set before ma_device_start — but source order is not a happens-before edge, and ma_device_init has already created the callback thread by that point, so nothing made the write visible.
+- pinned-by: tests/audio_conformance/tests/conformance.rs
+- lane:      tsan
+- proof:     a release store paired with a SINGLE acquire load at the top of the callback, which orders everything else maCreate published.
+
+## BUG-0025 — a cross-thread field hidden under a comment saying it was not one
+- found:     2026-08-25
+- class:     threading
+- where:     src/audio/miniaudio_provider.cpp
+- symptom:   none reported by TSan; found by reading after it flagged BUG-0024.
+- cause:     expectedPeriodNs sat under the comment "Callback-local, touched only by the audio thread" and is computed in maCreate. Grouping a cross-thread field beneath a comment ASSERTING it cannot be one is how it stayed invisible — a reader checking for races skips the block the comment excludes.
+- pinned-by: tests/audio_conformance/tests/conformance.rs
+- lane:      tsan
+- proof:     now an atomic, loaded relaxed in the callback. Worth noting TSan found one race and reading found the other: the tool bounds what it can observe in a single run, so a report is a starting point rather than a complete list.
+
+## BUG-0026 — an overrun counter that measured the runner instead of the mixer
+- found:     2026-08-25
+- class:     logic
+- where:     src/audio/miniaudio_provider.cpp
+- symptom:   "NO callback overruns under a 2000-command burst" failed on the Linux CI legs, 9 overruns counted — an assertion about our mixer failing on a fact about the machine.
+- cause:     a Linux runner has no sound card: ALSA prints "cannot find card '0'" and then returns a working 48 kHz device anyway, whose callback cadence is whatever the scheduler felt like. An overrun means "we missed a HARDWARE deadline"; with no hardware there is nothing to miss.
+- pinned-by: tests/audio_conformance/tests/conformance.rs
+- lane:      unit
+- proof:     ENGINE_AUDIO_NO_HARDWARE=1 covers both shapes of "no dependable audio device", permits the null-backend fallback and stops the timing assertions. ctest sets it; a shipped game never does, so a real device failure stays visible as E_NO_DEVICE. The FIRST version of the flag meant only "we fell back to the null backend" and could never trigger, because ALSA had already succeeded.
+
+## BUG-0027 — a generated file gated on content the commit itself changes
+- found:     2026-08-25
+- class:     coverage
+- where:     scripts/engine_doctor.py
+- symptom:   docs_status_current failed three runs on the gating leg while ENGINE_STATUS.md was, in every sense anyone cared about, current.
+- cause:     ENGINE_STATUS.md carries git-DERIVED data — the per-subsystem "code last changed" column and the stale-doc count — so regenerating before a commit and after it differ by construction: working-tree edits are not in history yet, and the moment they are, every doc covering them moves. Stale docs read 7 before and 14 after, same tree, same script. Committing the file invalidated it.
+- pinned-by: scripts/engine_doctor.py
+- lane:      docs
+- proof:     the gate now compares STRUCTURE — subsystems, tiers, docs, test counts — and normalises dates away; freshness stays with `engine_doctor check`, which computes it live and reports warnings. Verified by making a real commit and checking after it.
+- note:      two comments already in that function recorded the same lesson from two other causes, which is the sign it needed the rule stated rather than patched a third time: A GENERATED FILE CANNOT BE GATED ON CONTENT THAT CHANGES BECAUSE OF THE COMMIT THAT CONTAINS IT.
+
 ## Open — recorded so they are not forgotten
 
 These are known, unpinned, and deliberately visible rather than tidied away.
@@ -764,6 +826,14 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   the build stops there — the other three were found by grepping for the pattern
   rather than by waiting for three more red runs.
 
+- **Windows kits are blocked on design, not a flag.** `hot_reload_game` is a
+  MODULE that deliberately links nothing and resolves engine symbols from the
+  host executable at load — a Unix idiom. A Windows DLL must resolve every symbol
+  at link time, so it fails LNK2019 on flecs' globals. Making it work means
+  `engine_host` EXPORTING the symbols a module may use (Windows exports nothing
+  from an EXE by default, and WINDOWS_EXPORT_ALL_SYMBOLS covers DLLs only) and
+  the module linking the generated import library. Both Windows legs otherwise
+  report ZERO compile failures and build all 76 tests.
 - **The ledger is not updated by the gate that checks it.** `engine_doctor`
   validates entries that EXIST — ids unique, class known, `pinned-by` present —
   and structurally cannot notice an entry that should exist and does not. Three

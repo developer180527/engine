@@ -1,55 +1,61 @@
-tests: pin the overflow, and record the seven defects that were fixed
+docs: record the six defects the Windows port fixed, and re-verify four docs
 
-Two follow-ups to the last three commits, both small and both closing loops
-those commits left open.
+Bookkeeping the last fourteen commits earned. No code changes.
 
-── the overflow had no regression test ─────────────────────────────────────
-params_fit_their_uniforms was widened to u64 and nothing pinned it, which by
-this repo's own rule means it is not fixed yet: a bug is fixed when a test fails
-without the change and passes with it.
+── the ledger, 21 -> 27 ────────────────────────────────────────────────────
+BUG-0022  maRealloc read past the end of every block it grew
+BUG-0023  the one test that exercises the audio provider is the one ASan cannot see
+BUG-0024  engineInit published without a happens-before edge
+BUG-0025  a cross-thread field hidden under a comment saying it was not one
+BUG-0026  an overrun counter that measured the runner instead of the mixer
+BUG-0027  a generated file gated on content the commit itself changes
 
-The test covers BOTH bounds checks, because the defect was never the arithmetic
-— it was two sibling functions drifting apart in one sitting, one widened and
-one not. Pinning only the one that broke leaves the drift free to run the other
-way. Boundaries either side are asserted too (a float at component 3 fits
-exactly, component 4 spills), so the fix cannot degrade into "reject
-everything".
+Three are worth more than their titles.
 
-Mutation-proven in BOTH profiles, with the two distinct signatures that made
-this dangerous:
+BUG-0022's note records that the COMMENT was the worst part of it. Mine said the
+copy was "safe only while miniaudio uses this path to GROW" — exactly inverted,
+since growing is the unsafe direction. Identifying a hazard and drawing the
+opposite conclusion is worse than not considering it: nothing executable
+disagreed with something that read as reasoned.
 
-  debug     attempt to add with overflow            (shader.rs:177)
-  release   offset u32::MAX with Float must be REJECTED
+BUG-0023 is recorded as NOT FIXED. The sanitizer exclusion is correct in itself
+— the Rust harness aborts under a dlopen'd instrumented module — but its
+consequence was never noticed: the provider's only behavioural coverage lives in
+the excluded test, so that whole TU sits outside ASan's reach, which is why a
+textbook heap over-read survived to a Linux SIGSEGV. Both remedies (nightly
+-Zsanitizer, or a C++ harness linking the provider directly) are real work and
+deserve their own pass rather than a patch smuggled in here.
 
-Release is the one that mattered — pre-fix it returned Ok.
+BUG-0025's proof notes that TSan found one race and READING found the other. A
+report bounds what the tool observed in one run; it is a starting point, not a
+complete list.
 
-── seven fixes, no ledger entries ──────────────────────────────────────────
-BUG-0015 the overflow · BUG-0016 four cooked-asset lanes that never ran and
-reported ok · BUG-0017 assertions that disarmed instead of failing · BUG-0018
-lossy UTF-8 repair running BEFORE the name-safety check · BUG-0019 the reference
-audio clock that failed the gating leg · BUG-0020 the LAST_WELL_FORMED race ·
-BUG-0021 std::memcpy without <cstring> in four files.
+── two additions to the open list ──────────────────────────────────────────
+Windows kits are blocked on DESIGN, not a flag: hot_reload_game resolves engine
+symbols from the host executable at load, which is a Unix idiom, and a Windows
+DLL must resolve everything at link time. Written down so the conclusion is not
+re-derived. Both Windows legs otherwise report zero compile failures and build
+all 76 tests.
 
-Ledger at 21: memory 4, logic 6, coverage 4, threading 3, abi 2, build 2.
+And the ledger-discipline note updated, because it predicted its own recurrence:
+seven defects landed unrecorded, then fourteen more commits fixed six more with
+the ledger untouched. Twice in a row. engine_doctor validates entries that EXIST
+and structurally cannot notice one that should — so this stays a human rule, and
+one that may need a mechanical prompt rather than more resolve.
 
-Two are written to be uncomfortable rather than tidy. BUG-0016 is BUG-0004's
-exact shape three weeks later — a check that exists, is believed to run, and
-does not — and its note records that I verified two of those four lanes by hand
-with --nocapture and then failed to make the check mechanical. BUG-0017 is the
-self-agreeing-check pattern this crate exists to replace, reintroduced inside it.
+── four docs re-verified, not date-bumped ──────────────────────────────────
+animation, cookers/shader, render/diag and systems went stale during the port.
+All four changes turned out to be portability-only — three added #includes, one
+wrapped getpid() behind currentProcessId() for MSVC — so nothing they describe
+moved.
 
-BUG-0021's proof records the METHOD: found by grepping for the pattern rather
-than waiting for CI. The build stops at the first error, so CI could only ever
-report one of four — three more red runs to find them one at a time.
+Checked before touching a date, because bumping without re-reading is the one
+dishonest move this system cannot detect: no doc describes the area that
+changed; every test each doc cites as evidence still exists (6 files); all six
+pass. The staleness flag did its job and re-reading confirmed the content.
 
-── the gate's blind spot, now written down ─────────────────────────────────
-engine_doctor validates entries that EXIST and structurally cannot notice one
-that should exist and does not. Three commits fixing seven defects landed before
-anyone spotted it, and only because someone went looking. "A fix and its entry
-land together" is a human rule and nothing will ever tell you it was skipped.
+Warnings back to 12.
 
 ── verification ────────────────────────────────────────────────────────────
-Full ctest 74/74 — unit 53, stress 6, fuzz-explore 5, fuzz-regress 5, docs 2,
-asset 2, soak 1. ASan+UBSan 51/51 on a fresh instrumented build. Docs gate 0
-errors, ENGINE_STATUS current, every pinned-by resolves.
-
+Full ctest 76/76. Docs gate 0 errors, ENGINE_STATUS current, every pinned-by
+resolves.

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-03
+verified: 2026-08-26
 covers:
   - src/assets/cookers/shader/
   - modules/assetlib/src/formats/shader_asset.cpp

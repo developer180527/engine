@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-10
+verified: 2026-08-26
 parses-external-input: true
 covers:
   - src/animation/
