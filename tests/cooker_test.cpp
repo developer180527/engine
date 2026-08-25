@@ -31,6 +31,7 @@
 #include <assetlib/cook_pipeline.h>
 #include <vector>
 #include <cmath>
+#include "test_env.h"
 
 namespace fs = std::filesystem;
 namespace { int g_failures = 0; }
@@ -210,7 +211,7 @@ int main() {
             rgba[i*4+1] = (uint8_t)(255 - i * 4);
             rgba[i*4+2] = 128; rgba[i*4+3] = 255;   // opaque
         }
-        unsetenv("COOK_TEX_HQ");
+        testenv::unset("COOK_TEX_HQ");
         assetlib::TextureAsset t;
         CHECK(cook::encodeTexture(rgba.data(), 8, 8, false, t),
               "opaque color encodes (fast default)");
@@ -228,12 +229,12 @@ int main() {
               "alpha color → BC3 (fmt=%u, %zu B)", ta.header.format, ta.pixels.size());
 
         // Opt-in HQ → BC7 (16 B/block → 112 B), the exhaustive final-bake path.
-        setenv("COOK_TEX_HQ", "1", 1);
+        testenv::set("COOK_TEX_HQ", "1");
         assetlib::TextureAsset hq;
         CHECK(cook::encodeTexture(rgba.data(), 8, 8, false, hq)
               && hq.header.format == assetlib::kTexBC7 && hq.pixels.size() == 112,
               "COOK_TEX_HQ → BC7 (fmt=%u, %zu B)", hq.header.format, hq.pixels.size());
-        unsetenv("COOK_TEX_HQ");
+        testenv::unset("COOK_TEX_HQ");
 
         assetlib::TextureAsset n;
         CHECK(cook::encodeTexture(rgba.data(), 8, 8, true, n)

@@ -42,6 +42,7 @@
 #include "assets/cookers/texture/texture_eac.h"
 #include "assets/cookers/texture/texture_encode.h"
 #include "assets/cookers/texture/texture_target.h"
+#include "test_env.h"
 
 namespace { int g_failures = 0; }
 #define CHECK(cond, ...) do {                                       \
@@ -72,8 +73,8 @@ static std::vector<uint8_t> testImage(uint32_t w, uint32_t h) {
 }
 
 static void withTarget(const char* v) {
-    if (v) ::setenv("COOK_TEX_TARGET", v, 1);
-    else   ::unsetenv("COOK_TEX_TARGET");
+    if (v) testenv::set("COOK_TEX_TARGET", v);
+    else   testenv::unset("COOK_TEX_TARGET");
 }
 
 // ── 1. Block geometry ───────────────────────────────────────────────────────
@@ -222,7 +223,7 @@ static void testEncode() {
 
     for (const Case& c : cases) {
         withTarget(c.target);
-        if (c.hq) ::setenv("COOK_TEX_HQ", "1", 1); else ::unsetenv("COOK_TEX_HQ");
+        if (c.hq) testenv::set("COOK_TEX_HQ", "1"); else testenv::unset("COOK_TEX_HQ");
 
         TextureAsset a;
         const bool ok = cook::encodeTexture(src.data(), W, H, c.normal, a);
@@ -263,7 +264,7 @@ static void testEncode() {
               "  -> encoding twice gives identical bytes");
     }
     withTarget(nullptr);
-    ::unsetenv("COOK_TEX_HQ");
+    testenv::unset("COOK_TEX_HQ");
 }
 
 // ── 4. EAC alpha against bimg's decoder ─────────────────────────────────────

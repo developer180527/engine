@@ -254,12 +254,23 @@ jobs:
       # The whole point of the experimental legs is to turn "broken on Windows"
       # into a specific, incrementally fixable list — and that list is useless
       # if reading it means downloading an artifact and scrolling a 40 MB log.
+      # `-k 0` — KEEP GOING after a failure, and this is the difference between a
+      # workflow and a treadmill. Ninja stops scheduling new work at the first
+      # error, so a leg with six unrelated portability bugs reports ONE, and each
+      # fix costs a full round-trip to reveal the next. The Windows port spent six
+      # rounds that way: one missing macro, then one POSIX function, then one
+      # more, each discovered only after the previous was pushed.
+      #
+      # With -k 0 the whole graph is attempted and the summary step below gets the
+      # complete list. The build still exits non-zero, so nothing is hidden — it
+      # just stops rationing the diagnosis. Applied to every leg: the same
+      # argument holds anywhere a build can fail in more than one place.
       - name: Build
         id: build
         shell: bash
         run: |
           set -o pipefail
-          cmake --build build --parallel 2>&1 | tee build-output.log
+          cmake --build build --parallel -- -k 0 2>&1 | tee build-output.log
 
       - name: Summarise compiler errors
         if: failure() && steps.build.outcome == 'failure'
@@ -278,10 +289,10 @@ jobs:
               echo "No compile errors matched. The failure was in CONFIGURE or"
               echo "LINK — see the Build step log; the summary cannot help here."
             else
-              echo "$count distinct error line(s); first 40:"
+              echo "$count distinct error line(s); first 80:"
               echo
               echo '```'
-              printf '%s\n' "$errors" | head -40
+              printf '%s\n' "$errors" | head -80
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"

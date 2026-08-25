@@ -355,6 +355,39 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **Ninja stops at the first error, and that turned a port into a treadmill.**
+  Six consecutive CI rounds each revealed exactly ONE Windows portability bug —
+  a missing macro, then a POSIX function, then another — because the build stops
+  scheduling work at the first failure and a fix can only be validated by pushing
+  it. Six round-trips for six independent one-line problems, none of which
+  depended on the others.
+
+  The build now passes `-k 0`, so the whole graph is attempted and the summary
+  step gets the complete list. Nothing is hidden — the build still exits
+  non-zero; it just stops rationing the diagnosis. This is the same lesson as
+  `check_std_includes.py`: when the loop is "fix one, wait, learn one", the thing
+  to fix is the loop.
+
+- **`setenv`/`unsetenv` are POSIX, in four test files at once.** MSVC has neither;
+  it spells the first `_putenv_s`. The genuinely different half is UNSETTING:
+  POSIX has `unsetenv(name)`, while on Windows `_putenv_s(name, "")` REMOVES the
+  variable rather than defining it as empty. Code reading `getenv(x) && *x` cannot
+  tell those apart, but `getenv(x) != nullptr` can — and that is exactly what
+  `harness::skips_are_failures` and `resolveTexTarget` do, so getting it wrong
+  would have made an env-var test pass for the wrong reason on one platform.
+  Worse than not compiling. Behind `testenv::set`/`unset` now, and verified by
+  running the affected tests with the variables PRE-SET in the environment.
+
+- **DXC is x86-64 only on Windows too, and bgfx's CMake assumes otherwise.**
+  `bgfxToolUtils.cmake` appends both `s_5_0` (DXBC) and `s_6_0` (DXIL) for any
+  WIN32 target, and `tools/bin/windows/dxcompiler.dll` is a `PE32+ x86-64` DLL
+  with no ARM64 build — so every shader in the project failed on Windows-on-ARM
+  with "Unable to load DXC compiler". The identical fact already forced the
+  equivalent guard on the COOKER side for Linux arm64
+  (`profileCookableOnThisHost`), where `libdxcompiler.so` is likewise x86-64.
+  Two independent places had to learn the same thing, which is a hint the
+  question "can this host emit DXIL?" deserves one home rather than two.
+
 - **Fixing bx's arch detection uncovered the same assumption one file over.**
   `simd_t.h` read `#if defined(__SSE2__) || (BX_COMPILER_MSVC && (BX_ARCH_64BIT ||
   _M_IX86_FP >= 2))` — "MSVC and 64-bit" meaning "x86-64", which was fair until

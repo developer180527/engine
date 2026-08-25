@@ -1,0 +1,27 @@
+diff --git a/cmake/bgfxToolUtils.cmake b/cmake/bgfxToolUtils.cmake
+index a937ba1..e44891f 100644
+--- a/cmake/bgfxToolUtils.cmake
++++ b/cmake/bgfxToolUtils.cmake
+@@ -603,7 +603,21 @@ if(TARGET bgfx::shaderc)
+ 		)
+ 			set(PLATFORM WINDOWS)
+ 			list(APPEND PROFILES s_5_0)
+-			list(APPEND PROFILES s_6_0)
++			# s_6_0 is DXIL, which shaderc produces by loading DXC — and bgfx
++			# ships tools/bin/windows/dxcompiler.dll as an x86-64 PE. There is no
++			# ARM64 build of it, so on Windows-on-ARM every shader in the project
++			# fails with "Error: Unable to load DXC compiler. Failed to build
++			# shader." (engine patch)
++			#
++			# Exactly the same fact already forced the equivalent guard on the
++			# cooker side for Linux arm64, where libdxcompiler.so is likewise
++			# x86-64 only — see profileCookableOnThisHost in
++			# modules/assetlib/src/formats/shader_asset.cpp. A capability that
++			# depends on a checked-in binary's architecture cannot be inferred
++			# from the platform alone.
++			if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^([Aa][Rr][Mm]64|aarch64)$")
++				list(APPEND PROFILES s_6_0)
++			endif()
+ 		elseif(ORBIS) # ORBIS should be defined by a PS4 CMake toolchain
+ 			set(PLATFORM ORBIS)
+ 			list(APPEND PROFILES pssl)

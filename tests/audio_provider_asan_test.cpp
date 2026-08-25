@@ -38,6 +38,7 @@
 #include <vector>
 
 #include <engine/engine_audio_provider.h>
+#include "test_env.h"
 
 #if defined(_WIN32)
   #define WIN32_LEAN_AND_MEAN
@@ -219,7 +220,7 @@ int main() {
 #if defined(_WIN32)
     _putenv_s("ENGINE_AUDIO_NO_HARDWARE", "1");
 #else
-    setenv("ENGINE_AUDIO_NO_HARDWARE", "1", 1);
+    testenv::set("ENGINE_AUDIO_NO_HARDWARE", "1");
 #endif
 
     const EngineAudioProviderV1* p = loadProvider(ENGINE_AUDIO_MODULE_PATH);

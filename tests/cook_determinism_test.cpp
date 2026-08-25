@@ -34,6 +34,7 @@
 
 #include <assetlib/cooker.h>
 #include "cook/dispatch.h"          // internal header — this tests the choke point
+#include "test_env.h"
 
 namespace fs = std::filesystem;
 namespace { int g_failures = 0; }
@@ -131,8 +132,8 @@ int main(int argc, char** argv) {
 
     // Set BEFORE the first dispatchCook: the flag is read once and cached, so a
     // process tests one mode. Hence two ctest entries rather than one.
-    if (checkOn) ::setenv("ENGINE_COOK_DETERMINISM_CHECK", "1", 1);
-    else         ::unsetenv("ENGINE_COOK_DETERMINISM_CHECK");
+    if (checkOn) testenv::set("ENGINE_COOK_DETERMINISM_CHECK", "1");
+    else         testenv::unset("ENGINE_COOK_DETERMINISM_CHECK");
 
     std::printf("cook_determinism_test: check %s\n", checkOn ? "ON" : "OFF");
 
