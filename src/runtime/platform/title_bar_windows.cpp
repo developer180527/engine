@@ -22,15 +22,24 @@
 
 #if defined(_WIN32)
 
+// Guarded: the top-level CMakeLists already defines both for MSVC
+// (add_compile_definitions), and an unguarded #define here is
+// "warning C4005: macro redefinition" on every Windows TU that includes
+// this. Harmless individually, and collectively it buries the warnings
+// that mean something.
 #ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
+#ifndef WIN32_LEAN_AND_MEAN
+#  define WIN32_LEAN_AND_MEAN
+#endif
 #endif
 // windows.h defines min/max as MACROS, which then break any std::min/std::max
 // later in the same translation unit — and the breakage reads as a baffling
 // template error, not as a macro collision. Every TU here that pulls in
 // windows.h defines this; the cook dispatcher already did.
 #ifndef NOMINMAX
-#define NOMINMAX
+#ifndef NOMINMAX
+#  define NOMINMAX
+#endif
 #endif
 #include <windows.h>
 #include <windowsx.h>

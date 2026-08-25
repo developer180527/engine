@@ -9,8 +9,17 @@
 // WIN32_LEAN_AND_MEAN trims the socket/RPC/OLE headers; NOMINMAX stops
 // windows.h from defining min/max as macros, which breaks <algorithm> and
 // any `std::numeric_limits<T>::max()` downstream.
+// Guarded: the top-level CMakeLists already defines both for MSVC
+// (add_compile_definitions), and an unguarded #define here is
+// "warning C4005: macro redefinition" on every Windows TU that includes
+// this. Harmless individually, and collectively it buries the warnings
+// that mean something.
+#ifndef WIN32_LEAN_AND_MEAN
 #  define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #  define NOMINMAX
+#endif
 #  include <windows.h>
 #else
 #  include <pthread.h>

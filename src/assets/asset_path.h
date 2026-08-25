@@ -12,11 +12,20 @@
     // std::min/std::max at some unrelated call site, as a template error that
     // names neither); WIN32_LEAN_AND_MEAN keeps the rest of the Win32 surface
     // out of everyone's translation unit.
+// Guarded: the top-level CMakeLists already defines both for MSVC
+// (add_compile_definitions), and an unguarded #define here is
+// "warning C4005: macro redefinition" on every Windows TU that includes
+// this. Harmless individually, and collectively it buries the warnings
+// that mean something.
     #ifndef WIN32_LEAN_AND_MEAN
-    #define WIN32_LEAN_AND_MEAN
+    #ifndef WIN32_LEAN_AND_MEAN
+    #  define WIN32_LEAN_AND_MEAN
+    #endif
     #endif
     #ifndef NOMINMAX
-    #define NOMINMAX
+    #ifndef NOMINMAX
+    #  define NOMINMAX
+    #endif
     #endif
     #include <windows.h>          // GetModuleFileNameA
 #endif

@@ -25,7 +25,14 @@
 #include <vector>
 
 #if defined(_WIN32)
+// Guarded: the top-level CMakeLists already defines both for MSVC
+// (add_compile_definitions), and an unguarded #define here is
+// "warning C4005: macro redefinition" on every Windows TU that includes
+// this. Harmless individually, and collectively it buries the warnings
+// that mean something.
+#ifndef WIN32_LEAN_AND_MEAN
 #  define WIN32_LEAN_AND_MEAN
+#endif
 #  ifndef NOMINMAX
 #    define NOMINMAX            // keep windows.h min/max macros out of bx/flecs/std
 #  endif

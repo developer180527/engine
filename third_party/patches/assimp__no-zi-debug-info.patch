@@ -1,0 +1,21 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a61cd4d9f..e17395d51 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -354,7 +354,15 @@ ELSEIF(MSVC)
+   ENDIF()
+   # supress warning for double to float conversion if Double precision is activated
+   ADD_COMPILE_OPTIONS(/wd4244)
+-  SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /D_DEBUG /Zi /Od")
++  # /Zi REMOVED (engine patch). The engine rewrites /Zi to /Z7 project-wide so
++  # debug info lands in each .obj instead of a shared per-target .PDB: separate
++  # PDB writes from parallel cl.exe invocations produce "C1041: cannot open
++  # program database ... please use /FS", and sccache cannot cache a /Zi compile
++  # at all. Appending /Zi here defeated both — and out-voting it with a later
++  # /Z7 was not enough, because sccache parses the command line, sees /Zi, and
++  # then fails with "failed to open file assimp-vc145-mtd.pdb" for a PDB that
++  # /Z7 meant was never written. The flag has to be absent, not merely last.
++  SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /D_DEBUG /Od")
+   # Allow user to disable PDBs
+   if(ASSIMP_INSTALL_PDB)
+     SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")

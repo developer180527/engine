@@ -355,6 +355,36 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **Linux arm64 could not cook a single shader, because DXC is x86-64 only.**
+  `profileCookableOnThisHost` allowed `dx12` on any Linux host — "d3d4linux covers
+  DXIL" — but the DXC it loads is a VENDORED PREBUILT:
+  `bgfx/tools/bin/linux/libdxcompiler.so`, which `file` reports as
+  "ELF 64-bit LSB shared object, x86-64". There is no arm64 build. So arm64
+  accepted the profile, handed the stage to shaderc, and shaderc died with
+  "dlopen failed ... Unable to load DXC compiler" — failing the WHOLE shader cook,
+  on one architecture only, which is exactly why x86-64 Linux was green.
+
+  The guard asked which OS and needed to ask which OS AND ARCHITECTURE. A
+  capability that depends on a checked-in binary's arch cannot be inferred from
+  the platform alone.
+
+- **The test fixture's own allocator raced, under the sanitizer written to catch
+  races.** `audio_provider_asan_test` tracked live blocks in an unsynchronised
+  `std::map`, and the provider is EXPLICITLY allowed to allocate off the game
+  thread — the ABI hands it `parallelFor` and tells it to decode there. TSan
+  reported races inside libc++'s red-black tree (`__tree_remove`,
+  `__find_equal`, `__insert_node_at`). Left alone, a corrupted tree would
+  eventually have surfaced as "the provider freed a pointer we never handed out":
+  the fixture accusing the code it was written to vindicate. One mutex over the
+  whole record, because `live`, `peak` and `blocks` have to move together.
+
+- **`/Z7` won the flag argument and sccache lost anyway.** Adding a later `/Z7`
+  did stop assimp's `/Zi` from taking effect — C1041 disappeared — but `/Zi` was
+  still ON THE COMMAND LINE, and sccache parses the command line: it expected a
+  PDB, `/Z7` meant none was written, and it failed with "failed to open file
+  assimp-vc145-mtd.pdb". The flag had to be ABSENT, not merely outvoted, so it is
+  now removed at source by `assimp__no-zi-debug-info.patch`.
+
 - **`render_status` claimed staleness a shallow clone cannot know.** `check_docs`
   already refused to (`changed = "" if SHALLOW`), and `is_shallow()`'s own
   docstring says "refusing to make the claim beats emitting confident nonsense" —

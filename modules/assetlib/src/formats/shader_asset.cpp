@@ -64,7 +64,27 @@ bool profileCookableOnThisHost(uint32_t p) {
 #if defined(_WIN32)
     (void)p; return p < kProfileCount;            // Windows hosts do everything
 #elif defined(__linux__)
-    return p != kProfileDx11;                     // d3d4linux covers DXIL, not DXBC
+    // d3d4linux covers DXIL (dx12) but not DXBC (dx11) — and it covers DXIL only
+    // on x86-64, because the DXC compiler it loads is a VENDORED PREBUILT BINARY:
+    // third_party/bgfx.cmake/bgfx/tools/bin/linux/libdxcompiler.so is
+    // "ELF 64-bit LSB shared object, x86-64". There is no arm64 build of it.
+    //
+    // Without the arch half of this test, an arm64 Linux host cheerfully accepts
+    // the dx12 profile, hands the stage to shaderc, and shaderc dies with
+    // "dlopen failed: libdxcompiler.so: cannot open shared object file" ->
+    // "Unable to load DXC compiler" -> the whole shader cook fails. Every shader
+    // in the project, on that architecture only, which is why x86-64 Linux was
+    // green and arm64 was not.
+    //
+    // Compile-time arch rather than a runtime probe for the library: the answer
+    // is a property of the SUBMODULE's contents, not of the machine, and the
+    // function has no path to probe with. If bgfx ever ships an arm64
+    // libdxcompiler.so, this is the line to revisit.
+#   if defined(__x86_64__) || defined(__amd64__)
+    return p != kProfileDx11;
+#   else
+    return p != kProfileDx11 && p != kProfileDx12;
+#   endif
 #else
     return p == kProfileMetal || p == kProfileSpirv || p == kProfileGlsl;
 #endif

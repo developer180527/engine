@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <vector>
 
 #include <engine/engine_audio_provider.h>
@@ -59,6 +60,21 @@ namespace { int g_failures = 0; }
 namespace host {
 
 struct Counters {
+    // ── EVERY FIELD BELOW IS TOUCHED FROM MORE THAN ONE THREAD ───────────────
+    // The provider is explicitly allowed to allocate off the game thread — the
+    // ABI hands it parallelFor and tells it to decode and refill streams there —
+    // so a host allocator that keeps unsynchronised bookkeeping is the HOST's
+    // bug, not the provider's. This one kept a std::map and plain counters, and
+    // TSan reported races inside libc++'s red-black tree the first time the
+    // suite ran under the thread sanitizer: __tree_remove, __find_equal,
+    // __insert_node_at. A corrupted tree would eventually have been read as
+    // "the provider freed a pointer we never handed out" — the test accusing the
+    // code it was written to vindicate.
+    //
+    // One mutex over the whole record, not atomics per counter: `live`, `peak`
+    // and `blocks` have to move TOGETHER or the peak is nonsense, and this is a
+    // test fixture where contention costs nothing.
+    std::mutex m;
     uint64_t allocs = 0, frees = 0, bytes = 0, peak = 0, live = 0;
     // Sizes of every live block, so a free of an address we never handed out —
     // or of an interior pointer — is caught here rather than by the allocator
@@ -86,29 +102,38 @@ void* alloc(void* ud, uint64_t bytes, uint64_t alignment) {
                 sizeof(void*));
     void* p = reinterpret_cast<void*>(aligned);
 
-    ++c->allocs;
-    c->bytes += bytes;
-    c->live  += bytes;
-    if (c->live > c->peak) c->peak = c->live;
-    if (bytes > c->largest) c->largest = bytes;
-    c->blocks[p] = bytes;
+    // The malloc above is deliberately OUTSIDE the lock: it is thread-safe on
+    // its own, and holding our mutex across it would serialise the very
+    // parallel decode this test exists to exercise.
+    {
+        std::lock_guard<std::mutex> lk(c->m);
+        ++c->allocs;
+        c->bytes += bytes;
+        c->live  += bytes;
+        if (c->live > c->peak) c->peak = c->live;
+        if (bytes > c->largest) c->largest = bytes;
+        c->blocks[p] = bytes;
+    }
     return p;
 }
 
 void freeFn(void* ud, void* p) {
     auto* c = static_cast<Counters*>(ud);
     if (!p) return;
-    auto it = c->blocks.find(p);
-    if (it == c->blocks.end()) {
-        // The provider handed back something we never gave it. With a
-        // size-prefixed allocator inside the provider, an off-by-one on the
-        // prefix arithmetic lands exactly here.
-        ++c->badFrees;
-        return;
+    {
+        std::lock_guard<std::mutex> lk(c->m);
+        auto it = c->blocks.find(p);
+        if (it == c->blocks.end()) {
+            // The provider handed back something we never gave it. With a
+            // size-prefixed allocator inside the provider, an off-by-one on the
+            // prefix arithmetic lands exactly here.
+            ++c->badFrees;
+            return;
+        }
+        c->live -= it->second;
+        c->blocks.erase(it);
+        ++c->frees;
     }
-    c->live -= it->second;
-    c->blocks.erase(it);
-    ++c->frees;
     void* base = nullptr;
     std::memcpy(&base, reinterpret_cast<char*>(p) - sizeof(void*), sizeof(void*));
     std::free(base);
