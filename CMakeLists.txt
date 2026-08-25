@@ -421,7 +421,46 @@ if(ENGINE_BUILD_SAMPLES)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
     )
     add_subdirectory("sdk_sample_game(cpp)")
-    add_subdirectory(samples/hot_reload_game)
+
+    # ── hot_reload_game needs a linkage model Windows does not have ───────────
+    # It is a MODULE library that deliberately links NOTHING and resolves every
+    # engine symbol from the engine_host executable at load time. That is a Unix
+    # idiom: macOS permits it with -undefined dynamic_lookup, ELF shared objects
+    # allow undefined symbols and the loader binds them from the executable. A
+    # Windows DLL must resolve every symbol AT LINK TIME, so the same source
+    # fails with LNK2019 on flecs' globals — and the __imp_ prefix on them is a
+    # second, separate problem: flecs.h declares dllimport unless flecs_STATIC is
+    # defined, which the sample does not get because it links no flecs target.
+    #
+    # Making it build on Windows is real work, not a flag: engine_host would have
+    # to EXPORT the symbols a module may use (Windows exports nothing from an EXE
+    # by default, and WINDOWS_EXPORT_ALL_SYMBOLS covers DLLs only), and the module
+    # would link the generated import library. That is the same gap Windows KITS
+    # will hit, so it deserves designing once rather than patching here.
+    #
+    # Off by default on MSVC until then. This is the option the first Windows port
+    # attempt asked for — "make samples optional so unrelated failures do not
+    # block the engine build" — and nothing in the engine or the test suite
+    # depends on this target. With -k 0 proving it is the ONLY remaining failure
+    # on both Windows legs, skipping it is the difference between a green matrix
+    # and a red one that says nothing new.
+    if(MSVC)
+        set(_samples_default OFF)
+    else()
+        set(_samples_default ON)
+    endif()
+    option(ENGINE_BUILD_HOT_RELOAD_SAMPLE
+           "Build the hot-reloadable game module sample (needs load-time symbol \
+resolution against the host executable — Unix only for now)"
+           ${_samples_default})
+    if(ENGINE_BUILD_HOT_RELOAD_SAMPLE)
+        add_subdirectory(samples/hot_reload_game)
+    else()
+        message(STATUS "engine: hot_reload_game sample SKIPPED — its module "
+                       "resolves host symbols at load time, which needs "
+                       "import-library work on Windows (see the comment in "
+                       "CMakeLists.txt). Nothing else depends on it.")
+    endif()
 endif()
 
 # ── Install — `cmake --install build --prefix <sdk-dir>` ────────────────────

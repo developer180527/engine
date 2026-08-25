@@ -355,6 +355,29 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **The last Windows failure was a sample that CANNOT work there as written.**
+  `hot_reload_game` is a MODULE library that deliberately links nothing and
+  resolves every engine symbol from the `engine_host` executable at load time.
+  That is a Unix idiom: macOS allows it with `-undefined dynamic_lookup`, ELF
+  shared objects permit undefined symbols and the loader binds them from the
+  executable. A Windows DLL must resolve every symbol AT LINK TIME, so it failed
+  with LNK2019 on flecs' globals — plus a second, separate problem in the same
+  line: the `__imp_` prefix, because `flecs.h` declares `dllimport` unless
+  `flecs_STATIC` is defined and the sample links no flecs target to inherit it
+  from.
+
+  Making it work on Windows is design, not a flag: `engine_host` would have to
+  EXPORT the symbols a module may use (Windows exports nothing from an EXE by
+  default, and `WINDOWS_EXPORT_ALL_SYMBOLS` covers DLLs only) and the module would
+  link the generated import library. **Windows KITS will hit exactly this**, so it
+  is worth designing once rather than patching in a sample.
+
+  Off by default on MSVC until then, which is the option the first Windows port
+  attempt asked for in as many words. What made that a defensible call rather
+  than a convenient one: `-k 0` proved it was the ONLY remaining failure on both
+  legs — zero compile errors, one failed target — so the engine, every tool, every
+  shader and all 76 tests build on x64 and ARM64 Windows.
+
 - **`-k 0` paid for itself on its first run.** The round after adding it reported
   the COMPLETE Windows picture instead of one line: three root causes across both
   legs, all independent, all fixable together. Six earlier rounds had each

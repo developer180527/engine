@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-25
+verified: 2026-08-26
 parses-external-input: true
 covers:
   - modules/assetlib/
@@ -231,3 +231,13 @@ cost three CI round-trips one error at a time, because a build stops at the firs
 failure. `scripts/check_std_includes.py` now finds them all in one local pass and
 runs as the `std_includes` unit test — it caught two of its author's own the
 moment they were written.
+
+**The blake3 arch gate agrees with blake3, not with a string.** `CMAKE_SYSTEM_PROCESSOR`
+is `ARM64` on Windows, `aarch64` on Linux and `arm64` on macOS, and CMake's
+`MATCHES` is case-sensitive — so the NEON kernel silently went uncompiled on
+Windows-on-ARM while `blake3_impl.h` (correctly, from `_M_ARM64`) had
+`blake3_dispatch.c` calling it: "unresolved external symbol
+blake3_hash_many_neon". The gate is lowercased now, but the real lesson is that
+the compiler already answers "is this AArch64?" exactly and we answered it again,
+worse. `blake3_neon.c` cannot be compiled unconditionally instead — it includes
+`<arm_neon.h>` with no guard — so the two predicates must agree.
