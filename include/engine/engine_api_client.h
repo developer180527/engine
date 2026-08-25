@@ -24,6 +24,7 @@
 #include <stdio.h>
 
 #include "engine_api.h"
+#include "engine_export.h"
 #include "engine_api_table.h"
 
 /* Module-local state — one per dylib, invisible outside it. */
@@ -72,7 +73,7 @@ static bool eapiGuard(int group, const char* name) {
     return false;
 }
 
-extern "C" __attribute__((visibility("default")))
+extern "C" ENGINE_MODULE_EXPORT
 void engineModuleBindApiV1(const EngineApiTableV1* t) {
     /* ── ">=", not "==": this is the v1-kit-on-v5-host promise ──────────────
      * A NEWER host is fine. Its table appends groups after the ones this

@@ -355,6 +355,44 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **`-k 0` paid for itself on its first run.** The round after adding it reported
+  the COMPLETE Windows picture instead of one line: three root causes across both
+  legs, all independent, all fixable together. Six earlier rounds had each
+  delivered exactly one. Nothing about the code changed to make that possible —
+  only the flag.
+
+- **The module ABI could not be compiled by the toolchain most likely to build a
+  module.** Three SDK headers — `contract.h`, `engine_api_client.h`,
+  `game_module.h` — wrote `__attribute__((visibility("default")))` directly. MSVC
+  spells it `__declspec(dllexport)`, so every module entry point was "C3861:
+  'visibility': identifier not found" plus a C2059/C2143 cascade. A C ABI whose
+  entire purpose is to be dlopen'd from a shared library, unbuildable on Windows.
+  Now `ENGINE_MODULE_EXPORT` in its own header, because those three are
+  independent SDK entry points (`contract.h` includes nothing but `<stdint.h>`)
+  and each has to stay usable alone. Verified the symbol is still exported after
+  the swap rather than assuming it.
+
+- **A C99 compound literal in a C++ test.** `nav_test.cpp` passed
+  `(const float[3]){3, 1, 3}`; GCC and Clang accept that in C++ as an extension,
+  MSVC rejects it (C4576). A named local costs nothing — the temporary only had to
+  outlive the call. `script_host.h` had already reached the same conclusion in a
+  comment, which is a sign the extension was known to be a trap and the knowledge
+  had not travelled.
+
+- **Our blake3 arch test disagreed with blake3's own.** `CMAKE_SYSTEM_PROCESSOR`
+  is `ARM64` on Windows-on-ARM, `aarch64` on Linux and `arm64` on macOS — and
+  CMake's `MATCHES` is CASE-SENSITIVE, so `MATCHES "arm64|aarch64"` failed on
+  Windows only. The NEON kernel was never compiled, while `blake3_impl.h` derived
+  `BLAKE3_USE_NEON` from `__aarch64__ || _M_ARM64 || _M_ARM64EC` — correct on MSVC
+  ARM64 — and `blake3_dispatch.c` duly called it: "unresolved external symbol
+  blake3_hash_many_neon".
+
+  The lesson is not the missing `TOLOWER`. It is that the compiler already
+  answers "is this AArch64?" exactly, and we answered it again, worse, by string
+  comparison against an OS-specific spelling. `blake3_neon.c` cannot simply be
+  compiled unconditionally either — it includes `<arm_neon.h>` with no guard — so
+  the two predicates have to agree, and only one of them has the facts.
+
 - **Ninja stops at the first error, and that turned a port into a treadmill.**
   Six consecutive CI rounds each revealed exactly ONE Windows portability bug —
   a missing macro, then a POSIX function, then another — because the build stops

@@ -59,7 +59,13 @@ int main() {
 
     // Project an off-mesh point down onto the ground.
     float proj[3];
-    CHECK(nav.projectPoint((const float[3]){3, 1, 3}, proj) && proj[1] < 1.0f,
+    // A named local, not `(const float[3]){3, 1, 3}`. That is a C99 COMPOUND
+    // LITERAL, which GCC and Clang accept in C++ as an extension and MSVC
+    // rejects: "C4576: a parenthesized type followed by an initializer list is a
+    // non-standard explicit type conversion syntax". Nothing is lost — the
+    // temporary only had to live for the duration of the call.
+    const float query[3] = {3, 1, 3};
+    CHECK(nav.projectPoint(query, proj) && proj[1] < 1.0f,
           "projectPoint snaps onto the navmesh");
 
     // The path must route AROUND the wall: a straight shot would be 2 points;

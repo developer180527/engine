@@ -27,6 +27,7 @@
 #include "runtime/runtime_context.h"
 #include <flecs.h>
 #include <stdint.h>
+#include "engine_export.h"
 
 // Shared component headers — these define the layout hash below.
 #include "core/transform.h"
@@ -193,7 +194,7 @@ typedef void                (*EngineGameModuleDestroyV1Fn)(EngineGameModuleV1*);
         flecs::world wv(w);                                                    \
         static_cast<PluginType*>(u)->onFrame(wv, dt);                          \
     }                                                                          \
-    extern "C" __attribute__((visibility("default")))                          \
+    extern "C" ENGINE_MODULE_EXPORT                          \
     EngineGameModuleV1* engineGameModuleCreateV1(void) {                       \
         auto* p = new PluginType();                                            \
         auto* t = new EngineGameModuleV1{};                                    \
@@ -216,7 +217,7 @@ typedef void                (*EngineGameModuleDestroyV1Fn)(EngineGameModuleV1*);
         t->loadReason  = nullptr; /* fill in a custom create if you need it */ \
         return t;                                                              \
     }                                                                          \
-    extern "C" __attribute__((visibility("default")))                          \
+    extern "C" ENGINE_MODULE_EXPORT                          \
     void engineGameModuleDestroyV1(EngineGameModuleV1* t) {                    \
         if (!t) return;                                                        \
         delete static_cast<PluginType*>(t->user);                              \

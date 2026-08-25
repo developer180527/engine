@@ -55,7 +55,22 @@ set(BLAKE3_SRCS
     ${BLAKE3_DIR}/blake3_dispatch.c
     ${BLAKE3_DIR}/blake3_portable.c
 )
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+# CASE-INSENSITIVE, and that was a real bug rather than tidiness. CMake's MATCHES
+# is case-sensitive and CMAKE_SYSTEM_PROCESSOR is "ARM64" on Windows-on-ARM (and
+# "aarch64" on Linux, "arm64" on macOS) — so this test failed there, the NEON
+# kernel was never compiled, and the link died with "unresolved external symbol
+# blake3_hash_many_neon referenced in function blake3_hash_many".
+#
+# The call site is not ours to argue with: blake3_impl.h derives BLAKE3_USE_NEON
+# from `__aarch64__ || _M_ARM64 || _M_ARM64EC`, which is CORRECT on MSVC ARM64, so
+# blake3_dispatch.c rightly calls the NEON kernel. Our build simply had to agree
+# with it, and a string comparison against an OS-specific spelling is a poor way
+# to answer a question the compiler already answers exactly.
+#
+# blake3_neon.c cannot just be compiled unconditionally either: it `#include
+# <arm_neon.h>` at the top with no guard, so on x86 it does not build at all.
+string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" ENGINE_BLAKE3_PROC)
+if(ENGINE_BLAKE3_PROC MATCHES "arm64|aarch64")
     # NEON kernel autodetects via blake3_impl.h on AArch64.
     list(APPEND BLAKE3_SRCS ${BLAKE3_DIR}/blake3_neon.c)
 else()

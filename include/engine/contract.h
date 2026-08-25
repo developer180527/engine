@@ -30,6 +30,7 @@
  * a build error's moral equivalent, delivered at the last safe moment.
  */
 #include <stdint.h>
+#include "engine_export.h"
 
 extern "C" {
 typedef struct EngineContractDecl {
@@ -42,7 +43,7 @@ typedef const EngineContractDecl* (*EngineModuleContractsV1Fn)(int* count);
 }
 
 #define ENGINE_MODULE_CONTRACTS(...)                                         \
-    extern "C" __attribute__((visibility("default")))                        \
+    extern "C" ENGINE_MODULE_EXPORT                        \
     const EngineContractDecl* engineModuleContractsV1(int* count) {          \
         static const EngineContractDecl k[] = { __VA_ARGS__ };               \
         *count = (int)(sizeof(k) / sizeof(k[0]));                            \
