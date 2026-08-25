@@ -241,3 +241,12 @@ blake3_hash_many_neon". The gate is lowercased now, but the real lesson is that
 the compiler already answers "is this AArch64?" exactly and we answered it again,
 worse. `blake3_neon.c` cannot be compiled unconditionally instead — it includes
 `<arm_neon.h>` with no guard — so the two predicates must agree.
+
+**`sourcePath` is a portable key — forward slashes on every platform.**
+`registry.db` lives in `.cache`, and `.cache` travels: the DDC is a shared
+cross-machine store. Stored with native separators, a registry written on Windows
+(`assets\tex.png`) missed every lookup from a caller asking for
+`assets/tex.png` — the same cache-serves-the-wrong-answer class as a cook key
+that omits its target, and it made the registry look empty on Windows. Normalised
+on BOTH sides through `AssetRegistry::sourcePathKey`, because half-normalised
+keying is exactly what already bit the async loader (audit C.4).

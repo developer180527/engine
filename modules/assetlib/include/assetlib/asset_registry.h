@@ -62,6 +62,23 @@ public:
     bool remove(const UUID& uuid);
 
     std::optional<AssetRecord> findByUUID(const UUID& uuid)             const;
+    // ── sourcePath is a PORTABLE key: forward slashes, always ────────────────
+    // registry.db lives in .cache, and .cache travels — the DDC is a SHARED
+    // cross-machine store. A registry written on Windows with `assets\tex.png`
+    // and read on Linux, which looks up `assets/tex.png`, misses every asset:
+    // the same cache-serves-the-wrong-answer class as a cook key that omits its
+    // target. So the separator cannot be the platform's.
+    //
+    // Applied on BOTH sides through this one function — the scanner normalises
+    // what it stores, findBySourcePath normalises what it is asked — because
+    // half-normalised keying is what already bit the async loader (see
+    // asyncldr::normalizeKey and audit C.4): store raw, look up normalized, and
+    // every lookup silently misses.
+    static std::string sourcePathKey(std::string rel) {
+        for (char& c : rel) if (c == '\\') c = '/';
+        return rel;
+    }
+
     std::optional<AssetRecord> findBySourcePath(const std::string& rel) const;
     std::vector<AssetRecord>   findByType(AssetType type)               const;
     std::vector<AssetRecord>   findByState(AssetState state)            const;

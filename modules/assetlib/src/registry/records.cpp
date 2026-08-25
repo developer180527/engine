@@ -133,7 +133,10 @@ std::optional<AssetRecord> AssetRegistry::findBySourcePath(const std::string& re
     std::string sql=std::string("SELECT ")+kCols+" FROM assets WHERE source_path=?;";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db(m_db),sql.c_str(),-1,&stmt,nullptr)!=SQLITE_OK) return {};
-    sqlite3_bind_text(stmt,1,rel.c_str(),-1,SQLITE_TRANSIENT);
+    // Normalised, so a caller holding a native-separator path finds the record
+    // the scanner stored with forward slashes. See sourcePathKey's comment.
+    const std::string key = sourcePathKey(rel);
+    sqlite3_bind_text(stmt,1,key.c_str(),-1,SQLITE_TRANSIENT);
     return stepOne(stmt);
 }
 std::vector<AssetRecord> AssetRegistry::findByType(AssetType type) const {

@@ -85,7 +85,33 @@ int main() {
         // ── 2. Success path: cache round-trip across separators ──────────
         const fs::path dir = fs::temp_directory_path() / "engine_asyncldr_test";
         fs::create_directories(dir);
-        const fs::path triFile = dir / "tri\\angle.obj";   // literal '\' in name
+
+        // ── Getting a '\' into the path, on both kinds of platform ───────────
+        // The point of this section is that the RAW path contains a backslash
+        // and the normalized twin does not, so normalizeKey's round-trip is
+        // actually exercised. How you obtain that backslash is platform-specific:
+        //
+        //   POSIX   '\' is an ordinary filename CHARACTER, so a single file
+        //           literally named "tri\angle.obj" is the only way to get one
+        //           into a path at all.
+        //   Windows '\' IS the separator, so a nested directory produces one
+        //           natively — and the literal-name trick silently means
+        //           something else entirely.
+        //
+        // The original code used the POSIX trick unconditionally. On Windows
+        // `dir / "tri\angle.obj"` is `dir\tri\angle.obj` — a file inside a
+        // subdirectory that was never created — so the ofstream failed silently,
+        // no file existed, and Assimp reported "Unable to open file". The three
+        // failures that followed (isLoaded false, cache miss) were the loader
+        // CORRECTLY reporting that a failed parse cached nothing. The fixture was
+        // broken, not the code under test, which is the most expensive kind of
+        // test bug: it accuses the wrong component.
+#if defined(_WIN32)
+        fs::create_directories(dir / "tri");
+        const fs::path triFile = dir / "tri" / "angle.obj";  // separator IS '\'
+#else
+        const fs::path triFile = dir / "tri\\angle.obj";     // literal '\' in name
+#endif
         {
             std::ofstream f(triFile);
             f << "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";

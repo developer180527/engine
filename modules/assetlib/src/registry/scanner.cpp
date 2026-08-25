@@ -66,8 +66,9 @@ fileStamp(const std::filesystem::directory_entry& e) {
     return std::make_pair((int64_t)t.time_since_epoch().count(), (int64_t)sz);
 }
 // Is this record's project-relative sourcePath under the root being scanned?
-// Accepts either separator at the boundary: the stored path uses the platform's
-// native one, and a hand-edited or migrated registry may hold the other.
+// Accepts either separator at the boundary. Stored paths are now normalised to
+// forward slashes (AssetRegistry::sourcePathKey), so this tolerance is for
+// registries written by an older build — not the primary mechanism it used to be.
 bool underScannedRoot(const std::string& sourcePath, const std::string& prefix) {
     if (prefix.empty()) return true;
     if (sourcePath.size() <= prefix.size()) return false;
@@ -170,8 +171,12 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
     // sourcePath is stored in (same lexically_relative + .string()), so the
     // comparison below cannot disagree with what the walk wrote. Empty or "."
     // means the scanned root IS the project root, so every record is in scope.
+    // generic_string(), not string(): sourcePath is stored with forward slashes
+    // on every platform (see AssetRegistry::sourcePathKey), so the prefix this is
+    // compared against must be in the same dialect or every Windows record reads
+    // as out of scope.
     std::string scanPrefix =
-        assetsRoot.lexically_normal().lexically_relative(rootNorm).string();
+        assetsRoot.lexically_normal().lexically_relative(rootNorm).generic_string();
     if (scanPrefix == ".") scanPrefix.clear();
 
     std::error_code walkEc;
@@ -190,7 +195,12 @@ int AssetRegistry::scan(const std::filesystem::path& assetsRoot,
         // pure string manipulation once the root is normalised. The walked paths
         // are all built by the iterator from that same root, so they are already
         // in normal form and the lexical answer is identical.
-        auto rel=entry.path().lexically_relative(rootNorm).string();
+        // generic_string(): the stored key is separator-portable. With .string()
+        // this was `assets\before.png` on Windows while every caller looks up
+        // `assets/before.png`, so findBySourcePath missed and the registry looked
+        // empty — cook_hardening_test's "the file registered" and "both roots
+        // registered their asset" were reporting exactly that.
+        auto rel=entry.path().lexically_relative(rootNorm).generic_string();
         seen.insert(rel);
         buildIndex();
         std::optional<AssetRecord> existing;

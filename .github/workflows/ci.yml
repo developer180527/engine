@@ -310,8 +310,18 @@ jobs:
       #
       # Kept ahead of the docs contract deliberately — when both are broken, the
       # code failure is the one worth reading first.
+      # NO `shell: bash`, for the same reason the Rust step above avoids it and
+      # this is the second time that reason has cost a CI round. Git-for-Windows'
+      # bash puts C:\Program Files\Git\usr\bin ahead of the MSVC toolchain, and
+      # that directory holds a `link.exe` — coreutils' hardlink tool, not the
+      # linker. Two of these ctest entries shell out to `cargo test`
+      # (cooked_format_conformance, audio_abi_conformance), so rustc found the
+      # wrong link.exe and both died with "linking with `link.exe` failed: exit
+      # code: 1" — while the C++ tests, already linked by ninja, ran fine.
+      #
+      # Letting each runner use its default shell (bash on Unix, pwsh on Windows)
+      # keeps MSVC's linker first. The command is identical in both.
       - name: Test (unit lane)
-        shell: bash
         run: ctest --test-dir build -L unit --output-on-failure --timeout 600
 
       # The seeded regression corpus: every input that has ever broken a parser,
@@ -322,7 +332,6 @@ jobs:
       # The comment below about "the regression lane above catches it forever"
       # has been describing this step since before it existed.
       - name: Test (fuzz regression corpus)
-        shell: bash
         run: ctest --test-dir build -L fuzz-regress --output-on-failure --timeout 600
 
       # Documentation/maturity contract (docs/process/engineering-standards.md): doc

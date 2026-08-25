@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-25
+verified: 2026-08-26
 parses-external-input: true
 covers:
   - src/assets/
