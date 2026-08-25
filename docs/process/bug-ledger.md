@@ -355,6 +355,34 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **`texture2D` inside flow control is a hard error on D3D.** `fs_triangle.sc`
+  sampled the base colour inside a ternary and the normal map inside an `if`,
+  both on uniform conditions. HLSL compiles `texture2D` to `Sample()`, which
+  derives its mip level from screen-space derivatives — a GRADIENT operation —
+  and D3DCompile refuses those under flow control: "X3129: gradient-based
+  operations must be moved out of flow control to prevent divergence". The
+  build passes `--Werror`, so every Windows leg failed on a shader that compiles
+  cleanly on Metal, SPIR-V, GLSL and ESSL.
+
+  Both samples are now hoisted above their branches. This costs nothing and
+  changes no result: the renderer ALWAYS binds a texture to those stages
+  (`ctx.whiteTex` / `ctx.flatNormalTex`, see `opaque_pass.cpp`), so `u_texFlags`
+  says whether the fetch is MEANINGFUL, not whether it is legal. `texture2DLod`
+  would have been the tidier fix and is not available: bgfx only defines it for
+  `BGFX_SHADER_LANGUAGE_GLSL >= 130`, and this build also compiles `--profile
+  120` and `100_es`, so it would have traded a D3D failure for a GLSL one.
+
+- **Jolt links against a different C runtime than everything else.**
+  `USE_STATIC_MSVC_RUNTIME_LIBRARY` defaults to ON on MSVC and sets
+  `CMAKE_MSVC_RUNTIME_LIBRARY` to `MultiThreaded$<$<CONFIG:Debug>:Debug>` —
+  `/MTd` — while every other target used the default `/MDd`. `engine_cook_worker`
+  died with "LNK2038: mismatch detected for 'RuntimeLibrary': value
+  'MTd_StaticDebug' doesn't match value 'MDd_DynamicDebug'" and LNK1169. One CRT
+  per program is not negotiable: objects built against different runtimes cannot
+  share a heap, allocations or iostreams. Forced OFF, and the runtime is now
+  pinned explicitly at the top level so a vendored library flipping the default
+  cannot do this quietly again.
+
 - **We forced a reduced `<windows.h>` on every third-party library.** The
   top-level CMakeLists had `add_compile_definitions(NOMINMAX
   WIN32_LEAN_AND_MEAN)`, and `add_compile_definitions` applies to every

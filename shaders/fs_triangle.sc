@@ -61,16 +61,30 @@ void main() {
     float roughness = clamp(u_params.y, 0.045, 1.0);
     float metallic  = u_params.z;
 
-    vec4 albedo = (u_texFlags.x > 0.5)
-        ? texture2D(s_baseColor, v_texcoord0) * u_colorFactor
-        : u_colorFactor;
+    // ── SAMPLED OUTSIDE THE BRANCHES, deliberately ──────────────────────────
+    // texture2D becomes HLSL's Sample(), which is a GRADIENT-BASED operation:
+    // it derives the mip level from screen-space derivatives of the coordinate.
+    // D3DCompile rejects those inside flow control ("X3129: gradient-based
+    // operations must be moved out of flow control to prevent divergence") and
+    // the build passes --Werror, so this was a hard failure on every Windows
+    // leg while compiling fine on Metal, SPIR-V and GLSL.
+    //
+    // Hoisting costs nothing and changes no result. The renderer ALWAYS binds a
+    // texture to these stages — ctx.whiteTex or ctx.flatNormalTex, see
+    // opaque_pass.cpp — so the fetch is always valid; u_texFlags says whether it
+    // is MEANINGFUL, not whether it exists, and the selects below still ignore
+    // it exactly as the branches did.
+    vec4 baseTex   = texture2D(s_baseColor, v_texcoord0);
+    vec3 normalTex = texture2D(s_normalMap, v_texcoord0).xyz;
+
+    vec4 albedo = (u_texFlags.x > 0.5) ? baseTex * u_colorFactor : u_colorFactor;
     if (albedo.a < 0.01) discard;
     vec3 baseColor = albedo.rgb;
 
     vec3 N_geo = normalize(v_worldNormal);
     vec3 N;
     if (u_texFlags.y > 0.5) {
-        vec3 N_ts = texture2D(s_normalMap, v_texcoord0).xyz * 2.0 - vec3_splat(1.0);
+        vec3 N_ts = normalTex * 2.0 - vec3_splat(1.0);
         vec3 T  = normalize(v_worldTangent.xyz);
         T = normalize(T - dot(T, N_geo) * N_geo);
         vec3 B  = cross(N_geo, T) * v_worldTangent.w;

@@ -1,0 +1,24 @@
+diff --git a/3rdparty/directx-headers/include/directx/pix3_win.h b/3rdparty/directx-headers/include/directx/pix3_win.h
+index 6171af00f..f767ce298 100644
+--- a/3rdparty/directx-headers/include/directx/pix3_win.h
++++ b/3rdparty/directx-headers/include/directx/pix3_win.h
+@@ -70,6 +70,19 @@ DEFINE_ENUM_FLAG_OPERATORS(PIXHUDOptions);
+ 
+ #if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP | WINAPI_PARTITION_SYSTEM | WINAPI_PARTITION_GAMES)
+ 
++// <objbase.h> FIRST (engine patch). <shlobj.h> declares SHGetKnownFolderPath and
++// the KF_FLAG_* constants, but its declarations rest on the COM types that
++// <windows.h> only pulls in when WIN32_LEAN_AND_MEAN is absent — and bgfx defines
++// WIN32_LEAN_AND_MEAN across its own sources (bx/src/mutex.cpp, timer.cpp, ...).
++// The result on Windows SDK 10.0.26100 was "C2039: 'SHGetKnownFolderPath' is not
++// a member of '`global namespace''" and "C2065: 'KF_FLAG_DEFAULT': undeclared
++// identifier" from renderer_d3d12.cpp.
++//
++// This is the SAME family as the shaderc_hlsl.cpp failure fixed in
++// bgfx.cmake+bgfx__shaderc-hlsl-interface-newer-sdk.patch: a header that assumes
++// the full <windows.h> being compiled against a lean one, on a new SDK where the
++// fallback paths no longer cover it. Same remedy — pull COM in explicitly.
++#include <objbase.h>
+ #include <shlobj.h>
+ #include <strsafe.h>
+ #include <knownfolders.h>

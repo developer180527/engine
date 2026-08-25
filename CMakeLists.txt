@@ -75,6 +75,12 @@ if(MSVC)
     # <windows.h> can see the decision — which is where it belonged all along,
     # and which those fifteen now-guarded #defines were already doing.
     add_compile_definitions(NOMINMAX _USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS)
+    # Pin the CRT for every target. CMP0091 is NEW at our cmake_minimum_required,
+    # so this property is authoritative — and stating it here means a vendored
+    # library that flips the default (Jolt did) is a link error at configure
+    # time's mercy rather than a mystery at link time.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+        CACHE STRING "" FORCE)
 endif()
 
 # ── Shipping posture: source importers in or out ────────────────────────────
@@ -298,6 +304,14 @@ set(ENABLE_OBJECT_STREAM     OFF CACHE BOOL "" FORCE)
 # key functions (JobSystemWithBarrier -> JoltJobsAdapter); with Jolt's default
 # -fno-rtti the base typeinfo is never emitted and the link fails.
 set(CPP_RTTI_ENABLED         ON  CACHE BOOL "" FORCE)
+# Jolt defaults USE_STATIC_MSVC_RUNTIME_LIBRARY to ON on MSVC and then sets
+# CMAKE_MSVC_RUNTIME_LIBRARY to "MultiThreaded$<$<CONFIG:Debug>:Debug>" — /MTd.
+# Everything else in this build uses the default /MDd, so the link died with
+# "LNK2038: mismatch detected for 'RuntimeLibrary': value 'MTd_StaticDebug'
+# doesn't match value 'MDd_DynamicDebug'" and LNK1169 on engine_cook_worker.exe.
+# One runtime for the whole program is not negotiable — objects built against
+# different CRTs cannot share allocations, iostreams or a heap.
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/JoltPhysics/Build)
 
 # ── recastnavigation — navmesh (Recast build + Detour runtime query) ──────
