@@ -355,6 +355,31 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **Fixing bx's arch detection uncovered the same assumption one file over.**
+  `simd_t.h` read `#if defined(__SSE2__) || (BX_COMPILER_MSVC && (BX_ARCH_64BIT ||
+  _M_IX86_FP >= 2))` — "MSVC and 64-bit" meaning "x86-64", which was fair until
+  Windows on ARM64. With `BX_ARCH_64BIT` finally correct there, bx concluded SSE2
+  was available on an ARM target and included an x86 intrinsics header:
+  "emmintrin.h(20): fatal error C1189: This header is specific to X86, X64,
+  ARM64, and ARM64EC targets".
+
+  Before the arch fix, `BX_ARCH_64BIT` was 0 here — so ONE BUG WAS MASKING THE
+  OTHER, and correcting the first was what made the second reachable. Worth
+  expecting whenever a long-wrong platform predicate is finally fixed. Gated on
+  `BX_CPU_X86` now; MSVC ARM64 falls through to the scalar paths exactly as it
+  did before, because the NEON arm wants `__ARM_NEON__` and MSVC provides
+  `_M_ARM64` with `<arm64_neon.h>` instead.
+
+- **`popen`/`pclose` are POSIX spellings.** The editor's terminal panel used them
+  directly; MSVC provides `_popen`/`_pclose` from the same `<stdio.h>` and not the
+  unprefixed names, so the panel was "C3861: 'popen': identifier not found" on
+  every Windows build. Aliased once at the top of the header rather than ifdef'd
+  at the two call sites — the panel wants "run a command and read its output",
+  which is one capability with two spellings. A sweep for the rest of that family
+  (`fork`, `execvp`, `mkstemp`, `ftruncate`, `gettimeofday`) found only
+  `worker_posix.cpp`, which is a deliberate file-per-platform split with a
+  `worker_win32.cpp` sibling.
+
 - **bx believed ARM64 Windows was a 32-bit target, and that set the whole SDK
   back to Windows XP.** Its arch test lists `__x86_64__`, `_M_X64`,
   `__aarch64__`, `__64BIT__`, `__mips64`, `__powerpc64__`, `__ppc64__`,

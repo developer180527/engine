@@ -6,6 +6,23 @@
 #include <filesystem>
 #include <cstdio>
 #include <cstring>
+
+// ── popen/pclose, which Windows spells with an underscore ────────────────────
+// POSIX has popen/pclose in <stdio.h>; MSVC has _popen/_pclose in the same
+// header and does NOT provide the unprefixed names, so this panel was
+// "error C3861: 'popen': identifier not found" on every Windows build. Aliased
+// here rather than ifdef'd at the two call sites: the panel wants "run a command
+// and read its output", which is one capability with two spellings.
+//
+// The shell differs too — cmd.exe takes `&&` and `cd` the same way for this
+// purpose, so the command string itself needs no change.
+#if defined(_WIN32)
+#  define ENGINE_POPEN(cmd, mode)  ::_popen(cmd, mode)
+#  define ENGINE_PCLOSE(pipe)      ::_pclose(pipe)
+#else
+#  define ENGINE_POPEN(cmd, mode)  ::popen(cmd, mode)
+#  define ENGINE_PCLOSE(pipe)      ::pclose(pipe)
+#endif
 #include "core/logger.h"
 #include <algorithm>
 
@@ -36,7 +53,7 @@ struct TerminalPanel {
 
         // Run in project root
         std::string full = "cd " + projectRoot + " && " + cmd + " 2>&1";
-        FILE* pipe = popen(full.c_str(), "r");
+        FILE* pipe = ENGINE_POPEN(full.c_str(), "r");
         if (!pipe) {
             history.push_back("[error] popen failed");
             return;
@@ -48,7 +65,7 @@ struct TerminalPanel {
             if (!line.empty() && line.back() == '\n') line.pop_back();
             history.push_back(line);
         }
-        pclose(pipe);
+        ENGINE_PCLOSE(pipe);
         history.push_back("");
         scrollToBottom = true;
         LOG_DEBUG("Terminal", "Ran: %s", cmd.c_str());

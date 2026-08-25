@@ -49,3 +49,30 @@ index 72a3622..d2f25c7 100644
   || defined(__64BIT__)     \
   || defined(__mips64)      \
   || defined(__powerpc64__) \
+diff --git a/include/bx/simd_t.h b/include/bx/simd_t.h
+index ef032d2..62d53f1 100644
+--- a/include/bx/simd_t.h
++++ b/include/bx/simd_t.h
+@@ -24,7 +24,21 @@
+ #	define BX_SIMD_AVX 1
+ #endif //
+ 
+-#if defined(__SSE2__) || (BX_COMPILER_MSVC && (BX_ARCH_64BIT || _M_IX86_FP >= 2) )
++// BX_CPU_X86 added to the MSVC arm (engine patch). This read "MSVC and 64-bit"
++// and meant "x86-64" — a fair assumption until Windows on ARM64, where it
++// concludes SSE2 is available on an ARM target and includes an x86 intrinsics
++// header: "emmintrin.h(20): fatal error C1189: #error: This header is specific
++// to X86, X64, ARM64, and ARM64EC targets".
++//
++// This surfaced only after the companion patch taught bx that MSVC ARM64 IS
++// 64-bit (bgfx.cmake+bx__arm64-msvc-arch-detection.patch) — before that,
++// BX_ARCH_64BIT was 0 here and the bug was masked by a different one.
++//
++// MSVC ARM64 now falls through to no SIMD, exactly as it did before that patch,
++// because the NEON arm below wants __ARM_NEON__ and MSVC defines _M_ARM64 with
++// <arm64_neon.h> instead. Reference scalar paths are correct, and teaching bx
++// MSVC NEON is upstream's call, not a CI fix.
++#if defined(__SSE2__) || (BX_COMPILER_MSVC && BX_CPU_X86 && (BX_ARCH_64BIT || _M_IX86_FP >= 2) )
+ #	include <emmintrin.h> // __m128i
+ #	if defined(__SSE4_1__)
+ #		include <smmintrin.h>
