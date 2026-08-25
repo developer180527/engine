@@ -1,0 +1,51 @@
+diff --git a/include/bx/platform.h b/include/bx/platform.h
+index 72a3622..d2f25c7 100644
+--- a/include/bx/platform.h
++++ b/include/bx/platform.h
+@@ -83,9 +83,14 @@
+ #endif //
+ 
+ // http://sourceforge.net/apps/mediawiki/predef/index.php?title=Architectures
+-#if defined(__arm__)     \
+- || defined(__aarch64__) \
+- || defined(_M_ARM)
++// _M_ARM64 / _M_ARM64EC added (engine patch). MSVC on ARM64 defines _M_ARM64 and
++// NEVER __aarch64__ (a GCC/Clang macro), and _M_ARM is the 32-BIT ARM macro — so
++// this list did not recognise ARM64 Windows as ARM at all.
++#if defined(__arm__)      \
++ || defined(__aarch64__)  \
++ || defined(_M_ARM)       \
++ || defined(_M_ARM64)     \
++ || defined(_M_ARM64EC)
+ #	undef  BX_CPU_ARM
+ #	define BX_CPU_ARM 1
+ #	define BX_CACHE_LINE_SIZE 64
+@@ -120,9 +125,28 @@
+ #	define BX_CACHE_LINE_SIZE 64
+ #endif //
+ 
++// _M_ARM64 / _M_ARM64EC added (engine patch), and this one had teeth. Without
++// them MSVC ARM64 fell to the 32-bit branch, and a few lines below that decides
++// the Windows API level:
++//
++//     #if BX_ARCH_64BIT   -> WINVER/_WIN32_WINNT 0x0601   (Windows 7)
++//     #else               -> WINVER/_WIN32_WINNT 0x0502   (XP SP2 / Server 2003)
++//
++// So every bgfx translation unit on ARM64 Windows compiled against an XP-era SDK
++// surface: NTDDI_VERSION 0x05020000, below NTDDI_VISTA. The SDK then gates out
++// every Vista+ declaration, which is why renderer_d3d12.cpp could include
++// <shlobj.h> successfully and still report "SHGetKnownFolderPath is not a member
++// of '`global namespace''" and "KF_FLAG_DEFAULT: undeclared identifier".
++//
++// Measured, not guessed: a #pragma message in pix3_win.h printed
++// NTDDI_VERSION=0x05020000 on the arm64 leg and 0x06010000 on x64, in the same
++// run. Three attempts at that header failed because the header was never the
++// problem.
+ #if defined(__x86_64__)    \
+  || defined(_M_X64)        \
+  || defined(__aarch64__)   \
++ || defined(_M_ARM64)      \
++ || defined(_M_ARM64EC)    \
+  || defined(__64BIT__)     \
+  || defined(__mips64)      \
+  || defined(__powerpc64__) \

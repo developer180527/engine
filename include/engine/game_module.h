@@ -62,8 +62,29 @@
 #endif
 #define ENGINE_ABI_STR2(x) #x
 #define ENGINE_ABI_STR(x)  ENGINE_ABI_STR2(x)
+
+// ── Compiler identity, which is not spelled the same everywhere ─────────────
+// This used __VERSION__ directly. That is a GCC/Clang macro; MSVC does not
+// define it, so on Windows the fingerprint did not merely lose precision — it
+// FAILED TO COMPILE ("'__VERSION__': undeclared identifier", C2143/C2059
+// cascading through module_loader.h and kit_host.h). The whole kit-loading ABI
+// gate was unbuildable on the one platform whose ABI rules differ most.
+//
+// _MSC_FULL_VER is the right granularity for MSVC, not _MSC_VER: the STL's
+// layout can change between toolset patch releases, and this check exists
+// precisely to refuse a module built by a different compiler than the host.
+#if defined(_MSC_VER) && !defined(__clang__)
+    #define ENGINE_ABI_COMPILER "msvc" ENGINE_ABI_STR(_MSC_FULL_VER)
+#elif defined(__VERSION__)
+    #define ENGINE_ABI_COMPILER __VERSION__
+#else
+    // Refusing to guess beats a fingerprint that silently matches across two
+    // different compilers — which is the exact failure it exists to catch.
+    #define ENGINE_ABI_COMPILER "unknown-compiler"
+#endif
+
 #define ENGINE_ABI_FINGERPRINT \
-    __VERSION__ "|c++" ENGINE_ABI_STR(__cplusplus) \
+    ENGINE_ABI_COMPILER "|c++" ENGINE_ABI_STR(__cplusplus) \
     "|api" ENGINE_ABI_STR(ENGINE_GAME_API_VERSION) "|" ENGINE_ABI_BUILD_MODE
 
 namespace engine_abi {

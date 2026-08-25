@@ -355,6 +355,38 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **bx believed ARM64 Windows was a 32-bit target, and that set the whole SDK
+  back to Windows XP.** Its arch test lists `__x86_64__`, `_M_X64`,
+  `__aarch64__`, `__64BIT__`, `__mips64`, `__powerpc64__`, `__ppc64__`,
+  `__LP64__` — and **`_M_ARM64` is absent**. MSVC on ARM64 defines `_M_ARM64` and
+  never `__aarch64__` (a GCC/Clang macro); the neighbouring CPU test had the same
+  hole, using `_M_ARM`, which is the 32-BIT ARM macro.
+
+  A few lines below, that decision picks the Windows API level:
+  `BX_ARCH_64BIT` -> `_WIN32_WINNT 0x0601` (Windows 7), else `0x0502` (XP SP2).
+  So every bgfx translation unit on ARM64 Windows compiled against an XP-era SDK
+  surface — `NTDDI_VERSION 0x05020000`, below `NTDDI_VISTA` — and the SDK gated
+  out every Vista+ declaration. Which is why `renderer_d3d12.cpp` could include
+  `<shlobj.h>` *successfully* and still report `SHGetKnownFolderPath` and
+  `KF_FLAG_DEFAULT` as undeclared.
+
+  THREE PATCHES TO `pix3_win.h` FAILED before this, because that header was never
+  the problem. What ended it was measuring instead of guessing: a `#pragma
+  message` printing the version macros, which showed `NTDDI_VERSION=0x05020000`
+  on arm64 and `0x06010000` on x64 **in the same run**. The lesson is not about
+  `_M_ARM64` — it is that after two failed guesses at the same file, the next
+  commit should buy facts rather than attempt a third.
+
+- **`ENGINE_ABI_FINGERPRINT` was built from a macro MSVC does not define.** It
+  used `__VERSION__` (GCC/Clang only), so on Windows the kit-loading ABI gate did
+  not merely lose precision — it FAILED TO COMPILE, cascading C2143/C2059 through
+  `module_loader.h` and `kit_host.h`. The one check whose entire job is "refuse a
+  module built by a different compiler" was unbuildable on the compiler most
+  likely to differ. Now `ENGINE_ABI_COMPILER`: `_MSC_FULL_VER` on MSVC (patch
+  granularity, because the STL's layout can move between toolset patches),
+  `__VERSION__` elsewhere, and an explicit `"unknown-compiler"` rather than a
+  fingerprint that might silently match across two different compilers.
+
 - **The `/MTd` that appeared on no command line.** `engine_cook_worker.exe` died
   with "LNK2038: mismatch detected for 'RuntimeLibrary': value 'MTd_StaticDebug'
   doesn't match value 'MDd_DynamicDebug'", and grepping every compile command in
