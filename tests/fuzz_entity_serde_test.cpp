@@ -23,6 +23,7 @@
 //   3. The entity it produces is well-formed: alive, and any component it set
 //      holds finite values. A NaN scale silently poisons every transform that
 //      inherits from it, and the frame it corrupts is far from the load.
+#include <cstdio>
 #include "fuzz/fuzz.h"
 
 #include "scene/entity_serializer.h"
@@ -299,5 +300,8 @@ void oneCase(uint64_t masterSeed, fuzz::Report& rep) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     return fuzz::run("entity_serde", argc, argv, oneCase);
 }

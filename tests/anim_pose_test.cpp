@@ -34,6 +34,9 @@
 static float len3(float x, float y, float z) { return std::sqrt(x*x + y*y + z*z); }
 
 int main(int argc, char** argv) {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     if (argc < 3) { std::fprintf(stderr, "usage: anim_pose_test <character.fbx> <clip.fbx> [time]\n"); return 2; }
     const float t = argc > 3 ? (float)atof(argv[3]) : 0.0f;
 

@@ -18,6 +18,9 @@
 #include <cstdio>
 
 int main(int argc, char** argv) {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     if (argc < 3) {
         std::fprintf(stderr, "usage: clip_binding_test <character.fbx> <clip.fbx>\n");
         return 2;

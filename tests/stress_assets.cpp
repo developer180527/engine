@@ -26,6 +26,9 @@ static int g_failures = 0;
                            else {std::printf("  ok    " __VA_ARGS__);std::printf("\n");} } while(0)
 
 int main(int argc, char** argv) {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("stress_assets: garbage-in fuzz (nav + importers)\n");
     bgfx::renderFrame();
     bgfx::Init init; init.type = bgfx::RendererType::Noop;

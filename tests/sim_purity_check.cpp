@@ -33,6 +33,9 @@
 #include <cstdio>
 
 int main() {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("sim_purity_check: OK — sim-facing headers are GPU-free "
                 "(compiling IS the test)\n");
     return 0;

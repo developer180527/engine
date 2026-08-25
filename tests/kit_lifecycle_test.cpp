@@ -21,6 +21,9 @@
 #include <vector>
 
 int main(int argc, char** argv) {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     if (argc < 2) { std::fprintf(stderr, "usage: kit_lifecycle_test <project>\n"); return 2; }
 
     EngineConfig cfg;

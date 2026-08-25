@@ -55,6 +55,9 @@ static std::vector<assetlib::ShaderSampler> stdSamplers() {
 }
 
 int main() {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("material_cooker_test\n");
     const std::vector<std::string> feats = { "SKINNED", "FOG" };
 

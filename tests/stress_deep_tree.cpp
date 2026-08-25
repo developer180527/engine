@@ -23,6 +23,9 @@ static int g_failures = 0;
 } while (0)
 
 int main() {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("stress_deep_tree: transform-chain depth (flecs abort guard)\n");
 
     flecs::world w;

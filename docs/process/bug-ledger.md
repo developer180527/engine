@@ -417,6 +417,27 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **A 120-second silence is not evidence.** `input_test` timed out on Windows
+  having printed NOTHING — not even the banner on the first line of `main()`.
+  That absence was the clue, not the mystery: ctest redirects stdout, redirection
+  makes it BLOCK-BUFFERED, and the timeout kill discards the buffer. Measured
+  rather than assumed — the same program killed mid-run yields **0 lines**
+  buffered and **2 lines** unbuffered.
+
+  So 30 of 65 tests could have hung anywhere and told us nothing. All 65 now set
+  `_IONBF` before their first print. That is the load-bearing half.
+
+  The other half is `tests/test_watchdog.h`, for a hang inside a call that prints
+  nothing at all: a thread fires BELOW ctest's own timeout, names the last phase
+  reached, and `_Exit(97)`s. `_Exit` rather than `abort()` deliberately — on MSVC
+  `abort()` can raise the CRT error dialog or hand off to Windows Error
+  Reporting, and a CI runner then waits on a dialog nobody will click, turning a
+  diagnosable hang into a longer one. Verified by making a probe hang on purpose
+  under redirection: exit 97, phase trail intact, last phase named.
+
+  The pattern is the same one that ended the five-round `pix3_win.h` hunt: after
+  the second guess, spend a round buying facts instead.
+
 - **The last Windows failure was a sample that CANNOT work there as written.**
   `hot_reload_game` is a MODULE library that deliberately links nothing and
   resolves every engine symbol from the `engine_host` executable at load time.

@@ -34,6 +34,9 @@ static void addBox(std::vector<float>& v, std::vector<int>& t,
 }
 
 int main() {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("nav_test: NavService bake + path query\n");
 
     // Ground: 20x20 quad on the XZ plane at y=0.

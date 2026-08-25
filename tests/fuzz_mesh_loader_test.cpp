@@ -20,6 +20,7 @@
 //   3. Round-trip: a mesh written by saveMesh always loads back, with the
 //      payload intact. Rejecting our own valid output would be a silent
 //      content-loss bug.
+#include <cstdio>
 #include "fuzz/fuzz.h"
 
 #include <assetlib/mesh_asset.h>
@@ -430,6 +431,9 @@ void roundTripCase(uint64_t masterSeed, fuzz::Report& rep) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     return fuzz::run("mesh_loader", argc, argv,
                      [](uint64_t seed, fuzz::Report& rep) {
                          oneCase(seed, rep);

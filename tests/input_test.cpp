@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "runtime/input/input_manager.h"
+#include "test_watchdog.h"
 
 static int g_failures = 0;
 #define CHECK(cond, msg) do {                                        \
@@ -81,8 +82,14 @@ static void runStream(InputManager& m, InputSnapshot out[2]) {
 }
 
 int main() {
-    std::printf("input_test: InputManager gauntlet\n");
+    // Unbuffered + a watchdog under ctest's 120 s. This test TIMES OUT on
+    // Windows having printed NOTHING AT ALL — not even the banner one line below,
+    // which is the tell: stdout is block-buffered when ctest redirects it, and
+    // the timeout kill discards the buffer. The phase markers name the last
+    // section that started.
+    testwd::begin("input_test: InputManager gauntlet", 60);
 
+    testwd::phase("election + snapshot semantics");
     // ── Election + snapshot semantics ───────────────────────────────────────
     {
         InputManager m;
@@ -110,6 +117,7 @@ int main() {
         CHECK(lx == 0.0f && ly == 0.0f, "look accumulator drains on read");
     }
 
+    testwd::phase("reliable hotplug");
     // ── Reliable hotplug: a DROPPED DeviceRemoved must not wedge election ───
     // A device elected for a type, then unplugged with its DeviceRemoved event
     // lost (ring overflow), must be evicted so a replacement with the same
@@ -138,6 +146,7 @@ int main() {
               "replacement (same physId) elected after a dropped DeviceRemoved");
     }
 
+    testwd::phase("determinism: same stream twice");
     // ── Determinism: same stream twice -> bit-identical snapshots ───────────
     {
         InputSnapshot a[2], b[2];
@@ -151,6 +160,7 @@ int main() {
               "replayed stream -> bit-identical snapshots (netcode contract)");
     }
 
+    testwd::phase("actions: edges, axes, contexts");
     // ── Actions: edges, axes, contexts ──────────────────────────────────────
     {
         InputManager m;
@@ -178,6 +188,7 @@ int main() {
         CHECK(m.actionDown("Jump"), "pop restores gameplay resolution");
     }
 
+    testwd::phase("sub-tick tap");
     // ── Sub-tick tap: press+release inside ONE tick still fires edges ───────
     {
         InputManager m;
@@ -207,6 +218,7 @@ int main() {
               "axis2 scroll binding reaches BOTH components (wheel not lost)");
     }
 
+    testwd::phase("focus gate");
     // ── Focus gate: unfocused drops presses, keeps releases ─────────────────
     {
         InputManager m;
@@ -227,6 +239,7 @@ int main() {
         CHECK(!m.snapshot().keyDown(0x2C), "press dropped while unfocused");
     }
 
+    testwd::phase("sub-tick edges");
     // ── Sub-tick edges: exact in-tick timing of presses (CS2-style) ─────────
     {
         InputManager m;
@@ -256,6 +269,7 @@ int main() {
               "actionPressedOffsetUs resolves Fire to 7800us");
     }
 
+    testwd::phase("recorder round-trip");
     // ── Recorder round-trip: record -> replay -> bit-identical snapshots ────
     {
         const char* recPath = "/tmp/input_test_session.irec";
@@ -309,6 +323,8 @@ int main() {
         }
         std::remove(recPath);
     }
+
+    testwd::end();
 
     if (g_failures) { std::printf("input_test: FAIL (%d)\n", g_failures); return 1; }
     std::printf("input_test: PASS — election, snapshots, determinism, actions\n");

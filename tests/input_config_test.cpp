@@ -28,6 +28,9 @@ static std::string cfg(const std::string& bindings) {
 }
 
 int main() {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("input_config_test: malformed input.json gauntlet\n");
 
     // ── The crash corpus: every load must return, not throw ──────────────

@@ -28,6 +28,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "test_watchdog.h"
 
 namespace fs = std::filesystem;
 namespace { int g_failures = 0; }
@@ -285,20 +286,28 @@ static void testScanMoveDetection(const fs::path& tmp) {
 }
 
 int main() {
-    std::printf("=== cook_infra_test ===\n");
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    // Unbuffered + a watchdog under ctest's 120 s: this test TIMES OUT on
+    // Windows and reported only up to the hostile-manifest section, which with a
+    // block-buffered stdout is not evidence of where it stopped. The phase
+    // markers below name the last section that actually STARTED.
+    testwd::begin("=== cook_infra_test ===", 60);
     const fs::path tmp = fs::temp_directory_path() / "engine-cook-infra-test";
     std::error_code ec;
     fs::remove_all(tmp, ec);
     fs::create_directories(tmp, ec);
 
-    testGraphOrdering();
-    testGraphCycle();
-    testGraphCancel();
-    testDdcConcurrentStoreBytes(tmp);
-    testManifestRejectsHostileNames(tmp);
-    testScanMoveDetection(tmp);
+    testwd::phase("1/2 graph ordering");        testGraphOrdering();
+    testwd::phase("3 graph cycle");             testGraphCycle();
+    testwd::phase("4 graph cancel");            testGraphCancel();
+    testwd::phase("5 ddc concurrent storeBytes"); testDdcConcurrentStoreBytes(tmp);
+    testwd::phase("6 hostile manifest names");  testManifestRejectsHostileNames(tmp);
+    testwd::phase("7/8 registry scan move detection"); testScanMoveDetection(tmp);
+    testwd::phase("teardown");
 
     fs::remove_all(tmp, ec);
+    testwd::end();
     if (g_failures) {
         std::printf("cook_infra_test: %d FAILURE(S)\n", g_failures);
         return 1;

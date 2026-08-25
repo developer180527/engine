@@ -32,6 +32,9 @@ static int observerCount(flecs::world& w) {
 }
 
 int main() {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("script_host_test: world-bind lifecycle gauntlet\n");
 
     // ── 1. Observer accumulation across Play/Stop cycles (InPlace mode) ──

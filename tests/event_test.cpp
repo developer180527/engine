@@ -23,6 +23,9 @@ namespace { int g_failures = 0; }
 struct Ping { int n = 0; };
 
 int main() {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("event_test: EventSweeper lifecycle gauntlet\n");
 
     flecs::world w;

@@ -25,6 +25,9 @@ struct Tag2 {};
 struct Blob { double a, b, c, d; };
 
 int main(int argc, char** argv) {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("stress_churn: spawn/destroy + event-sweeper churn\n");
 
     flecs::world w;

@@ -15,6 +15,9 @@ static void sleepMs(int ms) {
 }
 
 int main() {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
 #if !ENGINE_PROFILE
     std::printf("profiler_test: ENGINE_PROFILE disabled — nothing to test\n");
     return 0;

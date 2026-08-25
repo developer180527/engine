@@ -17,6 +17,7 @@
 //   3. All-or-nothing: a true return means every member materialized, so a
 //      cache hit can never hand the runtime a mesh whose textures are missing.
 //   4. No temp files are left behind in the store.
+#include <cstdio>
 #include "fuzz/fuzz.h"
 
 #include <assetlib/ddc.h>
@@ -204,5 +205,8 @@ void oneCase(uint64_t masterSeed, fuzz::Report& rep) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     return fuzz::run("ddc_manifest", argc, argv, oneCase);
 }

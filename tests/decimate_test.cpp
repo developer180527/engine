@@ -58,6 +58,9 @@ static DecimateInput inputOf(const std::vector<V>& v, const std::vector<uint32_t
 }
 
 int main() {
+    // Unbuffered: ctest redirects stdout, which makes it block-buffered,
+    // and a test killed on timeout loses everything still in the buffer.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("decimate_test\n");
 
     std::vector<V> verts; std::vector<uint32_t> idx;
