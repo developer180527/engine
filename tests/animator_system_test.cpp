@@ -209,12 +209,23 @@ int main() {
 
     // ── 5. Time advance honours speed ───────────────────────────────────────
     {
+        // Sub-phases: this is the FIRST section that actually samples a clip
+        // with time advancing (1 and 2 bail on the bone guard, 3 is bind-pose,
+        // 4 has no skeleton), and it segfaults on Windows x64 while arm64
+        // passes — the signature of SSE's aligned loads faulting where NEON
+        // tolerates. Narrowing to a statement beats guessing at which ozz job.
+        testwd::phase("5a. makeSkeleton(4)");
         Skeleton s = makeSkeleton(4);
+        testwd::phase("5b. makeClip");
         AnimClip  c = makeClip(s, 10.0f);
+        testwd::phase("5c. Fixture ctor");
         Fixture f;
         Animator a{}; a.playing = true; a.looping = true; a.speed = 2.0f;
+        testwd::phase("5d. f.build(skeleton, clip, animator)");
         f.build(s, &c, a);
+        testwd::phase("5e. f.tick(0.1) — ozz sampling + LocalToModel");
         f.tick(0.1f);
+        testwd::phase("5f. tick returned");
         CHECK(std::fabs(f.anim().time - 0.2f) < 1e-5f,
               "time += dt * speed (0.1 * 2.0 = %.3f)", f.anim().time);
     }

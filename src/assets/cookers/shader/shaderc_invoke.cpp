@@ -14,6 +14,56 @@
 #  include <unistd.h>    // getpid
 #endif
 
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+
+namespace {
+// UTF-8 -> UTF-16 for the wide CreateProcess/CreateFile APIs. The narrow
+// variants mangle non-ASCII install paths, which is how a project under a
+// localised user folder stops cooking for reasons nobody connects to shaders.
+std::wstring widen(const std::string& s) {
+    if (s.empty()) return {};
+    const int n = ::MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(),
+                                        nullptr, 0);
+    std::wstring w((size_t)n, L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), w.data(), n);
+    return w;
+}
+
+// Quote one argument the way CommandLineToArgvW parses it back: backslashes are
+// literal EXCEPT immediately before a quote, where each must be doubled. Same
+// rules as modules/assetlib/src/cook/worker_win32.cpp — naive concatenation
+// silently splits any path containing a space.
+void appendQuoted(std::wstring& cmd, const std::wstring& arg) {
+    if (!cmd.empty()) cmd.push_back(L' ');
+    if (!arg.empty() && arg.find_first_of(L" \t\"") == std::wstring::npos) {
+        cmd += arg;
+        return;
+    }
+    cmd.push_back(L'"');
+    for (size_t i = 0; i < arg.size(); ++i) {
+        size_t slashes = 0;
+        while (i < arg.size() && arg[i] == L'\\') { ++slashes; ++i; }
+        if (i == arg.size()) { cmd.append(slashes * 2, L'\\'); break; }
+        if (arg[i] == L'"') {
+            cmd.append(slashes * 2 + 1, L'\\');
+            cmd.push_back(L'"');
+        } else {
+            cmd.append(slashes, L'\\');
+            cmd.push_back(arg[i]);
+        }
+    }
+    cmd.push_back(L'"');
+}
+} // namespace
+#endif
+
 #if !defined(_WIN32)
 #  include <fcntl.h>
 #  include <spawn.h>
@@ -171,11 +221,79 @@ CompileResult compileShader(const fs::path& shadercExe, const CompileRequest& re
     args.push_back("-O"); args.push_back(std::to_string(req.optimize));
 
 #if defined(_WIN32)
-    // The Windows port is deferred (see the port notes); when it lands this
-    // wants CreateProcess for the same reason POSIX uses posix_spawn —
-    // argument quoting through a shell is a correctness hazard with paths
-    // containing spaces.
-    res.error = "shader compilation is not wired for Windows hosts yet";
+    // ── CreateProcessW, mirroring the POSIX path below step for step ─────────
+    // No shell, for the reason the POSIX side uses posix_spawn: shader paths
+    // routinely contain spaces, and handing a command string to cmd.exe makes
+    // argument splitting a correctness problem instead of a formatting one.
+    //
+    // stdout AND stderr go to the same FILE the POSIX branch uses, rather than a
+    // pipe. A pipe would have to be drained while the child runs or shaderc
+    // blocks once the buffer fills — a deadlock that shows up only on shaders
+    // with many diagnostics, which are exactly the ones whose output matters.
+    // Redirecting to a file has no such failure mode and keeps both branches
+    // reading their diagnostics the same way.
+    std::wstring cmd;
+    appendQuoted(cmd, shadercExe.wstring());
+    for (const auto& a : args) appendQuoted(cmd, widen(a));
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength        = sizeof(sa);
+    sa.bInheritHandle = TRUE;               // the child must inherit the log
+    HANDLE log = ::CreateFileW(logPath.wstring().c_str(), GENERIC_WRITE,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, nullptr);
+    if (log == INVALID_HANDLE_VALUE) {
+        res.error = "cannot open a shaderc log file (GetLastError " +
+                    std::to_string((unsigned long)::GetLastError()) + ")";
+        return res;
+    }
+
+    STARTUPINFOW si{};
+    si.cb         = sizeof(si);
+    si.dwFlags    = STARTF_USESTDHANDLES;
+    si.hStdOutput = log;
+    si.hStdError  = log;                    // same target: adddup2's equivalent
+    si.hStdInput  = ::GetStdHandle(STD_INPUT_HANDLE);
+    PROCESS_INFORMATION pi{};
+
+    std::wstring cmdMutable = cmd;          // CreateProcessW may write to this
+    const BOOL ok = ::CreateProcessW(nullptr, cmdMutable.data(), nullptr, nullptr,
+                                     TRUE, 0, nullptr, nullptr, &si, &pi);
+    if (!ok) {
+        const DWORD err = ::GetLastError();
+        ::CloseHandle(log);
+        res.error = "cannot spawn shaderc (GetLastError " +
+                    std::to_string((unsigned long)err) + ")";
+        fs::remove(logPath, ec);
+        return res;
+    }
+    ::CloseHandle(pi.hThread);
+    ::WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exitCode = 1;
+    ::GetExitCodeProcess(pi.hProcess, &exitCode);
+    ::CloseHandle(pi.hProcess);
+    // Closed BEFORE slurping: the child's writes are only guaranteed visible
+    // once every handle to the file is closed, and ours is the last one.
+    ::CloseHandle(log);
+
+    res.diagnostics = slurp(logPath);
+    fs::remove(logPath, ec);
+
+    if (exitCode != 0) {
+        res.error = "shaderc failed (exit " + std::to_string((unsigned long)exitCode) + ")";
+        fs::remove(outPath, ec);
+        return res;
+    }
+    if (!readBinary(outPath, res.bytecode)) {
+        // Same reasoning as the POSIX branch: exit 0 with no usable output is a
+        // failure, not an empty success. An empty program would reach bgfx and
+        // fail there, far from the cause.
+        res.error = "shaderc reported success but produced no output";
+        fs::remove(outPath, ec);
+        return res;
+    }
+    fs::remove(outPath, ec);
+    res.ok = true;
     return res;
 #else
     std::vector<char*> argv;

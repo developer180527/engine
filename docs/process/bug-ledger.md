@@ -417,6 +417,27 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   with such a name in it is worth stopping for. All three sites are
   mutation-verified.
 
+- **The shader cooker could not spawn shaderc on Windows, and said so.** The
+  result file the harness now prints carried the answer verbatim: "standard
+  [metal mask 0] vertex: shader compilation is not wired for Windows hosts yet".
+  Our own deferred stub — the POSIX branch uses `posix_spawn`, the Windows branch
+  returned that string.
+
+  Implemented with `CreateProcessW`, mirroring the POSIX path step for step. Two
+  decisions worth keeping: no shell, because shader paths routinely contain
+  spaces and handing a command string to `cmd.exe` turns argument splitting from
+  a formatting question into a correctness one; and stdout/stderr redirected to
+  the same FILE the POSIX side uses rather than a pipe, because a pipe must be
+  drained while the child runs or shaderc blocks once the buffer fills — a
+  deadlock that appears only on shaders with many diagnostics, which are exactly
+  the ones whose output matters. The quoting rules are the same ones
+  `worker_win32.cpp` already worked out; `CommandLineToArgvW` treats backslashes
+  as literal EXCEPT before a quote, where each must be doubled.
+
+- **`Path::exists()` and `.exe`, and an ambiguous message that hid it.** Fixed
+  last commit; confirmed here — the cmat/ctex tests went from failing to 4
+  passing, leaving only the shader one above.
+
 - **The instrumentation found it on its first run: a hardcoded `/tmp`.**
   `input_test` reached all eight phases and hung in "recorder round-trip", which
   used `const char* recPath = "/tmp/input_test_session.irec"`. There is no `/tmp`
