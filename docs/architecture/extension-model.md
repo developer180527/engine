@@ -100,15 +100,57 @@ the static asserts would pass and the world would still burn.
 | `audio` | 312 | 32 | | `jobs` | 656 | 32 |
 | `assets` | 344 | 128 | | `memory` | 688 | 48 |
 | `anim` | 472 | 64 | | `drawSubmit` | 736 | 24 |
+| | | | | `log` | 760 | 40 |
 
 The test does the real thing rather than a proxy for it: it declares the table's
 *old* shape (a verbatim prefix, stopping at `draw`), lays it over the live
-760-byte table, and asserts the function pointers resolve identically. That is
-literally "a v1 Kit reading a v5 host." It also asserts the one direction that
-must keep **failing**: an older host does not satisfy a newer module.
+table, and asserts the function pointers resolve identically. That is literally
+"a v1 Kit reading a v5 host." It also asserts the one direction that must keep
+**failing**: an older host does not satisfy a newer module.
+
+`log` is the append-only rule working as designed: it was added *after* the test
+was written, took the next free offset, and moved nothing before it — which is
+why the twelve rows above it still read the same as the day they were frozen.
 
 The same pass found `static bool warned[7]` guarding nine groups — an
 out-of-bounds write on every warning past the seventh.
+
+### 1.4b The other half of the ABI — the load gate
+
+Everything above is the *static* ABI: layouts, sizes, offsets, versions. It is
+well covered, and it is also self-defending — a layout regression trips a
+`static_assert` before anything runs.
+
+The *dynamic* ABI is the gauntlet in
+[`src/runtime/module_loader.h`](../../src/runtime/module_loader.h), which decides
+whether a shared library is allowed to touch live world data. Five refusals:
+`structSize`, `apiVersion`, `abiFingerprint`, `componentLayoutHash`, and
+kit-to-kit contract skew. **None of them defends itself.** Invert a comparison
+and a bad module loads silently; soften a `return refuse()` into a bare
+`return false` and every rejected load leaks the module's table.
+
+For a long time none of the five had ever executed under test.
+`kit_lifecycle_test` is the only thing that dlopens a real module and it needs
+`.so` files from the gitignored Kits repos, so on a clean checkout it is built
+but *not registered* — CI had never run it once.
+
+[`tests/module_abi/`](../../tests/module_abi/) closes that. One fixture source,
+[`tests/fixtures/abi_gate_module.cpp`](../../tests/fixtures/abi_gate_module.cpp),
+compiles into nine modules that are each correct in every respect but one,
+selected by `-DABI_GATE_DEFECT`; the suite drives them through
+`engine_module_probe` and requires the right verdict. A control fixture with no
+defect at all must **load** — without it, a gauntlet that refused everything
+would satisfy every other assertion and look perfectly healthy.
+
+`engine_module_probe` is a diagnostic first and a test boundary second: it
+answers "why won't my kit load?" in one command, with no window, no GPU and no
+project, against the same code path the editor and the shipped player use.
+
+```
+$ engine_module_probe dist/kits/libcombat_kit.so
+[Module] Component layout changed since the host was built — RESTART the host
+module 0 refused dist/kits/libcombat_kit.so
+```
 
 ### 1.5 What this costs, permanently
 

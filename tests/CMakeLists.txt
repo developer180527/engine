@@ -536,3 +536,85 @@ if(ENGINE_WITH_RUST AND NOT ENGINE_SANITIZE)
                        "conformance DISABLED (install rustup to run it)")
     endif()
 endif()
+
+# ── Module-ABI gate conformance (Rust + fixture modules) ────────────────────
+# `ModuleLibrary::load` refuses a module for five reasons — struct size, API
+# version, ABI fingerprint, component layout hash, kit-to-kit contract — and
+# until now not one of them had ever executed under test.
+#
+# That gap is not the same shape as an untested function. api_abi_compat_test
+# pins the function-table LAYOUTS thoroughly, and a layout regression is loud:
+# an offset assert fires at compile time. A GATE regression is silent. Reorder
+# the checks, invert a comparison, replace a `return refuse()` with a bare
+# `return false` that skips destroy(t), and nothing fails and nothing prints —
+# the engine simply starts accepting a module it was built to reject, and the
+# symptom arrives later as corrupted ECS memory after a hot-reload.
+#
+# kit_lifecycle_test cannot cover it. It needs .so files from the gitignored
+# Kits repos, so on a clean checkout it is built but NOT registered (see above)
+# and CI has never run it. These fixtures depend on nothing outside the tree.
+#
+# One source, one module per defect, selected by -DABI_GATE_DEFECT. Six separate
+# fixtures would drift: the good one gets updated when the table grows and the
+# five bad ones go stale, still failing, still green, now for the wrong reason.
+set(ABI_GATE_FIXTURES
+    good          0
+    struct_size   1
+    api_version   2
+    fingerprint   3
+    layout_hash   4
+    no_exports    5
+    null_table    6
+    contract_v1   7
+    contract_v2   8
+)
+set(_abi_gate_targets "")
+list(LENGTH ABI_GATE_FIXTURES _abi_gate_len)
+math(EXPR _abi_gate_last "${_abi_gate_len} - 1")
+foreach(_i RANGE 0 ${_abi_gate_last} 2)
+    list(GET ABI_GATE_FIXTURES ${_i} _name)
+    math(EXPR _j "${_i} + 1")
+    list(GET ABI_GATE_FIXTURES ${_j} _defect)
+    set(_t abi_gate_${_name})
+    add_library(${_t} MODULE fixtures/abi_gate_module.cpp)
+    # engine::headers, never engine_runtime: linking the runtime into a module
+    # duplicates engine state, and the SDK header says so. These fixtures go
+    # further and reference NO host symbol at all — ecs_world_t* appears only as
+    # an opaque pointer and no flecs function is called — so unlike the
+    # hot_reload_game sample they have no undefined symbols and need no
+    # load-time resolution against the host. That is what lets them build on
+    # every platform, Windows included.
+    target_link_libraries(${_t} PRIVATE engine::headers)
+    target_compile_definitions(${_t} PRIVATE ABI_GATE_DEFECT=${_defect})
+    set_target_properties(${_t} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/abi_gate
+        DEBUG_POSTFIX ""        # the Rust side builds paths by name
+    )
+    list(APPEND _abi_gate_targets ${_t})
+endforeach()
+
+if(ENGINE_WITH_RUST AND NOT ENGINE_SANITIZE AND TARGET engine_module_probe)
+    find_program(CARGO_EXECUTABLE cargo)
+    if(CARGO_EXECUTABLE)
+        add_test(NAME module_abi_conformance
+                 COMMAND ${CMAKE_COMMAND} -E env
+                         ENGINE_MODULE_PROBE=$<TARGET_FILE:engine_module_probe>
+                         ENGINE_ABI_GATE_DIR=${CMAKE_BINARY_DIR}/abi_gate
+                         # Same contract as the cooked-format lane: here the
+                         # probe and every fixture are known to exist, so a skip
+                         # is a finding rather than a shrug.
+                         ENGINE_REQUIRE_MODULE_ABI_TESTS=1
+                         ${CARGO_EXECUTABLE} test --quiet
+                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/tests/module_abi)
+        # The fixtures are ordinary ALL targets, so a plain `cmake --build`
+        # produces them and ctest finds them already there. ENGINE_REQUIRE_
+        # MODULE_ABI_TESTS above is what stops a missing one from passing
+        # quietly: ctest does not chase target dependencies, so "the fixture was
+        # never built" has to be a failure rather than a skip.
+        set_tests_properties(module_abi_conformance PROPERTIES
+                             LABELS unit TIMEOUT 300)
+    else()
+        message(STATUS "module_abi_conformance: cargo not found — module ABI "
+                       "gate conformance DISABLED (install rustup to run it)")
+    endif()
+endif()

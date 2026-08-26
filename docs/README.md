@@ -58,6 +58,11 @@ claim about freshness as much as about tests. See
   defines the four ways code attaches: Plugins (static), Kits (dynamic,
   version-stable), Add-ons (out-of-process, crash-proof) and Providers
   (subsystem replacement). Also the ABI rules and why they cost what they cost.
+- **What belongs in the editor** — [`architecture/tool-ecosystem.md`](architecture/tool-ecosystem.md)
+  answers "inside the editor, or its own program?" with a rule rather than a
+  preference: authoring outside, tuning and viewing inside. Also the seat rule
+  (everyone has the editor, nobody needs every tool), what orchestration actually
+  requires, and the costs of the model stated rather than hidden.
 - **Replacing a subsystem** — [`guides/audio-provider.md`](guides/audio-provider.md)
   is the worked example: the C ABI a third-party audio engine implements, why it
   has no HRTF/Atmos switches, and the Rust conformance suite that decides

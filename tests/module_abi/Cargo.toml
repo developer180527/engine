@@ -1,0 +1,15 @@
+[package]
+name    = "engine_module_abi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Exercises the host's module load gauntlet from outside C++, one deliberate defect at a time."
+
+[lib]
+name = "engine_module_abi"
+path = "src/lib.rs"
+
+# Deliberately none. The suite drives a PROCESS — engine_module_probe — and reads
+# lines of text. A binding crate would put a generated C++ interface between the
+# test and the gate, which is the coupling this exists to avoid.
+[dependencies]

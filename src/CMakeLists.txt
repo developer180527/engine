@@ -481,6 +481,21 @@ set_target_properties(engine_player PROPERTIES
     ENABLE_EXPORTS ON
 )
 
+# ── engine_module_probe — "why won't my kit load?" ──────────────────────────
+# Runs ModuleLibrary's compatibility gauntlet against a shared library and
+# reports accept/refuse, without a window, a GPU or a project. Also the process
+# boundary the module-ABI conformance suite drives (tests/module_abi).
+#
+# Outside the dev-only block on purpose. The gauntlet is what a SHIPPED player
+# runs when it loads dist/kits/, so the posture that ships is the posture where
+# being able to ask "was this refused, and why" matters most — and it is the
+# posture ENGINE_WITH_SOURCE_IMPORTERS=OFF builds. Costs one small executable.
+add_executable(engine_module_probe tools/engine_module_probe.cpp)
+target_link_libraries(engine_module_probe PRIVATE engine_runtime)
+set_target_properties(engine_module_probe PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # ── Dev-only targets: skipped in the shipping posture ────────────────────────
 if(ENGINE_WITH_SOURCE_IMPORTERS)
 
