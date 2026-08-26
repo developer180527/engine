@@ -34,6 +34,10 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+  # Nightly, so the legs that no longer run on every push still run EVERY DAY
+  # against whatever landed. 02:00 UTC — after the working day, before the next.
+  schedule:
+    - cron: '0 2 * * *'
   workflow_dispatch:
 
 # Supersede in-flight runs for PULL REQUESTS only: a PR's older run is
@@ -47,6 +51,77 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # ── Why these six legs, preserved from the matrix they annotated ──────────
+  # arm64 Linux. Not redundant with macOS-arm64: same ISA, completely
+  # different libc and C++ standard library (glibc + libstdc++ against
+  # Apple's libc + libc++). The missing <cstring> includes that broke the
+  # x64 Linux legs were invisible on macOS for exactly that reason —
+  # libc++ pulls it in transitively and libstdc++ does not.
+  # This leg is also the ONLY thing that compiles
+  # src/runtime/platform/title_bar_windows.cpp, which was written
+  # without a Windows toolchain to check it against. Its first green
+  # run is what turns that file from a proposal into code.
+  # arm64 Windows — the platform combination with the least prior art in
+  # this tree and the most ways to be wrong: MSVC targeting aarch64, a
+  # Rust host triple that is not the default, and bgfx's D3D tooling on
+  # an arch its CI does not cover.
+
+  # ── Which legs run, and when ────────────────────────────────────────────────
+  # Wall clock is set entirely by the slowest leg: macOS finishes in ~4m50s and
+  # Windows x64 in ~11m20s, so every push paid Windows' price for a verdict
+  # macOS had already given. Testing is 20 SECONDS of that; the rest is getting
+  # to the point where you can test.
+  #
+  # So the gating leg runs on every push and the other four run NIGHTLY, plus on
+  # demand. The trade is stated rather than hidden: a portability regression can
+  # now sit on main for up to a day. Three things make that acceptable —
+  #
+  #   * all five legs are `experimental: false`, so the nightly is a HARD
+  #     failure, not an amber note. A ratchet that reports late still ratchets.
+  #   * workflow_dispatch runs the full matrix on demand, which is what to do
+  #     before anything that matters.
+  #   * the classes of bug these legs actually catch — a missing <cstring>, an
+  #     x86-64-only prebuilt, alignof(max_align_t) differing — are introduced by
+  #     code, and code lands on a schedule of hours, not seconds.
+  #
+  # The matrix lives here as JSON because GitHub does not expose `matrix` to a
+  # job-level `if`, so per-leg selection has to happen before the matrix exists.
+  # It is defined ONCE and filtered, rather than duplicated per event.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          # on_push marks the gating leg. Everything else waits for the nightly.
+          cat > all.json <<'JSON'
+          [
+            {"name":"macOS (arm64, AppleClang)","slug":"macos-appleclang","os":"macos-latest","experimental":false,"on_push":true},
+            {"name":"Linux (x64, GCC)","slug":"linux-x64-gcc","os":"ubuntu-latest","experimental":false},
+            {"name":"Linux (x64, Clang)","slug":"linux-x64-clang","os":"ubuntu-latest","cc":"clang","cxx":"clang++","experimental":false},
+            {"name":"Linux (arm64, GCC)","slug":"linux-arm64-gcc","os":"ubuntu-24.04-arm","experimental":false},
+            {"name":"Windows (x64, MSVC)","slug":"windows-x64-msvc","os":"windows-latest","msvc_arch":"x64","experimental":false},
+            {"name":"Windows (arm64, MSVC)","slug":"windows-arm64-msvc","os":"windows-11-arm","msvc_arch":"arm64","rust_target":"aarch64-pc-windows-msvc","experimental":false}
+          ]
+          JSON
+          if [ "${{ github.event_name }}" = "push" ]; then
+            sel=$(jq -c '[.[] | select(.on_push == true)]' all.json)
+          else
+            sel=$(jq -c '.' all.json)
+          fi
+          # Fail loudly rather than silently running nothing — an empty matrix
+          # is a job that reports success having built no platform at all.
+          n=$(printf '%s' "$sel" | jq 'length')
+          if [ "$n" -eq 0 ]; then
+            echo "::error::the leg filter selected NO platforms" >&2; exit 1
+          fi
+          echo "selected $n leg(s) for event '${{ github.event_name }}':"
+          printf '%s' "$sel" | jq -r '.[].name | "  " + .'
+          echo "matrix={\"include\":$sel}" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -57,57 +132,10 @@ jobs:
     # to false the moment a platform first goes green, so it can't regress.
     continue-on-error: ${{ matrix.experimental }}
 
+    needs: plan
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: macOS (arm64, AppleClang)
-            slug: macos-appleclang
-            os: macos-latest
-            experimental: false
-
-          - name: Linux (x64, GCC)
-            slug: linux-x64-gcc
-            os: ubuntu-latest
-            experimental: false   # GREEN since 32797762885 — must not regress
-
-          - name: Linux (x64, Clang)
-            slug: linux-x64-clang
-            os: ubuntu-latest
-            cc: clang
-            cxx: clang++
-            experimental: false   # GREEN since 32797762885 — must not regress
-
-          # arm64 Linux. Not redundant with macOS-arm64: same ISA, completely
-          # different libc and C++ standard library (glibc + libstdc++ against
-          # Apple's libc + libc++). The missing <cstring> includes that broke the
-          # x64 Linux legs were invisible on macOS for exactly that reason —
-          # libc++ pulls it in transitively and libstdc++ does not.
-          - name: Linux (arm64, GCC)
-            slug: linux-arm64-gcc
-            os: ubuntu-24.04-arm
-            experimental: false   # GREEN since 32797762885 — must not regress
-
-          # This leg is also the ONLY thing that compiles
-          # src/runtime/platform/title_bar_windows.cpp, which was written
-          # without a Windows toolchain to check it against. Its first green
-          # run is what turns that file from a proposal into code.
-          - name: Windows (x64, MSVC)
-            slug: windows-x64-msvc
-            os: windows-latest
-            msvc_arch: x64
-            experimental: true
-
-          # arm64 Windows — the platform combination with the least prior art in
-          # this tree and the most ways to be wrong: MSVC targeting aarch64, a
-          # Rust host triple that is not the default, and bgfx's D3D tooling on
-          # an arch its CI does not cover.
-          - name: Windows (arm64, MSVC)
-            slug: windows-arm64-msvc
-            os: windows-11-arm
-            msvc_arch: arm64
-            rust_target: aarch64-pc-windows-msvc
-            experimental: true
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
       # MUST precede checkout. Windows runners default to core.autocrlf=true,

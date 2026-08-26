@@ -398,6 +398,25 @@ eight classes had nowhere to go.
 
 ## Open — recorded so they are not forgotten
 
+- **A portability regression can now sit on main for up to a day.** The gating
+  macOS leg runs on every push; the four Linux/Windows legs run nightly and on
+  `workflow_dispatch`. Deliberate — wall clock was 11m27s set entirely by
+  Windows, for a verdict macOS had already given, and the test lane inside it is
+  20 seconds. All five legs are `experimental: false`, so the nightly is a hard
+  failure rather than an amber note, and the full matrix is one dispatch away
+  before anything that matters. Revisit if a regression ever survives a night.
+- **The push path is now bounded by TSan (~6m50s), not macOS (~4m53s).** Left
+  there on purpose: the sanitizer lanes are the highest-yield minutes in the
+  whole workflow — BUG-0001, 0002 and 0003 all came from them — so moving them
+  off the push path to save under two minutes would undercut the reason most of
+  this ledger exists. If pushes need to get faster again, TSan is the next
+  candidate and the cost is stated here rather than discovered.
+- **The build is ~110 link steps with a 97% compiler-cache hit rate.**
+  Compilation is already free; the six minutes are ~85 test executables each
+  statically linking the whole engine, and sccache does not cache links. Trimming
+  targets cannot move that — the levers are a shared engine library or fewer,
+  larger test binaries, both with real tradeoffs.
+
 These are known, unpinned, and deliberately visible rather than tidied away.
 
 - **BUG-0009 has no automated test.** The check is "assert on the built
