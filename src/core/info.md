@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-25
+verified: 2026-08-27
 covers:
   - src/core/
 tests:
@@ -52,9 +52,28 @@ include renderer, ECS, or editor headers.
   GPU/ECS-free so it times boot and works in engine_core tools. Hardened:
   fixed-capacity buffers (overflow drops+warns), parent IDs, platform clock
   seam, cache-line-aligned recorders. See `docs/guides/performance.md`.
-- **`mem_counters.h/.cpp`** — process-wide counting `operator new`/`delete`
-  (COUNTS + forwards to malloc/free; never pools — ASan/leaks keep working).
-  Gated by ENGINE_MEM_COUNT. Read per-frame deltas via runtime's MemoryChannel.
+- **`mem_counters.h/.cpp`** — the process-wide `operator new`/`delete`
+  replacement. Two independent switches, and the description here was stale by
+  one of them: **ENGINE_MEM_ROUTE defaults to 1**, so the default build ROUTES
+  every allocation into the tagged heaps (`mem::alloc` with the thread's
+  MEM_SCOPE tag) — that is what makes std containers land in tagged heaps with
+  no container rewrites. `ENGINE_MEM_ROUTE=0` falls back to count+malloc, which
+  is what the heap sanitizers need: the root CMakeLists sets it automatically
+  under ASan/LSan so allocations keep SYSTEM provenance. ENGINE_MEM_COUNT adds
+  the counters independently; read per-frame deltas via runtime's MemoryChannel.
+
+  **The alignment contract is the part to get right.** The plain
+  `operator new(size_t)` must return storage aligned to
+  `__STDCPP_DEFAULT_NEW_ALIGNMENT__` — NOT `alignof(std::max_align_t)`, which is
+  8 on macOS arm64 and MSVC x64 while the required value is 16 on both. Both
+  libc++ and MSVC's STL send a type through the ALIGNED overload only when
+  `alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__`, so a 16-byte-aligned type is
+  not over-aligned: it takes the plain overload and depends entirely on that
+  guarantee. Getting it wrong handed every `std::vector<ozz::math::SoaTransform>`
+  back at 8-byte alignment and segfaulted ozz's `_mm_store_ps` on Windows x64
+  only — three platforms hid it (BUG-0028). Every aligned overload is routed
+  too, including the sized and nothrow forms; a mismatched pair there frees a
+  pointer the other allocator never handed out.
 - **`frame_arena.h`** — linear bump allocator for per-frame transient data;
   reset() frees everything in O(1). Opt-in/explicit (our code uses it, it
   intercepts nothing). Lifetime: valid only within the frame; trivial

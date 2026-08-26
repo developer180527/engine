@@ -246,13 +246,34 @@ def is_shallow() -> bool:
 
 
 def last_change(paths: list[str]) -> str:
-    """ISO date of the most recent commit touching any of `paths` ('' if none)."""
+    """ISO date of the most recent change to any of `paths` ('' if none).
+
+    Counts UNCOMMITTED work, and that is the point. Staleness was computed from
+    `git log` alone, so a change sitting in the working tree was invisible: you
+    edit src/core, run `check`, it passes because the edit is not in history yet,
+    you commit — and now it is — and CI fails on a doc that was already stale
+    when you looked. Guaranteed round-trip for every commit touching a
+    `hardened` subsystem without a doc bump, and it cost one (BUG-0030).
+
+    A dirty covered path is therefore treated as changed TODAY: the same answer
+    CI will give a minute later, delivered while it is still cheap. CI itself is
+    unaffected — it checks out a clean tree, so nothing is ever dirty there.
+
+    Bumping `verified:` in the same edit makes code and doc dates equal, and the
+    rule is `code > verified`, so the intended workflow passes.
+    """
     existing = [p for p in paths if (REPO / p.rstrip("/*")).exists()
                 or any(REPO.glob(p))]
     if not existing:
         return ""
-    out = git("log", "-1", "--format=%cs", "--", *existing)
-    return out.splitlines()[0] if out else ""
+    committed = git("log", "-1", "--format=%cs", "--", *existing)
+    committed = committed.splitlines()[0] if committed else ""
+    # --porcelain lists modified, staged and untracked entries alike; any output
+    # means this doc's covered code differs from HEAD right now.
+    if git("status", "--porcelain", "--", *existing).strip():
+        today = date.today().isoformat()
+        return max(committed, today) if committed else today
+    return committed
 
 
 # Evaluated once: every doc asks the same question, and `git rev-parse` per doc

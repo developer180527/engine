@@ -375,6 +375,27 @@ eight classes had nowhere to go.
 - lane:      unit
 - proof:     mutation FROM macOS — restoring "Windows hosts do everything" fails two table rows ("win arm64 dx11", "win arm64 dx12"); reverted, it passes. `file` confirms all three vendored DLLs are PE32+ x86-64. The rule became a PURE function over (os, arch) so every combination is checkable from any machine — the guard used to answer only for the host it was compiled for, which is why the one platform whose answer was wrong had nothing checking it. profileCookableOnThisHost is now a one-line call into the same table, asserted to agree with it.
 
+## BUG-0030 — the doc-staleness gate could not be seen until after the commit
+- found:     2026-08-27
+- class:     coverage
+- where:     scripts/engine_doctor.py
+- symptom:   the Docs workflow failed on a commit whose `engine_doctor check` had passed locally minutes earlier — one ERROR, `src/core/info.md` stale.
+- cause:     staleness compared `verified:` against `git log -1` over the covered paths, so a change sitting in the WORKING TREE was invisible. Edit src/core, run check, it passes because the edit is not in history yet; commit, and now it is; push, and CI fails on a doc that was already stale when you looked. A guaranteed round-trip for every commit touching a `hardened` subsystem without a doc bump.
+- pinned-by: scripts/engine_doctor.py
+- lane:      docs
+- proof:     an uncommitted edit to modules/assetlib (hardened, verified one day earlier) now reports "code 2026-08-27 > verified 2026-08-26" locally; reverting clears it. CI is unaffected — it checks out a clean tree, so nothing is ever dirty there.
+- note:      the same SHAPE as the docs_status_current fix, arrived at from the other side. That one was a generated file gated on content the commit itself changed; this is a hand-written file gated on history the commit itself creates. In both cases the check was correct and the timing made it unobservable. Bumping `verified:` in the same edit makes the dates equal and the rule is `code > verified`, so the intended workflow passes.
+
+## BUG-0031 — src/core/info.md said the allocator never pools
+- found:     2026-08-27
+- class:     logic
+- where:     src/core/info.md
+- symptom:   the doc described mem_counters as "COUNTS + forwards to malloc/free; never pools — ASan/leaks keep working", gated by ENGINE_MEM_COUNT.
+- cause:     ENGINE_MEM_ROUTE defaults to 1, so the DEFAULT build routes every allocation into the tagged heaps — the opposite of "never pools". Forwarding to malloc is the ENGINE_MEM_ROUTE=0 path, which the root CMakeLists sets automatically under heap sanitizers. The doc described the fallback as though it were the default.
+- pinned-by: src/core/info.md
+- lane:      docs
+- proof:     found by re-reading the doc rather than bumping its date when BUG-0030's staleness flag pointed at it — which is what the flag is for. The entry now also states the alignment contract that BUG-0028 turned out to hinge on, since nothing described it before.
+
 ## Open — recorded so they are not forgotten
 
 These are known, unpinned, and deliberately visible rather than tidied away.
