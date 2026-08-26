@@ -16,11 +16,18 @@ engine; the fourth *replaces* part of it.
 > | **Plugin** | built, in use — `src/plugins/`, `IEnginePlugin` |
 > | **Kit** | built, in use — `include/engine/engine_api_table.h`, hot-reloaded `.so` |
 > | **Provider** | **live** — `engine_audio_provider.h`, implemented by `src/audio/miniaudio_provider.cpp`, consumed by `audio_plugin.h`. Built both statically and as a standalone `.so` the conformance suite loads |
-> | **Add-on** | **not built.** Designed here, nothing implements it |
+> | **Add-on** | **partly built.** `include/engine/addon_protocol.h` is the v1 **batch** protocol — invoke, framed result file, manifest, exit-code contract — and `src/tools/engine_module_probe.cpp` is its first speaker, driven by `tests/module_abi/`. The **live-link** direction (a tool streaming into a running editor) is still designed only |
 > | **API registry** | **not built.** Designed here |
 >
 > The tier table and the swap recipe below are decisions. The unbuilt rows are
 > intent, marked as such wherever they appear.
+>
+> The Add-on row is deliberately split rather than flipped to "built". v1 covers
+> one direction — the host launches a tool, the tool does one job, the tool exits
+> — and that scoping is the design, not an omission: a persistent connection with
+> incremental state shares nothing with a request/response frame, and
+> [`tool-ecosystem.md`](tool-ecosystem.md) §10 records why pretending otherwise
+> would produce a protocol serving neither.
 
 ---
 
@@ -171,7 +178,7 @@ it in "recompile everything."
 
 ## 2. Axis one — isolation
 
-|  | **Plugin** | **Kit** | **Add-on** *(unbuilt)* |
+|  | **Plugin** | **Kit** | **Add-on** *(batch v1 built)* |
 |---|---|---|---|
 | Linkage | static, in the binary | dynamic `.so` | separate **process** |
 | Boundary | C++ (`IEnginePlugin`) | C ABI table | IPC |
@@ -413,3 +420,27 @@ table, Add-on protocol:
 - **Freeze offsets in a test**, not only sizes in a static assert. Sizes catch a
   growth; only offsets catch a reorder, and a reorder breaks everything while
   every static assert still passes.
+
+### How a text protocol satisfies these
+
+The Add-on protocol carries no structs, so half the list above has nothing to
+bind to. It is listed here anyway because the *reasons* transfer, and the
+substitutions are what make that visible rather than assumed:
+
+| Struct rule | Its text equivalent in `addon_protocol.h` |
+|---|---|
+| fixed-width types | line-oriented ASCII records; no binary layout to disagree about |
+| `structSize` | the `END` trailer's **line count and digest** — a body is valid only if it is entirely present |
+| append-only | reserved keys (`VERDICT`, `ERROR`) never change meaning; a tool adds new record keys and old readers ignore them |
+| version with `>=` | **`==`, deliberately.** A reader that does not know the version must refuse, because the failure mode of guessing is reading a partial body as a complete one — silent, not loud |
+| no exception may escape | exit status says whether the tool *ran*, never what it decided; a crash is a distinct, visible outcome |
+| absence is normal | a refusal is a *successful* probe of a bad input, reported as a record, at exit 0 |
+| freeze offsets in a test | two independent implementations of the frame — C++ writer, Rust reader — that must agree on bytes |
+
+The one genuine inversion is `>=` becoming `==`, and it is worth stating why the
+rule flips rather than quietly not applying. A Kit table tolerates an unknown
+newer host because the *host* is the one reading, and it reads only fields it
+knows are there. A frame is read whole: a reader that tolerated an unknown
+version would have to guess where the body ends, and guessing wrong produces a
+truncated result that parses — which is precisely the failure the trailer exists
+to make impossible.

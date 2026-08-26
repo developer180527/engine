@@ -567,6 +567,12 @@ set(ABI_GATE_FIXTURES
     null_table    6
     contract_v1   7
     contract_v2   8
+    # The one fixture whose defect is not in its ABI table. Its table is
+    # correct and it MUST load; what it attacks is the channel the verdicts
+    # used to travel on, by printing lines indistinguishable from the probe's
+    # own. That is what moved the probe's machine output off stdout and into a
+    # framed Add-on result file.
+    noisy_stdout  9
 )
 set(_abi_gate_targets "")
 list(LENGTH ABI_GATE_FIXTURES _abi_gate_len)

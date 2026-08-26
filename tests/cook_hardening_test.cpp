@@ -35,6 +35,8 @@
 #include <thread>
 #include <vector>
 
+#include <engine/addon_protocol.h>
+
 #include <assetlib/asset_registry.h>
 #include <assetlib/cook_result_file.h>
 #include <assetlib/ddc.h>
@@ -101,6 +103,44 @@ static void testResultFraming() {
     const std::string minimal = cookresult::frame("RESULT ok\n", 1);
     CHECK(cookresult::unframe(minimal, out, err) && out == "RESULT ok\n",
           "a verdict-only result validates");
+
+    // ── The same framing, in two places, kept honest ────────────────────────
+    // `engine/addon_protocol.h` implements this identical frame under its own
+    // magic, and is deliberately NOT expressed in terms of this header: assetlib
+    // is a standalone CMake project that does not depend on the engine SDK, and
+    // inverting that dependency to remove thirty lines would be the worse trade.
+    //
+    // Duplication that nothing checks is duplication that drifts. Change the
+    // digest seed here, the trailer spelling, the version position, the newline
+    // handling — every one of those keeps both files compiling and passing their
+    // own tests while the two formats silently stop being the same format. Then
+    // the day one is asked to read the other's file, or a host is taught "the
+    // trailer looks like this", it is wrong in a way no test wrote down.
+    //
+    // So: frame the same body through both and require identical bytes below the
+    // magic. Cheap, and it converts "keep these in sync" from a comment into a
+    // build failure.
+    {
+        const std::string sameBody = "VERDICT ok\nMODULE 0 ok /tmp/x.so\n";
+        const std::string viaCook  = cookresult::frame(sameBody, 2);
+        const std::string viaAddon =
+            engine::addon::frame(cookresult::kMagic, sameBody, 2);
+        CHECK(viaCook == viaAddon,
+              "the cook and add-on framings agree byte for byte on one body");
+
+        CHECK(engine::addon::fnv1a64(sameBody) == cookresult::fnv1a64(sameBody),
+              "...and on the digest, which is the half a length check cannot see");
+
+        // Version numbers are independent by design — the cook result file and
+        // the Add-on protocol may be revised separately — so this is the one
+        // place the two are allowed to differ, and it is asserted rather than
+        // assumed, because the check above would start failing for this reason
+        // and the reason should be written down before it does.
+        CHECK(cookresult::kVersion == engine::addon::kProtocolVersion,
+              "both formats are still at version %d; when one is bumped, the "
+              "byte-for-byte check above must take a version argument rather "
+              "than being deleted", cookresult::kVersion);
+    }
 }
 
 // ── 2. DDC eviction ─────────────────────────────────────────────────────────

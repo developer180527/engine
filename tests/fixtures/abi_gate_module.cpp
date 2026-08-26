@@ -55,6 +55,44 @@
 #define ABI_GATE_NULL_TABLE    6
 #define ABI_GATE_CONTRACT_V1   7
 #define ABI_GATE_CONTRACT_V2   8
+#define ABI_GATE_NOISY_STDOUT  9
+
+// ── Defect 9: a module that writes on the probe's stdout ────────────────────
+// The only fixture here whose defect is not in its ABI table. Its table is
+// perfect and it must LOAD — what it attacks is the channel the verdicts used to
+// travel on.
+//
+// engine_module_probe dlopens code it does not trust; that is the whole reason
+// it is a separate process. Loaded code can print. So a module can write lines
+// that are byte-for-byte indistinguishable from the probe's own output, and a
+// parser reading that stream cannot tell the host's verdict from the module's
+// forgery. It is not noise, it is impersonation, and it works in both
+// directions: an extra `module 0 ok` invents an accept that never happened, and
+// a forged `probe done` makes a run that died halfway look complete.
+//
+// Both spellings are emitted, at both times a module can run code:
+//
+//   * STATIC INITIALISATION, i.e. during dlopen, before the host has called
+//     anything at all;
+//   * inside `create`, i.e. after the host has decided to talk to it.
+//
+// This is why the probe's machine channel is now a framed result FILE. The
+// fixture is the proof that the old contract was forgeable, and the conformance
+// suite requires the verdicts to survive it.
+// Defined only for this defect: an unused static function is a warning, and this
+// tree builds warnings as errors.
+#if ABI_GATE_DEFECT == ABI_GATE_NOISY_STDOUT
+static void forge() {
+    std::printf("module 0 ok /forged/by/the/module\n");
+    std::printf("probe done\n");
+    std::fflush(stdout);
+}
+
+// Before the host calls anything. A module needs no cooperation whatsoever to
+// reach the shared stream — merely being loaded is enough.
+struct ForgeAtLoad { ForgeAtLoad() { forge(); } };
+static ForgeAtLoad g_forgeAtLoad;
+#endif
 
 // ── The trace ───────────────────────────────────────────────────────────────
 // Appends a line per lifecycle event to $ABI_GATE_TRACE. This is how the test
@@ -112,6 +150,12 @@ ENGINE_MODULE_CONTRACTS({ "abi_gate", 2, 0x2222ull })
 extern "C" ENGINE_MODULE_EXPORT
 EngineGameModuleV1* engineGameModuleCreateV1(void) {
     trace("create");
+
+#if ABI_GATE_DEFECT == ABI_GATE_NOISY_STDOUT
+    // Again, now that the host is actively talking to it. Printed BETWEEN the
+    // probe's own lines, which is the placement a naive parser handles worst.
+    forge();
+#endif
 
 #if ABI_GATE_DEFECT == ABI_GATE_NULL_TABLE
     // The module decides at runtime that it cannot initialise. The host has a

@@ -3,6 +3,7 @@ status: decided
 covers:
   - src/tools/
   - src/editor/panels/
+  - include/engine/addon_protocol.h
 ---
 # The Tool Ecosystem — what the editor is for, and what it is not
 
@@ -14,7 +15,7 @@ That document answers *how code attaches to the engine*; this one answers *how
 TOOLS attach to the pipeline*, and it leans on the tier that document already
 defined and did not build:
 
-> | | **Add-on** *(unbuilt)* |
+> | | **Add-on** *(batch v1 built)* |
 > |---|---|
 > | Linkage | separate **process** |
 > | Boundary | IPC |
@@ -24,10 +25,15 @@ defined and did not build:
 > **The process boundary is affordable exactly where the frame boundary is not.**
 
 > **What exists today.** Fourteen separate tools (§5), an editor that already
-> holds the line (§5), and a cooked-asset pipeline that already makes the
-> seat rule work (§4). What does NOT exist is a formal Add-on protocol — every
-> tool today speaks its own argv-and-stdout contract. §6 says what to do about
-> that and why it is not urgent.
+> holds the line (§5), and a cooked-asset pipeline that already makes the seat
+> rule work (§4). The Add-on protocol now exists for the **batch** direction —
+> `include/engine/addon_protocol.h`, spoken by `engine_module_probe` (§5) — and
+> converting that one tool found a forgeable output channel nobody had noticed.
+> What does NOT exist is **live link**, the direction where a running tool pushes
+> into a running editor, and §10 says why that is a separate protocol rather than
+> a missing half of this one. Every other tool still speaks its own
+> argv-and-stdout contract; §6 says what to do about that and why it is not
+> urgent.
 
 ---
 
@@ -251,6 +257,50 @@ That is the pattern: **a tool's CLI is an ABI.** It is versioned, it is
 documented, it is tested from outside, and it is stable because something other
 than a human depends on it.
 
+### It is now a protocol, not a pattern
+
+Step 1 and step 2 of §8 are done. `include/engine/addon_protocol.h` is the v1
+**batch** Add-on protocol — the invoke direction only — and `engine_module_probe`
+is its first speaker, converted rather than written for the purpose, exactly as
+step 2 asks.
+
+Three rules, and the third is the probe's own insight generalised:
+
+1. **stdout and stderr are human channels.** Always. Rewording them is never a
+   breaking change.
+2. **The result file is the machine channel** — framed, with a line count and
+   digest, so a partial write is *detectably* partial.
+3. **Exit status says whether the tool ran**, never what it decided. A refusal is
+   a successful probe of a bad module, at exit 0, reported as a record.
+
+**The conversion found a real defect, which is what converting an existing tool
+is for.** The probe's machine-readable verdicts were on stdout — and the probe
+`dlopen`s modules it does not trust, which is the entire reason it is a separate
+process. Loaded code can print. A module's static initialiser or its `create`
+could write `module 0 ok /x`, or forge the `probe done` terminator, in bytes
+indistinguishable from the host's own output. Not noise: **impersonation**, in
+both directions — inventing an accept that never happened, or making a run that
+died halfway look complete.
+
+`engine_cook_worker` had already written the rule down — *"cookers print freely,
+so stdout is not a channel"* — and the probe, whose exposure is strictly worse,
+had not applied it. A channel shared with the thing under test is not a channel.
+`abi_gate_noisy_stdout` is a fixture that performs the forgery at both moments a
+module can run code, and the conformance suite requires the verdicts to survive
+it.
+
+Two things about how it is verified are worth stating, because they are the
+difference between a protocol and a format someone wrote once:
+
+- **The Rust suite reimplements the frame**, digest included, rather than binding
+  to the C++. A test that calls the writer's own reader agrees with the writer by
+  construction — rename a key, change the seed, and both halves move together and
+  stay green. It is also the honest simulation of the real client, since an Add-on
+  may be written by anyone in anything.
+- **A missing result file is a hard failure, never a fallback to stdout.**
+  Otherwise the conversion would be decorative: a broken writer would silently
+  revert to the forgeable channel with every test still passing.
+
 ---
 
 ## 6. What orchestration requires
@@ -267,6 +317,15 @@ behaviour is unverified. Everything in the table above already satisfies this.
 it, which contract version it speaks. `EngineContractDecl` and the frozen ABI
 tables are this idea applied to modules; a tool manifest is the same idea applied
 to processes.
+
+*Now specified and demonstrated:* `--addon-manifest` on any Add-on prints a
+framed self-description. One lesson from building it is worth keeping, because it
+generalises past manifests: **a manifest nothing cross-checks is decorative.**
+The first test written for it asserted the manifest declared the record key the
+suite parses — and mutation testing showed it passed while the key was renamed
+out from under nine other tests, because it had only compared one string literal
+in the tool against the same literal in the test. It is load-bearing only now
+that it is checked in both directions against what a real run actually emits.
 
 **3. The DDC is the substrate. Do not build a second one.** A tool becomes a
 cooker or a pre-cook step. Its output is content-addressed on its inputs, its
@@ -307,13 +366,15 @@ document ends where it does.
 
 ## 8. What to do, in order
 
-1. **Write the Add-on protocol** that [`extension-model.md`](extension-model.md)
-   already specifies and does not implement: the IPC shape, the manifest, the
-   lifecycle, the failure modes. This is the one piece with no substitute.
-2. **Prove it by converting one tool that already exists.** `engine_cook_worker`
-   and `engine_module_probe` are both nearly Add-ons with bespoke contracts.
-   Converting one is a real test of the protocol; inventing a new tool to
-   demonstrate it is not.
+1. ~~**Write the Add-on protocol**~~ — **done, for the batch direction.**
+   `include/engine/addon_protocol.h`: the invoke shape, the framed result, the
+   manifest, the exit-code contract. Live link is explicitly not in v1; see §10.
+2. ~~**Prove it by converting one tool that already exists.**~~ — **done.**
+   `engine_module_probe` speaks it, and the conversion found a forgeable channel
+   nobody had noticed (§5). That is the argument for converting rather than
+   inventing, and it only works once: `engine_cook_worker` is the next candidate,
+   and the interesting question there is whether its `RESULT`/`OUTPUT`/`DEP`
+   vocabulary survives contact with a second tool's needs or wants generalising.
 3. **Keep the editor's domain panels viewers.** An animation panel that plays and
    blends but cannot keyframe is not an unfinished feature. It is the design.
 4. **Adopt, do not author.** Blender, Substance, Reaper, Audacity and VS Code
@@ -347,10 +408,15 @@ document ends where it does.
 Recorded rather than answered, because guessing at them would be worse than
 leaving them visible.
 
-- **Does the Add-on protocol carry structured data, or only paths?**
-  `engine_cook_worker` passes paths and a framed result file, which is simple and
-  crash-safe. A live-link tool needs a stream. Those may be two protocols rather
-  than one, and pretending otherwise would produce a protocol that serves neither.
+- ~~**Does the Add-on protocol carry structured data, or only paths?**~~
+  **Answered by scoping, not by choosing.** v1 is the batch direction: argv in, a
+  framed result file out, records as `KEY value` lines. Live link is a different
+  protocol in a different document, because a persistent connection with
+  incremental state shares nothing with a request/response frame. What remains
+  open is narrower and better: **the record vocabulary is deliberately unfixed.**
+  `CONSUMES` and `PRODUCES` are free-form tokens, and an asset-type ontology is a
+  thing to extract from three working Add-ons rather than invent for the first —
+  a wrong one here would be copied by everything after it.
 - **Who launches whom?** The editor invoking tools is obvious. A tool wanting to
   push into a *running* editor is the live-link direction and needs a discovery
   mechanism the editor does not have.
