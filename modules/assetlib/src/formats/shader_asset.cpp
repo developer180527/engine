@@ -57,37 +57,63 @@ bool profileFromName(const std::string& s, uint32_t& out) {
     return false;
 }
 
-bool profileCookableOnThisHost(uint32_t p) {
+bool profileCookableOn(uint32_t os, uint32_t arch, uint32_t profile) {
     // Mirrors bgfx's own guards. Getting this wrong does not fail loudly at
     // cook time — it produces a package that renders nothing on the target,
     // which is exactly the class of bug that reaches players.
+    //
+    // THE D3D COMPILERS ARE VENDORED PREBUILT x86-64 BINARIES. That single fact
+    // drives every arch test below:
+    //
+    //   bgfx/tools/bin/windows/d3dcompiler_47.dll   PE32+ x86-64   (dx11/DXBC)
+    //   bgfx/tools/bin/windows/dxcompiler.dll       PE32+ x86-64   (dx12/DXIL)
+    //   bgfx/tools/bin/linux/libdxcompiler.so       ELF    x86-64
+    //
+    // An arm64 process cannot load an x86-64 library — the Windows emulator
+    // switches whole processes, not libraries, and dlopen simply fails. shaderc
+    // then dies with "Unable to load DXC compiler" and the ENTIRE shader cook
+    // fails: every shader in the project, on that architecture only. If bgfx
+    // ever ships arm64 builds, this is the function to revisit.
+    if (profile >= kProfileCount) return false;
+    const bool x64 = (arch == kArchX86_64);
+
+    switch (os) {
+    case kHostWindows:
+        // "Windows hosts do everything" was true of x64 and false of arm64.
+        if (profile == kProfileDx11 || profile == kProfileDx12) return x64;
+        return true;
+    case kHostLinux:
+        // d3d4linux covers DXIL (dx12) but never DXBC (dx11) — and DXIL only on
+        // x86-64, for the reason above.
+        if (profile == kProfileDx11) return false;
+        if (profile == kProfileDx12) return x64;
+        return true;
+    case kHostMacOs:
+    default:
+        // bgfx guards D3DCompiler on BX_PLATFORM_WINDOWS, so neither D3D
+        // profile exists here at any architecture.
+        return profile == kProfileMetal || profile == kProfileSpirv
+            || profile == kProfileGlsl;
+    }
+}
+
+bool profileCookableOnThisHost(uint32_t p) {
+    // One line, so the host answer and the testable table cannot drift apart.
 #if defined(_WIN32)
-    (void)p; return p < kProfileCount;            // Windows hosts do everything
+    constexpr uint32_t kOs = kHostWindows;
 #elif defined(__linux__)
-    // d3d4linux covers DXIL (dx12) but not DXBC (dx11) — and it covers DXIL only
-    // on x86-64, because the DXC compiler it loads is a VENDORED PREBUILT BINARY:
-    // third_party/bgfx.cmake/bgfx/tools/bin/linux/libdxcompiler.so is
-    // "ELF 64-bit LSB shared object, x86-64". There is no arm64 build of it.
-    //
-    // Without the arch half of this test, an arm64 Linux host cheerfully accepts
-    // the dx12 profile, hands the stage to shaderc, and shaderc dies with
-    // "dlopen failed: libdxcompiler.so: cannot open shared object file" ->
-    // "Unable to load DXC compiler" -> the whole shader cook fails. Every shader
-    // in the project, on that architecture only, which is why x86-64 Linux was
-    // green and arm64 was not.
-    //
-    // Compile-time arch rather than a runtime probe for the library: the answer
-    // is a property of the SUBMODULE's contents, not of the machine, and the
-    // function has no path to probe with. If bgfx ever ships an arm64
-    // libdxcompiler.so, this is the line to revisit.
-#   if defined(__x86_64__) || defined(__amd64__)
-    return p != kProfileDx11;
-#   else
-    return p != kProfileDx11 && p != kProfileDx12;
-#   endif
+    constexpr uint32_t kOs = kHostLinux;
+#elif defined(__APPLE__)
+    constexpr uint32_t kOs = kHostMacOs;
 #else
-    return p == kProfileMetal || p == kProfileSpirv || p == kProfileGlsl;
+    constexpr uint32_t kOs = kHostOther;
 #endif
+#if defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__) || defined(__amd64__)
+    constexpr uint32_t kArch = kArchX86_64;
+#else
+    constexpr uint32_t kArch = kArchArm64;
+#endif
+    return profileCookableOn(kOs, kArch, p);
 }
 
 uint32_t paramComponents(uint32_t type) {

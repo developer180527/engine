@@ -445,17 +445,76 @@ int main() {
             }
         }
         CHECK(true, "every profile round-trips through its name");
-        // The host guard. Getting this wrong ships a package that renders
-        // nothing on the target rather than failing the cook.
-#if defined(__APPLE__)
-        CHECK(assetlib::profileCookableOnThisHost(assetlib::kProfileMetal),
-              "macOS can cook metal");
-        CHECK(assetlib::profileCookableOnThisHost(assetlib::kProfileSpirv),
-              "macOS can cook spirv");
-        CHECK(!assetlib::profileCookableOnThisHost(assetlib::kProfileDx11)
-              && !assetlib::profileCookableOnThisHost(assetlib::kProfileDx12),
-              "macOS CANNOT cook D3D — bgfx guards D3DCompiler on Windows");
+        // ── The host guard, EVERY combination, from any machine ─────────
+        // BUG-0029: profileCookableOnThisHost answered `p < kProfileCount` for
+        // all of _WIN32 — "Windows hosts do everything" — which is true of x64
+        // and false of arm64. The D3D compilers bgfx vendors are PREBUILT
+        // x86-64 binaries, and an arm64 process cannot load one, so the whole
+        // shader cook died with "Unable to load DXC compiler": every shader in
+        // the project, on that architecture only.
+        //
+        // It survived because the guard answers for the host it was COMPILED
+        // for, so only the macOS branch was ever exercised where the tests ran.
+        // The one platform whose answer was wrong had nothing checking it.
+        //
+        // The rule is now a pure function over (os, arch), so this table runs
+        // on every machine and a wrong answer for a platform nobody is standing
+        // on still fails here.
+        using namespace assetlib;
+        struct Case { uint32_t os, arch, profile; bool cookable; const char* why; };
+        static const Case kCases[] = {
+            // Windows x64 does everything; arm64 loses BOTH D3D profiles.
+            { kHostWindows, kArchX86_64, kProfileDx11,  true,  "win x64 dx11" },
+            { kHostWindows, kArchX86_64, kProfileDx12,  true,  "win x64 dx12" },
+            { kHostWindows, kArchArm64,  kProfileDx11,  false, "win arm64 dx11 — d3dcompiler_47.dll is x86-64" },
+            { kHostWindows, kArchArm64,  kProfileDx12,  false, "win arm64 dx12 — dxcompiler.dll is x86-64" },
+            { kHostWindows, kArchArm64,  kProfileSpirv, true,  "win arm64 still cooks spirv" },
+            { kHostWindows, kArchArm64,  kProfileGlsl,  true,  "win arm64 still cooks glsl" },
+            // Linux never cooks DXBC; DXIL only on x86-64.
+            { kHostLinux,   kArchX86_64, kProfileDx11,  false, "linux dx11 — d3d4linux covers DXIL, not DXBC" },
+            { kHostLinux,   kArchX86_64, kProfileDx12,  true,  "linux x86-64 dx12 via d3d4linux" },
+            { kHostLinux,   kArchArm64,  kProfileDx12,  false, "linux arm64 dx12 — libdxcompiler.so is x86-64" },
+            { kHostLinux,   kArchArm64,  kProfileSpirv, true,  "linux arm64 still cooks spirv" },
+            // macOS has no D3D at any architecture.
+            { kHostMacOs,   kArchArm64,  kProfileDx11,  false, "macOS dx11" },
+            { kHostMacOs,   kArchArm64,  kProfileDx12,  false, "macOS dx12" },
+            { kHostMacOs,   kArchArm64,  kProfileMetal, true,  "macOS metal" },
+            { kHostMacOs,   kArchX86_64, kProfileMetal, true,  "macOS metal on intel" },
+        };
+        for (const auto& c : kCases)
+            CHECK(profileCookableOn(c.os, c.arch, c.profile) == c.cookable,
+                  "cookable(%s) == %s", c.why, c.cookable ? "true" : "false");
+
+        // An out-of-range profile is never cookable — the cook loop iterates a
+        // count, and a garbage id must not read as "sure, go ahead".
+        CHECK(!profileCookableOn(kHostWindows, kArchX86_64, kProfileCount)
+              && !profileCookableOn(kHostWindows, kArchX86_64, 9999u),
+              "an unknown profile id is never cookable");
+
+        // And the compiled-in answer must agree with the table for THIS host,
+        // so the two cannot drift apart.
+        for (uint32_t i = 0; i < kProfileCount; ++i) {
+#if defined(_WIN32)
+            const uint32_t os = kHostWindows;
+#elif defined(__linux__)
+            const uint32_t os = kHostLinux;
+#elif defined(__APPLE__)
+            const uint32_t os = kHostMacOs;
+#else
+            const uint32_t os = kHostOther;
 #endif
+#if defined(_M_X64) || defined(_M_AMD64) || defined(__x86_64__) || defined(__amd64__)
+            const uint32_t arch = kArchX86_64;
+#else
+            const uint32_t arch = kArchArm64;
+#endif
+            if (profileCookableOnThisHost(i) != profileCookableOn(os, arch, i)) {
+                CHECK(false, "profileCookableOnThisHost disagrees with the table "
+                             "for %s", profileName(i));
+                break;
+            }
+        }
+        CHECK(true, "the compiled-in host answer matches the table");
     }
 
     if (g_failures) {

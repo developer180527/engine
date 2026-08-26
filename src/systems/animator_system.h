@@ -1,4 +1,8 @@
 #pragma once
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+
 #include "animation/skin_palette.h"   // palettes live out of the component
 // AnimatorSystem — runs every frame, advances animation time, samples clips,
 // computes per-entity bone palettes. Writes into SkinnedMesh::skinMatrices
@@ -130,6 +134,23 @@ private:
         float          fadeElapsed = 0.0f;
         float          fadeDuration = 0.0f;
 
+        // Fails loudly with the buffer's name and address. A misaligned buffer
+        // here is always a bug, never a tolerable condition, so this reports
+        // rather than degrades.
+        static void assertSimdAligned(const char* what, const void* p) {
+            if (!p) return;   // an empty vector may legitimately hold nullptr
+            const auto addr = reinterpret_cast<std::uintptr_t>(p);
+            if ((addr & 0xF) == 0) return;
+            std::fprintf(stderr,
+                "[Animator] FATAL: %s is at %p, which is %u-byte aligned, not 16.\n"
+                "  ozz writes this buffer with aligned SIMD stores; on x86 that\n"
+                "  faults. The allocator behind std::vector did not honour the\n"
+                "  type's alignas(16) — check the aligned operator new overloads\n"
+                "  in src/core/mem_counters.cpp and mem::alloc's align handling.\n",
+                what, p, (unsigned)(addr & (~addr + 1)));
+            std::abort();
+        }
+
         void ensure(const ozz::animation::Skeleton& skel) {
             if (builtFor == &skel) return;
             if (!sampling)     sampling     = std::make_unique<ozz::animation::SamplingJob::Context>();
@@ -140,6 +161,27 @@ private:
             localsPrev.resize((size_t)skel.num_soa_joints());
             localsBlend.resize((size_t)skel.num_soa_joints());
             models.resize((size_t)skel.num_joints());
+
+            // ── The buffers ozz writes with ALIGNED SIMD stores ─────────────
+            // SoaTransform and Float4x4 are alignas(16), so the allocator must
+            // honour that: ozz uses _mm_store_ps on x86, which FAULTS on a
+            // misaligned address, while NEON tolerates it. Get this wrong and
+            // the failure is a bare SEGFAULT with no stack, on one architecture
+            // only — which is exactly what Windows x64 reports today while
+            // Linux x64, macOS arm64 and Windows arm64 all pass.
+            //
+            // Checked rather than assumed, because the default allocation
+            // alignment is NOT the same everywhere: alignof(max_align_t) is 16
+            // on Linux/macOS x86-64 and 8 on MSVC. A buffer that reaches ozz at
+            // 8-byte alignment is fine on three of our four platforms.
+            //
+            // Diagnostic, not a guess at the cause: it names the buffer and the
+            // address instead of dying silently, so one CI run answers the
+            // question rather than narrowing it.
+            assertSimdAligned("locals",      locals.data());
+            assertSimdAligned("localsPrev",  localsPrev.data());
+            assertSimdAligned("localsBlend", localsBlend.data());
+            assertSimdAligned("models",      models.data());
             builtFor = &skel;
         }
     };

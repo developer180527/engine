@@ -29,6 +29,29 @@ MemCounters& memCounters() {
 
 #if ENGINE_MEM_COUNT || ENGINE_MEM_ROUTE
 
+// ── The alignment the UNALIGNED operator new must still provide ─────────────
+// NOT alignof(std::max_align_t). The standard requires the plain
+// `operator new(size_t)` to return storage aligned to
+// __STDCPP_DEFAULT_NEW_ALIGNMENT__, and the two are NOT the same number:
+//
+//   platform            max_align_t   __STDCPP_DEFAULT_NEW_ALIGNMENT__
+//   macOS arm64                   8                                 16
+//   MSVC x64                      8                                 16
+//   Linux x86-64                 16                                 16
+//
+// libc++ and MSVC's STL both route an over-aligned type through the ALIGNED
+// operator new only when `alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__`. A
+// 16-byte-aligned type is therefore NOT over-aligned: it goes through the plain
+// overload, relying on the guarantee this replacement was quietly breaking.
+//
+// What that cost: ozz's SoaTransform and Float4x4 are alignas(16), so every
+// std::vector of them came back 8-byte aligned wherever max_align_t is 8. ozz
+// writes those buffers with _mm_store_ps, which FAULTS on a misaligned address
+// — so animator_system_test segfaulted on Windows x64 and passed everywhere
+// else: Linux x64 got 16 from max_align_t, and both arm64 legs tolerate
+// unaligned NEON stores. Three green platforms hid a real bug on the fourth.
+static constexpr std::size_t kDefaultNewAlign = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
+
 static inline void* engine_global_alloc(std::size_t n, std::size_t align) {
 #if ENGINE_MEM_ROUTE
     void* p = mem::alloc(n ? n : 1, align);
@@ -57,13 +80,13 @@ static inline void engine_global_free(void* p) {
 }
 
 void* operator new(std::size_t n) {
-    void* p = engine_global_alloc(n, alignof(std::max_align_t));
+    void* p = engine_global_alloc(n, kDefaultNewAlign);
     if (!p) throw std::bad_alloc();
     return p;
 }
 void* operator new[](std::size_t n) { return ::operator new(n); }
 void* operator new(std::size_t n, const std::nothrow_t&) noexcept {
-    return engine_global_alloc(n, alignof(std::max_align_t));
+    return engine_global_alloc(n, kDefaultNewAlign);
 }
 void* operator new[](std::size_t n, const std::nothrow_t& t) noexcept {
     return ::operator new(n, t);

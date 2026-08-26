@@ -1,61 +1,73 @@
-docs: record the six defects the Windows port fixed, and re-verify four docs
+build: an operator new that under-promised, and a guard only one platform checked
 
-Bookkeeping the last fourteen commits earned. No code changes.
+Both Windows CI failures. Neither was a Windows quirk, both were real bugs
+that three green platforms were hiding, and both are now reproducible and
+mutation-proven from macOS.
 
-── the ledger, 21 -> 27 ────────────────────────────────────────────────────
-BUG-0022  maRealloc read past the end of every block it grew
-BUG-0023  the one test that exercises the audio provider is the one ASan cannot see
-BUG-0024  engineInit published without a happens-before edge
-BUG-0025  a cross-thread field hidden under a comment saying it was not one
-BUG-0026  an overrun counter that measured the runner instead of the mixer
-BUG-0027  a generated file gated on content the commit itself changes
+── BUG-0028: THE REPLACEMENT operator new BROKE ITS OWN GUARANTEE ──────────
+animator_system_test segfaulted on Windows x64 and passed on Linux x64, macOS
+arm64 and Windows arm64.
 
-Three are worth more than their titles.
+`operator new(size_t)` in mem_counters.cpp requested alignof(std::max_align_t).
+The standard requires it to return storage aligned to
+__STDCPP_DEFAULT_NEW_ALIGNMENT__, and those are NOT the same number:
 
-BUG-0022's note records that the COMMENT was the worst part of it. Mine said the
-copy was "safe only while miniaudio uses this path to GROW" — exactly inverted,
-since growing is the unsafe direction. Identifying a hazard and drawing the
-opposite conclusion is worse than not considering it: nothing executable
-disagreed with something that read as reasoned.
+    macOS arm64    max_align_t  8    required 16
+    MSVC x64       max_align_t  8    required 16
+    Linux x86-64   max_align_t 16    required 16
 
-BUG-0023 is recorded as NOT FIXED. The sanitizer exclusion is correct in itself
-— the Rust harness aborts under a dlopen'd instrumented module — but its
-consequence was never noticed: the provider's only behavioural coverage lives in
-the excluded test, so that whole TU sits outside ASan's reach, which is why a
-textbook heap over-read survived to a Linux SIGSEGV. Both remedies (nightly
--Zsanitizer, or a C++ harness linking the provider directly) are real work and
-deserve their own pass rather than a patch smuggled in here.
+libc++ and MSVC's STL route a type through the ALIGNED operator new only when
+alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__. A 16-byte-aligned type is
+therefore NOT over-aligned: it takes the plain overload and relies on exactly
+the guarantee this replacement was quietly breaking. Every
+std::vector<ozz::math::SoaTransform> came back 8-byte aligned, and ozz writes
+those with _mm_store_ps, which faults.
 
-BUG-0025's proof notes that TSan found one race and READING found the other. A
-report bounds what the tool observed in one run; it is a starting point, not a
-complete list.
+That explains all four legs. Linux x64 got 16 from max_align_t by luck of the
+ABI; both arm64 legs tolerate unaligned NEON stores; only MSVC x64 combined a
+small max_align_t with faulting SIMD.
 
-── two additions to the open list ──────────────────────────────────────────
-Windows kits are blocked on DESIGN, not a flag: hot_reload_game resolves engine
-symbols from the host executable at load, which is a Unix idiom, and a Windows
-DLL must resolve everything at link time. Written down so the conclusion is not
-re-derived. Both Windows legs otherwise report zero compile failures and build
-all 76 tests.
+Verified independently that mem::alloc and the ALIGNED operator new both honour
+alignment correctly, the defect was the value being passed, not the allocator.
 
-And the ledger-discipline note updated, because it predicted its own recurrence:
-seven defects landed unrecorded, then fourteen more commits fixed six more with
-the ledger untouched. Twice in a row. engine_doctor validates entries that EXIST
-and structurally cannot notice one that should — so this stays a human rule, and
-one that may need a mechanical prompt rather than more resolve.
+The diagnostic that found it is permanent. AnimatorSystem::Ctx::ensure now
+asserts all four ozz buffers are 16-aligned and aborts naming the buffer and its
+address, because the alternative is a bare SEGFAULT with no stack on one
+architecture. It fires on macOS too: the bug was always on this machine, arm64
+just tolerated it.
 
-── four docs re-verified, not date-bumped ──────────────────────────────────
-animation, cookers/shader, render/diag and systems went stale during the port.
-All four changes turned out to be portability-only — three added #includes, one
-wrapped getpid() behind currentProcessId() for MSVC — so nothing they describe
-moved.
+── BUG-0029: "WINDOWS HOSTS DO EVERYTHING" WAS TRUE OF x64 ONLY ────────────
+cooked_format_conformance failed on Windows arm64 with "Unable to load DXC
+compiler", the whole shader cook, so every shader in the project, on that
+architecture only.
 
-Checked before touching a date, because bumping without re-reading is the one
-dishonest move this system cannot detect: no doc describes the area that
-changed; every test each doc cites as evidence still exists (6 files); all six
-pass. The staleness flag did its job and re-reading confirmed the content.
+The D3D compilers bgfx vendors are PREBUILT x86-64 binaries, d3dcompiler_47.dll,
+dxcompiler.dll and dxil.dll all report PE32+ x86-64, and a native arm64 process
+cannot load one, because the emulator switches whole processes, not libraries.
+The Linux branch already carried exactly this arch test, written for the
+identical reason; this branch was never updated alongside it.
 
-Warnings back to 12.
+WHY IT REACHED CI IS THE PART WORTH KEEPING. profileCookableOnThisHost answers
+for the host it was COMPILED for, so every branch is invisible to a test running
+anywhere else, and only the macOS branch had assertions. The one platform whose
+answer was wrong was the one with nothing checking it.
+
+So the rule is now a pure function over (os, arch) and the host entry point is a
+one-line call into it, asserted to agree. A 14-row table covers every
+combination from any machine, including that an out-of-range profile id is never
+cookable. Mutation FROM macOS: restoring "Windows hosts do everything" fails
+"win arm64 dx11" and "win arm64 dx12"; reverted, it passes.
+
+── ON THE CI SIGNAL ITSELF ─────────────────────────────────────────────────
+Both runs reported SUCCESS. Both Windows legs are experimental: true, so a red
+job sits inside a green run, which is the right setting while a platform is
+being brought up, and worth knowing is the reason these two sat unexamined.
 
 ── verification ────────────────────────────────────────────────────────────
-Full ctest 76/76. Docs gate 0 errors, ENGINE_STATUS current, every pinned-by
-resolves.
+Full ctest 76/76. Ledger at 29, both entries pinned by the TESTS that fail
+without the fix rather than by the fixes themselves. Docs gate 0 errors,
+ENGINE_STATUS current.
+
+Windows itself is unverified from here; the next CI run is the confirmation.
+BUG-0028 does not depend on it, the misalignment reproduces locally.
+

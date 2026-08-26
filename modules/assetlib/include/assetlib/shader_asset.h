@@ -51,6 +51,20 @@ const char* profileShadercPlatform(uint32_t profile);       // shaderc --platfor
 // shipped build that renders nothing.
 bool        profileCookableOnThisHost(uint32_t profile);
 
+// ── The same rule, as a PURE FUNCTION ───────────────────────────────────────
+// profileCookableOnThisHost answers for the host it was compiled for, so every
+// branch of it is invisible to a test running anywhere else — which is exactly
+// how "Windows hosts do everything" survived: the one platform whose answer was
+// wrong (arm64) had nothing checking it, because only the macOS branch was ever
+// compiled where the tests ran (BUG-0029).
+//
+// Taking the host as PARAMETERS makes the whole table testable from any
+// machine. profileCookableOnThisHost is now a one-line call into this with its
+// own compile-time constants, so the two cannot disagree.
+enum CookHostOs   : uint32_t { kHostWindows = 0, kHostLinux = 1, kHostMacOs = 2, kHostOther = 3 };
+enum CookHostArch : uint32_t { kArchX86_64 = 0, kArchArm64 = 1 };
+bool profileCookableOn(uint32_t os, uint32_t arch, uint32_t profile);
+
 // ── Declared interface ──────────────────────────────────────────────────────
 enum ShaderParamType : uint32_t {
     kParamFloat = 0,

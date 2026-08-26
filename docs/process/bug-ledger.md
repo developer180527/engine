@@ -354,6 +354,27 @@ eight classes had nowhere to go.
 - proof:     the gate now compares STRUCTURE — subsystems, tiers, docs, test counts — and normalises dates away; freshness stays with `engine_doctor check`, which computes it live and reports warnings. Verified by making a real commit and checking after it.
 - note:      two comments already in that function recorded the same lesson from two other causes, which is the sign it needed the rule stated rather than patched a third time: A GENERATED FILE CANNOT BE GATED ON CONTENT THAT CHANGES BECAUSE OF THE COMMIT THAT CONTAINS IT.
 
+## BUG-0028 — the replacement operator new promised less alignment than the standard requires
+- found:     2026-08-26
+- class:     memory
+- where:     src/core/mem_counters.cpp
+- symptom:   animator_system_test SEGFAULT on Windows x64 only. Linux x64, macOS arm64 and Windows arm64 all passed.
+- cause:     the replacement `operator new(size_t)` requested `alignof(std::max_align_t)`, but the standard requires it to return storage aligned to `__STDCPP_DEFAULT_NEW_ALIGNMENT__`. Those differ: max_align_t is 8 on macOS arm64 AND MSVC x64, while the required new-alignment is 16 on both. libc++ and MSVC's STL route a type through the ALIGNED operator new only when `alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__`, so a 16-byte-aligned type is NOT over-aligned — it takes the plain overload and relies on the guarantee this replacement was breaking. Every `std::vector<ozz::math::SoaTransform>` therefore came back 8-byte aligned, and ozz writes those buffers with `_mm_store_ps`, which faults.
+- pinned-by: tests/animator_system_test.cpp
+- lane:      unit
+- proof:     mutation — restoring `alignof(std::max_align_t)` reproduces "localsPrev is at 0x109c092d8, which is 8-byte aligned, not 16" on macOS; the fix passes. Verified independently that mem::alloc and the ALIGNED operator new both honour alignment correctly, so the defect was the value being passed, not the allocator.
+- note:      three green platforms hid it. Linux x64 got 16 from max_align_t by luck of the ABI, and both arm64 legs tolerate unaligned NEON stores — so only MSVC x64 combined a small max_align_t with faulting SIMD. The diagnostic that found it is now permanent: AnimatorSystem::Ctx::ensure asserts all four ozz buffers are 16-aligned and aborts naming the buffer and address, because the alternative is a bare SEGFAULT with no stack.
+
+## BUG-0029 — "Windows hosts do everything" was true of x64 only
+- found:     2026-08-26
+- class:     build
+- where:     modules/assetlib/src/formats/shader_asset.cpp
+- symptom:   cooked_format_conformance failed on Windows arm64: "shaderc failed (exit 1)|Error: Unable to load DXC compiler." The whole shader cook fails, so every shader in the project, on that architecture only.
+- cause:     profileCookableOnThisHost returned `p < kProfileCount` for all of _WIN32. The D3D compilers bgfx vendors are PREBUILT x86-64 DLLs — d3dcompiler_47.dll, dxcompiler.dll and dxil.dll are all "PE32+ x86-64" — and a native arm64 process cannot load an x86-64 DLL, because the emulator switches whole processes rather than libraries.
+- pinned-by: tests/shader_cooker_test.cpp
+- lane:      unit
+- proof:     mutation FROM macOS — restoring "Windows hosts do everything" fails two table rows ("win arm64 dx11", "win arm64 dx12"); reverted, it passes. `file` confirms all three vendored DLLs are PE32+ x86-64. The rule became a PURE function over (os, arch) so every combination is checkable from any machine — the guard used to answer only for the host it was compiled for, which is why the one platform whose answer was wrong had nothing checking it. profileCookableOnThisHost is now a one-line call into the same table, asserted to agree with it.
+
 ## Open — recorded so they are not forgotten
 
 These are known, unpinned, and deliberately visible rather than tidied away.
