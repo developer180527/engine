@@ -20,6 +20,7 @@ what order it should be built.
 |---|---|
 | `architecture/` | How a subsystem is built and **why**. Load-bearing decisions and the invariants that are silent when broken. |
 | `guides/` | How to *use* the engine — APIs, scripting, performance tuning. |
+| `reference/` | File formats and schemas, field by field. Lookup material, not narrative. |
 | `process/` | How we work: the doc contract, the maturity ladder, the roadmap. |
 | `plans/` | Work not yet done. Audits, phased plans, backlog. `plans/future/` is speculative. |
 | `generated/` | Doxygen output. Not written by hand, not reviewed. |
@@ -63,6 +64,11 @@ claim about freshness as much as about tests. See
   preference: authoring outside, tuning and viewing inside. Also the seat rule
   (everyone has the editor, nobody needs every tool), what orchestration actually
   requires, and the costs of the model stated rather than hidden.
+- **Writing a scene by hand** — [`reference/scene-format.md`](reference/scene-format.md)
+  is the `.scene` schema: every component, every field, every default, and — the
+  half that matters most — what a wrong value silently does instead of failing.
+  The no-editor path in `tool-ecosystem.md` §4 depends on this format being
+  hand-writable, so this is its reference.
 - **Replacing a subsystem** — [`guides/audio-provider.md`](guides/audio-provider.md)
   is the worked example: the C ABI a third-party audio engine implements, why it
   has no HRTF/Atmos switches, and the Rust conformance suite that decides

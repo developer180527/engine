@@ -36,6 +36,12 @@
 // PROVES: the CLI chain works end to end — scaffold, hand-author, cook — and a
 // hand-written scene's data reaches the cooked artifact intact.
 //
+// ALSO PINS: the surprising claims in docs/reference/scene-format.md (section 5).
+// `status: as-built` gets the docs gate to flag that file stale when the cooker
+// changes, which prompts a human to re-read it — it cannot tell whether the prose
+// is TRUE. Writing that document turned up one claim that was wrong, so the rest
+// are asserted here rather than trusted.
+//
 // DOES NOT PROVE: that the packaged game renders on screen. That needs a display
 // and a GPU, which CI runners do not reliably have, and a lane that flakes is
 // worse than one that is honest about its edges. The `sdk-only-game` CI job
@@ -266,7 +272,148 @@ int main() {
     CHECK(nearly(light->scale[0], 2.0f),
           "a non-default transform scale survived (got %.2f)", light->scale[0]);
 
-    // ── 5. Idempotence ──────────────────────────────────────────────────────
+    // ── 5. The documented quirks ────────────────────────────────────────────
+    // docs/reference/scene-format.md tells a hand-author how wrong values
+    // behave, and those claims are the most load-bearing part of the document:
+    // they are what someone reaches for when a component "isn't working".
+    //
+    // `status: as-built` gets the docs gate to flag the file as STALE when the
+    // cooker changes — which prompts a human to re-read it, and nothing more. It
+    // cannot tell whether the prose is TRUE. So the surprising claims are pinned
+    // here instead, because a schema claim nothing exercises is a guess.
+    //
+    // Every case below was verified against the real cooker before being written
+    // down, and one of them corrected the document: `"fov": 1e999` does NOT fall
+    // back to the default the way a wrong-typed value does — nlohmann's parser
+    // rejects the number and the whole scene fails to cook. That case is not
+    // here, because it produces no artifact to assert against; it is in the doc.
+    testwd::phase("documented quirks");
+    std::printf("\n-- the quirks the schema doc promises --\n");
+    {
+        static const char* kQuirks = R"JSON({
+  "entities": [
+    { "name": "GarbageCameraValue", "camera": 5 },
+    { "name": "QuotedBool",  "light": { "castShadows": "true", "intensity": 9.5 } },
+    { "name": "RealBool",    "light": { "castShadows": true, "type": 2 } },
+    { "name": "ShortScale",  "transform": { "scale": [2, 2] } },
+    { "name": "StringFov",   "camera": { "fov": "71.5" } },
+    { "name": "StringEnum",  "light": { "type": "point" } },
+    { "name": "EmptyBody",   "rigidBody": {} },
+    { "name": 12345 },
+    "this array element is not an object",
+    { "id": 7, "name": "Parent" },
+    { "id": 8, "parentId": 7, "name": "Child" }
+  ]
+})JSON";
+        {
+            std::ofstream f(scenePath, std::ios::binary | std::ios::trunc);
+            f << kQuirks << "\n";
+        }
+        CHECK(runTool(cookTool, "\"" + project.string() + "\"") == 0,
+              "a scene full of deliberately wrong values still cooks");
+
+        assetlib::SceneAsset q;
+        CHECK(assetlib::loadScene(q, cooked), "...and loads");
+
+        // 11 array elements, one of which is a string. A non-object element is
+        // skipped silently, which is the doc's claim and also the reason an
+        // entity count lower than you wrote is worth checking in the cook log.
+        CHECK(q.entities.size() == 10,
+              "the non-object array element was skipped: 11 written, 10 cooked "
+              "(got %zu)", q.entities.size());
+
+        auto byName = [&](const char* want) -> const assetlib::SceneEntity* {
+            for (const auto& e : q.entities) {
+                if (e.nameOffset == 0xFFFFFFFFu) continue;
+                if (assetlib::stringTableRead(q.stringTable, e.nameOffset,
+                                              e.nameLength) == want)
+                    return &e;
+            }
+            return nullptr;
+        };
+
+        // THE RULE THAT SURPRISES EVERYONE: presence of the key attaches the
+        // component, whatever the value is.
+        if (const auto* e = byName("GarbageCameraValue")) {
+            CHECK(e->componentMask & assetlib::kComp_Camera,
+                  "\"camera\": 5 ATTACHES a camera — presence of the key is what "
+                  "counts, not whether the value makes sense");
+            CHECK(nearly(e->cameraFov, 60.0f),
+                  "...with every field at its default (fov %.1f)", e->cameraFov);
+        } else CHECK(false, "GarbageCameraValue entity missing");
+
+        // Booleans are strict: is_boolean() only.
+        if (const auto* e = byName("QuotedBool")) {
+            CHECK(e->lightCastShadows == 0,
+                  "\"castShadows\": \"true\" is FALSE — a quoted boolean is not a "
+                  "boolean, and this is the one that wastes the most time");
+            CHECK(nearly(e->lightIntensity, 9.5f),
+                  "...while a correctly-typed sibling field in the same object is "
+                  "still read (intensity %.2f)", e->lightIntensity);
+        } else CHECK(false, "QuotedBool entity missing");
+
+        if (const auto* e = byName("RealBool")) {
+            CHECK(e->lightCastShadows == 1, "a real `true` works");
+            CHECK(e->lightType == 2, "and an integer enum works (spot == 2)");
+        } else CHECK(false, "RealBool entity missing");
+
+        // Short float arrays keep their DEFAULT, they do not zero. A (2,2,0)
+        // here would flatten the object to a plane.
+        if (const auto* e = byName("ShortScale")) {
+            CHECK(nearly(e->scale[0], 2.0f) && nearly(e->scale[1], 2.0f) &&
+                  nearly(e->scale[2], 1.0f),
+                  "\"scale\": [2,2] gives (%.1f, %.1f, %.1f) — the missing "
+                  "element keeps its default of 1, it does not become 0",
+                  e->scale[0], e->scale[1], e->scale[2]);
+        } else CHECK(false, "ShortScale entity missing");
+
+        if (const auto* e = byName("StringFov"))
+            CHECK(nearly(e->cameraFov, 60.0f),
+                  "a wrong-typed number falls back to the default (fov %.1f)",
+                  e->cameraFov);
+        else CHECK(false, "StringFov entity missing");
+
+        // Enums are integers. There are no string enums in this format.
+        if (const auto* e = byName("StringEnum"))
+            CHECK(e->lightType == 0,
+                  "\"type\": \"point\" is NOT 1 — string enums do not exist here, "
+                  "so it silently means directional (got %u)", e->lightType);
+        else CHECK(false, "StringEnum entity missing");
+
+        // The default nobody expects: kinematic, not dynamic.
+        if (const auto* e = byName("EmptyBody")) {
+            CHECK(e->componentMask & assetlib::kComp_RigidBody,
+                  "\"rigidBody\": {} attaches a rigid body");
+            CHECK(e->rbBodyType == 1,
+                  "...whose bodyType defaults to 1 (KINEMATIC, not dynamic) — "
+                  "which is why a body you expected to fall sits still (got %u)",
+                  e->rbBodyType);
+        } else CHECK(false, "EmptyBody entity missing");
+
+        // The documented exception to "wrong type means default".
+        CHECK(byName("Entity") != nullptr,
+              "a non-string \"name\" becomes the literal string \"Entity\" — the "
+              "one field where a wrong type does not mean its default");
+
+        // Hierarchy, and the id-defaults-to-0 trap that goes with it.
+        const auto* parent = byName("Parent");
+        const auto* child  = byName("Child");
+        CHECK(parent && parent->entityId == 7, "an explicit id survives the cook");
+        CHECK(child && child->parentId == 7,
+              "parentId links to another entity's id in the same file");
+        if (const auto* e = byName("ShortScale"))
+            CHECK(e->entityId == 0,
+                  "an entity that omits \"id\" gets 0 — which is why EVERY entity "
+                  "in a hierarchy needs an explicit non-zero id, or they all "
+                  "collide at 0 and the parent lookup silently picks one");
+        else CHECK(false, "ShortScale entity missing");
+
+        // Put the hand-written scene back for the idempotence check below.
+        std::ofstream f(scenePath, std::ios::binary | std::ios::trunc);
+        f << kHandWrittenScene << "\n";
+    }
+
+    // ── 6. Idempotence ──────────────────────────────────────────────────────
     // Cooking again must not fail, and must leave the artifact loadable. The
     // second run takes the up-to-date path, which is the one a developer hits on
     // every build after the first — and the one nothing else here exercises.
