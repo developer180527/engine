@@ -8,6 +8,8 @@
 build/
 build-asan/
 build-ship/
+# the sdk-only-game CI lane (ENGINE_BUILD_EDITOR=OFF)
+build-sdk/
 build-ab/
 build-sdl3/
 

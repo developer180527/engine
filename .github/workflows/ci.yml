@@ -443,6 +443,98 @@ jobs:
           fi
           echo "OK: no Assimp symbols in engine_player"
 
+  # ── The no-editor path ──────────────────────────────────────────────────────
+  # Every tool in this engine is a CLI and every source format is text, so a
+  # complete game can be built with the SDK, a text editor and a Makefile — no
+  # editor application in the loop. tool-ecosystem.md treats that as a property
+  # worth keeping: the editor is a CLIENT of the same tools, never a privileged
+  # path.
+  #
+  # Nothing verified it. That is a shape this repo has shipped twice —
+  # ENGINE_AUDIO_FROZEN's static asserts sat in a header no TU included, so none
+  # had ever compiled; kit_lifecycle_test needs .so files from gitignored repos,
+  # so ctest never listed it and CI never ran it once. A feature nothing
+  # exercises is a comment.
+  #
+  # Two halves, split by what each can actually prove:
+  #
+  #   * sdk_only_game_test (in the unit lane, every push) writes a .scene BY HAND
+  #     and requires its values to survive engine_cook into the binary the
+  #     runtime loads. That catches the specific drift: the editor WRITES .scene
+  #     files and the cooker READS them, and every .scene in this tree came out
+  #     of the editor, so a cooker that starts leaning on an editor-only field
+  #     breaks hand authoring and nothing else notices.
+  #
+  #   * THIS JOB proves the structural half the test cannot: that all of it still
+  #     builds and passes with ENGINE_BUILD_EDITOR=OFF — no editor binary in the
+  #     tree at all. Same shape as `shipping-runtime` above: build with the thing
+  #     excluded, then ASSERT it is excluded, then prove the result still works.
+  #     Without the assertion the flag could quietly stop taking effect and this
+  #     lane would keep passing while proving nothing.
+  #
+  # Not covered, deliberately: the packaged game rendering on screen. That needs a
+  # display and a GPU that runners do not reliably have, and a lane that flakes is
+  # worse than one honest about its edges.
+  sdk-only-game:
+    name: SDK-only game (no editor)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Apply third-party patches
+        if: hashFiles('third_party/patches/*.patch') != ''
+        shell: bash
+        run: ./scripts/apply_third_party_patches.sh
+
+      - run: brew install ninja
+
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: sdk-only-macos
+          max-size: 1G
+
+      # Rust off: engine_net is not on the no-editor path and a toolchain install
+      # would be most of this job's wall clock. Samples off for the same reason.
+      - name: Configure (editor OFF)
+        run: |
+          cmake -B build-sdk -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENGINE_BUILD_EDITOR=OFF \
+            -DENGINE_BUILD_SAMPLES=OFF \
+            -DENGINE_WITH_RUST=OFF \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build the CLI chain and the test
+        run: |
+          cmake --build build-sdk --parallel \
+            --target engine_project engine_cook engine_cook_worker engine_player \
+                     sdk_only_game_test
+
+      # The assertion that keeps the lane honest. ENGINE_BUILD_EDITOR=OFF only
+      # skips add_subdirectory(editor), so a future change that builds the editor
+      # from somewhere else would leave this passing while the premise was gone.
+      - name: Assert no editor binary was produced
+        shell: bash
+        run: |
+          if [ -e build-sdk/editor ]; then
+            echo "::error::build-sdk/editor exists despite ENGINE_BUILD_EDITOR=OFF — this lane proves nothing while the editor is still being built."
+            exit 1
+          fi
+          for t in engine_project engine_cook engine_cook_worker engine_player; do
+            test -x "build-sdk/$t" || { echo "::error::build-sdk/$t was not produced"; exit 1; }
+          done
+          echo "OK: no editor binary, and the whole CLI chain is present"
+
+      # A game's scene from hand-written text to a runtime-loadable binary, on a
+      # tree that cannot open an editor because there isn't one.
+      - name: Cook a hand-authored game with no editor present
+        run: ctest --test-dir build-sdk -R sdk_only_game_test --output-on-failure
+
   # ── Sanitizers ──────────────────────────────────────────────────────────────
   # ENGINE_SANITIZE had been wired into CMake for a long time and NOTHING EVER
   # RAN IT. The first time this lane was executed it found two real defects in

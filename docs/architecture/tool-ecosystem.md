@@ -179,6 +179,67 @@ source of truth.
 
 > **Viewers and tuners in. Editors out.**
 
+### The stronger form — the editor is optional too
+
+The seat rule says a project must not require an *authoring tool*. There is a
+stronger claim this architecture makes almost by accident, and it is worth
+stating as a rule because it is worth keeping:
+
+> **A complete game can be built with the SDK, the CLI tools and a text editor.
+> The editor application is one client of those tools, never a privileged path.**
+
+It already holds, and not by a little:
+
+| Need | Without the editor |
+|---|---|
+| Scaffold a project | `engine_project create` |
+| Project / input config | `project.json`, `input.json` — text |
+| Scenes | hand-editable JSON `.scene` files |
+| Game code | your own CMake, your own `.so`, against a frozen C ABI |
+| Cook | `engine_cook` |
+| Package | `engine_build` |
+| Run | `engine_player` |
+| Debug a plugin that won't load | `engine_module_probe` |
+
+**Why this is worth protecting rather than merely noting.** It costs nothing to
+maintain, because it falls out of the tool boundaries rather than being a
+feature — the monoliths cannot retrofit it. It is also not only for people who
+prefer their own environment: procedural generation, data-driven levels, asset
+automation and CI all need exactly this plumbing. A game that generates its
+levels from a table does not want a GUI in the loop.
+
+**And it was unverified, which is the same shape this repo has shipped twice.**
+`ENGINE_AUDIO_FROZEN`'s static asserts lived in a header no translation unit
+included, so none had ever compiled; `kit_lifecycle_test` needs `.so` files from
+gitignored repos, so `ctest` never listed it and CI never ran it once. A feature
+nothing exercises is a comment.
+
+So it is now checked in two halves, split by what each can honestly prove:
+
+- **`sdk_only_game_test`** (unit lane, every push) scaffolds a project by CLI,
+  replaces its scene with one written **by hand**, cooks it with `engine_cook`,
+  and requires the hand-written values to survive into the binary
+  `assetlib::loadScene` actually reads. The drift it catches is specific: the
+  editor **writes** `.scene` files and the cooker **reads** them, and every
+  `.scene` in this tree came out of the editor — so a cooker that starts leaning
+  on an editor-only field breaks hand authoring while every other test stays
+  green.
+- **the `sdk-only-game` CI job** builds the whole chain with
+  `ENGINE_BUILD_EDITOR=OFF` and **asserts no editor binary exists**, then runs
+  that test on the editor-free tree. Same shape as the `shipping-runtime` lane,
+  which proves the importers claim by asserting Assimp's symbols are absent: build
+  with the thing excluded, assert it is excluded, then prove the result works.
+
+Not covered, deliberately: the packaged game rendering on screen. That needs a
+display and a GPU that runners do not reliably have, and a lane that flakes is
+worse than one honest about its edges.
+
+**The discipline that keeps this true** is that the editor must stay a client of
+the same tools. The day it can do something no CLI can, the no-editor path is
+silently second-class — and nothing will fail, because the people who would
+notice are not the people writing the editor. Today it holds nearly by accident:
+the editor's only way to run a tool is a terminal panel and `popen`.
+
 ---
 
 ## 5. What exists today

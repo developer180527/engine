@@ -263,6 +263,36 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # Result-file framing, DDC budget/LRU eviction, registry schema versioning
     engine_test(cook_hardening_test LIB engine_core)
 
+    # ── The no-editor path ──────────────────────────────────────────────────
+    # Every tool is a CLI and every source format is text, so a complete game can
+    # be built with the SDK and a text editor. Nothing verified that, and this
+    # repo has shipped "a feature nothing exercises is a comment" twice already
+    # (ENGINE_AUDIO_FROZEN's never-compiled asserts; kit_lifecycle_test never
+    # once run in CI).
+    #
+    # Scaffolds a project with engine_project, replaces its scene with one
+    # written BY HAND, cooks it with engine_cook, and requires the hand-written
+    # values to survive into the binary the runtime loads. The drift it catches
+    # is specific: the editor WRITES .scene files and the cooker READS them, and
+    # every .scene in this tree came out of the editor — so a cooker that starts
+    # depending on an editor-only field breaks hand authoring and nothing notices.
+    #
+    # The other half — that all of this still works with no editor binary in the
+    # tree at all — is the `sdk-only-game` CI job, which configures
+    # ENGINE_BUILD_EDITOR=OFF and asserts the editor is absent.
+    engine_test(sdk_only_game_test LIB engine_core TIMEOUT 300)
+    if(TARGET engine_project AND TARGET engine_cook)
+        set_tests_properties(sdk_only_game_test PROPERTIES ENVIRONMENT
+            "ENGINE_PROJECT_TOOL=$<TARGET_FILE:engine_project>;ENGINE_COOK_TOOL=$<TARGET_FILE:engine_cook>;ENGINE_REQUIRE_SDK_ONLY_TEST=1")
+        add_dependencies(sdk_only_game_test engine_project engine_cook)
+        # The cook spawns engine_cook_worker per asset, so the worker must exist
+        # before the test runs or every cook falls back and the lane proves less
+        # than it claims.
+        if(TARGET engine_cook_worker)
+            add_dependencies(sdk_only_game_test engine_cook_worker)
+        endif()
+    endif()
+
     # ── The Add-on protocol's own rules ─────────────────────────────────────
     # The writer's structural guarantees (verdict ordering, sanitising, the
     # record/recordExact split) plus engine_build's exit-code and manifest
