@@ -27,8 +27,10 @@ defined and did not build:
 > **What exists today.** Fourteen separate tools (§5), an editor that already
 > holds the line (§5), and a cooked-asset pipeline that already makes the seat
 > rule work (§4). The Add-on protocol now exists for the **batch** direction —
-> `include/engine/addon_protocol.h`, spoken by `engine_module_probe` (§5) — and
-> converting that one tool found a forgeable output channel nobody had noticed.
+> `include/engine/addon_protocol.h`, spoken by `engine_module_probe` and
+> `engine_build` (§5) — and each conversion found a real defect: a forgeable
+> output channel in the first, and twelve defects-in-the-shipped-package that
+> exited 0 in the second.
 > What does NOT exist is **live link**, the direction where a running tool pushes
 > into a running editor, and §10 says why that is a separate protocol rather than
 > a missing half of this one. Every other tool still speaks its own
@@ -289,6 +291,64 @@ had not applied it. A channel shared with the thing under test is not a channel.
 module can run code, and the conformance suite requires the verdicts to survive
 it.
 
+### 5.1 The second speaker, and what it cost the protocol
+
+`engine_build` — the editor's fifth job, **export** — is the second Add-on, and
+it is where the protocol stopped being a guess.
+
+**It had a worse version of the probe's defect.** Twelve warning sites, each
+describing a defect in the *shipped game*: an unreadable cooked scene whose every
+object is missing, a scene referencing a mesh that is not there, a mesh
+referencing a texture that is not there, two shaders both claiming one name, no
+shader providing `standard` so the player silently falls back to compiled-in
+shading, material textures resolving to nothing and shipping white.
+
+All twelve went to stderr, and **the process exited 0.** No caller could see
+them — not the editor, not CI, not a build farm; only a human reading scrollback,
+who has no reason to scroll back because the status said the package was fine.
+That is the silently-untextured build again, arriving through the packager instead
+of the IPC channel.
+
+They are records now, with a `WARNINGS` count. Two rules came out of it:
+
+- **The tool reports; the caller decides.** A warning does not fail the build by
+  itself, because whether a missing texture blocks a ship is policy and a
+  packager is not where policy lives. `--strict` is how a caller that wants them
+  fatal says so, and CI is expected to pass it.
+- **Exit 1 is gone.** It had meant fifteen different things in that one file —
+  and the protocol reserves 1 as *unassigned* precisely because it is the exit
+  code of every accident. A failed kit build and a segfault in cmake used to be
+  the same number.
+
+**Two things the second speaker changed in the protocol itself**, which is the
+whole reason to convert rather than invent:
+
+1. **`recordExact` alongside `record`.** v1 sanitised every record value —
+   correct for a *message*, dangerous for a *path the caller opens*. Mangle a
+   warning and a human reads an odd sentence; mangle a path and the caller opens
+   a file that does not exist, turning a precise failure into a silent wrong
+   answer. `recordExact` refuses instead, and the caller must handle the refusal.
+   The probe never exposed this: it only ever put paths in records as diagnostic
+   text, so mangling was harmless there. **One speaker cannot tell you whether a
+   protocol generalises.**
+2. **`Exit::RanWithFailure` (5).** The probe has one kind of caller — a host that
+   reads the result file — so exit 0 with a `refused` record is perfect. A
+   packager is also run by people and by CI, where the status is the *only*
+   channel, and a packaging step that exits 0 on a defective package is the bug
+   being fixed. So 0 and 5 both mean *the tool ran and its result is trustworthy*
+   — which is what rule 3 actually protects — and they differ only in the
+   verdict. The rejected alternative was making the exit status depend on whether
+   `--addon-result` was passed; that lets a tool's contract change shape based on
+   how it was called, which is worse.
+
+The same pass found one real bug in `engine_cook_worker` without converting it:
+`ERROR` was sanitised and `OUTPUT` was not, and `OUTPUT` carries a path whose stem
+comes from the asset filename. A newline is legal in a POSIX filename, so such an
+asset produced a body one line longer than the writer counted, the frame failed
+its own line-count check, and the parent blamed the worker's write for what was a
+filename. It now refuses, naming the file — *not* sanitises, because the parent
+**opens** that path.
+
 Two things about how it is verified are worth stating, because they are the
 difference between a protocol and a format someone wrote once:
 
@@ -371,10 +431,24 @@ document ends where it does.
    manifest, the exit-code contract. Live link is explicitly not in v1; see §10.
 2. ~~**Prove it by converting one tool that already exists.**~~ — **done.**
    `engine_module_probe` speaks it, and the conversion found a forgeable channel
-   nobody had noticed (§5). That is the argument for converting rather than
-   inventing, and it only works once: `engine_cook_worker` is the next candidate,
-   and the interesting question there is whether its `RESULT`/`OUTPUT`/`DEP`
-   vocabulary survives contact with a second tool's needs or wants generalising.
+   nobody had noticed (§5).
+3. ~~**Convert a second tool**~~ — **done: `engine_build`**, and it is the
+   conversion that mattered. See §5.1.
+
+   I named `engine_cook_worker` here first and that was **wrong**. It is not an
+   Add-on and should not become one: it is fork/exec'd by assetlib from the same
+   build, in lockstep, so version negotiation, a discovery manifest and a
+   self-describing vocabulary all answer questions that cannot arise. No human
+   runs it; the editor does not drive it; a library does, as an implementation
+   detail. Converting would also force assetlib — a standalone project,
+   deliberately independent of the engine SDK — to depend on `include/engine/` to
+   gain nothing.
+
+   The distinction is worth keeping, because the mechanism is identical and the
+   purpose is not: **a worker process is blast containment; an Add-on is
+   untrusted extension.** Assimp may `SIGSEGV`, so put it in its own address
+   space — that is not the same problem as talking to a tool someone else built.
+   Conflating them is how a protocol acquires users who do not need it.
 3. **Keep the editor's domain panels viewers.** An animation panel that plays and
    blends but cannot keyframe is not an unfinished feature. It is the design.
 4. **Adopt, do not author.** Blender, Substance, Reaper, Audacity and VS Code

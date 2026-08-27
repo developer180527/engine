@@ -262,6 +262,22 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
 
     # Result-file framing, DDC budget/LRU eviction, registry schema versioning
     engine_test(cook_hardening_test LIB engine_core)
+
+    # ── The Add-on protocol's own rules ─────────────────────────────────────
+    # The writer's structural guarantees (verdict ordering, sanitising, the
+    # record/recordExact split) plus engine_build's exit-code and manifest
+    # contract. NOT engine_build's packaging — package_closure_test covers that,
+    # and a real package configures and builds the whole engine tree.
+    engine_test(addon_protocol_test LIB engine_core)
+    if(TARGET engine_build)
+        # ENGINE_REQUIRE_ADDON_TOOL_TESTS makes a missing binary a FAILURE rather
+        # than a skip: under ctest the tool is known to exist, so "it wasn't
+        # there" is a finding. Without it a lane that had quietly stopped
+        # exercising the tool would print `ok` exactly like one that ran.
+        set_tests_properties(addon_protocol_test PROPERTIES
+            ENVIRONMENT "ENGINE_BUILD_TOOL=$<TARGET_FILE:engine_build>;ENGINE_REQUIRE_ADDON_TOOL_TESTS=1")
+        add_dependencies(addon_protocol_test engine_build)
+    endif()
     # Enforces that every cooker's DECLARED inputs move its cook key
     engine_test(cook_deps_test LIB engine_core)
 

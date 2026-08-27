@@ -20,6 +20,35 @@
 // write this process does not finish is detectably incomplete rather than
 // reading as a success that lost its OUTPUT lines.
 // Exit code 0 means "result file written"; anything else means crash.
+//
+// ── This is NOT an Add-on, and deliberately does not speak that protocol ─────
+// tool-ecosystem.md §8 named this the next tool to convert to
+// engine/addon_protocol.h. Investigating it says no, and the reason is worth
+// keeping so nobody spends a week rediscovering it.
+//
+// An Add-on is a tool reached across a boundary that has to be STABLE, because
+// the thing on the other side was built separately — a different version, a
+// different vendor, possibly untrusted. Everything the protocol adds serves that:
+// version negotiation, a discovery manifest, a self-describing record vocabulary.
+//
+// None of it applies here. This process is fork/exec'd by assetlib, from the same
+// build, in the same repository, always in lockstep — `dispatchCook` and this
+// binary cannot disagree about a version because they cannot exist at different
+// ones. No human runs it. The editor does not drive it; a library does, as an
+// implementation detail. Converting would additionally force assetlib — a
+// standalone CMake project, deliberately independent of the engine SDK — to
+// depend on include/engine/ to gain nothing.
+//
+// The isolation here is BLAST CONTAINMENT: Assimp may SIGSEGV, so put it in its
+// own address space. The isolation an Add-on buys is UNTRUSTED EXTENSION. Same
+// mechanism, opposite purpose, and conflating them is how a protocol grows users
+// that do not need it.
+//
+// So the right name for this is a WORKER PROCESS, not an Add-on, and the two
+// stay separate. What the Add-on work did contribute is one real bug fix — see
+// `carryable` below — and the confirmation that the reserved vocabulary
+// generalises: this tool's RESULT/ERROR is exactly the protocol's VERDICT/ERROR,
+// which is unsurprising, since they were taken from here.
 #include "assets/cookers/mesh/mesh_cooker.h"
 #include "assets/cookers/texture/texture_cooker.h"
 #include "assets/cookers/shader/shader_cooker.h"
@@ -68,6 +97,32 @@ static std::string oneLine(std::string s) {
     for (auto& c : s)
         if (c == '\n' || c == '\r') c = '|';
     return s;
+}
+
+// ── Why an unrepresentable path is a FAILED cook ────────────────────────────
+// `ERROR` went through oneLine and `OUTPUT` did not, and OUTPUT carries a
+// filesystem PATH. A newline is legal in a POSIX filename, and a sibling
+// texture's path is derived from the asset's own stem (mesh_cooker.cpp), so an
+// asset named with a newline in it produced a body with one more line than the
+// writer counted. The frame then failed its own line-count check, and the parent
+// reported "its result file is unusable: END claims N line(s), found N+1" —
+// blaming this process's write for what was really a filename.
+//
+// The tempting fix is to sanitise the path the way ERROR is sanitised. That is
+// WRONG here, and the difference is what the caller does next: the parent OPENS
+// this path and registers it as a cooked sibling. A mangled path is a file that
+// does not exist, so sanitising would trade a loud, if misdirected, failure for
+// a DDC record pointing at nothing — a silently missing sibling, which is the
+// exact class of bug the result trailer was added to prevent.
+//
+// So it is refused instead, with the offending name in the message. A path this
+// format cannot carry is a real failure and saying so precisely beats guessing.
+// `engine/addon_protocol.h` draws the same line between `record` and
+// `recordExact` for the same reason.
+static bool carryable(const std::string& s) {
+    for (unsigned char u : s)
+        if (u < 0x20 || u == 0x7f) return false;
+    return true;
 }
 
 int main(int argc, char** argv) {
@@ -178,6 +233,20 @@ int main(int argc, char** argv) {
     // That is the silently-untextured-build failure mode, arriving through the
     // IPC channel. The trailer makes truncation detectable: no END line, or a
     // line count or digest that disagrees, means incomplete.
+    // Checked before the body is built, so the failure names the path rather
+    // than surfacing as a line-count mismatch the parent blames on this write.
+    for (const auto& p : extras) {
+        if (!carryable(p.string())) {
+            res = { .success=false,
+                    .error="cooked output path contains a character the result "
+                           "format cannot carry (a newline or control character "
+                           "in the asset filename): " + oneLine(p.string()) };
+            extras.clear();
+            deps.clear();
+            break;
+        }
+    }
+
     std::string body;
     size_t lines = 0;
     auto put = [&](const std::string& s) { body += s; body += '\n'; ++lines; };

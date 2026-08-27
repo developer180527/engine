@@ -16,11 +16,18 @@ engine; the fourth *replaces* part of it.
 > | **Plugin** | built, in use — `src/plugins/`, `IEnginePlugin` |
 > | **Kit** | built, in use — `include/engine/engine_api_table.h`, hot-reloaded `.so` |
 > | **Provider** | **live** — `engine_audio_provider.h`, implemented by `src/audio/miniaudio_provider.cpp`, consumed by `audio_plugin.h`. Built both statically and as a standalone `.so` the conformance suite loads |
-> | **Add-on** | **partly built.** `include/engine/addon_protocol.h` is the v1 **batch** protocol — invoke, framed result file, manifest, exit-code contract — and `src/tools/engine_module_probe.cpp` is its first speaker, driven by `tests/module_abi/`. The **live-link** direction (a tool streaming into a running editor) is still designed only |
+> | **Add-on** | **partly built.** `include/engine/addon_protocol.h` is the v1 **batch** protocol — invoke, framed result file, manifest, exit-code contract. Two speakers: `engine_module_probe` (driven by `tests/module_abi/`) and `engine_build`. The **live-link** direction (a tool streaming into a running editor) is still designed only |
 > | **API registry** | **not built.** Designed here |
 >
 > The tier table and the swap recipe below are decisions. The unbuilt rows are
 > intent, marked as such wherever they appear.
+>
+> Note what is NOT an Add-on: `engine_cook_worker`. It is a separate process for
+> **blast containment** — Assimp may `SIGSEGV` — not for untrusted extension, and
+> it ships in lockstep with the library that fork/exec's it, so protocol
+> versioning and manifest discovery answer questions that cannot arise. Same
+> mechanism, opposite purpose. [`tool-ecosystem.md`](tool-ecosystem.md) §8 keeps
+> the reasoning.
 >
 > The Add-on row is deliberately split rather than flipped to "built". v1 covers
 > one direction — the host launches a tool, the tool does one job, the tool exits
@@ -143,11 +150,16 @@ but *not registered* — CI had never run it once.
 
 [`tests/module_abi/`](../../tests/module_abi/) closes that. One fixture source,
 [`tests/fixtures/abi_gate_module.cpp`](../../tests/fixtures/abi_gate_module.cpp),
-compiles into nine modules that are each correct in every respect but one,
-selected by `-DABI_GATE_DEFECT`; the suite drives them through
-`engine_module_probe` and requires the right verdict. A control fixture with no
-defect at all must **load** — without it, a gauntlet that refused everything
-would satisfy every other assertion and look perfectly healthy.
+compiles into ten modules, each correct in every respect but one, selected by
+`-DABI_GATE_DEFECT`; the suite drives them through `engine_module_probe` and
+requires the right verdict. A control fixture with no defect at all must
+**load** — without it, a gauntlet that refused everything would satisfy every
+other assertion and look perfectly healthy.
+
+The tenth fixture's defect is not in its ABI table at all: it prints lines
+indistinguishable from the probe's own output, and must still load. That one
+exists because the probe's *reporting channel* turned out to be as capable of
+lying as the loader is — see [`tool-ecosystem.md`](tool-ecosystem.md) §5.
 
 `engine_module_probe` is a diagnostic first and a test boundary second: it
 answers "why won't my kit load?" in one command, with no window, no GPU and no

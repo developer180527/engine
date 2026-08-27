@@ -117,12 +117,44 @@ inline constexpr std::string_view kManifestMagic = "ENGINE_ADDON_MANIFEST";
 // it is left in the "unknown — treat as a crash" bucket along with 1, 5, 139 and
 // everything else this enum does not name.
 enum class Exit : int {
-    Ran          = 0,   // ran to completion; the verdict is in the result file
-    Usage        = 2,   // the command line was wrong; nothing ran
-    MissingInput = 3,   // a named input was not there; nothing ran
-    Failed       = 4,   // started and could not finish — the TOOL's failure,
+    Ran            = 0, // ran to completion; the verdict is `ok` or `skip`
+    Usage          = 2, // the command line was wrong; nothing ran
+    MissingInput   = 3, // a named input was not there; nothing ran
+    Failed         = 4, // started and could not finish — the TOOL's failure,
                         // not a verdict about the input
+    RanWithFailure = 5, // ran to completion; the verdict is `fail`
 };
+
+// Whether this status means a result file exists and can be trusted. `Ran` and
+// `RanWithFailure` are the only two, and that is the whole point of separating
+// them from `Failed`.
+inline bool reachedVerdict(int status) {
+    return status == static_cast<int>(Exit::Ran)
+        || status == static_cast<int>(Exit::RanWithFailure);
+}
+
+// ── Why `RanWithFailure` exists, when rule 3 says the status is not the verdict
+// It is still not the verdict. It says WHICH of two things the caller should read
+// — and both of them mean "the result file is complete and trustworthy", which is
+// exactly the distinction rule 3 protects. A host reads the file either way;
+// `reachedVerdict` is the test it actually cares about, and 0 and 5 both pass it.
+//
+// It exists because the second tool to speak this protocol has TWO kinds of
+// caller. `engine_module_probe` has one: a host that reads the result file, for
+// which exit 0 and a `refused` record is perfect. `engine_build` is also run
+// directly by people and by CI, where the exit status is the ONLY channel — and a
+// packaging step that exits 0 on a defective package is precisely the bug being
+// fixed by giving it a protocol at all.
+//
+// The rejected alternative was to make the exit status depend on whether
+// `--addon-result` was passed. That is worse: it makes a tool's contract change
+// shape based on how it was invoked, and a caller reading the docs cannot tell
+// which contract it is going to get.
+//
+// A tool whose "no" is a NORMAL outcome should still report it as a record at
+// exit 0, the way the probe reports a refusal — a refused module is a successful
+// probe. Use `RanWithFailure` only when the tool's own verdict for the whole run
+// is `fail`.
 
 inline int exitCode(Exit e) { return static_cast<int>(e); }
 
@@ -264,13 +296,58 @@ public:
     // Single-line, human-readable, and only meaningful with `Verdict::Fail`.
     void error(std::string_view msg) { m_error = sanitise(msg); m_haveError = true; }
 
-    // One `KEY value` record. Both halves are sanitised — see `sanitise`.
+    // One `KEY value` record, for values that are MESSAGES — text a person
+    // reads. Both halves are sanitised, so a control character is replaced and
+    // the record is still emitted. See `sanitise`.
     void record(std::string_view key, std::string_view value) {
         std::string line = sanitise(key);
         line += ' ';
         line += sanitise(value);
         line += '\n';
         m_records.push_back(std::move(line));
+    }
+
+    // One `KEY value` record for values the CALLER WILL RESOLVE — a path it
+    // opens, an id it looks up. Returns false, and emits nothing, when the value
+    // cannot be carried exactly.
+    //
+    // ── Why this is not the same function as `record` ───────────────────────
+    // Sanitising is right for a message and dangerous for an identifier, and the
+    // difference is what the caller does next.
+    //
+    // Mangle a warning and a human reads a slightly odd sentence. Mangle a PATH
+    // and the caller opens the wrong file — or, more likely, a file that does not
+    // exist, and now the tool has reported an output nobody can find. That turns
+    // a loud, precise failure ("this filename cannot be represented") into a
+    // quiet wrong answer, which is the trade this whole protocol exists to refuse.
+    //
+    // This distinction was missed in v1 and found by the SECOND tool to speak the
+    // protocol. The probe only ever put paths in records as diagnostic text — the
+    // verdict was the payload — so mangling was harmless and the gap invisible.
+    // `engine_build` reports paths its caller is expected to open, and there the
+    // same function would have been a defect. One speaker cannot tell you whether
+    // a protocol generalises.
+    //
+    // The caller MUST handle `false`. For a cook or a package that means failing
+    // the run with an error naming the offending value: an input the format
+    // cannot represent is a real failure, and saying so beats guessing.
+    [[nodiscard]] bool recordExact(std::string_view key, std::string_view value) {
+        if (!carryable(key) || !carryable(value)) return false;
+        std::string line(key);
+        line += ' ';
+        line.append(value);
+        line += '\n';
+        m_records.push_back(std::move(line));
+        return true;
+    }
+
+    // Whether `recordExact` could carry this text. Exposed so a tool can check
+    // before it has done the work, and report the problem where the offending
+    // value is still in scope.
+    static bool carryable(std::string_view s) {
+        for (unsigned char u : s)
+            if (u < 0x20 || u == 0x7f) return false;
+        return true;
     }
 
     // The framed file contents. Exposed separately from `writeTo` so a test can
@@ -327,6 +404,9 @@ private:
     // digest and line count both agree, because the writer computed them after
     // the injection. Sanitising at the point where untrusted text enters the
     // body is the only place this can be fixed; the frame cannot see it.
+    //
+    // Correct for MESSAGES, and only messages. For a value the caller resolves,
+    // use `recordExact` and handle its `false` — see the note there.
     static std::string sanitise(std::string_view s) {
         std::string out(s);
         for (char& c : out) {
