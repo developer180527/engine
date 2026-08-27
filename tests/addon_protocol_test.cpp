@@ -142,6 +142,48 @@ static void testWriterRules() {
               "carryable() rejects a tab, not only a newline");
         CHECK(!addon::Result::carryable(std::string("has\0nul", 7)),
               "carryable() rejects an embedded NUL");
+        CHECK(addon::Result::carryable("/tmp/my dir/x"),
+              "carryable() ALLOWS a space — a value runs to end of line, and "
+              "refusing spaces would refuse every path that has one");
+    }
+
+    // ── The key is the other half, and it was unguarded ─────────────────────
+    // A record is `KEY value` split on the FIRST space, so a key containing one
+    // is re-cut rather than carried: `MY KEY v` reads back as key `MY`, value
+    // `KEY v`. That is the same silent wrong answer recordExact was split out of
+    // record to prevent — the value was guarded and the key was not.
+    //
+    // Not reachable from this tree today; every call site passes a literal. It
+    // is pinned because "no caller does that yet" is not a property of the
+    // function, and this one's entire job is to refuse rather than mangle.
+    {
+        addon::Result r;
+        r.verdict(addon::Verdict::Ok);
+        CHECK(!r.recordExact("MY KEY", "/tmp/x"),
+              "recordExact REFUSES a key containing a space");
+        CHECK(!r.recordExact("", "/tmp/x"),
+              "recordExact REFUSES an empty key");
+        CHECK(!r.recordExact("BAD\nKEY", "/tmp/x"),
+              "recordExact REFUSES a key containing a newline");
+        CHECK(bodyLines(r.framed()).size() == 1,
+              "...and emits nothing for any of them: the verdict alone");
+
+        CHECK(addon::Result::usableKey("DIST"), "usableKey() accepts a plain key");
+        CHECK(!addon::Result::usableKey("HAS SPACE"),
+              "usableKey() rejects the delimiter itself, which carryable() must not");
+    }
+
+    // `record` cannot refuse — it returns void and its contract is that it always
+    // emits, so dropping a warning would be worse than an ugly key. It mangles
+    // the space instead, which keeps the record parseable and the mistake visible.
+    {
+        addon::Result r;
+        r.verdict(addon::Verdict::Ok);
+        r.record("MY KEY", "a message with spaces");
+        const auto lines = bodyLines(r.framed());
+        CHECK(lines.size() == 2 && lines[1] == "MY_KEY a message with spaces",
+              "record() mangles a space in the KEY to '_' and leaves the VALUE's "
+              "spaces alone — a key's space is a delimiter, a value's is text");
     }
 
     // Exactness is the point: recordExact must not alter what it accepts.

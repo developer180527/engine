@@ -300,7 +300,7 @@ public:
     // reads. Both halves are sanitised, so a control character is replaced and
     // the record is still emitted. See `sanitise`.
     void record(std::string_view key, std::string_view value) {
-        std::string line = sanitise(key);
+        std::string line = sanitiseKey(key);
         line += ' ';
         line += sanitise(value);
         line += '\n';
@@ -332,7 +332,7 @@ public:
     // the run with an error naming the offending value: an input the format
     // cannot represent is a real failure, and saying so beats guessing.
     [[nodiscard]] bool recordExact(std::string_view key, std::string_view value) {
-        if (!carryable(key) || !carryable(value)) return false;
+        if (!usableKey(key) || !carryable(value)) return false;
         std::string line(key);
         line += ' ';
         line.append(value);
@@ -341,12 +341,39 @@ public:
         return true;
     }
 
-    // Whether `recordExact` could carry this text. Exposed so a tool can check
+    // Whether `recordExact` could carry this VALUE. Exposed so a tool can check
     // before it has done the work, and report the problem where the offending
     // value is still in scope.
+    //
+    // Spaces are allowed, and must be: a value runs to the end of the line, and
+    // refusing spaces would refuse every path with one in it — the case
+    // `recordExact` exists to carry. The KEY is the half where a space is
+    // structural; see `usableKey`.
     static bool carryable(std::string_view s) {
         for (unsigned char u : s)
             if (u < 0x20 || u == 0x7f) return false;
+        return true;
+    }
+
+    // Whether this KEY can be written unambiguously.
+    //
+    // A record is `KEY value`, split on the FIRST space, so a key containing one
+    // is not carried — it is silently re-cut. `recordExact("MY KEY", "v")` emits
+    // `MY KEY v`, and every reader in this tree hands back key `MY` with value
+    // `KEY v`. That is precisely the quiet wrong answer `recordExact` was split
+    // out of `record` to refuse, hiding in `recordExact` itself: the value was
+    // guarded and the key was not.
+    //
+    // An empty key is refused for the same reason — ` value` parses as a key of
+    // nothing followed by a value that has lost its leading space.
+    //
+    // Unlike a bad value, a bad key is a mistake by the TOOL'S AUTHOR rather
+    // than something that arrived from the world, so it fails the same way and
+    // is caught the first time the tool is run.
+    static bool usableKey(std::string_view s) {
+        if (s.empty()) return false;
+        for (unsigned char u : s)
+            if (u <= 0x20 || u == 0x7f) return false;   // <= : space included
         return true;
     }
 
@@ -416,6 +443,27 @@ private:
         return out;
     }
 
+    // The same, plus the space itself, because in a KEY a space is not text — it
+    // is the delimiter, and leaving one in re-cuts the record at the wrong place.
+    //
+    // `record` has no way to say no: it returns void and its contract is that it
+    // always emits, so refusing here would mean silently dropping a warning,
+    // which is worse than an ugly key. `_` keeps the record parseable and makes
+    // the mistake visible in the file. `recordExact` has a channel and uses it —
+    // it refuses via `usableKey` rather than mangling, because there the caller
+    // is going to resolve what it reads.
+    //
+    // An EMPTY key would still produce a leading space, so it becomes `_` too:
+    // one visibly wrong key beats a record whose value silently loses a
+    // character to the split.
+    static std::string sanitiseKey(std::string_view s) {
+        if (s.empty()) return "_";
+        std::string out = sanitise(s);
+        for (char& c : out)
+            if (c == ' ') c = '_';
+        return out;
+    }
+
     Verdict                  m_verdict{Verdict::Fail};
     bool                     m_haveVerdict{false};
     std::string              m_error;
@@ -430,12 +478,21 @@ private:
 //
 //     ENGINE_ADDON_MANIFEST 1
 //     VERDICT ok
-//     ID       engine_module_probe
-//     TOOL     <tool's own version>
-//     RECORD   MODULE
+//     ID engine_module_probe
+//     TOOL <tool's own version>
+//     RECORD MODULE
 //     CONSUMES module-library
 //     PRODUCES module-verdict
 //     END 6 <hex>
+//
+// EXACTLY ONE SPACE between key and value, here and in every record. This
+// example used to be column-aligned for readability, which was a real defect in
+// a header whose stated contract is that a third-party tool can "reimplement it
+// from the format documented in the comments": a writer built from the aligned
+// version emits padded keys, and every reader splits on the FIRST space and
+// hands back a value with leading blanks. A spec cannot use whitespace
+// decoratively. The value may then contain spaces freely — it runs to the end of
+// the line — which is what lets a path with a space in it survive `recordExact`.
 //
 // `RECORD` lines declare the tool's own vocabulary. That is what makes a rename
 // a LOUD change: a host or test that parses `MODULE` can assert the tool still

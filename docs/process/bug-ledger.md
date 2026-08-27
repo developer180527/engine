@@ -396,6 +396,63 @@ eight classes had nowhere to go.
 - lane:      docs
 - proof:     found by re-reading the doc rather than bumping its date when BUG-0030's staleness flag pointed at it — which is what the flag is for. The entry now also states the alignment contract that BUG-0028 turned out to hinge on, since nothing described it before.
 
+## BUG-0032 — the probe's verdicts travelled on a channel the thing under test could write
+- found:     2026-08-27
+- class:     logic
+- where:     src/tools/engine_module_probe.cpp
+- symptom:   a module could make `engine_module_probe` appear to report an acceptance that never happened, or a completed run that had in fact died, by printing `module 0 ok <path>` and `probe done` on stdout.
+- cause:     the probe's machine-readable output contract was ITS OWN STDOUT — `module <i> ok|refused <path>`, terminated by `probe done`. The probe exists to dlopen modules it does not trust; that is the entire reason it is a separate process. Loaded code can print, and it needs no cooperation to do it: a static initialiser runs during `dlopen`, before the host has called anything at all. The forged bytes are indistinguishable from the host's, so a parser cannot tell them apart. Not noise — impersonation, and it works in both directions: an extra `ok` invents an accept, a forged `probe done` makes a truncated run look complete.
+- pinned-by: tests/module_abi/tests/gate.rs
+- lane:      unit
+- proof:     fixture defect 9 (`abi_gate_noisy_stdout`) forges both spellings at both times a module can run code — static initialisation and inside `create` — while its own ABI table is perfect, so it must still LOAD. Observed directly: probing that one module prints THREE `module 0 ok` lines and three `probe done` on stdout (two forged, one real), while the result file holds exactly one `MODULE` record. Any parser reading stdout sees three modules where one was probed. The test also asserts the forged text IS present, so it cannot pass green against a fixture that had quietly stopped printing — asserting nothing was forged in a run where nothing tried.
+- note:      the fix generalised into `include/engine/addon_protocol.h` rather than staying local — rule 2, "the result file is the machine channel". `engine_cook_worker` had already learned the same lesson from a different direction ("cookers print freely, so stdout is not a channel") without either being written down as a rule. One tool learning it twice is a coincidence; writing it down is what makes it a protocol.
+
+## BUG-0033 — twelve defects in a shipped package, every one of them at exit 0
+- found:     2026-08-27
+- class:     build
+- where:     src/tools/engine_build.cpp
+- symptom:   `engine_build` packaged a game with an unreadable cooked scene, a scene referencing a missing mesh, a mesh referencing a missing texture, two shaders claiming one name, or no shader providing `standard` — and exited 0 with the package written.
+- cause:     twelve warning sites, each describing a real defect IN THE SHIPPED GAME, all of them `fprintf(stderr, ...)`. stderr is the human channel, so no caller could see any of it: not the editor, not CI, not a build farm. Only a person reading scrollback — who has no reason to scroll back, because the exit status said the package was fine. The same silently-untextured-build failure the cook worker's trailer was added to prevent, arriving through the packager instead of the IPC channel.
+- pinned-by: tests/addon_protocol_test.cpp
+- lane:      unit
+- proof:     the test runs the real binary and pins its caller-facing contract — `Usage(2)` for a bad command line, `MissingInput(3)` for a directory with no project.json, a stale result file deleted rather than left for a caller that forgets to check the status, and a manifest that round-trips through the real parser and declares `RECORD WARNING` / `RECORD WARNINGS`. Mutation: dropping the stale-result deletion fails the stale-result check.
+- note:      HONEST LIMIT — what is pinned is that the tool still CLAIMS to emit warning records and that its exit codes are distinguishable. No test yet packages a deliberately broken project and asserts a `WARNING` record actually appears; that needs a fixture project with a dangling mesh reference, and `package_closure_test` is where it would belong because a real package configures and builds the whole engine tree. Recorded rather than left implied.
+- note:      two rules fell out. THE TOOL REPORTS, THE CALLER DECIDES — a warning is not fatal by itself, because whether a missing texture blocks a ship is policy and a packager is not where policy lives; `--strict` is how a caller says otherwise and CI is expected to pass it. And EXIT 1 IS GONE: it meant fifteen different things in that one file, while the protocol reserves 1 as unassigned precisely because it is the exit code of every accident.
+
+## BUG-0034 — a cooked sibling path the result format could not carry
+- found:     2026-08-27
+- class:     logic
+- where:     src/tools/engine_cook_worker.cpp
+- symptom:   cooking an asset whose filename contained a newline produced `its result file is unusable: END claims 2 line(s), found 3` in the parent — blaming this process's write. The cook itself had succeeded.
+- cause:     `ERROR` went through `oneLine` and `OUTPUT` did not, and `OUTPUT` carries a filesystem PATH. A newline is legal in a POSIX filename and a sibling texture's path is derived from the asset's own stem (`foo.gltf` → `foo_t0.ctex`), so such an asset produced a body one line longer than the writer counted. The frame then failed its own line-count check — correctly — and the diagnosis pointed at the writer instead of the filename.
+- pinned-by: tests/cooked_format/tests/cook_result_frame.rs
+- lane:      unit
+- proof:     mutation — removing the `carryable` guard reproduces the original symptom exactly, and the test reports it as `incomplete: END claims 2 line(s), found 3`. Both halves are pinned: the newline-named asset must produce a result that PARSES and says `fail` with a reason, and an identically-shaped clean asset must still cook to `ok` AND still emit its `OUTPUT` sibling — without that control, a worker that had stopped emitting sibling records at all would pass the first check perfectly while shipping the same missing-sibling bug by another route.
+- note:      the fix REFUSES rather than sanitises, and the difference is what the caller does next. The parent OPENS that path and registers it as a cooked sibling, so a mangled path is a DDC record pointing at nothing — a silently missing sibling, the exact class of bug the trailer exists to prevent. A loud precise failure beats a quiet wrong answer. `addon_protocol.h` draws the same line between `record` and `recordExact`; see BUG-0035 for where that line had a hole in it.
+- note:      the fixture needs an EXTERNAL image URI. A glTF with its texture embedded as a base64 data URI cooks fine and emits no sibling at all, so it never reaches the record that carries a path — the difference between exercising the bug and cooking a triangle.
+
+## BUG-0035 — recordExact guarded the value and left the key open
+- found:     2026-08-27
+- class:     logic
+- where:     include/engine/addon_protocol.h
+- symptom:   `recordExact("MY KEY", "/tmp/x")` emitted `MY KEY /tmp/x`, which every reader in the tree parses as key `MY` with value `KEY /tmp/x`.
+- cause:     a record is `KEY value` split on the FIRST space, so a space in the key is not carried — it re-cuts the record. `recordExact` checked the value with `carryable` and did not check the key at all. `carryable` cannot simply be applied to both: a value legitimately contains spaces (it runs to end of line, which is what lets a path with a space in it survive), so the two halves need different predicates. This is the quiet wrong answer `recordExact` was split out of `record` to refuse, hiding inside `recordExact` itself.
+- pinned-by: tests/addon_protocol_test.cpp
+- lane:      unit
+- proof:     mutation — relaxing `usableKey` from `<= 0x20` to `< 0x20` (allowing the space again) fails "recordExact REFUSES a key containing a space"; removing `sanitiseKey`'s space handling fails the `record()` mangling check. The value side is pinned in the opposite direction: `carryable("/tmp/my dir/x")` must stay TRUE, so a later "fix" that refuses spaces outright fails too.
+- note:      not reachable from this tree — every call site passes a string literal. Pinned because "no caller does that yet" is not a property of the function, and this one's whole job is to refuse rather than mangle. `record` mangles the space to `_` instead of refusing: it returns void and its contract is that it always emits, so refusing would mean silently dropping a warning, which is worse than an ugly key.
+
+## BUG-0036 — a spec that used whitespace decoratively
+- found:     2026-08-27
+- class:     logic
+- where:     include/engine/addon_protocol.h
+- symptom:   the manifest example in the header showed column-aligned records (`ID       engine_module_probe`, `RECORD   MODULE`) while every tool emits exactly one space.
+- cause:     the example was formatted for readability in a header whose stated contract is that a third-party tool can "reimplement it from the format documented in the comments". A writer built from the aligned version emits padded keys; every reader splits on the FIRST space and hands back a value with leading blanks. The bytes were always right — the specification of them was not.
+- pinned-by: include/engine/addon_protocol.h
+- lane:      docs
+- proof:     the emitted manifest was read back byte-wise (`od -c`) and confirmed single-spaced, so this was the comment disagreeing with the code rather than a behaviour change; the example now matches, and states the one-space rule explicitly alongside the reason a value may then contain spaces freely. `addon_protocol_test` independently searches for `RECORD WARNING\n`, so a padded key would now fail a test as well as a reading.
+- note:      the same shape as BUG-0031 — a document that was wrong about code that was right. It counts here because this header is not documentation ABOUT a format, it IS the format's specification, which the Rust conformance suites exist to keep honest by reimplementing from it.
+
 ## Open — recorded so they are not forgotten
 
 - **A portability regression can now sit on main for up to a day.** The gating

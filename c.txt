@@ -1,52 +1,69 @@
-ci: the gating leg on every push, the other five nightly
+addon: the key nobody guarded, and five defects the ledger had not caught up with
+The ledger stopped at BUG-0031 while five commits of defect-finding landed on
+top of it. Catching up turned up a fixed bug with no regression proof and two
+live defects in the protocol header.
 
-Wall clock was 11m27s, set ENTIRELY by Windows x64 at 11m22s, for a verdict
-macOS had already delivered in 4m53s. The test lane inside that is 20 SECONDS;
-the rest is getting to the point where you can test.
+── THE ENTRY THAT HAD NO TEST ──────────────────────────────────────────────
+BUG-0034 shipped its fix in 4a65297 with nothing pinning it: engine_cook_worker
+sent ERROR through oneLine and OUTPUT straight through, and OUTPUT carries a
+path the parent OPENS. A newline is legal in a POSIX filename and a sibling
+texture's path comes from the asset's stem, so such an asset produced a body one
+line longer than the writer counted, and the parent blamed this process's write
+for what was a filename.
 
-So the gating leg runs on every push and the other five run nightly at 02:00
-UTC, plus on demand. ~11m27s -> ~6m50s.
+cook_result_frame.rs cooks a synthetic textured glTF under a newline-named path
+through the real worker CLI and requires the result to PARSE and say fail.
+Mutation: removing the carryable guard reproduces the original symptom exactly,
+"incomplete: END claims 2 line(s), found 3".
 
-── WHAT MADE THIS SAFE TO DO ───────────────────────────────────────────────
-Both Windows legs flipped to experimental: false. They went green in
-32999369599, and this file's own ladder rule is to flip on first green, "it is
-a LADDER, not a resting place". That ordering matters: nightly AND non-fatal
-would have been a very weak ratchet. All six legs are now hard failures.
+The fixture needs an EXTERNAL image URI. A glTF with its texture embedded as a
+data URI cooks fine and emits no sibling, so it never reaches the record that
+carries a path, the difference between exercising the bug and cooking a
+triangle. The clean-name control is load-bearing for the same reason: a worker
+that had stopped emitting OUTPUT records entirely would pass the newline case
+perfectly while shipping the missing-sibling bug by another route.
 
-── THE MECHANISM, AND THE ONE IT AVOIDS ────────────────────────────────────
-GitHub does not expose `matrix` to a job-level `if`, so per-leg selection has to
-happen BEFORE the matrix exists. A small `plan` job emits the matrix as JSON,
-defined once and filtered by event rather than duplicated per event.
+── TWO DEFECTS IN THE PROTOCOL ITSELF ──────────────────────────────────────
+BUG-0035. recordExact checked the value with carryable and did not check the key
+at all, so recordExact("MY KEY", "/tmp/x") emitted a record every reader re-cuts
+as key MY, value "KEY /tmp/x". The quiet wrong answer recordExact was split out
+of record to refuse, hiding inside recordExact.
 
-The tempting alternative, keep every leg and make its STEPS conditional,
-burns a runner per leg and produces a green job that built nothing. That is
-exactly BUG-0016, a lane reporting ok while exercising nothing, and this repo
-has now shipped that shape twice. The plan job fails loudly on an empty
-selection for the same reason.
+carryable cannot just be applied to both halves: a value legitimately contains
+spaces, it runs to end of line, which is what lets a path with a space survive
+— so usableKey is a separate predicate rejecting <= 0x20. record mangles the
+space to '_' instead of refusing, because it returns void and its contract is
+that it always emits; silently dropping a warning is worse than an ugly key.
 
-── THE TRADE, STATED RATHER THAN DISCOVERED ────────────────────────────────
-A portability regression can now sit on main for up to a day. Three things make
-that acceptable, and all three are in the ledger's open list rather than only in
-a commit message: every leg is a hard failure so the nightly still ratchets;
-workflow_dispatch runs the full matrix before anything that matters; and the
-bugs these legs catch, a missing <cstring>, an x86-64-only prebuilt DLL,
-alignof(max_align_t) differing from __STDCPP_DEFAULT_NEW_ALIGNMENT__, arrive
-with code, and code lands on a schedule of hours.
+Not reachable today, every call site passes a literal. Pinned because "no caller
+does that yet" is not a property of the function.
 
-── TWO MEASUREMENTS WORTH KEEPING ──────────────────────────────────────────
-The push path is now bounded by TSan (~6m50s), not macOS (~4m53s). The
-sanitizers stay on it deliberately: BUG-0001, 0002 and 0003 all came from those
-lanes, and moving them to save under two minutes would undercut the reason most
-of this ledger exists. Recorded as the next candidate, with its cost named.
+BUG-0036. The manifest example was column-aligned in a header whose stated
+contract is that a third party can reimplement the format from its comments. A
+writer built from the aligned version emits padded keys and every reader hands
+back a value with leading blanks. The bytes were always right; the specification
+of them was not. A spec cannot use whitespace decoratively.
 
-And the six-minute build is ~110 LINK steps at a 97% compiler-cache hit rate.
-Compilation is already free; the time is ~85 test executables each statically
-linking the whole engine, and sccache does not cache links. That is why the
-first idea, trimming targets with ENGINE_BUILD_EDITOR=OFF / SAMPLES=OFF, was
-measured and DROPPED: it skips 10 of 1756 actions and 4 of 116 links, while
-costing two real build-time invariants (sample_minimal is the SDK-surface
-honesty check, and imgui_bgfx.cpp / imgui_impl_glfw.cpp compile nowhere else).
-Three link steps is not worth a coverage hole that nothing turns red for.
+── THE THREE ENTRIES FOR WORK ALREADY DONE ─────────────────────────────────
+BUG-0032, the probe's forgeable stdout. Observed rather than asserted: probing
+one noisy module prints three "module 0 ok" and three "probe done" on stdout,
+while the result file holds one MODULE record.
 
-Docs gate clean. Suggested exclusion: c.txt is your scratch file.
+BUG-0033, engine_build's twelve warnings at exit 0, with an HONEST LIMIT stated
+in the entry: what is pinned is that the tool still declares RECORD WARNING and
+that its exit codes are distinguishable. No test yet packages a deliberately
+broken project and asserts a WARNING record appears; that needs a fixture with a
+dangling mesh reference and belongs in package_closure_test.
 
+Deliberately NOT recorded: the .gitignore trailing-comment entry from 90959e2.
+It is a real mistake and there is no test that could fail without the fix, so an
+entry would be a pinned-by field pointing at nothing.
+
+── VERIFICATION ────────────────────────────────────────────────────────────
+Mutations, all three caught: the cook worker's carryable guard; usableKey
+relaxed from <= 0x20 to < 0x20; sanitiseKey's space handling removed. The value
+side is pinned in the opposite direction too, carryable("/tmp/my dir/x") must
+stay true, so a later "fix" refusing spaces outright fails as well.
+
+ctest -L unit 58/58. Ledger 36 entries, every pinned-by resolving. Docs gate 72
+docs, 0 errors.
