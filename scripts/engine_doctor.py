@@ -266,11 +266,30 @@ def last_change(paths: list[str]) -> str:
                 or any(REPO.glob(p))]
     if not existing:
         return ""
-    committed = git("log", "-1", "--format=%cs", "--", *existing)
+    # DOCUMENTATION IS NOT CODE, and counting it as code punishes the one
+    # behaviour this whole script exists to encourage (BUG-0037).
+    #
+    # `covers:` names directories, and directories contain their own docs —
+    # src/runtime/ holds src/runtime/docs/, src/render/ holds issues.md. Without
+    # this exclusion, editing ANY markdown under a covered path marks that
+    # subsystem's info.md stale, and at `tier: hardened` that is a commit-blocking
+    # ERROR. So correcting a stale document made an unrelated document stale, and
+    # the only way to a clean gate was to re-verify a subsystem nothing had
+    # touched. Improving docs cost more than neglecting them.
+    #
+    # Same family as BUG-0027 (a generated file gated on content the commit
+    # itself changes) and BUG-0030 (a gate you could not see until after the
+    # commit): the rule was right and what it measured was not.
+    #
+    # `:(exclude)` is a git pathspec, so both the log and the status query answer
+    # the same question — a divergence here would put the committed and dirty
+    # halves on different definitions of "changed".
+    NOT_CODE = [":(exclude)*.md"]
+    committed = git("log", "-1", "--format=%cs", "--", *existing, *NOT_CODE)
     committed = committed.splitlines()[0] if committed else ""
     # --porcelain lists modified, staged and untracked entries alike; any output
     # means this doc's covered code differs from HEAD right now.
-    if git("status", "--porcelain", "--", *existing).strip():
+    if git("status", "--porcelain", "--", *existing, *NOT_CODE).strip():
         today = date.today().isoformat()
         return max(committed, today) if committed else today
     return committed

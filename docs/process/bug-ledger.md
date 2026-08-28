@@ -453,6 +453,19 @@ eight classes had nowhere to go.
 - proof:     the emitted manifest was read back byte-wise (`od -c`) and confirmed single-spaced, so this was the comment disagreeing with the code rather than a behaviour change; the example now matches, and states the one-space rule explicitly alongside the reason a value may then contain spaces freely. `addon_protocol_test` independently searches for `RECORD WARNING\n`, so a padded key would now fail a test as well as a reading.
 - note:      the same shape as BUG-0031 — a document that was wrong about code that was right. It counts here because this header is not documentation ABOUT a format, it IS the format's specification, which the Rust conformance suites exist to keep honest by reimplementing from it.
 
+## BUG-0037 — the doc gate counted documentation as code, so fixing docs broke the gate
+- found:     2026-08-28
+- class:     coverage
+- where:     scripts/engine_doctor.py
+- symptom:   editing `src/runtime/docs/bgfx-includes-in-runtime.md` — a document, changing no code — produced `ERROR src/runtime/docs/info.md: tier hardened requires a fresh doc, but it is stale (code 2026-08-28 > verified 2026-08-25)`, which is commit-blocking.
+- cause:     `last_change()` asks git whether anything under a doc's `covers:` paths has changed, with no filter on file type. `covers:` names DIRECTORIES, and directories contain their own documentation — `src/runtime/` holds `src/runtime/docs/`, `src/render/` holds `issues.md`. So any markdown edit under a covered path marks that subsystem's `info.md` stale. At `tier: hardened` that is an ERROR, and the only route to a clean gate was re-verifying a subsystem nothing had touched.
+- pinned-by: scripts/engine_doctor.py
+- lane:      docs
+- proof:     mutation — setting the exclusion pathspec back to empty reproduces the ERROR exactly; restoring it clears it. Found while correcting the renderer documents: the gate refused a change whose entire content was making documentation more accurate.
+- note:      the incentive is the reason this rates an entry rather than a tweak. This script exists to keep documents honest, and it was charging a tax on doing so — improving a doc cost strictly more than neglecting it, and the cheapest way to a green gate was to stop touching documentation. A gate that penalises its own purpose is worse than no gate.
+- note:      it had been mis-firing before today, silently. Applying the exclusion dropped the standing warning count from **12 to 8** with no code change and no `verified:` bump: four documents were flagged stale purely because a sibling document had been edited. Four false alarms is how a warning list stops being read.
+- note:      third in a family. BUG-0027 was a generated file gated on content the commit itself changes; BUG-0030 was a gate that could not be seen until after the commit. All three had a correct RULE measuring the wrong thing, and all three were found by the gate misbehaving on a real edit rather than by reading it.
+
 ## Open — recorded so they are not forgotten
 
 - **A portability regression can now sit on main for up to a day.** The gating
