@@ -1,0 +1,13 @@
+## BUG-0039 — the doc gate counted bug records as documents
+- found:     2026-08-28
+- status:    fixed
+- class:     coverage
+- where:     scripts/engine_doctor.py
+- symptom:   splitting the ledger into one file per bug produced 38 new warnings, `warn docs/process/bugs/BUG-NNNN-….md: no front-matter (run: engine_doctor.py bootstrap)`, alongside the 8 real ones. `engine_doctor check` went from 72 docs / 12 warnings to 112 docs / 46 warnings, and `ENGINE_STATUS.md`'s "Unreviewed docs" from 33 to 71.
+- cause:     `find_docs()` scans every tracked `*.md` in the repo and expects front-matter. A bug record is not a document: it has its own schema (`found`/`status`/`class`/`pinned-by`) and its own validator, `check_bugs()`, which checks all of it including that every `pinned-by` test exists. `BUG_DIR` already existed as a constant and only `check_bugs()` knew about it — the document scan was never taught the directory was not its business.
+- pinned-by: scripts/engine_doctor.py
+- lane:      docs
+- proof:     mutation — deleting the `BUG_DIR` exclusion in `find_docs()` makes `check_bug_records_are_not_docs()` report `bug records are being scanned as documents (38 of them)` as an ERROR, exit 1, so the `docs_contract` ctest fails. Restoring it returns 74 docs / 0 errors / 8 warnings. The check globs `BUG_DIR` directly and asks whether those paths came back in the document list, so it is not circular with the exclusion it guards.
+- note:      the damage is to a SIGNAL, not to correctness, which is why it rates an entry. Two numbers stopped meaning what they meant: 8 real staleness warnings became 8-in-46, and "Unreviewed docs" — whose job is to count documents nobody has classified — became a count of bug records. Nothing was wrong; nothing was readable either.
+- note:      pinned as an ERROR rather than a warning on purpose. The failure this guards is warning noise, and a regression that degrades the warning channel cannot be reported through the warning channel.
+- note:      fourth in the family BUG-0037 named, and the closest to it — one commit apart, in the same function's neighbourhood, and the mirror image. BUG-0037 counted documents as code; this counted records as documents. Both are `find_docs`/`last_change` answering a question about a file whose kind they never established. The lesson BUG-0037 recorded ("four false alarms is how a warning list stops being read") was written into the ledger by the commit immediately before the one that added thirty-eight.

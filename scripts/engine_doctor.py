@@ -219,6 +219,27 @@ def find_docs() -> list[Doc]:
             continue                      # another repo's contract
         if p == STATUS_FILE:
             continue                      # generated; not itself a contract
+        # ── Bug RECORDS are not documents ───────────────────────────────────
+        # docs/process/bugs/BUG-*.md have their own schema (found/status/class/
+        # pinned-by) and their own validator, `check_bugs()`, which checks all of
+        # it including that every pinned-by test exists. They have no
+        # front-matter and are not supposed to: `status:`/`covers:`/`verified:`
+        # describe a document that makes claims about code, and a bug record
+        # makes a claim about one past defect.
+        #
+        # Without this they were scanned as documents, and the split into one
+        # file per bug turned that into 38 "no front-matter" warnings in a list
+        # that had 8 real ones — burying exactly the staleness signal the gate
+        # exists to raise. It also pushed ENGINE_STATUS.md's doc count 72 -> 112
+        # and its "Unreviewed docs" 33 -> 71, so the headline number stopped
+        # meaning "docs nobody has classified" and started meaning "mostly bug
+        # records".
+        #
+        # This is the same family as BUG-0037 one commit earlier: the rule was
+        # right and what it measured was not. There the gate counted documents as
+        # code; here it counted records as documents.
+        if p.parent == BUG_DIR:
+            continue
         out.append(parse_front_matter(p))
     return out
 
@@ -440,6 +461,36 @@ def parse_bug_ledger() -> list[dict]:
             entries.append({"id": path.stem.split("-")[0] + "-" + path.stem.split("-")[1],
                             "title": "", "line": 1, "file": path, "_no_head": True})
     return entries
+
+
+def check_bug_records_are_not_docs(docs: list[Doc]) -> list[Finding]:
+    """Bug records must never appear in the DOCUMENT scan (BUG-0039).
+
+    `find_docs()` skips `BUG_DIR`, so this looks circular and is not: it globs
+    BUG_DIR directly and asks whether any of those paths came back in the
+    document list. Delete the exclusion and this fires, which is the point —
+    without it the fix was pinned by nothing.
+
+    An ERROR rather than a warning, deliberately, because the failure it guards
+    is *warning noise*: 38 records scanned as documents produced 38
+    "no front-matter" warnings alongside 8 real staleness ones, and pushed
+    ENGINE_STATUS.md's "Unreviewed docs" from 33 to 71. A regression that
+    degrades the warning channel cannot be reported through the warning channel.
+    """
+    if not BUG_DIR.is_dir():
+        return []
+    scanned = {d.rel for d in docs}
+    offenders = [str(p.relative_to(REPO)) for p in sorted(BUG_DIR.glob("BUG-*.md"))
+                 if str(p.relative_to(REPO)) in scanned]
+    if not offenders:
+        return []
+    return [Finding("error", offenders[0],
+                    f"bug records are being scanned as documents "
+                    f"({len(offenders)} of them). They have their own schema and "
+                    f"their own validator (check_bugs); scanning them as "
+                    f"documents buries the real staleness warnings and inflates "
+                    f"ENGINE_STATUS.md's doc counts. See find_docs()'s BUG_DIR "
+                    f"exclusion.")]
 
 
 def check_bugs() -> list[Finding]:
@@ -923,6 +974,7 @@ def main() -> int:
 
     findings = check_docs(docs, strict_missing=args.strict_missing)
     findings += check_bugs()
+    findings += check_bug_records_are_not_docs(docs)
     errs = [f for f in findings if f.level == "error"]
     warns = [f for f in findings if f.level == "warn"]
 
