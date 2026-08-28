@@ -1,0 +1,11 @@
+## BUG-0030 — the doc-staleness gate could not be seen until after the commit
+- found:     2026-08-27
+- status:    fixed
+- class:     coverage
+- where:     scripts/engine_doctor.py
+- symptom:   the Docs workflow failed on a commit whose `engine_doctor check` had passed locally minutes earlier — one ERROR, `src/core/info.md` stale.
+- cause:     staleness compared `verified:` against `git log -1` over the covered paths, so a change sitting in the WORKING TREE was invisible. Edit src/core, run check, it passes because the edit is not in history yet; commit, and now it is; push, and CI fails on a doc that was already stale when you looked. A guaranteed round-trip for every commit touching a `hardened` subsystem without a doc bump.
+- pinned-by: scripts/engine_doctor.py
+- lane:      docs
+- proof:     an uncommitted edit to modules/assetlib (hardened, verified one day earlier) now reports "code 2026-08-27 > verified 2026-08-26" locally; reverting clears it. CI is unaffected — it checks out a clean tree, so nothing is ever dirty there.
+- note:      the same SHAPE as the docs_status_current fix, arrived at from the other side. That one was a generated file gated on content the commit itself changed; this is a hand-written file gated on history the commit itself creates. In both cases the check was correct and the timing made it unobservable. Bumping `verified:` in the same edit makes the dates equal and the rule is `code > verified`, so the intended workflow passes.

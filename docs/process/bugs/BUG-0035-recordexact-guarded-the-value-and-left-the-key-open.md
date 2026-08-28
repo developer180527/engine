@@ -1,0 +1,11 @@
+## BUG-0035 — recordExact guarded the value and left the key open
+- found:     2026-08-27
+- status:    fixed
+- class:     logic
+- where:     include/engine/addon_protocol.h
+- symptom:   `recordExact("MY KEY", "/tmp/x")` emitted `MY KEY /tmp/x`, which every reader in the tree parses as key `MY` with value `KEY /tmp/x`.
+- cause:     a record is `KEY value` split on the FIRST space, so a space in the key is not carried — it re-cuts the record. `recordExact` checked the value with `carryable` and did not check the key at all. `carryable` cannot simply be applied to both: a value legitimately contains spaces (it runs to end of line, which is what lets a path with a space in it survive), so the two halves need different predicates. This is the quiet wrong answer `recordExact` was split out of `record` to refuse, hiding inside `recordExact` itself.
+- pinned-by: tests/addon_protocol_test.cpp
+- lane:      unit
+- proof:     mutation — relaxing `usableKey` from `<= 0x20` to `< 0x20` (allowing the space again) fails "recordExact REFUSES a key containing a space"; removing `sanitiseKey`'s space handling fails the `record()` mangling check. The value side is pinned in the opposite direction: `carryable("/tmp/my dir/x")` must stay TRUE, so a later "fix" that refuses spaces outright fails too.
+- note:      not reachable from this tree — every call site passes a string literal. Pinned because "no caller does that yet" is not a property of the function, and this one's whole job is to refuse rather than mangle. `record` mangles the space to `_` instead of refusing: it returns void and its contract is that it always emits, so refusing would mean silently dropping a warning, which is worse than an ugly key.

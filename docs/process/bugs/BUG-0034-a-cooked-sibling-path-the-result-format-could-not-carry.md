@@ -1,0 +1,12 @@
+## BUG-0034 — a cooked sibling path the result format could not carry
+- found:     2026-08-27
+- status:    fixed
+- class:     logic
+- where:     src/tools/engine_cook_worker.cpp
+- symptom:   cooking an asset whose filename contained a newline produced `its result file is unusable: END claims 2 line(s), found 3` in the parent — blaming this process's write. The cook itself had succeeded.
+- cause:     `ERROR` went through `oneLine` and `OUTPUT` did not, and `OUTPUT` carries a filesystem PATH. A newline is legal in a POSIX filename and a sibling texture's path is derived from the asset's own stem (`foo.gltf` → `foo_t0.ctex`), so such an asset produced a body one line longer than the writer counted. The frame then failed its own line-count check — correctly — and the diagnosis pointed at the writer instead of the filename.
+- pinned-by: tests/cooked_format/tests/cook_result_frame.rs
+- lane:      unit
+- proof:     mutation — removing the `carryable` guard reproduces the original symptom exactly, and the test reports it as `incomplete: END claims 2 line(s), found 3`. Both halves are pinned: the newline-named asset must produce a result that PARSES and says `fail` with a reason, and an identically-shaped clean asset must still cook to `ok` AND still emit its `OUTPUT` sibling — without that control, a worker that had stopped emitting sibling records at all would pass the first check perfectly while shipping the same missing-sibling bug by another route.
+- note:      the fix REFUSES rather than sanitises, and the difference is what the caller does next. The parent OPENS that path and registers it as a cooked sibling, so a mangled path is a DDC record pointing at nothing — a silently missing sibling, the exact class of bug the trailer exists to prevent. A loud precise failure beats a quiet wrong answer. `addon_protocol.h` draws the same line between `record` and `recordExact`; see BUG-0035 for where that line had a hole in it.
+- note:      the fixture needs an EXTERNAL image URI. A glTF with its texture embedded as a base64 data URI cooks fine and emits no sibling at all, so it never reaches the record that carries a path — the difference between exercising the bug and cooking a triangle.

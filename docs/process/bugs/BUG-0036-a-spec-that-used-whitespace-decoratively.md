@@ -1,0 +1,11 @@
+## BUG-0036 — a spec that used whitespace decoratively
+- found:     2026-08-27
+- status:    fixed
+- class:     logic
+- where:     include/engine/addon_protocol.h
+- symptom:   the manifest example in the header showed column-aligned records (`ID       engine_module_probe`, `RECORD   MODULE`) while every tool emits exactly one space.
+- cause:     the example was formatted for readability in a header whose stated contract is that a third-party tool can "reimplement it from the format documented in the comments". A writer built from the aligned version emits padded keys; every reader splits on the FIRST space and hands back a value with leading blanks. The bytes were always right — the specification of them was not.
+- pinned-by: include/engine/addon_protocol.h
+- lane:      docs
+- proof:     the emitted manifest was read back byte-wise (`od -c`) and confirmed single-spaced, so this was the comment disagreeing with the code rather than a behaviour change; the example now matches, and states the one-space rule explicitly alongside the reason a value may then contain spaces freely. `addon_protocol_test` independently searches for `RECORD WARNING\n`, so a padded key would now fail a test as well as a reading.
+- note:      the same shape as BUG-0031 — a document that was wrong about code that was right. It counts here because this header is not documentation ABOUT a format, it IS the format's specification, which the Rust conformance suites exist to keep honest by reimplementing from it.

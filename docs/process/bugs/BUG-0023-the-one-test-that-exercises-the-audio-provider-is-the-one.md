@@ -1,0 +1,11 @@
+## BUG-0023 — the one test that exercises the audio provider is the one ASan cannot see
+- found:     2026-08-25
+- status:    fixed
+- class:     coverage
+- where:     tests/CMakeLists.txt
+- symptom:   BUG-0022 was a textbook heap over-read that ASan would have caught instantly, on a lane that runs on every push, and it survived to a Linux SIGSEGV.
+- cause:     audio_abi_conformance is EXCLUDED from sanitizer builds, because the Rust harness dlopens an instrumented module and ASan aborts with "interceptors are not working". The exclusion is correct in itself; its consequence was not noticed — the provider's only behavioural coverage lives in the excluded test, so that whole TU is outside the sanitizer's reach.
+- pinned-by: tests/audio_provider_asan_test.cpp
+- lane:      unit
+- proof:     FIXED 2026-08-26 by the second of the two options this entry named — a C++ harness (tests/audio_provider_asan_test.cpp) that links the provider DIRECTLY, so the sanitizer lanes compile and instrument it instead of dlopening it. The Rust conformance suite stays excluded from those lanes, which was always correct; what changed is that it is no longer the provider's only behavioural coverage.
+- note:      this entry read "NOT FIXED" for two days after the fix shipped, and nothing could notice. Its `pinned-by` was `docs/process/bug-ledger.md` — the ledger pointing at itself — which passes an existence check while proving nothing, so the gate saw a satisfied entry. A ledger that reports a gap already closed is worse than one missing the entry: the next person re-does the work. That is what `status:` and the self-pin refusal (BUG-0038) exist to prevent.

@@ -1,0 +1,11 @@
+## BUG-0028 — the replacement operator new promised less alignment than the standard requires
+- found:     2026-08-26
+- status:    fixed
+- class:     memory
+- where:     src/core/mem_counters.cpp
+- symptom:   animator_system_test SEGFAULT on Windows x64 only. Linux x64, macOS arm64 and Windows arm64 all passed.
+- cause:     the replacement `operator new(size_t)` requested `alignof(std::max_align_t)`, but the standard requires it to return storage aligned to `__STDCPP_DEFAULT_NEW_ALIGNMENT__`. Those differ: max_align_t is 8 on macOS arm64 AND MSVC x64, while the required new-alignment is 16 on both. libc++ and MSVC's STL route a type through the ALIGNED operator new only when `alignof(T) > __STDCPP_DEFAULT_NEW_ALIGNMENT__`, so a 16-byte-aligned type is NOT over-aligned — it takes the plain overload and relies on the guarantee this replacement was breaking. Every `std::vector<ozz::math::SoaTransform>` therefore came back 8-byte aligned, and ozz writes those buffers with `_mm_store_ps`, which faults.
+- pinned-by: tests/animator_system_test.cpp
+- lane:      unit
+- proof:     mutation — restoring `alignof(std::max_align_t)` reproduces "localsPrev is at 0x109c092d8, which is 8-byte aligned, not 16" on macOS; the fix passes. Verified independently that mem::alloc and the ALIGNED operator new both honour alignment correctly, so the defect was the value being passed, not the allocator.
+- note:      three green platforms hid it. Linux x64 got 16 from max_align_t by luck of the ABI, and both arm64 legs tolerate unaligned NEON stores — so only MSVC x64 combined a small max_align_t with faulting SIMD. The diagnostic that found it is now permanent: AnimatorSystem::Ctx::ensure asserts all four ozz buffers are 16-aligned and aborts naming the buffer and address, because the alternative is a bare SEGFAULT with no stack.

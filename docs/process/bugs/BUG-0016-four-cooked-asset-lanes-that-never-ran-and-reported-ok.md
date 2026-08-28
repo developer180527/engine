@@ -1,0 +1,11 @@
+## BUG-0016 — four cooked-asset lanes that never ran and reported ok
+- found:     2026-08-24
+- status:    fixed
+- class:     coverage
+- where:     tests/cooked_format/
+- symptom:   none. `cargo test --quiet` reported passing lanes that had silently stopped exercising anything.
+- cause:     every test that COOKS a real asset began with a `println!` and an early return when ENGINE_BUILD_DIR was unset. CMake invokes the crate with `--quiet`, WHICH CAPTURES STDOUT — so the reason went into a buffer nobody reads and the lane reported precisely what a passing lane reports. Four tests, not one: cmat, ctex, cshader and the glTF factor case — every test that touches real cooked bytes. The eight that did run all build structs by hand, so the crate's entire premise rested on the four that were invisible.
+- pinned-by: tests/cooked_format/src/harness.rs
+- lane:      unit
+- proof:     ENGINE_REQUIRE_COOK_TESTS=1 (set by the CMake entry) turns a skip into a FAILURE; verified by running the crate with the flag and no build dir, which fails rather than reporting ok. A bare `cargo test` still skips, because there the developer knows there is no engine to point at.
+- note:      the same shape as BUG-0004 three weeks later — a check that exists, is believed to run, and does not. I had verified two of these four by hand with `--nocapture` and then did not make the check mechanical, which is the failure this ledger exists to stop.

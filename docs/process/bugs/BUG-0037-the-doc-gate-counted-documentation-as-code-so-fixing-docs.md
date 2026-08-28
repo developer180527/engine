@@ -1,0 +1,13 @@
+## BUG-0037 — the doc gate counted documentation as code, so fixing docs broke the gate
+- found:     2026-08-28
+- status:    fixed
+- class:     coverage
+- where:     scripts/engine_doctor.py
+- symptom:   editing `src/runtime/docs/bgfx-includes-in-runtime.md` — a document, changing no code — produced `ERROR src/runtime/docs/info.md: tier hardened requires a fresh doc, but it is stale (code 2026-08-28 > verified 2026-08-25)`, which is commit-blocking.
+- cause:     `last_change()` asks git whether anything under a doc's `covers:` paths has changed, with no filter on file type. `covers:` names DIRECTORIES, and directories contain their own documentation — `src/runtime/` holds `src/runtime/docs/`, `src/render/` holds `issues.md`. So any markdown edit under a covered path marks that subsystem's `info.md` stale. At `tier: hardened` that is an ERROR, and the only route to a clean gate was re-verifying a subsystem nothing had touched.
+- pinned-by: scripts/engine_doctor.py
+- lane:      docs
+- proof:     mutation — setting the exclusion pathspec back to empty reproduces the ERROR exactly; restoring it clears it. Found while correcting the renderer documents: the gate refused a change whose entire content was making documentation more accurate.
+- note:      the incentive is the reason this rates an entry rather than a tweak. This script exists to keep documents honest, and it was charging a tax on doing so — improving a doc cost strictly more than neglecting it, and the cheapest way to a green gate was to stop touching documentation. A gate that penalises its own purpose is worse than no gate.
+- note:      it had been mis-firing before today, silently. Applying the exclusion dropped the standing warning count from **12 to 8** with no code change and no `verified:` bump: four documents were flagged stale purely because a sibling document had been edited. Four false alarms is how a warning list stops being read.
+- note:      third in a family. BUG-0027 was a generated file gated on content the commit itself changes; BUG-0030 was a gate that could not be seen until after the commit. All three had a correct RULE measuring the wrong thing, and all three were found by the gate misbehaving on a real edit rather than by reading it.

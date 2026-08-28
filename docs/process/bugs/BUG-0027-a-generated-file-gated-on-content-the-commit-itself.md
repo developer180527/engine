@@ -1,0 +1,11 @@
+## BUG-0027 — a generated file gated on content the commit itself changes
+- found:     2026-08-25
+- status:    fixed
+- class:     coverage
+- where:     scripts/engine_doctor.py
+- symptom:   docs_status_current failed three runs on the gating leg while ENGINE_STATUS.md was, in every sense anyone cared about, current.
+- cause:     ENGINE_STATUS.md carries git-DERIVED data — the per-subsystem "code last changed" column and the stale-doc count — so regenerating before a commit and after it differ by construction: working-tree edits are not in history yet, and the moment they are, every doc covering them moves. Stale docs read 7 before and 14 after, same tree, same script. Committing the file invalidated it.
+- pinned-by: scripts/engine_doctor.py
+- lane:      docs
+- proof:     the gate now compares STRUCTURE — subsystems, tiers, docs, test counts — and normalises dates away; freshness stays with `engine_doctor check`, which computes it live and reports warnings. Verified by making a real commit and checking after it.
+- note:      two comments already in that function recorded the same lesson from two other causes, which is the sign it needed the rule stated rather than patched a third time: A GENERATED FILE CANNOT BE GATED ON CONTENT THAT CHANGES BECAUSE OF THE COMMIT THAT CONTAINS IT.

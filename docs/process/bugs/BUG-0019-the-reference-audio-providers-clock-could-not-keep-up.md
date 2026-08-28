@@ -1,0 +1,11 @@
+## BUG-0019 — the reference audio provider's clock could not keep up with itself
+- found:     2026-08-24
+- status:    fixed
+- class:     threading
+- where:     tests/audio_conformance/src/reference.rs
+- symptom:   the macOS CI leg — the GATING one — failed for several commits, taking two tests with it, while passing 15/15 on a 12-core laptop.
+- cause:     the stand-in driver thread was `sleep(period); samples += frames`, so its effective sample rate is `frames / how long that sleep ACTUALLY took` — and sleep guarantees only a LOWER bound. On a 3-core runner with several tests in parallel the clock advanced at under half real time, and the suite's own "the sample clock and the host clock agree within 0.5x-2.0x" check failed. The assertion was right and the reference was wrong.
+- pinned-by: tests/audio_conformance/src/reference.rs
+- lane:      unit
+- proof:     reproduced deterministically by injecting a 3x sleep overshoot — identical failure, identical message ("101.3 ms of samples vs 361.4 ms of host"); the fix passes 3/3 under the same injection. samplesPlayed now derives from Instant::elapsed(), which is what real hardware does: the device clock runs whether or not the callback thread was scheduled promptly — that is what an underrun IS.
+- note:      the first attempt is worth recording. Polling until the clock moved AT ALL traded a starvation failure for a QUANTISATION one (2.7 ms of samples vs 6.3 ms of host): a provider advances in buffer-sized chunks, so over a one-buffer window the quantisation IS the measurement. The window has to be long enough to make a buffer small.

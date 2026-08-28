@@ -1,0 +1,12 @@
+## BUG-0033 — twelve defects in a shipped package, every one of them at exit 0
+- found:     2026-08-27
+- status:    fixed
+- class:     build
+- where:     src/tools/engine_build.cpp
+- symptom:   `engine_build` packaged a game with an unreadable cooked scene, a scene referencing a missing mesh, a mesh referencing a missing texture, two shaders claiming one name, or no shader providing `standard` — and exited 0 with the package written.
+- cause:     twelve warning sites, each describing a real defect IN THE SHIPPED GAME, all of them `fprintf(stderr, ...)`. stderr is the human channel, so no caller could see any of it: not the editor, not CI, not a build farm. Only a person reading scrollback — who has no reason to scroll back, because the exit status said the package was fine. The same silently-untextured-build failure the cook worker's trailer was added to prevent, arriving through the packager instead of the IPC channel.
+- pinned-by: tests/addon_protocol_test.cpp
+- lane:      unit
+- proof:     the test runs the real binary and pins its caller-facing contract — `Usage(2)` for a bad command line, `MissingInput(3)` for a directory with no project.json, a stale result file deleted rather than left for a caller that forgets to check the status, and a manifest that round-trips through the real parser and declares `RECORD WARNING` / `RECORD WARNINGS`. Mutation: dropping the stale-result deletion fails the stale-result check.
+- note:      HONEST LIMIT — what is pinned is that the tool still CLAIMS to emit warning records and that its exit codes are distinguishable. No test yet packages a deliberately broken project and asserts a `WARNING` record actually appears; that needs a fixture project with a dangling mesh reference, and `package_closure_test` is where it would belong because a real package configures and builds the whole engine tree. Recorded rather than left implied.
+- note:      two rules fell out. THE TOOL REPORTS, THE CALLER DECIDES — a warning is not fatal by itself, because whether a missing texture blocks a ship is policy and a packager is not where policy lives; `--strict` is how a caller says otherwise and CI is expected to pass it. And EXIT 1 IS GONE: it meant fifteen different things in that one file, while the protocol reserves 1 as unassigned precisely because it is the exit code of every accident.

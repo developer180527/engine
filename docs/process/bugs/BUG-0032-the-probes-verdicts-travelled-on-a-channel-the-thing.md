@@ -1,0 +1,11 @@
+## BUG-0032 — the probe's verdicts travelled on a channel the thing under test could write
+- found:     2026-08-27
+- status:    fixed
+- class:     logic
+- where:     src/tools/engine_module_probe.cpp
+- symptom:   a module could make `engine_module_probe` appear to report an acceptance that never happened, or a completed run that had in fact died, by printing `module 0 ok <path>` and `probe done` on stdout.
+- cause:     the probe's machine-readable output contract was ITS OWN STDOUT — `module <i> ok|refused <path>`, terminated by `probe done`. The probe exists to dlopen modules it does not trust; that is the entire reason it is a separate process. Loaded code can print, and it needs no cooperation to do it: a static initialiser runs during `dlopen`, before the host has called anything at all. The forged bytes are indistinguishable from the host's, so a parser cannot tell them apart. Not noise — impersonation, and it works in both directions: an extra `ok` invents an accept, a forged `probe done` makes a truncated run look complete.
+- pinned-by: tests/module_abi/tests/gate.rs
+- lane:      unit
+- proof:     fixture defect 9 (`abi_gate_noisy_stdout`) forges both spellings at both times a module can run code — static initialisation and inside `create` — while its own ABI table is perfect, so it must still LOAD. Observed directly: probing that one module prints THREE `module 0 ok` lines and three `probe done` on stdout (two forged, one real), while the result file holds exactly one `MODULE` record. Any parser reading stdout sees three modules where one was probed. The test also asserts the forged text IS present, so it cannot pass green against a fixture that had quietly stopped printing — asserting nothing was forged in a run where nothing tried.
+- note:      the fix generalised into `include/engine/addon_protocol.h` rather than staying local — rule 2, "the result file is the machine channel". `engine_cook_worker` had already learned the same lesson from a different direction ("cookers print freely, so stdout is not a channel") without either being written down as a rule. One tool learning it twice is a coincidence; writing it down is what makes it a protocol.

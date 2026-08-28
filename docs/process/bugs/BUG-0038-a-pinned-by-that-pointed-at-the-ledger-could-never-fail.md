@@ -1,0 +1,12 @@
+## BUG-0038 — a `pinned-by` that pointed at the ledger could never fail
+- found:     2026-08-28
+- status:    fixed
+- class:     coverage
+- where:     scripts/engine_doctor.py
+- symptom:   BUG-0023 read `proof: NOT FIXED` for two days after its fix had shipped (tests/audio_provider_asan_test.cpp, 2026-08-26), and every gate passed.
+- cause:     `pinned-by` was a REQUIRED field with no notion of an unfixed bug, so the two entries recording found-but-not-fixed defects wrote `pinned-by: docs/process/bug-ledger.md`. The gate's only test is that the path exists — and that path is the file doing the checking, so it exists by construction. A self-referential pin is indistinguishable from a real regression proof to an existence check, so those entries were permanently, silently satisfied.
+- pinned-by: scripts/engine_doctor.py
+- lane:      docs
+- proof:     mutation, four ways, each producing a distinct error: an `open` entry claiming `pinned-by: tests/mem_test.cpp`; a `fixed` entry pinned at `docs/process/bug-ledger.md`; a `fixed` entry with `pinned-by` deleted; and a filename whose id disagrees with its heading. Reverting any one check makes its mutation pass again.
+- note:      the fix is a `status:` field rather than a smarter path check. `open` and `fixed` are different claims and the gate now enforces what each may say — `fixed` requires a proof that exists, `open` must claim `none`, and the ledger's own path is refused from either. `engine_doctor bugs --open` lists the unfixed set, which is the thing nobody could ask for before.
+- note:      what makes this a `coverage` bug rather than a schema wart is the direction of the failure. A ledger that under-reports is merely incomplete; this one OVER-reported — it showed a gap that had already been closed, which sends the next person to redo finished work. The same shape as BUG-0004 (asserts in a header no TU included) and BUG-0010 (a test CI could never run): a check that cannot fail, reported as a check that passed.

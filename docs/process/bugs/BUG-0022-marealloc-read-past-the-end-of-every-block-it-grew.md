@@ -1,0 +1,11 @@
+## BUG-0022 — maRealloc read past the end of every block it grew
+- found:     2026-08-25
+- status:    fixed
+- class:     memory
+- where:     src/audio/miniaudio_provider.cpp
+- symptom:   SIGSEGV on Linux inside ma_decoder__full_decode_and_uninit, i.e. on every sound decode. Nothing ever went wrong on macOS.
+- cause:     the host services interface has no realloc — deliberately — so the shim did alloc + copy + free and bounded the copy by the NEW size. Growing 64 KB -> 128 KB therefore read 64 KB past the end of the old block. On macOS the over-read landed inside the tagged heap's mapped region and was invisible.
+- pinned-by: tests/audio_conformance/tests/conformance.rs
+- lane:      unit
+- proof:     reproduced under Linux in a container with the provider built standalone (it is one self-contained TU by design, so no engine build is needed); gdb pointed straight at maRealloc. Mutation-verified — restoring the old bound brings the segfault straight back. Blocks now carry their size in a 16-byte alignas(16) prefix, static-asserted so the payload stays SIMD-aligned, and the copy is bounded by the MINIMUM, the only bound correct in both directions.
+- note:      MINE, and the comment is the worst part: it said the copy was "safe only while miniaudio uses this path to GROW", which is exactly inverted — growing is the unsafe direction. I identified the hazard and drew the opposite conclusion from it, which is worse than not considering it, because nothing executable disagreed with a comment that read as reasoned.
