@@ -48,9 +48,13 @@ claim about freshness as much as about tests. See
 
 - **The asset pipeline** — [`architecture/asset-cook-architecture.md`](architecture/asset-cook-architecture.md).
   §0 is a full end-to-end walkthrough, source file to screen.
-- **The renderer** — [`architecture/renderer-architecture.md`](architecture/renderer-architecture.md)
+- **The renderer** — [`plans/renderer-program.md`](plans/renderer-program.md) is the
+  START HERE: what we are building, in what order, and why the reuse boundary sits
+  *below* the renderer rather than through it. Then
+  [`architecture/renderer-architecture.md`](architecture/renderer-architecture.md)
   for the target design, [`plans/renderer-audit-and-plan.md`](plans/renderer-audit-and-plan.md)
-  for the ranked findings and which are fixed.
+  for the ranked findings and which are fixed, and
+  [`plans/rhi-design.md`](plans/rhi-design.md) for the GPU-driven RHI itself.
 - **Using the engine** — [`guides/engine-api.md`](guides/engine-api.md),
   [`guides/scripting.md`](guides/scripting.md) and its
   [API reference](guides/scripting-api.md),

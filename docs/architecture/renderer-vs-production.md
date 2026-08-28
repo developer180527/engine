@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-08-10
+verified: 2026-08-28
 covers:
   - src/render/
 ---
@@ -146,8 +146,25 @@ the submission model is the limit.
 
    Note also that LOD was never going to move the CURRENT bottleneck, which is extraction
    (CPU 24.8 ms vs GPU 9.11 at 50 k real props). It reduces GPU triangles and draws.
-3. **Indirect + bindless submission.** Removes the per-draw uniform cost and the ceiling
-   entirely. Needs compute; bgfx supports it.
+3. **Indirect submission — and bindless, which is a different question.** *(Split
+   2026-08-28; this row previously read "Indirect + bindless submission… bgfx
+   supports it", which is half wrong.)*
+
+   **Indirect: bgfx supports it and we have never used it.** Compute dispatch,
+   `createIndirectBuffer`, storage buffers and `submit(view, program,
+   indirectHandle)` are all present in the vendored copy — with **zero call sites
+   in this engine**. A compute cull writing compacted indirect args, with per-draw
+   data in a storage buffer indexed by draw id, is expressible today. That removes
+   the per-draw uniform payload and with it the 8 MB Metal ceiling.
+
+   **Bindless: bgfx does not have it, at all.** `setTexture(stage, …)` per draw is
+   the only model, and an indirect draw cannot bind anything — so a GPU-driven path
+   over a scene with *per-object textures* is not reachable without leaving bgfx.
+   A scene whose per-object variation is an index into a parameter buffer is.
+
+   That split is the actual decision point for `docs/plans/rhi-design.md`: the
+   indirect half is a spike we can run now, and the bindless half is the one that
+   costs a backend.
 4. **Multi-threaded encoders.** Free headroom once submission stops being the wall.
 
 Not on this list, and deliberately: hand-written SIMD in the cull (measured — the plane

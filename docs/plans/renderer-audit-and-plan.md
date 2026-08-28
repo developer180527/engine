@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-08-10
+verified: 2026-08-28
 covers:
   - src/render/
 ---
@@ -24,13 +24,33 @@ ECS world ──Renderer::buildView──> RenderView ──> ForwardPipeline::r
             frustum planes, target      │            submission ALL live here
 ```
 
-`src/render/passes/` (shadow, sky, opaque, transparency, post, resolve) is
-**scaffold — commented stubs, not in the build.** The single real pipeline is
-`ForwardPipeline`, 442 lines that do everything after extraction.
-
-The June TODOs are still in the source, verbatim: *"ECS World → Render
-Extraction → RenderWorld → Visibility → Submission. Keep extraction, culling,
-sorting and submission as separate stages."* The design was right; it stalled.
+> **Re-verified 2026-08-28 — this subsection was stale in the GOOD direction, and
+> its headline finding no longer holds.**
+>
+> It read: "`src/render/passes/` (shadow, sky, opaque, transparency, post,
+> resolve) is **scaffold — commented stubs, not in the build.** The single real
+> pipeline is `ForwardPipeline`, 442 lines that do everything after extraction…
+> The design was right; it stalled."
+>
+> **It un-stalled.** `src/render/passes/` no longer exists; it is
+> `src/render/pipeline/` with real, built `opaque_pass.cpp` and `shadow_pass.cpp`.
+> `ForwardPipeline` is **253 lines**, not 442, because the passes came out of it.
+> `src/render/world/` now holds the GPU-free decision layer the June TODOs asked
+> for — `RenderWorld`, cull streams, sort keys, light packing — with headless
+> tests. Extraction → visibility → submission are separate stages today.
+>
+> Two things from the original finding DO survive, and they are the ones that
+> matter for `rhi-design.md`:
+>
+> * **There is still no render graph.** Passes are split into files and called in
+>   a fixed order; they do not declare reads and writes, so nothing derives
+>   barriers or aliases transient targets. Splitting the code was necessary and is
+>   not the same as the graph.
+> * **The seam still leaks.** `include/engine/render.h` — named below as "a real
+>   public extension point" — is a 12-line umbrella over `render_pipeline.h`,
+>   `render_view.h` and `render_context.h`, and the last two hand out
+>   `bgfx::TextureHandle`, `bgfx::FrameBufferHandle` and `bgfx::ViewId`. A second
+>   pipeline is expressible; a second *backend* is not.
 
 ### 1.2 Measured (fps_shooter, 600 fixed frames, `engine_host --frames 600`)
 

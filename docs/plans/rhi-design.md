@@ -65,22 +65,74 @@ And what bgfx is **not** costing us, which matters just as much for honesty:
 This is the finding that makes the project tractable, and it is why I would say
 yes rather than no. Counted from the tree:
 
-- **~58 distinct `bgfx::` symbols, of which ~35 are functions.** Not a dozen
+- **~72 distinct `bgfx::` symbols, of which ~48 are functions.** Not a dozen
   APIs' worth of surface — one engine's worth.
 - The whole list is unremarkable: create/destroy for buffers, textures, shaders,
   programs, uniforms, framebuffers; `setState`/`setTexture`/`setUniform`/
   `setVertexBuffer`/`setIndexBuffer`/`setTransform`/`submit`; views; `frame`;
   `getCaps`; `getStats`; transient and instance-data buffers.
-- **57 files include bgfx, and 30 of them are outside `src/render/`.**
 
-That last number is the actual problem, and it is already written up in
-`src/runtime/docs/bgfx-includes-in-runtime.md`: `runtime.h`, `camera_util.h`
-(includes bgfx to read one depth-convention cap!), and the async loader all speak
-graphics. **That contamination has to be cleaned up whether or not we replace
-bgfx** — it is the same refactor the headless dedicated server needs. So Phase 1
-below pays for itself even if the RHI is later abandoned. That is the single most
-important property of this plan: **its early phases are valuable independently of
-its late phases.**
+### 2.1 The contamination, re-counted — and it is two problems, not one
+
+**Corrected 2026-08-28.** This section previously read "57 files include bgfx, 30
+of them outside `src/render/`" and treated that as one number. It is two, they
+cost completely different things, and conflating them made the cleanup look four
+times larger than it is.
+
+| | files | of which |
+|---|---|---|
+| `#include <bgfx/…>` outside `src/render/` | **18** | 10 tests, 3 editor |
+| **non-test, non-editor graphics coupling** | **5** | `asset_service.cpp`, `async_loader/upload.cpp`, `mesh_loader.cpp`, `gltf_importer.cpp`, `assimp_importer.cpp` |
+| `#include <bx/…>` only — a **math** dependency | 18 | `core/math_types.h`, `core/transform.h`, `animation/pose.h`, `components/*` |
+
+**The graphics problem is five files.** Every one of them mixes *loading* with
+*GPU upload*, which is the same defect in five places and the one that has to be
+fixed for a headless server, a second backend, or an embedding host — all three
+want bytes handed over without a device in the room.
+
+**The bx problem is a different project and probably not urgent.** `bx` is
+bgfx's base library, and 18 files depend on it for MATH — `Vec3`, `mtxMul`. That
+survives bgfx's removal untouched if we want it to; it is a maths-library choice,
+not a graphics dependency, and it should be decided on its own schedule rather
+than being swept into an RHI migration.
+
+`src/runtime/docs/bgfx-includes-in-runtime.md` still names `camera_util.h` as the
+poster child. **That one is already fixed**: `homogeneousDepth` is a `bool`
+parameter now, with the header comment recording it as audit A.2. `runtime.h`
+remains real — `Renderer m_renderer` by value at line 253, pulling bgfx
+transitively through `render/primitive_library.h`, and that is what blocks a
+headless build.
+
+**The cleanup has to happen whether or not we replace bgfx** — it is the same
+refactor the headless dedicated server needs, and the same one an embedding host
+needs. So Phase 1 pays for itself even if the RHI is abandoned. That is the single
+most important property of this plan: **its early phases are valuable
+independently of its late phases.**
+
+### 2.2 The headroom we have never touched
+
+Measured 2026-08-28, and it belongs in this document because it changes what
+Phase 0 should be:
+
+> **bgfx has compute dispatch, indirect buffers, storage buffers and
+> `submit(view, program, indirectHandle)`. This engine has ZERO call sites for
+> any of them.**
+
+`renderer-vs-production.md` says the same thing from the other side — "compute
+shaders, indirect draws, multi-threaded encoders, instancing; we use one of those
+four" — and instancing is the one.
+
+So the claim "bgfx cannot give us GPU-driven rendering" is currently **untested**.
+What bgfx genuinely lacks is **bindless**, and that is what blocks GPU-driven
+rendering *for a textured game scene*, because an indirect draw cannot bind a
+texture per draw. It does not block a compute cull writing indirect args, nor
+per-instance data read from a storage buffer.
+
+That distinction is worth a spike before committing a year: a GPU-driven cull →
+indirect draw path on bgfx, with per-instance material indices in a storage
+buffer, would either move the 24.8 ms extraction number or fail against a wall we
+can name precisely. Either outcome is worth more than the plan below is without
+it.
 
 The seam we need also half-exists. `IRenderPipeline` is a real swap point with one
 implementation. But `RenderContext` hands pipelines `bgfx::TextureHandle` and
@@ -88,6 +140,13 @@ implementation. But `RenderContext` hands pipelines `bgfx::TextureHandle` and
 second backend.
 
 ## 3. The measurement trap, which is the sharpest point in the question
+
+> **Corrected 2026-08-28 — this section's conclusion was wrong, and §4.1's axiom 6
+> with it.** What follows about SoC measurement remains true. What did NOT survive
+> is the inference drawn from it: "stop pretending the Mac is a performance
+> target." **Apple Silicon is a SHIPPING target**, because the second consumer of
+> this renderer — vCAD — ships on macOS and iPad, where Metal is the only backend
+> that exists. See §3.1.
 
 **"On SoCs like Apple's, one measurement gives false positives."** This is correct
 and it invalidates part of our own roadmap, so it deserves to be stated plainly:
@@ -102,11 +161,33 @@ budget. On that machine:
 - and crucially, **GPU-driven rendering's whole payoff — moving per-object work off
   a CPU that is feeding a bus — is the thing an SoC hides.**
 
-So: **the first deliverable of this project is not code, it is a measurement rig
-on real PC hardware.** The testing farm (headless x86 Debian, SQLite results DB)
-has no GPU lane. Until it has one, D3D12 and Vulkan work is unfalsifiable, and
-this repo's entire method is falsifiability. Phase 0 exists for this reason and
-nothing else.
+So: **a measurement rig on real PC hardware is required before any D3D12 or Vulkan
+performance claim is falsifiable.** The testing farm (headless x86 Debian, SQLite
+results DB) has no GPU lane, and this repo's entire method is falsifiability.
+
+### 3.1 What that argument does NOT license
+
+The original version of §3 concluded that the Mac should stop being a performance
+target and that **nothing** could start before the farm had GPUs. Both halves need
+correcting, and the second one has been holding up work that needs no farm at all.
+
+**Apple Silicon is a shipping target.** This renderer has two consumers:
+
+| | platforms | backends available |
+|---|---|---|
+| the game engine | Windows, Linux, macOS (editor) | D3D12, Vulkan, Metal |
+| **vCAD** | **macOS and iPad** | **Metal, and nothing else** |
+
+vCAD hosts 50 000-part assemblies on an iPad. That is the weakest CPU in the
+entire picture driving the largest object count, which is precisely the workload
+GPU-driven submission exists for — so the payoff is *largest* on the platform the
+old §4.1 called dev-only and allowed to be slow.
+
+**And measurement gates performance claims, not structural ones.** De-contamination
+(§2.1), opaque handles, a retained scene, stable object ids — every one of those is
+falsifiable today with link-time assertions and headless builds. Phase 0 gates
+Phases 4–8. It does not gate Phase 1, and treating it as though it did is why the
+five files in §2.1 are still uncleaned.
 
 ## 4. Design
 
@@ -133,12 +214,49 @@ Six, and each one is a thing we refuse rather than a feature we add:
 5. **GPU-driven is the default path, CPU-driven is the debug path.** Not the other
    way round — otherwise the fast path is the untested one, which is the drift this
    repo already refuses in extraction ("ONE body, serial or parallel").
-6. **Three backends, and only two of them ship.** D3D12 and Vulkan 1.3 are
-   shipping targets. Metal 3 is a **dev-only backend, explicitly allowed to be
-   slower and feature-reduced.** This is the direct consequence of §3: we cannot
-   measure the things this project exists for on Apple Silicon anyway, so we should
-   stop pretending the Mac is a performance target and keep it as what it is — the
-   machine the editor runs on.
+6. **TWO backends: Metal 4 and Vulkan 1.3. D3D12 is deferred, and Xbox is its
+   trigger.** *(Rewritten twice on 2026-08-28. The original read "three backends,
+   only two of them ship", with Metal 3 as a dev-only backend "explicitly allowed
+   to be slower and feature-reduced". The first correction made all three ship.
+   This one cuts the count to two.)*
+
+   **Coverage is why.** Between them these two reach every platform either product
+   ships on, and D3D12 adds exactly one thing neither covers:
+
+   | | Metal 4 | Vulkan 1.3 | D3D12 |
+   |---|---|---|---|
+   | macOS, iPadOS, iOS, visionOS | ✅ | MoltenVK only | — |
+   | Windows | — | ✅ | ✅ |
+   | Linux, Steam Deck / Proton | — | ✅ | — |
+   | Android | — | ✅ | — |
+   | **Xbox** | — | — | **✅ only** |
+
+   **Complexity is the decisive argument, not coverage.** §9 already names the
+   dominant unschedulable risk of this whole project: the ~15 years of driver
+   quirks bgfx absorbs for us, which we rediscover one vendor at a time. A third
+   backend multiplies that risk, the validation setups and the CI legs — forever,
+   for one developer, to reach a platform neither product ships on today.
+
+   **Metal 4 is what makes two backends sufficient rather than a compromise.**
+   The earlier argument for pairing Metal with D3D12 was that they disagree most,
+   so an abstraction satisfying both is unlikely to be secretly shaped like
+   either. That was reasoning about **Metal 3**, which tracked resources
+   implicitly. Metal 4 is an explicit API: resources are **untracked by default**
+   and need explicit barriers, `MTL4ArgumentTable` replaces per-resource binding
+   (this is the bindless model of axiom 2), residency sets make resources resident
+   with minimal per-frame CPU cost, and `MTL4CommandBuffer` is reusable via
+   `beginCommandBuffer(allocator:)`. That is structurally Vulkan's shape. The
+   axioms above translate to both without either being bent.
+
+   Enough divergence remains — residency sets versus memory heaps, argument tables
+   versus descriptor sets, the queue and submission models — that an abstraction
+   satisfying both is unlikely to be a thin veneer over one of them. That is the
+   property that keeps D3D12 *later a backend rather than a redesign*.
+
+   **The bet, stated so it is a decision:** Vulkan-on-Windows is not D3D12, which
+   is Windows' native and generally best-tested path, especially on Intel iGPUs.
+   It is a good bet — every IHV ships Vulkan on Windows and Proton has hardened it
+   enormously — but it is a bet, and the fallback is adding the third backend.
 
 ### 4.2 The core API, concretely
 
@@ -286,7 +404,8 @@ Each phase must be independently defensible — no phase justified only by the n
 
 | # | Phase | Exit criterion |
 |---|---|---|
-| **0** | **GPU measurement lane on the farm** (one NVIDIA + one AMD box, D3D12 + Vulkan, GPU timings into the SQLite results DB) | The current bgfx renderer's numbers reproduced on discrete hardware. **We will learn things here that change the rest of this plan.** |
+| **0a** | **The bgfx GPU-driven spike** (§2.2): compute cull → indirect args → indirect draw, per-instance data from a storage buffer, on the 50 k fuzz scene. No new backend. | Either extraction stops dominating, or we can name the exact wall. **Weeks, not months, and it decides whether Phases 2–6 are worth a year.** |
+| **0b** | **GPU measurement lane on the farm** (one NVIDIA + one AMD box, D3D12 + Vulkan, GPU timings into the SQLite results DB) | The current bgfx renderer's numbers reproduced on discrete hardware. **We will learn things here that change the rest of this plan.** Gates Phases 4–8; does NOT gate Phase 1 (§3.1). |
 | **1** | **De-contaminate.** bgfx out of the 30 non-render files, out of `RenderContext`; headless server builds with no graphics libs | `engine_runtime` links without bgfx for a server target; 64/64 tests green |
 | **2** | **`rhi` core**: device, queues, timelines, buffers, textures, bindless heap, command lists. D3D12 + Vulkan. Triangle. | One triangle, both backends, under validation layers with zero warnings |
 | **3** | **Shader toolchain**: HLSL → DXC → DXIL/SPIR-V through the existing cooker and DDC | Every current shader cooks and renders on both backends |
@@ -324,14 +443,58 @@ vendor at a time and cannot schedule.
 
 ## 11. Decisions needed before any code
 
-1. **Shipping targets** — is Windows/D3D12 first with Vulkan second, or both at
-   once? (Recommend: both from day one in Phase 2, because a single-backend
-   abstraction is always wrong, and Vulkan is Proton/Deck.)
-2. **Metal's status** — dev-only, as argued in §4.1? (Recommend: yes, explicitly.)
-3. **Minimum spec.** SM 6.6 / `ResourceDescriptorHeap` and mesh shaders mean
-   roughly Turing+/RDNA2+. Ray tracing hardware, required or optional?
-4. **Phase 0 hardware** — one NVIDIA + one AMD box on the farm. Nothing after this
-   is measurable without them.
+*Revised 2026-08-28. Decisions 1 and 2 were answered by facts that arrived after
+this document was written, not by argument.*
+
+1. ~~**Which two backends is the API designed against?**~~ **Answered: Metal 4 and
+   Vulkan 1.3, and there is no third for now.** See §4.1 axiom 6. D3D12's trigger
+   is Xbox, or a Windows Vulkan driver problem that actually shows up rather than
+   one we anticipated.
+2. ~~**Metal's status** — dev-only?~~ **Answered: no.** Metal 4 is a first-class
+   shipping backend and one of the two the API is designed against. See §3.1.
+3. **Minimum spec — and this is where two of our own documents contradict each
+   other.** *(Raised 2026-08-28.)*
+
+   > `renderer-architecture.md` §1.3: "The low-end floor is real hardware. **Intel
+   > UHD 630**, ~128 MB usable VRAM, 4 GB system RAM. **Not a stretch goal — the
+   > acceptance test.**"
+   >
+   > This document, previously: "SM 6.6 / `ResourceDescriptorHeap` and mesh shaders
+   > mean roughly **Turing+/RDNA2+**."
+
+   UHD 630 is Gen9.5, 2017. Turing is 2018. **Both cannot be true**, and the
+   clustered-forward decision in `renderer-architecture.md` §2 — the reason this
+   engine is not deferred — was justified entirely by that 128 MB floor. Nobody had
+   written the conflict down.
+
+   It resolves, but only as a TIERED spec rather than one number:
+
+   | capability | UHD 630 (Gen9.5) | needed by |
+   |---|---|---|
+   | Vulkan 1.3, compute, indirect draw | ✅ | Phases 4–6 |
+   | Descriptor indexing / bindless | ✅ core in 1.2, tighter limits | Phase 6 |
+   | Mesh shaders | ❌ | Phase 8 |
+   | Hardware ray tracing | ❌ | Phase 7 |
+
+   So **GPU-driven cull → indirect → bindless reaches the stated floor** and the
+   floor survives. Phases 7 and 8 do not, and must therefore be explicitly OPTIONAL
+   tiers with a working path when absent — not the baseline this document assumed.
+   Ray tracing is optional by the same reasoning.
+
+   The iPad floor is a third number, set by argument buffers and
+   `MTLIndirectCommandBuffer`, and it has to be stated before Phase 7 rather than
+   discovered in it.
+4. **Phase 0b hardware** — one NVIDIA + one AMD box on the farm. Every *performance*
+   claim after Phase 4 needs them; Phase 1 does not (§3.1).
 5. **Do we do incremental extraction first?** It is cheap, independent, and attacks
-   the *actual* current bottleneck. My recommendation: yes, in parallel with
+   the *actual* current bottleneck. Recommendation: yes, in parallel with
    Phases 0–1, so the frame gets faster while the substrate is being built.
+6. **NEW — does the RHI compile shaders?** Recommend **no**: it takes bytes
+   (DXIL/SPIR-V/metallib) and the cooker stays host-side. That is NVRHI's choice
+   and it is what keeps a second consumer from inheriting our content pipeline. It
+   also contains §5, which this document calls the hidden 40%.
+7. **NEW — bindless-only, or binding sets?** Axiom 2 says bindless-only, and
+   GPU-driven at 50 k objects genuinely needs it. Worth recording that every
+   reusable RHI shipping today (NVRHI, and NRI's higher-level tier) chose immutable
+   binding sets instead, explicitly for validation. Recommend keeping axiom 2 and
+   accepting we take the harder validation story — but knowingly.
