@@ -59,7 +59,7 @@ out-of-process crash isolation, GC. It is genuinely studio-shaped.
 |---|---|---|
 | R1 | GPU resources had no identity/refcount/dedup | **done** — `GpuResourceCache`, wired for textures through `AssetService` |
 | R2 | Extraction/submission split never happened | **done** — `src/render/world/` |
-| R3 | Shaders are compile-time blobs | **done for authored content** — a shipped dist renders its standard program from a cooked `.cshader`, and `.cmat` materials load by name. Mesh-EMBEDDED materials still use the fixed struct (Phase 5 step 4) |
+| R3 | Shaders are compile-time blobs | **done for authored content** — a shipped dist renders its standard program from a cooked `.cshader`, and `.cmat` materials load by name. Mesh-EMBEDDED materials still use the fixed struct (A5 step 4) |
 | R4 | Bone palette uploaded per submesh | **done** — hoisted to once per item (`pipeline/opaque_pass.cpp`) |
 | R5 | No instancing | **done** — runs collapse into instanced submits; 299 covering 41 571 items at 50 k props |
 | R6 | Render targets ~5× the naive figure (71 MB) | **mostly explained** — shadow map was the bulk; now a project setting, rt down to 23 MB |
@@ -72,7 +72,7 @@ peak 71.1 → 63.7 MB with textures actually loading.
 
 ---
 
-## 3. The gate that was blocking Phase 5 — resolved
+## 3. The gate that was blocking A5 — resolved
 
 The question was where the engine's own cooked default assets live, since
 `/shaders` is engine-owned but `.cache` is project-owned. **Answer: the engine's
@@ -102,7 +102,7 @@ Verified in a shipped `fps_shooter` dist: `standard program: cooked .cshader`,
 
 ## 4. What has to be made
 
-### Next — finish Phase 5 (R3)
+### Next — finish A5 (R3)
 1. ~~Resolve the packaging decision.~~ **done** — §3
 2. ~~`ForwardPipeline` consumes `ShaderLibrary`.~~ **done** — verified in a dist
 3. ~~`AssetService` loads `.cmat`; the pipeline uploads prebuilt blocks.~~
@@ -139,7 +139,7 @@ Verified in a shipped `fps_shooter` dist: `standard program: cooked .cshader`,
 *Unlocks:* the stated goal — a game defines its look without rebuilding the
 engine. `src/render/shader` → `working`.
 
-### ~~Then — Phase 4, submission efficiency~~ — **done** (R17–R20)
+### ~~Then — A4, submission efficiency~~ — **done** (R17–R20)
 All three landed: instancing off `batchRunLength()` (R5), material-bind dedup
 (R7), bone palette hoisted to once per item (R4). Submesh-granular visible sets
 (R18) were the prerequisite that made the first two work on real content —
@@ -152,7 +152,7 @@ decimation, so no level is cheaper). Both were kept — the dedup is what makes
 submesh expansion safe, and LOD is correct and waits on a decimator.
 
 ### Then — render graph (tier-2 customization)
-Deliberately after Phase 5. The engine has **two passes**; a render graph for two
+Deliberately after A5. The engine has **two passes**; a render graph for two
 passes is machinery in search of a problem. What creates the need is
 post-processing, which is tier-2 customization and only worth building once
 tier-1 (material + shader) is proven.

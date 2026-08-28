@@ -85,9 +85,9 @@ Worth stating plainly, because the gaps below are not a verdict on the whole:
 | # | Finding | Evidence | Severity |
 |---|---|---|---|
 | **R1** ✅ (shipped path) | **GPU resources have no identity, no refcount, no dedup.** `TextureRegistry::addTexture` is a slot allocator: every call makes a new GPU texture. Two materials referencing the same image file get two copies of it in VRAM. Nothing tracks who references a resource, so nothing can know when it is free. | `src/render/texture_registry.h` — `addTexture` appends; `removeTexture` is manual and unreferenced by any owner | **Critical** |
-| **R2** ✅ | **Extraction/submission split never happened.** Culling, sorting, light packing and material binding all lived inside `ForwardPipeline`. A dev who swapped the pipeline inherited *none* of it and had to rewrite culling and sorting to draw a single triangle differently. **FIXED in Phase 3** — all four moved to `src/render/world/`; the pipeline now owns only shaders, uniforms and binds. Material *assets* remain fixed-struct (R3). | `src/render/world/`, `forward_pipeline.h` | **Critical** |
+| **R2** ✅ | **Extraction/submission split never happened.** Culling, sorting, light packing and material binding all lived inside `ForwardPipeline`. A dev who swapped the pipeline inherited *none* of it and had to rewrite culling and sorting to draw a single triangle differently. **FIXED in A3** — all four moved to `src/render/world/`; the pipeline now owns only shaders, uniforms and binds. Material *assets* remain fixed-struct (R3). | `src/render/world/`, `forward_pipeline.h` | **Critical** |
 | **R3** ✅ | **Shaders are compile-time blobs.** `.sc` sources are compiled to per-platform C arrays (`vs_triangle_mtl`, `_dxbc`, `_spv`) and `#include`d. There is no shader asset, no variant system, no runtime load. A game cannot add a material type without rebuilding the engine. | `forward_pipeline.h:34–104`, `shaders/*.sc` | **Critical** (for the customization goal) |
-| **R4** ✅ | **Bone palette uploaded per submesh.** `setUniform(m_uBoneMatrices, …, boneCount*4)` sits inside `bindMaterial`, which runs once per submesh. The 73-bone zombie re-uploads its whole palette for every submesh, every frame. | `forward_pipeline.h` | **High as written, nil as measured** — **FIXED in Phase 4**: hoisted to once per item in both the main and shadow passes. Safe because bgfx uniform VALUES persist across submits (`BGFX_DISCARD_STATE` drops the pending update range, not the applied value) — the same property that lets the view-level light/camera uniforms be set once per view. But the severity was assessed by READING: `fps_shooter`'s only skinned mesh (Zombie, 73 bones) has exactly ONE submesh, so the redundancy in this scene was zero and the fix changed no measured number. It is correct for any multi-submesh skinned mesh, and GPU time is now instrumented so the cost would be visible if such content appears. |
+| **R4** ✅ | **Bone palette uploaded per submesh.** `setUniform(m_uBoneMatrices, …, boneCount*4)` sits inside `bindMaterial`, which runs once per submesh. The 73-bone zombie re-uploads its whole palette for every submesh, every frame. | `forward_pipeline.h` | **High as written, nil as measured** — **FIXED in A4**: hoisted to once per item in both the main and shadow passes. Safe because bgfx uniform VALUES persist across submits (`BGFX_DISCARD_STATE` drops the pending update range, not the applied value) — the same property that lets the view-level light/camera uniforms be set once per view. But the severity was assessed by READING: `fps_shooter`'s only skinned mesh (Zombie, 73 bones) has exactly ONE submesh, so the redundancy in this scene was zero and the fix changed no measured number. It is correct for any multi-submesh skinned mesh, and GPU time is now instrumented so the cost would be visible if such content appears. |
 | **R5** ✅ | **No instancing.** The sort already groups identical meshes adjacently — the setup for batching is done, the batch is not. | `vs_instanced.sc`, `ForwardPipeline` run loop | **DONE 2026-08-04.** The sort key already made adjacency mean batchability, so the run loop walks `rworld::batchRunLength` and collapses each run into one instanced submit. Measured: 20 001 objects go from 20 001 draws to **1**, and fps_shooter from 12 to 6. Restricted deliberately — skinned items carry a per-item bone palette in uniforms, submeshes need per-range index draws, and a data-driven material supplies its OWN program (instancing it would silently render with the wrong shader), so all three fall through to per-draw. |
 | **R6** ✅ | **Render-target memory is ~5× the naive figure.** 1280×720 colour+depth for the scene and game framebuffers should be ≈14 MB; bgfx reports **71 MB**. Unexplained — candidates are Retina drawable scaling, D24S8 storage on Metal, and the 2-deep swap chain. | `RenderStatsChannel`, `[Renderer] Scene FB: 1280x720` | High |
 | **R7** ✅ | **Redundant material binds.** `bindMaterial` re-set every uniform and texture per submesh with no comparison against current state. **IMPLEMENTED AND MEASURED AT ZERO** (issues.md R17): binds were already 1:1 with draws, so the dedup saved nothing. Kept anyway — it is what makes submesh expansion (R18) safe. | `pipeline/opaque_pass.cpp` | Medium |
@@ -112,7 +112,14 @@ That is why the plan starts there rather than with instancing or shadows.
 Sequenced so each phase is independently useful and leaves a working renderer.
 No big-bang rewrite; the June doc's incremental rule stands.
 
-### Phase 1 — Resource layer (unblocks everything, including the tools)
+> **The phases below are the `A` sequence** — renamed from bare numbers on
+> 2026-08-28. Two other renderer documents also number phases from 1
+> (`renderer-program.md` = `P`, `rhi-design.md` = `G`), and "Phase 4" meant
+> A4 (**done**), P4 and G4 simultaneously. `roadmap.md` and
+> `renderer-architecture.md` cite this sequence. `R1`–`R20` above are FINDING
+> ids, which is why `R` is not a phase prefix.
+
+### A1 — Resource layer (unblocks everything, including the tools)
 
 **`GpuResourceCache`**: content-keyed, refcounted, size-aware ownership for
 textures, materials and meshes.
@@ -128,11 +135,11 @@ textures, materials and meshes.
 
 *Unlocks:* R1, R8, and all tooling.
 
-### Phase 2 — Tools (fall out of Phase 1 almost for free)
+### A2 — Tools (fall out of A1 almost for free)
 
 1. **VRAM census** — every resident resource with size, refcount, owner;
    sorted by cost. Extends `RenderStatsChannel`.
-2. **Duplicate report** — same content hash under two handles. After Phase 1
+2. **Duplicate report** — same content hash under two handles. After A1
    this should always be empty, which makes it a *regression test*, not a
    diagnostic.
 3. **Leak detector** — load scene → unload → assert resident VRAM returns to
@@ -143,7 +150,7 @@ textures, materials and meshes.
 
 *Unlocks:* the `hardened` tier for `src/render`, which today has no test at all.
 
-### Phase 3 — RenderWorld: finish the extraction split (R2) — **DONE**
+### A3 — RenderWorld: finish the extraction split (R2) — **DONE**
 
 Culling, sorting and light packing now live in `src/render/world/` (`rworld::`)
 instead of inside `ForwardPipeline`, producing a **`RenderWorld`** consumed
@@ -168,7 +175,7 @@ Landed, with the deviations worth recording:
 *Unlocked:* R2; R5/R7 are now cheap — `batchRunLength()` is the instancing hook
 and is already tested.
 
-### Phase 4 — Submission efficiency
+### A4 — Submission efficiency
 
 - **Instancing** on the existing mesh-grouped sort (R5).
 - **State dedup**: skip material binds identical to the previous draw (R7).
@@ -184,7 +191,7 @@ and is already tested.
 - Resolve the **71 MB render-target mystery** (R6) with a per-target
   breakdown; on a 128 MB budget a 57 MB unknown decides whether we ship.
 
-### Phase 5 — Authoring: make it actually customizable (R3)
+### A5 — Authoring: make it actually customizable (R3)
 
 - **Shader assets**: a `ShaderCooker` feeding the existing cook pipeline, so
   shaders are cooked content with DDC caching like meshes and textures — not
@@ -205,7 +212,7 @@ produced every wrong number in this document:
 | `engine_host` (dev) | SOURCE `.fbx`/`.gltf` | `AsyncLoader` + Assimp/cgltf -> `TextureRegistry::addTexture` | **none** |
 | `engine_player` (ships) | COOKED `.ctex` | `AssetService` -> `GpuResourceCache` | yes |
 
-Found by wiring the Phase 2 census (which existed and was never called — the cache
+Found by wiring the A2 census (which existed and was never called — the cache
 it reports on was private with no accessor) and seeing it print `0 resources,
 0.0 MB` while bgfx reported 100 MB of textures under `engine_host`.
 
@@ -472,7 +479,7 @@ the display. The instruments to watch are `waitSubmit`/`waitRender`, which read 
 in single-threaded mode and were 3.07 / 7.66 ms in the experiment: both threads
 mostly waiting, because neither was the bottleneck.
 
-### Phase 6 — Scale (deferred, with triggers)
+### A6 — Scale (deferred, with triggers)
 
 LOD (trigger: draw counts or vertex load actually hurt), cascaded shadows
 (trigger: shadow quality complaints at range), occlusion culling (trigger: a

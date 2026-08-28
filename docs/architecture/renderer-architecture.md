@@ -241,7 +241,7 @@ fps_shooter on this hardware; unmeasured ones are marked.
 
 | technique | buys | build when |
 |---|---|---|
-| GPU resource cache | dedup + eviction; makes leaks *definable* | **done** (Phase 1) |
+| GPU resource cache | dedup + eviction; makes leaks *definable* | **done** (A1) |
 | Shadow resolution as data | **71 MB → 23 MB shipped VRAM (measured)** | **done** |
 | Cooked BC textures + mips | **76 MB → ~0 MB (measured)** | **done** |
 | Render-target aliasing | the post chain fits in budget | with the graph |

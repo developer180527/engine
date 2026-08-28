@@ -105,14 +105,14 @@ headless build.
 
 **The cleanup has to happen whether or not we replace bgfx** — it is the same
 refactor the headless dedicated server needs, and the same one an embedding host
-needs. So Phase 1 pays for itself even if the RHI is abandoned. That is the single
+needs. So G1 pays for itself even if the RHI is abandoned. That is the single
 most important property of this plan: **its early phases are valuable
 independently of its late phases.**
 
 ### 2.2 The headroom we have never touched
 
 Measured 2026-08-28, and it belongs in this document because it changes what
-Phase 0 should be:
+G0 should be:
 
 > **bgfx has compute dispatch, indirect buffers, storage buffers and
 > `submit(view, program, indirectHandle)`. This engine has ZERO call sites for
@@ -185,8 +185,8 @@ old §4.1 called dev-only and allowed to be slow.
 
 **And measurement gates performance claims, not structural ones.** De-contamination
 (§2.1), opaque handles, a retained scene, stable object ids — every one of those is
-falsifiable today with link-time assertions and headless builds. Phase 0 gates
-Phases 4–8. It does not gate Phase 1, and treating it as though it did is why the
+falsifiable today with link-time assertions and headless builds. G0 gates
+G4–G8. It does not gate G1, and treating it as though it did is why the
 five files in §2.1 are still uncleaned.
 
 ## 4. Design
@@ -400,20 +400,28 @@ the cleanup work already banked.
 
 ## 8. Phases, with exit criteria
 
+> **These are the `G` sequence.** Three renderer documents run phase sequences and
+> all three used to number from 1 unprefixed, so "Phase 4" meant this document's
+> forward-pipeline port, `renderer-program.md`'s render graph, AND
+> `renderer-audit-and-plan.md`'s submission-efficiency work, which is **already
+> done**. `A` is the audit's, `P` is the programme's, `G` is this document's; `R`
+> is reserved for the audit's finding ids. `renderer-program.md` §4 carries the
+> P↔G mapping and is the document that decides ORDER — this one decides content.
+
 Each phase must be independently defensible — no phase justified only by the next.
 
 | # | Phase | Exit criterion |
 |---|---|---|
-| **0a** | **The bgfx GPU-driven spike** (§2.2): compute cull → indirect args → indirect draw, per-instance data from a storage buffer, on the 50 k fuzz scene. No new backend. | Either extraction stops dominating, or we can name the exact wall. **Weeks, not months, and it decides whether Phases 2–6 are worth a year.** |
-| **0b** | **GPU measurement lane on the farm** (one NVIDIA + one AMD box, D3D12 + Vulkan, GPU timings into the SQLite results DB) | The current bgfx renderer's numbers reproduced on discrete hardware. **We will learn things here that change the rest of this plan.** Gates Phases 4–8; does NOT gate Phase 1 (§3.1). |
-| **1** | **De-contaminate.** bgfx out of the 30 non-render files, out of `RenderContext`; headless server builds with no graphics libs | `engine_runtime` links without bgfx for a server target; 64/64 tests green |
-| **2** | **`rhi` core**: device, queues, timelines, buffers, textures, bindless heap, command lists. D3D12 + Vulkan. Triangle. | One triangle, both backends, under validation layers with zero warnings |
-| **3** | **Shader toolchain**: HLSL → DXC → DXIL/SPIR-V through the existing cooker and DDC | Every current shader cooks and renders on both backends |
-| **4** | **Port the forward pipeline 1:1**, CPU-driven, but *no per-draw uniforms* — per-draw data in a structured buffer indexed by draw ID | Pixel-comparable to bgfx on the fuzz scene, **and the 4 096 draw ceiling is gone**. First point where we beat bgfx on something real. |
-| **5** | **Render graph**: declared passes, derived barriers, transient aliasing | Shadow + opaque + a post pass through the graph; peak VRAM measurably lower than the hand-managed version |
-| **6** | **GPU-driven**: compute cull → HZB occlusion → indirect draws; incremental instance upload | `Render.extract` no longer scales with entity count. **This is the phase the whole document is for.** |
-| **7** | **Inline ray tracing**: BVH management, RT shadows, RTAO, gameplay ray queries | RT shadows replace the shadow map on the fuzz scene at equal or better cost |
-| **8** | **Mesh shaders / cluster LOD** — where this week's decimation graduates toward Nanite-style clusters | Dense geometry stops costing draws at all |
+| **G0a** | **The bgfx GPU-driven spike** (§2.2): compute cull → indirect args → indirect draw, per-instance data from a storage buffer, on the 50 k fuzz scene. No new backend. | Either extraction stops dominating, or we can name the exact wall. **Weeks, not months, and it decides whether G2–G6 are worth a year.** |
+| **G0b** | **GPU measurement lane on the farm** (one NVIDIA + one AMD box, D3D12 + Vulkan, GPU timings into the SQLite results DB) | The current bgfx renderer's numbers reproduced on discrete hardware. **We will learn things here that change the rest of this plan.** Gates G4–G8; does NOT gate G1 (§3.1). |
+| **G1** | **De-contaminate.** bgfx out of the 30 non-render files, out of `RenderContext`; headless server builds with no graphics libs | `engine_runtime` links without bgfx for a server target; 64/64 tests green |
+| **G2** | **`rhi` core**: device, queues, timelines, buffers, textures, bindless heap, command lists. D3D12 + Vulkan. Triangle. | One triangle, both backends, under validation layers with zero warnings |
+| **G3** | **Shader toolchain**: HLSL → DXC → DXIL/SPIR-V through the existing cooker and DDC | Every current shader cooks and renders on both backends |
+| **G4** | **Port the forward pipeline 1:1**, CPU-driven, but *no per-draw uniforms* — per-draw data in a structured buffer indexed by draw ID | Pixel-comparable to bgfx on the fuzz scene, **and the 4 096 draw ceiling is gone**. First point where we beat bgfx on something real. |
+| **G5** | **Render graph**: declared passes, derived barriers, transient aliasing | Shadow + opaque + a post pass through the graph; peak VRAM measurably lower than the hand-managed version |
+| **G6** | **GPU-driven**: compute cull → HZB occlusion → indirect draws; incremental instance upload | `Render.extract` no longer scales with entity count. **This is the phase the whole document is for.** |
+| **G7** | **Inline ray tracing**: BVH management, RT shadows, RTAO, gameplay ray queries | RT shadows replace the shadow map on the fuzz scene at equal or better cost |
+| **G8** | **Mesh shaders / cluster LOD** — where this week's decimation graduates toward Nanite-style clusters | Dense geometry stops costing draws at all |
 
 ## 9. Effort, honestly
 
@@ -434,11 +442,11 @@ vendor at a time and cannot schedule.
 
 ## 10. What would make me say stop
 
-- Phase 0 shows the GPU is nowhere near the limit on discrete hardware either.
+- G0 shows the GPU is nowhere near the limit on discrete hardware either.
   Then the answer is incremental extraction and job-system work, not an RHI.
-- Phase 4 lands and the win is only the draw ceiling. That is a real but modest
-  prize for three months; reassess before Phase 5.
-- The shader toolchain (Phase 3) slips past ~6 weeks. That is the classic sinkhole
+- G4 lands and the win is only the draw ceiling. That is a real but modest
+  prize for three months; reassess before G5.
+- The shader toolchain (G3) slips past ~6 weeks. That is the classic sinkhole
   and the honest signal to reconsider scope.
 
 ## 11. Decisions needed before any code
@@ -471,24 +479,24 @@ this document was written, not by argument.*
 
    | capability | UHD 630 (Gen9.5) | needed by |
    |---|---|---|
-   | Vulkan 1.3, compute, indirect draw | ✅ | Phases 4–6 |
-   | Descriptor indexing / bindless | ✅ core in 1.2, tighter limits | Phase 6 |
-   | Mesh shaders | ❌ | Phase 8 |
-   | Hardware ray tracing | ❌ | Phase 7 |
+   | Vulkan 1.3, compute, indirect draw | ✅ | G4–G6 |
+   | Descriptor indexing / bindless | ✅ core in 1.2, tighter limits | G6 |
+   | Mesh shaders | ❌ | G8 |
+   | Hardware ray tracing | ❌ | G7 |
 
    So **GPU-driven cull → indirect → bindless reaches the stated floor** and the
-   floor survives. Phases 7 and 8 do not, and must therefore be explicitly OPTIONAL
+   floor survives. G7 and G8 do not, and must therefore be explicitly OPTIONAL
    tiers with a working path when absent — not the baseline this document assumed.
    Ray tracing is optional by the same reasoning.
 
    The iPad floor is a third number, set by argument buffers and
-   `MTLIndirectCommandBuffer`, and it has to be stated before Phase 7 rather than
+   `MTLIndirectCommandBuffer`, and it has to be stated before G7 rather than
    discovered in it.
-4. **Phase 0b hardware** — one NVIDIA + one AMD box on the farm. Every *performance*
-   claim after Phase 4 needs them; Phase 1 does not (§3.1).
+4. **G0b hardware** — one NVIDIA + one AMD box on the farm. Every *performance*
+   claim after G4 needs them; G1 does not (§3.1).
 5. **Do we do incremental extraction first?** It is cheap, independent, and attacks
    the *actual* current bottleneck. Recommendation: yes, in parallel with
-   Phases 0–1, so the frame gets faster while the substrate is being built.
+   G0–G1, so the frame gets faster while the substrate is being built.
 6. **NEW — does the RHI compile shaders?** Recommend **no**: it takes bytes
    (DXIL/SPIR-V/metallib) and the cooker stays host-side. That is NVRHI's choice
    and it is what keeps a second consumer from inheriting our content pipeline. It
