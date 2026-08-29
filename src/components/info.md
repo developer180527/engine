@@ -1,15 +1,51 @@
 ---
 status: as-built
-tier: working
-verified: 2026-08-10
+tier: hardened
+verified: 2026-08-29
 covers:
   - src/components/
 tests:
+  - tests/component_abi_test.cpp
   - tests/event_test.cpp
   - tests/sim_purity_check.cpp
   - tests/stress_churn.cpp
 ---
 # Components
+
+## The layout is an ABI, and it is frozen
+
+These structs are not private to the engine. Thirteen of them are hashed into
+`engine_abi::componentLayoutHash()`, which `ModuleLibrary::load` uses to decide
+whether a kit may touch **live ECS memory** — and whose refusal says *restart the
+host*, not *rebuild the module*, because world data survives a reload.
+
+**That hash covers `sizeof` and `alignof` only.** Reordering two same-sized
+fields changes neither, so the gate accepts a kit built against the old order and
+that kit then reads and writes the wrong field, every frame, in memory the host
+owns. Demonstrated rather than argued — swapping `CharacterController::radius`
+with `::height`:
+
+```
+componentLayoutHash()  before: e369fed4bf52e60f
+                        after: e369fed4bf52e60f     ← identical
+```
+
+`tests/component_abi_test.cpp` closes that. It is the same treatment
+`api_abi_compat_test` gave the API table for the same reason
+([`extension-model.md`](../../docs/architecture/extension-model.md) §1.3: *"a
+reordered group keeps every size intact and still breaks every Kit"*), and until
+2026-08-29 `offsetof` appeared in exactly one file in this tree. Components are
+the more exposed of the two surfaces: a kit **writes** them.
+
+Pure-POD components get exact `sizeof` and exact offsets. The four containing
+`std::string`/`std::vector` get **field order** instead, because their sizes
+differ between standard libraries and freezing a byte count would fail on Linux
+for a reason that is not a defect — cross-toolchain mixing is already refused by
+`abiFingerprint`.
+
+> **Changing a component layout is always a deliberate act.** Update the frozen
+> numbers in the same commit, and expect `componentLayoutHash()` to refuse every
+> older module — which is the gate working, not the gate breaking.
 
 ## Purpose
 Plain-data ECS component definitions shared by runtime, plugins, and editor.

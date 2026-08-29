@@ -131,6 +131,13 @@ engine_test(logger_test    LIB engine_core)
 # damage. Hermetic — "the type is not registered" is the whole condition, so this
 # needs no kit and no dlopen.
 engine_test(reflected_pending_test)
+# The shared components' LAYOUT, frozen. componentLayoutHash() — the gate that
+# decides whether a kit may touch live ECS memory — hashes sizeof and alignof
+# only, so reordering two same-sized fields leaves it byte-identical and the gate
+# accepts a kit that then misreads world data. Same defect class the API table
+# fixed with api_abi_compat_test; nothing had done it for components, and
+# `offsetof` appeared in exactly one file in the tree.
+engine_test(component_abi_test)
 engine_test(event_test)
 engine_test(input_test)
 engine_test(script_host_test)
