@@ -446,6 +446,12 @@ engine_test(soak_engine LABEL soak TIMEOUT 300 ARGS 1)
 engine_test(stress_deep_tree LABEL stress TIMEOUT 600)
 engine_test(stress_swarm     LABEL stress TIMEOUT 600)
 engine_test(stress_churn     LABEL stress TIMEOUT 600)
+# The job facade under contention: sustained churn, EXTERNAL threads (BUG-0003's
+# livelock shape), nested waits, work distribution, exact parallelFor coverage on
+# a saturated pool, and the main-thread channel. Written against jobs.h and never
+# against enkiTS, so it doubles as the acceptance gate for the FiberTaskingLib
+# swap the facade was shaped for.
+engine_test(stress_jobs      LABEL stress TIMEOUT 600)
 # The skinned path had no load coverage at all: every other stress test uses
 # static meshes, so the one component measured in KILOBYTES per entity was
 # never exercised at scale. Measures what extraction pays to WALK it.
