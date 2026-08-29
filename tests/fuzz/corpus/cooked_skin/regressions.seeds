@@ -1,0 +1,12 @@
+# Cases that reproduce bugs which were REAL. Found under generator version 1.
+#
+# BUG-0044 — a truncated ozz archive was read into partially uninitialised
+# memory and built into a Skeleton anyway. ozz's IArchive is documented as
+# trusting its input ("reading cannot fail") and enforced that with DEBUG-ONLY
+# asserts, so the same corrupt cooked mesh ABORTED in debug and was SILENTLY
+# ACCEPTED in release, on the AsyncLoader thread.
+#
+# Fixed by anim::GuardedStream (records every short read, refuses the result)
+# plus a patch removing ozz's read-side asserts so debug and release agree.
+# Against the pre-fix tree this seed aborts on archive.h's assert.
+12660276661850738527

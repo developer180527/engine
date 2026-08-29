@@ -366,6 +366,12 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     engine_fuzz_target(fuzz_mesh_loader_test  mesh_loader)
     engine_fuzz_target(fuzz_scene_loader_test scene_loader)
     engine_fuzz_target(fuzz_entity_serde_test entity_serde LIB engine_runtime)
+    # The two OPAQUE ozz archives inside a cooked mesh. fuzz_mesh_loader_test
+    # fuzzes the container — header, counts, strides — and stops at the blob,
+    # which is opaque to it and never decoded. So the container was fuzzed and
+    # the two third-party deserializers reading out of it were not.
+    # engine_runtime: cooked_skin.h pulls in ozz + the animation headers.
+    engine_fuzz_target(fuzz_cooked_skin_test cooked_skin LIB engine_runtime)
     engine_fuzz_target(fuzz_scene_service_test scene_service LIB engine_runtime)
     engine_test(import_test)
     engine_test(residency_test)

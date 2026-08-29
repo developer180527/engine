@@ -1,0 +1,56 @@
+diff --git a/include/ozz/base/io/archive.h b/include/ozz/base/io/archive.h
+index ddf3a3b4..fd7114ab 100644
+--- a/include/ozz/base/io/archive.h
++++ b/include/ozz/base/io/archive.h
+@@ -87,6 +87,24 @@
+ #include "ozz/base/platform.h"
+ #include "ozz/base/span.h"
+ 
++// ── ENGINE PATCH: asserts removed from the untrusted-input path ─────────────
++// Upstream IArchive is documented as trusting its input ("reading cannot fail")
++// and enforces that with DEBUG-ONLY asserts: a short read aborts in debug and is
++// silently discarded in release, leaving destination memory partially
++// uninitialised while ozz builds a Skeleton or Animation out of it.
++//
++// This engine hands these archives bytes read off disk — a partial cook, a DDC
++// blob from another machine, a bad disk — on an async loader thread. Neither
++// half of that behaviour is acceptable there, and the two are inconsistent with
++// each other, which is worse: the debug build cannot run the fuzz lane that
++// would find the release bug.
++//
++// So the asserts are removed and the engine takes responsibility, in
++// src/animation/cooked_skin.h: a Stream that records every short read, checked
++// after extraction, with the result refused if anything came up short. That
++// works identically in debug and release.
++//
++// See BUG-0044 and tests/fuzz_cooked_skin_test.cpp.
+ namespace ozz {
+ namespace io {
+ namespace internal {
+@@ -189,9 +207,10 @@ class OZZ_BASE_DLL IArchive {
+   // Class type loading.
+   template <typename _Ty>
+   void operator>>(_Ty& _ty) {
+-    // Only uses tag validation for assertions, as reading cannot fail.
+-    OZZ_IF_DEBUG(bool valid =) internal::Tagger<const _Ty>::Validate(*this);
+-    assert(valid && "Type tag does not match archive content.");
++    // ENGINE PATCH: was `assert(valid && "Type tag does not match archive
++    // content.")`. Upstream's comment "reading cannot fail" is the assumption
++    // being removed: this engine feeds these archives bytes off disk.
++    (void)internal::Tagger<const _Ty>::Validate(*this);
+ 
+     // Loads instance.
+     uint32_t version = LoadVersion<_Ty>();
+@@ -348,9 +367,10 @@ struct Version<const Array<_Ty>> {
+   template <>                                                               \
+   inline void Array<_type>::Load(IArchive& _archive, uint32_t /*_version*/) \
+       const {                                                               \
+-    OZZ_IF_DEBUG(size_t size =)                                             \
++    /* ENGINE PATCH: no assert on a short read. See the note at the top of  \
++       this file — the engine detects short reads through its own Stream    \
++       and refuses the result, which works in release too. */               \
+     _archive.LoadBinary(array, count * sizeof(_type));                      \
+-    assert(size == count * sizeof(_type));                                  \
+     if (_archive.endian_swap()) { /*Can swap in-place.*/                    \
+       EndianSwapper<_type>::Swap(array, count);                             \
+     }                                                                       \

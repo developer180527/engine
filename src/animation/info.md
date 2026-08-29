@@ -1,16 +1,47 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-26
+verified: 2026-08-29
 parses-external-input: true
 covers:
   - src/animation/
 tests:
+  - tests/fuzz_cooked_skin_test.cpp
   - tests/anim_pose_test.cpp
   - tests/clip_binding_test.cpp
   - tests/import_test.cpp
 ---
 # Animation
+
+## The untrusted-input boundary, and why this is still `working`
+
+A cooked `.mesh` carries two **opaque third-party archives** — an
+`ozz::animation::Skeleton` and one `ozz::animation::Animation` per take — and
+`cooked_skin.h` hands those bytes straight to `ozz::io::IArchive` on the
+AsyncLoader worker thread. That is this subsystem's `parses-external-input: true`,
+and until 2026-08-29 nothing fuzzed it. `fuzz_mesh_loader_test` fuzzes the mesh
+*container* and stops at the blob, which is opaque to it and never decoded.
+
+`tests/fuzz_cooked_skin_test.cpp` closes that, and found a real defect on its
+**second case** (BUG-0045): ozz's `IArchive` is documented as trusting its input
+— *"reading cannot fail"* — and enforces it with debug-only asserts, so a
+truncated archive **aborted in debug and was silently accepted in release**, built
+out of partially uninitialised memory. Fixed by `anim::GuardedStream` plus a patch
+removing ozz's read-side asserts, so both builds now agree and refuse.
+
+> **The tier stays `working`, deliberately.** `hardened` is mechanically
+> available now — the fuzz lane exists and its regression corpus gates — but the
+> explore lane still finds **BUG-0046**, an open defect of a class the stream
+> guard structurally cannot catch: a corrupt COUNT field that ozz reads
+> successfully and then trips its own sanity check while allocating from.
+>
+> Claiming `hardened` while this subsystem's own fuzz lane finds an open memory
+> defect would be the tier inflation `docs/plans/subsystem-audit.md` argues
+> against. What lifts it is the fix BUG-0046 names: **integrity carried by the
+> cooked format itself** — a digest written by the cooker and verified before ozz
+> sees the bytes — because guarding the stream cannot make a deserializer safe
+> against arbitrary input, and removing ozz's internal sanity checks would make
+> release worse rather than better.
 
 ## Purpose
 Skeletal animation: skeleton extraction from FBX (via Assimp), clip sampling,

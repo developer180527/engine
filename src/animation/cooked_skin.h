@@ -22,6 +22,66 @@
 
 namespace anim {
 
+// ── Why a guarded stream, and not just TestTag ───────────────────────────────
+// ozz's IArchive is documented — in its own source — as trusting its input:
+//
+//     // Class type loading.
+//     template <typename _Ty> void operator>>(_Ty& _ty) {
+//       // Only uses tag validation for assertions, as reading cannot fail.
+//       OZZ_IF_DEBUG(bool valid =) internal::Tagger<const _Ty>::Validate(*this);
+//
+// and every primitive array load discards the byte count it actually got:
+//
+//     OZZ_IF_DEBUG(size_t size =) _archive.LoadBinary(array, count * sizeof(T));
+//     assert(size == count * sizeof(T));           // DEBUG ONLY
+//
+// `OZZ_IF_DEBUG` is empty in release, so in a shipping build a truncated or
+// corrupt archive reads FEWER bytes than asked, the short read is discarded, the
+// destination is left partially uninitialised, and ozz goes on to build a
+// Skeleton or Animation out of it. No error, no log, no crash — on the
+// AsyncLoader worker thread, from a file that may be a partial cook, a DDC blob
+// from another machine, or a bad disk. In a debug build the same input aborts
+// the process on ozz's assert instead.
+//
+// `TestTag` does not help: it validates the tag and version at the FRONT of the
+// archive and says nothing about the body behind it. A blob with an intact
+// header and a mangled interior is exactly the input that gets furthest in.
+//
+// So the engine guards the one seam it owns — the Stream. Every short read is
+// recorded, and a decode that consumed less than it asked for is refused rather
+// than returned half-built. Found by `tests/fuzz_cooked_skin_test.cpp` on its
+// second case; repro `--seed 12660276661850738527`.
+//
+// RESIDUAL, stated because it is not zero: this catches the read side. A corrupt
+// COUNT field large enough to make ozz allocate before it reads is still an
+// allocation this cannot see, and the real fix for that is integrity the format
+// carries itself. See BUG-0044.
+class GuardedStream : public ozz::io::Stream {
+public:
+    explicit GuardedStream(const std::vector<uint8_t>& bytes) {
+        if (!bytes.empty()) m_ms.Write(bytes.data(), bytes.size());
+        m_ms.Seek(0, ozz::io::Stream::kSet);
+    }
+    bool shortRead() const { return m_short; }
+
+    bool   opened() const override { return m_ms.opened(); }
+    size_t Read(void* buffer, size_t size) override {
+        const size_t got = m_ms.Read(buffer, size);
+        if (got != size) m_short = true;
+        return got;
+    }
+    size_t Write(const void* buffer, size_t size) override {
+        return m_ms.Write(buffer, size);
+    }
+    int    Seek(int offset, Origin origin) override { return m_ms.Seek(offset, origin); }
+    int    Tell() const override                    { return m_ms.Tell(); }
+    size_t Size() const override                    { return m_ms.Size(); }
+
+private:
+    ozz::io::MemoryStream m_ms;
+    bool                  m_short = false;
+};
+
 // Rebuild the runtime Skeleton (bones + ozz runtime skeleton + our-bone →
 // ozz-joint mapping) from a cooked mesh. Returns a skeleton with .ozz null
 // if the archive blob is unreadable — caller decides the fallback.
@@ -44,15 +104,19 @@ inline Skeleton decodeCookedSkeleton(const assetlib::MeshAsset& asset) {
 
     // ozz skeleton from the opaque archive blob.
     {
-        ozz::io::MemoryStream ms;
-        ms.Write(asset.skeletonBlob.data(), asset.skeletonBlob.size());
-        ms.Seek(0, ozz::io::Stream::kSet);
-        ozz::io::IArchive ar(&ms);
+        GuardedStream gs(asset.skeletonBlob);
+        ozz::io::IArchive ar(&gs);
         if (ar.TestTag<ozz::animation::Skeleton>()) {
             auto sk = ozz::make_unique<ozz::animation::Skeleton>();
             ar >> *sk;
-            skel.ozz = std::shared_ptr<const ozz::animation::Skeleton>(
-                sk.release(), ozz::Deleter<ozz::animation::Skeleton>());
+            if (gs.shortRead()) {
+                LOG_ERROR("Anim", "cooked skeleton archive is truncated or "
+                          "corrupt (%zu bytes) — refusing the partially read "
+                          "skeleton", asset.skeletonBlob.size());
+            } else {
+                skel.ozz = std::shared_ptr<const ozz::animation::Skeleton>(
+                    sk.release(), ozz::Deleter<ozz::animation::Skeleton>());
+            }
         }
     }
     if (skel.ozz) {
@@ -78,13 +142,16 @@ inline Skeleton decodeCookedSkeleton(const assetlib::MeshAsset& asset) {
 inline std::vector<AnimClip> decodeCookedClips(const assetlib::MeshAsset& asset) {
     std::vector<AnimClip> out;
     for (const auto& cc : asset.clips) {
-        ozz::io::MemoryStream ms;
-        ms.Write(cc.blob.data(), cc.blob.size());
-        ms.Seek(0, ozz::io::Stream::kSet);
-        ozz::io::IArchive ar(&ms);
+        GuardedStream gs(cc.blob);
+        ozz::io::IArchive ar(&gs);
         if (!ar.TestTag<ozz::animation::Animation>()) continue;
         auto a = ozz::make_unique<ozz::animation::Animation>();
         ar >> *a;
+        if (gs.shortRead()) {
+            LOG_ERROR("Anim", "cooked clip archive is truncated or corrupt "
+                      "(%zu bytes) — skipping it", cc.blob.size());
+            continue;
+        }
         AnimClip clip;
         clip.name         = a->name();
         clip.duration     = a->duration();
