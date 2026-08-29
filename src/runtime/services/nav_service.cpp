@@ -10,12 +10,15 @@
 #include <cstring>
 
 #include <Recast.h>
+#include <RecastAlloc.h>
+#include <DetourAlloc.h>
 #include <DetourNavMesh.h>
 #include <DetourNavMeshBuilder.h>
 #include <DetourNavMeshQuery.h>
 #include <DetourCommon.h>
 
 #include "core/logger.h"
+#include "core/memory/mem.h"
 
 namespace nav {
 
@@ -23,6 +26,46 @@ namespace {
 constexpr int   kMaxPolyPath   = 256;   // Detour corridor cap per query
 constexpr float kSearchExt[3]  = {2.0f, 4.0f, 2.0f};  // findNearestPoly box
 constexpr unsigned short kFlagWalk = 0x01;
+
+// ── Recast/Detour onto the engine allocator ─────────────────────────────────
+// Both libraries default to plain malloc — `DetourAlloc.cpp` is literally
+// `return malloc(size)` — and neither was hooked, so every navmesh and every
+// query object allocated OUTSIDE the engine: off the tagged TLSF heaps, absent
+// from the VRAM/heap census, and invisible to the budget the census exists to
+// enforce.
+//
+// This is not bake-time-only, which is what made it worth fixing. `dtAllocNavMesh`
+// and `dtAllocNavMeshQuery` run at load, `dtNavMeshQuery::init` allocates its node
+// pools there too, and the whole path is exposed to Kits through the FROZEN API
+// table as `EngineApiNavV1` — so a Kit doing pathfinding was allocating engine
+// data through libc while every other subsystem went through mem::.
+//
+// The hooks are process-global and set here rather than in runtime_boot, because
+// nothing can allocate through Recast or Detour without going through this
+// translation unit first, and a hook installed next to its only user cannot be
+// left behind when the user moves.
+//
+// The alignment is `alignof(max_align_t)`: neither library takes an alignment
+// parameter, so it is asking for malloc's guarantee and must get at least that.
+// See BUG-0028 — under-promising here is exactly the defect that produced a
+// crash on x64 and nothing on arm64.
+void* navAlloc(size_t size, rcAllocHint)  { return mem::alloc(size, alignof(max_align_t), mem::Tag::Nav); }
+void* navAllocDt(size_t size, dtAllocHint){ return mem::alloc(size, alignof(max_align_t), mem::Tag::Nav); }
+void  navFree(void* p)                    { mem::free(p); }
+
+// Installed once, before any Recast or Detour call. A function-local static's
+// initialiser is thread-safe and runs exactly once, which is what this needs:
+// NavService can be constructed from more than one place and the hooks must not
+// be reinstalled after allocations already exist — a later swap would hand
+// pointers from the old allocator to the new one's free().
+void installNavAllocators() {
+    static const bool once = [] {
+        rcAllocSetCustom(navAlloc,   navFree);
+        dtAllocSetCustom(navAllocDt, navFree);
+        return true;
+    }();
+    (void)once;
+}
 } // namespace
 
 struct NavService::Impl {
@@ -38,6 +81,12 @@ struct NavService::Impl {
 };
 
 NavService::NavService() : m_impl(new Impl) {
+    // BEFORE anything else: `Impl` holds no Recast/Detour allocations yet, but
+    // the very next call that does must already see the engine allocator. A hook
+    // installed after the first allocation would leave pointers from libc's heap
+    // to be freed through mem::, which the registry forwards to std::free — safe,
+    // but it would make the census silently under-count forever.
+    installNavAllocators();
     m_impl->filter.setIncludeFlags(kFlagWalk);
     m_impl->filter.setExcludeFlags(0);
 }

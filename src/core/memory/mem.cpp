@@ -69,10 +69,16 @@ struct BlockHeader {
 };
 static_assert(sizeof(BlockHeader) <= kHeaderSize, "header must fit the line");
 
-const char* kTagNames[(size_t)Tag::Count] = {
+constexpr const char* kTagNames[(size_t)Tag::Count] = {
     "Core", "Frame", "Assets", "Rendering", "Animation", "Physics",
-    "Scripting", "ECS", "Audio", "Jobs", "Editor",
+    "Scripting", "ECS", "Audio", "Jobs", "Editor", "Nav",
 };
+// The array is sized by the enum, so a NEW TAG WITHOUT A NAME is a
+// zero-initialised entry — tagName() would return an empty string and the
+// census would print a blank row rather than failing. Adding the tag and
+// forgetting the name is the likely mistake; this makes it a build error.
+static_assert(kTagNames[(size_t)Tag::Count - 1] != nullptr,
+              "every Tag needs an entry in kTagNames");
 
 // ── OS mapping (the ONLY syscalls in the manager) ───────────────────────────
 std::atomic<uint64_t> g_mappedBytes{0};

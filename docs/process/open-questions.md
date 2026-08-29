@@ -103,3 +103,38 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   findings plus the recent ABI and audio work. Older subsystems — the renderer's
   R10–R21, the asset cookers, assetlib — are not yet indexed, and until they are
   the histogram under-reports.
+
+- **The window backend allocates outside the engine, and both backends do.**
+  GLFW is vendored at 3.5, which has `glfwInitAllocator`; SDL3 has
+  `SDL_SetMemoryFunctions`. Neither is wired, so whichever backend a build
+  selects allocates through libc — invisible to the tagged heaps and the census.
+
+  Deferred as ONE item rather than half-done. Fixing GLFW alone leaves the
+  identical hole for the backend that is meant to replace it, and
+  `ENGINE_WINDOW_BACKEND` still defaults to `glfw` ("default, complete") with
+  sdl3 marked "in progress", so neither is safe to treat as the legacy one yet.
+
+  The volume is low and bounded — both allocate at init and window creation, not
+  per frame — which is the honest reason this is deferred rather than urgent. It
+  is recorded because "everything the runtime allocates goes through
+  `engine_core`" is either true or it is not, and today it is not.
+
+  - **since** 2026-08-29
+  - **where** src/runtime/platform/
+  - **trigger** SDL3 becoming the default backend, or the first memory census
+    that has to account for every byte
+
+- **Nine of the ten routed libraries have no test.** `src/core/memory/info.md`
+  lists which hook each vendored library is wired through — Jolt, bgfx/bx, Lua,
+  flecs, ozz, enkiTS, miniaudio, ImGui, Recast/Detour — and only the last has a
+  test asserting its allocations actually land on the engine heap (`nav_test`,
+  added with BUG-0044). The rest are a table in a document.
+
+  A dependency bump that changes a hook's shape, or a new library nobody wires,
+  passes CI in silence — which is exactly how BUG-0044 survived: nine libraries
+  were routed and the tenth was not, and nothing could tell.
+
+  - **since** 2026-08-29
+  - **where** src/core/memory/info.md
+  - **trigger** any vendored dependency bump; cheap for the libraries with a
+    trivial construct-one-object path (Lua, flecs, ozz)

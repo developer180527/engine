@@ -67,6 +67,7 @@ enum class Tag : uint8_t {
     Audio,        // miniaudio
     Jobs,         // enkiTS + job control blocks
     Editor,       // ImGui + editor-only state
+    Nav,          // Recast bake scratch + the Detour navmesh and query
     Count
 };
 const char* tagName(Tag t);

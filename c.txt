@@ -1,87 +1,81 @@
-ledger: four defects that existed only as prose, and a file whose title had stopped being true
+mem: a navmesh that allocated through malloc, and the first test that any library is routed
 
-open-questions.md was 598 lines and 46 items. Classifying them found the title was
-true of SEVEN.
+Ten vendored libraries are supposed to allocate through engine_core. Nine do.
+Recast and Detour never had their hooks called, zero call sites for
+rcAllocSetCustom or dtAllocSetCustom anywhere in the tree, so every bake put
+231 allocations and ~82 KB outside the engine entirely: off the tagged TLSF
+heaps, absent from the census, uncounted against the budget the census exists to
+enforce.
 
-    25  Windows / cross-ISA port findings, every one FIXED
-     8  fixed defects DUPLICATING a BUG-NNNN entry that already had a test
-     4  fixed defects with no ledger entry at all
-     1  a note about an existing entry
-     1  stale, the thing it described was no longer true
-     7  actually open
+`DetourAlloc.cpp` is literally `return malloc(size)`.
 
-── THE FOUR THAT WERE NOWHERE ELSE ─────────────────────────────────────────
-This is the finding. Four complete defects, mechanism, cause, fix, recorded only
-as prose in a file nothing checks, with no id, no `pinned-by`, and no way to ask
-whether their fixes had regressed.
+── WHY THIS WAS WORTH FIXING RATHER THAN NOTING ────────────────────────────
+It is RUNTIME, not bake time. dtAllocNavMesh and dtAllocNavMeshQuery run at load
+and dtNavMeshQuery::init allocates its node pools there, and the whole path is
+exposed to Kits through the FROZEN API table as EngineApiNavV1. A Kit calling
+pathfinding was allocating engine data through libc while every other subsystem
+went through mem::.
 
-BUG-0040. audio_provider_asan_test tracked live blocks in an unsynchronised
-std::map while the ABI EXPLICITLY permits the provider to allocate off the game
-thread, it is handed parallelFor and told to decode there. TSan reported races
-inside libc++'s red-black tree. The fixture was the racing party, and a corrupted
-tree would eventually have surfaced as "the provider freed a pointer we never
-handed out": the fixture accusing the code it was written to vindicate.
+The shape of the defect is not a wrong decision, it is an absent one, in the one
+library nobody went back to.
 
-BUG-0041. `verified:` dates from a UTC+5:30 machine read as the FUTURE to a UTC
-runner, a hard error, on the gating leg, for a timezone, five and a half hours a
-day.
+── THE FIRST TEST OF ANY LIBRARY'S ROUTING ─────────────────────────────────
+This is the part that generalises. src/core/memory/info.md carries a table of ten
+libraries and the hook each is wired through, and it was a claim in a document
+with NOTHING BEHIND IT. mem_test exercises the MEM_SCOPE mechanism; it never
+asserted that a Jolt allocation lands on the Physics tag, or a flecs one on ECS.
 
-BUG-0042. render_status computed staleness a shallow clone cannot know, while
-check_docs already refused to and is_shallow()'s own docstring says "refusing to
-make the claim beats emitting confident nonsense". Two halves of one tool
-disagreeing about what it is allowed to know; ⚠️ on twenty rows that were not
-stale.
+Which is exactly how this survived. Nine libraries were routed, the tenth was
+not, and no check in the repo could tell the difference.
 
-BUG-0043. The cooked-format test checked status.success(), but the worker returns
-`f.good() ? 0 : 65`, the exit code says whether the RESULT FILE was written, not
-whether the cook succeeded. The test asked "did the worker run?" while believing it
-asked "did the cook succeed?", and the machine-readable answer sat in a file three
-lines away. It PREDATES BUG-0032 and BUG-0033, which is why the Add-on protocol's
-rule 3, "exit status says whether the tool ran, never what it decided", is
-written the way it is. The rule was learned here first and not written down.
+nav_test now asserts the bake lands on Tag::Nav, 231 allocations, 82344 bytes,
+with a `> 1024` floor as well, so a hook that fired for one incidental structure
+while missing the navmesh would not pass. Mutation: removing
+installNavAllocators() yields "0 allocations on Tag::Nav" and three failures.
 
-── WHY THE FILE ROTTED ─────────────────────────────────────────────────────
-The ledger has a lifecycle: found -> fixed -> pinned-by, and `status:` now
-enforces it. This file had none. Things went in and nothing ever left, so "Open"
-stopped meaning open somewhere around item 15, and once a list is half untrue,
-the untrue half is invisible, because nobody re-reads a list they already know is
-mixed.
+The other nine remain untested and that is now written down in the table itself
+and filed as an open item, rather than left as an implication of the table
+looking complete.
 
-Three rules are now stated in it, each the direct cause of one of the categories
-above:
+── Tag::Nav, AND WHY ADDING A TAG IS SAFE ──────────────────────────────────
+EngineApiMemoryV1 passes `uint8_t tag`, and its own comment says an unknown tag
+is charged to the general one "so a kit built against a newer tag list still runs
+on an older host", the list is designed to grow. Every internal use is a
+Tag::Count-sized loop, not a frozen array; checked before adding.
 
-  1. Fixed goes to the ledger, not here. Four defects sat only in this file
-     because that was never written down.
-  2. Nothing is duplicated from the ledger. Eight items described a defect that
-     already had a number and a test; when two records of one defect drift,
-     nothing says which is true.
-  3. An item that turns out to be FIXED is a finding. "CI has never run the unit
-     lane" survived here long after ci.yml grew `ctest -L unit`, and the item's
-     own text contradicted itself, calling the sanitizer job "the first lane in
-     the project's history to execute ctest -L unit".
+kTagNames is constexpr now with a static_assert that the last entry is non-null.
+Adding a tag and forgetting its name previously produced a zero-initialised entry
+— tagName() returning an empty string and a BLANK CENSUS ROW rather than a
+failure. Mutation-verified: an unnamed tag now fails the build with that message.
 
-Plus an optional schema, since / where / trigger, where `where` gets the same
-existence check the ledger's does, and an item with no trigger is a complaint
-rather than scheduled work.
+The hooks install through a function-local static, so exactly once and never
+after allocations already exist, a later swap would hand pointers from one
+allocator to another's free(). Alignment is alignof(max_align_t) because neither
+library takes an alignment parameter, so it is asking for malloc's guarantee and
+must get at least it (BUG-0028 is what under-promising there costs).
 
-── THE PORT LOG ────────────────────────────────────────────────────────────
-port-log-windows.md, 25 findings from making a macOS-only engine build on Windows
-x64, Windows arm64, Linux x64 and Linux arm64. All fixed; six also have BUG
-entries and the rest are toolchain findings with no test to pin, where the value
-is entirely in knowing they exist before hitting them again.
+── GLFW AND SDL3: DEFERRED AS ONE ITEM, NOT HALF DONE ──────────────────────
+Both window backends allocate outside the engine. GLFW is vendored at 3.5 and has
+glfwInitAllocator; SDL3 has SDL_SetMemoryFunctions. Neither is wired.
 
-Kept as a NARRATIVE rather than filed away, because the recurring shapes are the
-reusable part: POSIX spellings assumed universal (setenv, popen, getpid, each
-found separately, each the same lesson, none the last); architecture detection
-that agreed with itself and nothing else (our blake3 test, bx's simd_t.h, bgfx's
-DXC rule, and bx believing ARM64 Windows is 32-bit, four instances of one
-assumption in four files); and silence read as success.
+Not fixed here, and the reason is not that GLFW is legacy, ENGINE_WINDOW_BACKEND
+still defaults to `glfw`, described in CMakeLists as "default, complete" against
+sdl3's "in progress". Fixing GLFW alone would leave the identical hole for the
+backend meant to replace it. Both allocate at init and window creation rather than
+per frame, so the volume is low and bounded, which is the honest reason it is
+deferred rather than urgent. Recorded with a trigger.
 
-── ALSO ────────────────────────────────────────────────────────────────────
-The "BUG-0009 has no automated test" item is folded into BUG-0009 itself. A note
-about a bug belongs on the bug, or the two drift, which is the same failure as
-category 2, one level down.
+── THREADING: AUDITED, NOTHING TO DO ───────────────────────────────────────
+Checked alongside, since "everything managed by engine_core" is two claims. Jolt
+runs on the engine worker pool through JoltJobsAdapter, JobSystemWithBarrier
+minus the threads, installed at jolt_plugin.h:134. bgfx's render thread is
+suppressed by calling renderFrame() before init. flecs never calls ecs_set_threads.
+ozz's thread-creating files are all under extern/ and samples/, none in the
+library. miniaudio owns its device thread, which is correct by design:
+provider-abi.md rule 1 gives the provider its resource, its threads and its
+schedule.
 
-598 lines -> 105. Ledger 43 entries, 1 open, every pinned-by resolving.
-engine_doctor 75 docs, 0 errors. docs lane 2/2.
+ctest -L unit 58/58. engine_doctor 76 docs, 0 errors. Three hardened docs
+re-verified and bumped, core, core/memory and runtime, after checking that
+neither core/info.md nor runtime/info.md enumerates the tag list.
 

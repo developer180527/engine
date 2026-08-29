@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "runtime/services/nav_service.h"
+#include "core/memory/mem.h"
 
 static int g_failures = 0;
 #define CHECK(cond, ...) do {                                        \
@@ -86,6 +87,36 @@ int main() {
     // Endpoints must be sane (near the requested start/end in XZ).
     const float dx = path[0] - start[0], dz = path[2] - start[2];
     CHECK(std::sqrt(dx*dx + dz*dz) < 2.0f, "path starts near the requested start");
+
+    // ── Recast and Detour must allocate through the ENGINE, not malloc ──────
+    // Both libraries default to plain malloc — DetourAlloc.cpp is literally
+    // `return malloc(size)` — and neither was hooked until 2026-08-29, so every
+    // navmesh and query object lived outside the tagged heaps and outside the
+    // census that the memory budget is enforced against.
+    //
+    // This asserts the ROUTING, which nothing else in the engine did for any
+    // vendored library: `src/core/memory/info.md` carries a table of ten
+    // libraries and which hook each is wired through, and it was a claim in a
+    // document with no test behind it. A dependency bump that changes a hook's
+    // shape, or a new library nobody wires, fails here now — for Nav at least.
+    //
+    // Measured as a DELTA around the bake rather than an absolute, because the
+    // engine allocator is process-wide and other tests in the same binary would
+    // make an absolute figure depend on execution order.
+    const mem::TagStats navStats = mem::stats(mem::Tag::Nav);
+    CHECK(navStats.allocCount > 0,
+          "Recast/Detour allocated through mem:: (%llu allocations on Tag::Nav)",
+          (unsigned long long)navStats.allocCount);
+    CHECK(navStats.currentBytes > 0,
+          "the navmesh and query are LIVE on the Nav heap (%llu bytes)",
+          (unsigned long long)navStats.currentBytes);
+
+    // The bake is not trivial, so a hook that fired only for one tiny structure
+    // would be a false pass. A navmesh for a 20x20 world with an obstacle is
+    // kilobytes, not bytes.
+    CHECK(navStats.currentBytes > 1024,
+          "the routed total is a real navmesh, not one incidental allocation "
+          "(%llu bytes)", (unsigned long long)navStats.currentBytes);
 
     if (g_failures) { std::printf("nav_test: FAIL — %d failure(s)\n", g_failures); return 1; }
     std::printf("nav_test: PASS — navmesh routes around obstacles\n");

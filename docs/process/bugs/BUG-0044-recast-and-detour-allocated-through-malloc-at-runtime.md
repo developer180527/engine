@@ -1,0 +1,13 @@
+## BUG-0044 — Recast and Detour allocated through malloc, at runtime, behind a frozen API
+- found:     2026-08-29
+- status:    fixed
+- class:     memory
+- where:     src/runtime/services/nav_service.cpp
+- symptom:   231 allocations and ~82 KB of navmesh, per bake, outside the engine allocator entirely — off the tagged TLSF heaps, absent from the VRAM/heap census, and not counted against the budget the census exists to enforce.
+- cause:     both libraries default to plain malloc (`DetourAlloc.cpp` is literally `return malloc(size)`), and neither `rcAllocSetCustom` nor `dtAllocSetCustom` had ever been called — zero call sites in the tree. Nine other vendored libraries were routed and these two were not, which is the shape of the defect: not a wrong decision, an absent one, in the only library nobody had gone back to.
+- pinned-by: tests/nav_test.cpp
+- lane:      unit
+- proof:     mutation — removing `installNavAllocators()` reports `0 allocations on Tag::Nav` and `0 bytes`, and three assertions fail. With the hooks: 231 allocations, 82344 bytes. A `> 1024` floor is asserted as well, so a hook that fired for one incidental structure while missing the navmesh would not pass.
+- note:      RUNTIME, not just bake time, which is what made it worth fixing rather than noting. `dtAllocNavMesh` and `dtAllocNavMeshQuery` run at load and `dtNavMeshQuery::init` allocates its node pools there; the whole path is exposed to Kits through the frozen API table as `EngineApiNavV1`. A Kit calling pathfinding was allocating engine data through libc while every other subsystem went through `mem::`.
+- note:      `mem::Tag::Nav` is new. Adding a tag is safe by construction — `EngineApiMemoryV1` passes `uint8_t tag` and its own comment says an unknown tag is charged to the general one "so a kit built against a newer tag list still runs on an older host" — and every internal use is a `Tag::Count`-sized loop rather than a frozen array. `kTagNames` is now `constexpr` with a `static_assert` that the last entry is non-null, so adding a tag and forgetting its name is a build error instead of a blank census row.
+- note:      the wider finding is that this was the FIRST test of any vendored library's routing. `src/core/memory/info.md` carries a table of ten libraries and the hook each is wired through, and it was a claim in a document with nothing behind it — a dependency bump that changed a hook's shape would have passed CI in silence. Nav now has a test; the other nine do not.

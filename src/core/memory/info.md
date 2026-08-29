@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-25
+verified: 2026-08-29
 covers:
   - src/core/memory/
 tests:
@@ -44,7 +44,21 @@ std::free/std::realloc.
 | enkiTS                     | TaskSchedulerConfig.customAllocator      | Jobs |
 | miniaudio                  | engine config allocationCallbacks        | Audio |
 | ImGui                      | SetAllocatorFunctions (imgui_bgfx.cpp)   | Editor |
+| Recast/Detour              | rc/dtAllocSetCustom (nav_service.cpp)     | Nav |
 | AsyncLoader thread         | MEM_SCOPE(Assets) around the worker loop | Assets |
+
+**Not routed, and known:** GLFW (3.5 vendored, `glfwInitAllocator` exists and is
+unused) and SDL3 (`SDL_SetMemoryFunctions`). Both are the WINDOW backend, both
+allocate at init and window creation rather than per frame, and only one of them
+is compiled into any given build. Deferred as one item rather than half-done:
+fixing GLFW alone leaves the same hole for whichever backend ships. See
+`open-questions.md`.
+
+**Only Nav has a test.** `nav_test` asserts the bake lands on `Tag::Nav`
+(231 allocations, ~82 KB) and fails if the hooks are removed. Every other row in
+this table is a claim with nothing behind it — a dependency bump that changes a
+hook's shape would pass CI silently. The check is cheap for any library with a
+trivial construct-one-object path.
 
 `MEM_SCOPE(tag)` pushes a thread-local tag; every untagged allocation under
 it (std containers included) is attributed. Scopes must not straddle a
