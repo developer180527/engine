@@ -84,6 +84,15 @@ endif()
 add_test(NAME hid_null_link_check COMMAND hid_null_link_check)
 set_tests_properties(hid_null_link_check PROPERTIES LABELS unit TIMEOUT 30)
 
+# The hid SPSC ring: push order, drop-newest overflow, monotonic clock, and the
+# 24-byte wire POD. It had an add_executable in modules/hid/CMakeLists.txt and
+# NO add_test anywhere, so it was compiled by every build and run by nothing —
+# the same shape as BUG-0010 (kit_lifecycle_test built but never registered, so
+# CI had never executed it once). It passes, and has presumably passed the whole
+# time; a test nobody runs is a test nobody can trust.
+add_test(NAME hid_ring_test COMMAND hid_ring_test)
+set_tests_properties(hid_ring_test PROPERTIES LABELS unit TIMEOUT 60)
+
 # SDL3 gamepad backend gauntlet — exists only when that backend is compiled.
 # Uses SDL's VIRTUAL joystick, so it needs no controller and runs in CI.
 if(TARGET hid_sdl3_gamepad_test)

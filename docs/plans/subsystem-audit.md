@@ -88,10 +88,22 @@ being `prototype` costs nothing: **nothing depends on it.**
   `scripts/engine_doctor.py`. That is §6's caveat arriving early: the doc gate is
   not the second-buggiest thing here, it is the thing that gets re-read most, and
   five of its defects are written down because five of them were looked for.
-- **`modules/hid/info.md` exists and has no front-matter**, so it parses as an
-  unclassified document. It describes itself as "the bottom of the AAA input
-  pipeline", is a standalone zero-dependency module like `assetlib`, and has its
-  own tests (`ring_test`, `sdl3_gamepad_test`, `null_link_check`).
+- **`modules/hid` is a git SUBMODULE**, and `engine_doctor` deliberately skips
+  submodule-owned docs — *"another repo's contract"*. It therefore cannot appear
+  on `ENGINE_STATUS.md` no matter what its `info.md` says.
+
+  > **Corrected 2026-08-29.** This entry originally read "`modules/hid/info.md`
+  > exists and has no front-matter, so it parses as an unclassified document",
+  > and listed it beside `src/audio` as the same kind of reporting gap. That was
+  > wrong. The missing front-matter was real and has been added, but it was never
+  > the reason for the absence: a tool that cannot see a submodule's git history
+  > has no business asserting whether its docs are stale, so refusing to make the
+  > claim is the correct behaviour and not a gap to close.
+  >
+  > The error is the same one §3.1 is *about* — an enumeration that assumed every
+  > directory under `src/` and `modules/` plays by the same rules, and was wrong
+  > by exactly the entry that does not. Third time in this document's short life
+  > (see also the stale count in §4, which was seven and is eight).
 
 Neither is a code problem. Both already have test evidence. They are *reporting*
 gaps, and they are the reason this audit had to be assembled by hand rather than
@@ -151,7 +163,8 @@ independently worth doing.
 | # | Work | Why first |
 |---|---|---|
 | 1 | `src/audio/info.md` — declare a tier against the tests that already exist (`audio_abi_conformance`, `audio_provider_asan_test`) | The densest defect cluster in the engine is not on the status page. Costs hours; no new tests needed |
-| 2 | `modules/hid/info.md` — add front-matter | Invisible for want of a `---` block |
+| 2 | `modules/hid/info.md` — add front-matter | **Done, and it does not do what this table originally claimed.** `hid` is a submodule, so it stays off `ENGINE_STATUS.md` by design (§3.1). Worth having anyway: the module is meant to be vendored standalone, so it should be self-describing in its own repo |
+| 2b | Register `hid_ring_test` in ctest | Found while doing #2. It had an `add_executable` and **no `add_test` anywhere** — compiled by every build, run by nothing, and passing the whole time. BUG-0010's shape, a third time |
 
 **You cannot rank what you cannot see.** These two are not improvements to the
 engine; they are improvements to the audit, and everything below is more
