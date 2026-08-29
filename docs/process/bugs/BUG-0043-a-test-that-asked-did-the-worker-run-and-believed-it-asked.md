@@ -1,0 +1,11 @@
+## BUG-0043 — a test that asked "did the worker run" and believed it asked "did the cook succeed"
+- found:     2026-08-26
+- status:    fixed
+- class:     coverage
+- where:     tests/cooked_format/
+- symptom:   on Linux arm64 the cook produced no `.cshader`, and the best the test could say was `no output (shaderc unavailable?)` — a guess, while the machine-readable answer sat in a file three lines away.
+- cause:     `engine_cook_worker` returns `f.good() ? 0 : 65`, so its exit code reports whether the RESULT FILE was written, not whether the cook succeeded — the verdict travels inside that file, which is what the real pipeline reads. The test checked `status.success()`. Both halves were correct in isolation and the test was asking a different question than it believed.
+- pinned-by: tests/cooked_format/tests/cook_result_frame.rs
+- lane:      unit
+- proof:     the suite parses `ENGINE_COOK_RESULT` frames and asserts on `RESULT ok` / `RESULT fail` rather than the exit status. Verified by hand at the time: a malformed `.shader` yields exit 0 with `RESULT fail` and the real parse error. `cook_result_frame.rs` later reused the same reader to pin BUG-0034.
+- note:      recorded 2026-08-29 from `open-questions.md`. The same shape as BUG-0032 and BUG-0033 — a caller reading the wrong channel — and it predates both, which is why the Add-on protocol's rule 3 ("exit status says whether the tool ran, never what it decided") is written the way it is. See BUG-0040's note.

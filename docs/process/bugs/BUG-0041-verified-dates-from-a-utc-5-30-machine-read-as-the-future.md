@@ -1,0 +1,11 @@
+## BUG-0041 — `verified:` dates from a UTC+5:30 machine read as the future to a UTC runner
+- found:     2026-08-26
+- status:    fixed
+- class:     logic
+- where:     scripts/engine_doctor.py
+- symptom:   three docs stamped 2026-08-25 failed the gating CI leg as a hard error, on a runner where it was still the 24th.
+- cause:     `verified:` is a DATE with no timezone. A contributor at UTC+5:30 writing today's local date produces a stamp that a UTC runner reads as the FUTURE for five and a half hours out of every day, and a future stamp was treated as an error. The same clock skew flipped `Contract errors: 0` to `3` inside the generated `ENGINE_STATUS.md`, so the status gate failed for the same reason one layer up.
+- pinned-by: scripts/engine_doctor.py
+- lane:      docs
+- proof:     the comparison is against UTC with one day of slack, and a 2027 stamp is still rejected — the check exists to catch a transposed year, not to police which side of midnight a contributor lives on. Live-check counts are now excluded from the status comparison for the same reason the stale count already was.
+- note:      recorded 2026-08-29 from `open-questions.md`, where it had sat with no id since the day it was fixed. See BUG-0040's note.

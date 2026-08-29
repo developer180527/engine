@@ -7,4 +7,5 @@
 - cause:     input_system.h included `<GLFW/glfw3.h>` and branched on the backend in six places. Because input.h, input_map.h, input_sources.h, runtime.cpp and the editor all include it, one include decided the link line for the whole engine.
 - pinned-by: src/CMakeLists.txt
 - lane:      unit
-- proof:     stashed the change and reconfigured — `libglfw3.a` is in the SDL3 `engine_player` link line before and absent after. NOT YET A TEST: this is verified by hand, and BUG-0009 is the reason the `build` class exists. See the open item below.
+- proof:     stashed the change and reconfigured — `libglfw3.a` is in the SDL3 `engine_player` link line before and absent after. NOT YET A TEST: this is verified by hand, and BUG-0009 is the reason the `build` class exists.
+- note:      **the proof is still manual, and that is the one gap this entry carries.** The check the `build` class implies is "assert on the built artifact" — read the link line, or `nm` the binary, the way the `shipping-runtime` CI lane already asserts Assimp is absent. Until that exists, nothing stops GLFW creeping back into an SDL3 build. Folded in from `open-questions.md` on 2026-08-29, where it had lived as a separate item pointing at this entry: a note about a bug belongs on the bug, or the two drift.

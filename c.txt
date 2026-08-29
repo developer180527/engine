@@ -1,73 +1,87 @@
-docs: rank the subsystems by blast radius, and four numbers checked against the tool
+ledger: four defects that existed only as prose, and a file whose title had stopped being true
 
-An audit of what exists, what is load-bearing, and what order to strengthen it in.
-One principle, and the whole document is an argument from it:
+open-questions.md was 598 lines and 46 items. Classifying them found the title was
+true of SEVEN.
 
-    Hardening propagates downward. A test on a foundation protects everything
-    above it; a test on a leaf protects only itself.
+    25  Windows / cross-ISA port findings, every one FIXED
+     8  fixed defects DUPLICATING a BUG-NNNN entry that already had a test
+     4  fixed defects with no ledger entry at all
+     1  a note about an existing entry
+     1  stale, the thing it described was no longer true
+     7  actually open
 
-So the order is not "worst first", it is HIGHEST FAN-IN first, and the finding
-that makes it worth writing down is that the current tiers already follow that
-rule for the bottom of the graph and stop halfway. core, core/memory, assetlib,
-assets, runtime and scene are hardened and are genuinely the foundations. Every
-gap is in the MIDDLE layer: the hubs many things depend on that nobody has treated
-as foundations yet. Sorted by dependents, the first `working` subsystem appears at
-rank 2.
+── THE FOUR THAT WERE NOWHERE ELSE ─────────────────────────────────────────
+This is the finding. Four complete defects, mechanism, cause, fix, recorded only
+as prose in a file nothing checks, with no id, no `pinned-by`, and no way to ask
+whether their fixes had regressed.
 
-runtime/jobs is the sharpest case and the only subsystem meeting all three
-criticality conditions: eight dependents, a shipped LIVELOCK that only TSan's
-timing exposed (BUG-0003), and no endurance lane of its own.
+BUG-0040. audio_provider_asan_test tracked live blocks in an unsynchronised
+std::map while the ABI EXPLICITLY permits the provider to allocate off the game
+thread, it is handed parallelFor and told to decode there. TSan reported races
+inside libc++'s red-black tree. The fixture was the racing party, and a corrupted
+tree would eventually have surfaced as "the provider freed a pointer we never
+handed out": the fixture accusing the code it was written to vindicate.
 
-── TWO SUBSYSTEMS ARE INVISIBLE TO THE TIER SYSTEM ─────────────────────────
-src/audio has no info.md at all, and modules/hid/info.md has no front-matter so
-it parses as unclassified. Neither is a code problem, both already have test
-evidence, and they are the reason this audit had to be assembled by hand instead
-of read off ENGINE_STATUS.md. You cannot rank what you cannot see, so they are
-Rank 0 and cost hours.
+BUG-0041. `verified:` dates from a UTC+5:30 machine read as the FUTURE to a UTC
+runner, a hard error, on the gating leg, for a timezone, five and a half hours a
+day.
 
-── THE ONE PLACE HARDENING WOULD BE WASTED ─────────────────────────────────
-src/render has eleven dependents and no endurance lane, which says harden it. The
-renderer programme says the opposite for half of it. The split already exists in
-the tree: src/render/world is GPU-free pure functions that P3/P4 build on and the
-RHI keeps, harden that. src/render proper is the bgfx-coupled part P7–P8 replace
-— refresh its stale doc and add no tests.
+BUG-0042. render_status computed staleness a shallow clone cannot know, while
+check_docs already refused to and is_shallow()'s own docstring says "refusing to
+make the claim beats emitting confident nonsense". Two halves of one tool
+disagreeing about what it is allowed to know; ⚠️ on twenty rows that were not
+stale.
 
-── FOUR NUMBERS, CHECKED AGAINST THE TOOL RATHER THAN THE DRAFT ────────────
-Every claim here was re-derived before committing. Four did not survive.
+BUG-0043. The cooked-format test checked status.success(), but the worker returns
+`f.good() ? 0 : 65`, the exit code says whether the RESULT FILE was written, not
+whether the cook succeeded. The test asked "did the worker run?" while believing it
+asked "did the cook succeed?", and the machine-readable answer sat in a file three
+lines away. It PREDATES BUG-0032 and BUG-0033, which is why the Add-on protocol's
+rule 3, "exit status says whether the tool ran, never what it decided", is
+written the way it is. The rule was learned here first and not written down.
 
-THE STALE COUNT WAS SEVEN AND IS EIGHT. The list was assembled by walking
-info.md files, and docs/architecture/asset-cook-architecture.md is the only stale
-doc that is not one. Recorded rather than quietly corrected, because it is the
-same failure §3.1 describes one level up: an audit that enumerates by file NAME is
-wrong by exactly the entries that do not fit the naming convention. The row now
-names the command that owns the answer.
+── WHY THE FILE ROTTED ─────────────────────────────────────────────────────
+The ledger has a lifecycle: found -> fixed -> pinned-by, and `status:` now
+enforces it. This file had none. Things went in and nothing ever left, so "Open"
+stopped meaning open somewhere around item 15, and once a list is half untrue,
+the untrue half is invisible, because nobody re-reads a list they already know is
+mixed.
 
-§3.1 LISTED THE WRONG FIVE. BUG-0019's `where` is
-tests/audio_conformance/src/reference.rs, so it was counted twice, once as a
-src/audio entry and again as one of "two more in its conformance suite". The
-actual fifth is BUG-0024. The 7-of-39 total survived only because the swap is
-one-for-one.
+Three rules are now stated in it, each the direct cause of one of the categories
+above:
 
-"TWO FILES" WAS ONE. All five name src/audio/miniaudio_provider.cpp. That is the
-stronger finding and it was understated: five of the engine's thirty-nine ledger
-entries came out of a single source file.
+  1. Fixed goes to the ledger, not here. Four defects sat only in this file
+     because that was never written down.
+  2. Nothing is duplicated from the ledger. Eight items described a defect that
+     already had a number and a test; when two records of one defect drift,
+     nothing says which is true.
+  3. An item that turns out to be FIXED is a finding. "CI has never run the unit
+     lane" survived here long after ci.yml grew `ctest -L unit`, and the item's
+     own text contradicted itself, calling the sanitizer job "the first lane in
+     the project's history to execute ctest -L unit".
 
-"SECOND-DENSEST" CONTRADICTED "DENSEST" TWO SECTIONS LATER. Densest is right,
-src/audio has five, the next src/ subsystem has three.
+Plus an optional schema, since / where / trigger, where `where` gets the same
+existence check the ledger's does, and an item with no trigger is a complaint
+rather than scheduled work.
 
-Checking that last one turned up something worth keeping: exactly one file in the
-repo ties miniaudio_provider.cpp at five entries, and it is scripts/engine_doctor.py.
-That is §6's own caveat, density partly measures ATTENTION, arriving in the data
-instead of only in the disclaimer. The doc gate is not the second-buggiest thing
-here; it is the thing that gets re-read most.
+── THE PORT LOG ────────────────────────────────────────────────────────────
+port-log-windows.md, 25 findings from making a macOS-only engine build on Windows
+x64, Windows arm64, Linux x64 and Linux arm64. All fixed; six also have BUG
+entries and the rest are toolchain findings with no test to pin, where the value
+is entirely in knowing they exist before hitting them again.
+
+Kept as a NARRATIVE rather than filed away, because the recurring shapes are the
+reusable part: POSIX spellings assumed universal (setenv, popen, getpid, each
+found separately, each the same lesson, none the last); architecture detection
+that agreed with itself and nothing else (our blake3 test, bx's simd_t.h, bgfx's
+DXC rule, and bx believing ARM64 Windows is 32-bit, four instances of one
+assumption in four files); and silence read as success.
 
 ── ALSO ────────────────────────────────────────────────────────────────────
-Two future subsystems are waiting on something other than what the backlog says.
-Crash reporting is not blocked on crash capture, Crashpad already captures, it
-is blocked on src/tools/packaging being trustworthy enough to archive symbols
-against a build id, and packaging is `working` and stale. And the dedicated server
-and the RHI de-contamination are the same work: renderer-program.md P1 is the
-headless-server refactor under another name, and should be counted once.
+The "BUG-0009 has no automated test" item is folded into BUG-0009 itself. A note
+about a bug belongs on the bug, or the two drift, which is the same failure as
+category 2, one level down.
 
-engine_doctor 75 docs, 0 errors, 8 warnings. docs lane 2/2.
+598 lines -> 105. Ledger 43 entries, 1 open, every pinned-by resolving.
+engine_doctor 75 docs, 0 errors. docs lane 2/2.
 

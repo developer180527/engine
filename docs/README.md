@@ -21,7 +21,7 @@ what order it should be built.
 | `architecture/` | How a subsystem is built and **why**. Load-bearing decisions and the invariants that are silent when broken. |
 | `guides/` | How to *use* the engine — APIs, scripting, performance tuning. |
 | `reference/` | File formats and schemas, field by field. Lookup material, not narrative. |
-| `process/` | How we work: the doc contract, the maturity ladder, the roadmap. |
+| `process/` | How we work: the doc contract, the maturity ladder, the roadmap. Also the defect record — [`bug-ledger.md`](process/bug-ledger.md) is the schema and [`bugs/`](process/bugs/) is one file per defect; [`open-questions.md`](process/open-questions.md) is what is known and *not* fixed; [`port-log-windows.md`](process/port-log-windows.md) is what the cross-platform port cost. |
 | `plans/` | Work not yet done. Audits, phased plans, backlog. `plans/future/` is speculative. |
 | `generated/` | Doxygen output. Not written by hand, not reviewed. |
 

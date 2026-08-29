@@ -1,0 +1,11 @@
+## BUG-0042 — render_status claimed staleness a shallow clone cannot know
+- found:     2026-08-26
+- status:    fixed
+- class:     logic
+- where:     scripts/engine_doctor.py
+- symptom:   the ⚠️ stale marker appeared on twenty subsystem rows in `ENGINE_STATUS.md` that were not stale, on CI only.
+- cause:     two halves of one tool disagreeing about what it is allowed to know. `check_docs` already refused to compute staleness on a shallow clone (`changed = "" if SHALLOW`), and `is_shallow()`'s own docstring says "refusing to make the claim beats emitting confident nonsense" — but the status RENDERER computed it anyway. CI checks out `fetch-depth: 1`, so `git log` sees only the tip and every subsystem's "code last changed" came back as TODAY.
+- pinned-by: scripts/engine_doctor.py
+- lane:      docs
+- proof:     the renderer is SHALLOW-aware now, like the checker. The marker is also why the status gate kept failing after dates were normalised away: ⚠️ is git-derived but is not a DATE, so it survived date normalisation. The gate blanks both freshness columns and the marker, mutation-verified to still catch real structural drift — a changed tier and a dropped entry from a `tests:` list both fail it.
+- note:      recorded 2026-08-29 from `open-questions.md`. The lesson is narrower than "handle shallow clones": one tool had two code paths answering the same question, and only one of them had been taught the answer. See BUG-0040's note.
