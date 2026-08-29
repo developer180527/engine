@@ -1,0 +1,73 @@
+docs: rank the subsystems by blast radius, and four numbers checked against the tool
+
+An audit of what exists, what is load-bearing, and what order to strengthen it in.
+One principle, and the whole document is an argument from it:
+
+    Hardening propagates downward. A test on a foundation protects everything
+    above it; a test on a leaf protects only itself.
+
+So the order is not "worst first", it is HIGHEST FAN-IN first, and the finding
+that makes it worth writing down is that the current tiers already follow that
+rule for the bottom of the graph and stop halfway. core, core/memory, assetlib,
+assets, runtime and scene are hardened and are genuinely the foundations. Every
+gap is in the MIDDLE layer: the hubs many things depend on that nobody has treated
+as foundations yet. Sorted by dependents, the first `working` subsystem appears at
+rank 2.
+
+runtime/jobs is the sharpest case and the only subsystem meeting all three
+criticality conditions: eight dependents, a shipped LIVELOCK that only TSan's
+timing exposed (BUG-0003), and no endurance lane of its own.
+
+── TWO SUBSYSTEMS ARE INVISIBLE TO THE TIER SYSTEM ─────────────────────────
+src/audio has no info.md at all, and modules/hid/info.md has no front-matter so
+it parses as unclassified. Neither is a code problem, both already have test
+evidence, and they are the reason this audit had to be assembled by hand instead
+of read off ENGINE_STATUS.md. You cannot rank what you cannot see, so they are
+Rank 0 and cost hours.
+
+── THE ONE PLACE HARDENING WOULD BE WASTED ─────────────────────────────────
+src/render has eleven dependents and no endurance lane, which says harden it. The
+renderer programme says the opposite for half of it. The split already exists in
+the tree: src/render/world is GPU-free pure functions that P3/P4 build on and the
+RHI keeps, harden that. src/render proper is the bgfx-coupled part P7–P8 replace
+— refresh its stale doc and add no tests.
+
+── FOUR NUMBERS, CHECKED AGAINST THE TOOL RATHER THAN THE DRAFT ────────────
+Every claim here was re-derived before committing. Four did not survive.
+
+THE STALE COUNT WAS SEVEN AND IS EIGHT. The list was assembled by walking
+info.md files, and docs/architecture/asset-cook-architecture.md is the only stale
+doc that is not one. Recorded rather than quietly corrected, because it is the
+same failure §3.1 describes one level up: an audit that enumerates by file NAME is
+wrong by exactly the entries that do not fit the naming convention. The row now
+names the command that owns the answer.
+
+§3.1 LISTED THE WRONG FIVE. BUG-0019's `where` is
+tests/audio_conformance/src/reference.rs, so it was counted twice, once as a
+src/audio entry and again as one of "two more in its conformance suite". The
+actual fifth is BUG-0024. The 7-of-39 total survived only because the swap is
+one-for-one.
+
+"TWO FILES" WAS ONE. All five name src/audio/miniaudio_provider.cpp. That is the
+stronger finding and it was understated: five of the engine's thirty-nine ledger
+entries came out of a single source file.
+
+"SECOND-DENSEST" CONTRADICTED "DENSEST" TWO SECTIONS LATER. Densest is right,
+src/audio has five, the next src/ subsystem has three.
+
+Checking that last one turned up something worth keeping: exactly one file in the
+repo ties miniaudio_provider.cpp at five entries, and it is scripts/engine_doctor.py.
+That is §6's own caveat, density partly measures ATTENTION, arriving in the data
+instead of only in the disclaimer. The doc gate is not the second-buggiest thing
+here; it is the thing that gets re-read most.
+
+── ALSO ────────────────────────────────────────────────────────────────────
+Two future subsystems are waiting on something other than what the backlog says.
+Crash reporting is not blocked on crash capture, Crashpad already captures, it
+is blocked on src/tools/packaging being trustworthy enough to archive symbols
+against a build id, and packaging is `working` and stale. And the dedicated server
+and the RHI de-contamination are the same work: renderer-program.md P1 is the
+headless-server refactor under another name, and should be counted once.
+
+engine_doctor 75 docs, 0 errors, 8 warnings. docs lane 2/2.
+

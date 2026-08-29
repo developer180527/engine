@@ -68,6 +68,12 @@ claim about freshness as much as about tests. See
   preference: authoring outside, tuning and viewing inside. Also the seat rule
   (everyone has the editor, nobody needs every tool), what orchestration actually
   requires, and the costs of the model stated rather than hidden.
+- **What to strengthen next** — [`plans/subsystem-audit.md`](plans/subsystem-audit.md)
+  ranks every subsystem by blast radius rather than by how rough it feels, on one
+  principle: hardening propagates downward, so a test on a foundation defends
+  everything above it. Also the two subsystems that are invisible to
+  `ENGINE_STATUS.md`, and what the future systems (crash reporting, fibers, a
+  dedicated server) are really waiting on.
 - **Writing a scene by hand** — [`reference/scene-format.md`](reference/scene-format.md)
   is the `.scene` schema: every component, every field, every default, and — the
   half that matters most — what a wrong value silently does instead of failing.
