@@ -71,7 +71,10 @@
 
 // Bumped when the generator's shape changes: a stored repro seed only means
 // something against the generator that produced it.
-static constexpr uint32_t kGeneratorVersion = 1;
+// 2: v6 blob digests. Cases now set the digest from the PRISTINE blob and then
+// corrupt the bytes, which is the real-world model — the cooker writes blob and
+// digest together, and a partial write or a bad disk damages the blob afterwards.
+static constexpr uint32_t kGeneratorVersion = 2;
 
 namespace {
 
@@ -213,14 +216,25 @@ void oneCase(uint64_t seed, fuzz::Report& rep) {
 
     asset.skeletonBlob = skeletonBlobOf(src);
     if (asset.skeletonBlob.empty()) { rep.fail(key, "skeleton serialized to nothing"); return; }
+    // Digest of the PRISTINE bytes, then damage them — the cooker writes both
+    // together and the disk corrupts the blob afterwards. A generator that
+    // digested the corrupted bytes would be modelling an attacker who can
+    // rewrite both, which the format explicitly does not defend against.
+    asset.skeletonBlobDigest = assetlib::blobDigest(asset.skeletonBlob);
+    const std::vector<uint8_t> pristineSkel = asset.skeletonBlob;
     corrupt(asset.skeletonBlob, rng);
+    const bool skelDamaged = (asset.skeletonBlob != pristineSkel);
 
     const int clipCount = (int)(rng.next() % 3);
+    int damagedClips = 0;
     for (int i = 0; i < clipCount; ++i) {
         assetlib::CookedClipBlob cc{};
         cc.blob = clipBlobOf(src, 1.0f + (float)(rng.next() % 10));
         if (cc.blob.empty()) continue;
+        cc.blobDigest = assetlib::blobDigest(cc.blob);
+        const std::vector<uint8_t> pristineClip = cc.blob;
         corrupt(cc.blob, rng);
+        if (cc.blob != pristineClip) ++damagedClips;
         cc.mappedTracks = (int32_t)(rng.next() % 200);
         cc.totalTracks  = (int32_t)(rng.next() % 200);
         asset.clips.push_back(std::move(cc));
@@ -228,6 +242,18 @@ void oneCase(uint64_t seed, fuzz::Report& rep) {
 
     // Property 1 and 2: this must return, without crashing, in bounded time.
     Skeleton out = anim::decodeCookedSkeleton(asset);
+
+    // Property 3, the v6 rule: a blob whose digest no longer matches must NEVER
+    // have reached ozz. This is the assertion that would have caught BUG-0046,
+    // and unlike "did not crash" it cannot pass vacuously — the round-trip case
+    // below proves clean blobs still decode.
+    if (skelDamaged && out.ozz) {
+        rep.fail(key, "a skeleton blob whose digest no longer matches was "
+                      "DECODED — corrupt bytes reached ozz, which is the class "
+                      "of input its own deserializer is documented not to "
+                      "survive");
+        return;
+    }
 
     // Property 3: an honest result. If the archive did not yield an ozz
     // skeleton, the caller is told so by `ozz == nullptr` and decides the
@@ -256,6 +282,13 @@ void oneCase(uint64_t seed, fuzz::Report& rep) {
     // usable ozz animation, because AnimClip::ozz is dereferenced at sample
     // time with no further check.
     std::vector<AnimClip> clips = anim::decodeCookedClips(asset);
+    if (damagedClips > 0 && clips.size() > (size_t)(clipCount - damagedClips)) {
+        rep.fail(key, "a clip blob whose digest no longer matches was decoded: "
+                 + std::to_string(clips.size()) + " clips came back from "
+                 + std::to_string(clipCount) + " with " + std::to_string(damagedClips)
+                 + " damaged");
+        return;
+    }
     for (size_t i = 0; i < clips.size(); ++i) {
         if (!clips[i].ozz) {
             rep.fail(key, "decodeCookedClips returned clip " + std::to_string(i)
@@ -285,10 +318,12 @@ void roundTripCase(uint64_t seed, fuzz::Report& rep) {
 
     assetlib::MeshAsset asset;
     fillBones(asset, src, rng, /*corruptBones=*/false);
-    asset.skeletonBlob = skeletonBlobOf(src);
+    asset.skeletonBlob       = skeletonBlobOf(src);
+    asset.skeletonBlobDigest = assetlib::blobDigest(asset.skeletonBlob);
 
     assetlib::CookedClipBlob cc{};
     cc.blob = clipBlobOf(src, 2.0f);
+    cc.blobDigest = assetlib::blobDigest(cc.blob);
     if (!cc.blob.empty()) asset.clips.push_back(std::move(cc));
 
     const Skeleton out = anim::decodeCookedSkeleton(asset);

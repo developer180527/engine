@@ -9,7 +9,8 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 16; // 16: LOD levels keep their submesh
+    static constexpr uint32_t kVersion = 17; // 17: v6 blob integrity digests
+                                         // 16: LOD levels keep their submesh
                                              // ranges, so a level draws with the
                                              // same materials as its parent
                                              // (15: LOD levels, 16-bit indices too)

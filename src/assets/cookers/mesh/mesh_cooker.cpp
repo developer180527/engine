@@ -315,7 +315,10 @@ static void appendLodLevels(assetlib::MeshAsset& asset) {
         parentTris = r.triangles;
     }
     if (!asset.lods.empty()) {
-        asset.header.version = 5;   // v5: per-level submesh ranges
+        // RAISE, never assign: the skinned path already set 6, and an
+        // unconditional `= 5` here would silently downgrade it and drop the
+        // blob digests on any skinned mesh that also has LODs.
+        if (asset.header.version < 5) asset.header.version = 5;
         std::printf("[MeshCooker]   lods: %u tris ->", asset.header.indexCount / 3);
         for (const auto& l : asset.lods) std::printf(" %u", l.indexCount / 3);
         std::printf("\n");
@@ -477,7 +480,9 @@ static CookResult cookSkinned(const CookContext& ctx) {
 
     MeshAsset asset;
     asset.header.magic        = 0x4D455348;
-    asset.header.version      = 3;
+    // v6: the skeleton and clip archives carry integrity digests. This path is
+    // the only writer of those blobs, so it is the only one that needs it.
+    asset.header.version      = 6;
     asset.header.vertexFlags  = kSkinnedFlags;
     asset.header.vertexStride = sizeof(CookSkinnedVertex);
     asset.header.boneCount    = (uint32_t)skel.boneCount();

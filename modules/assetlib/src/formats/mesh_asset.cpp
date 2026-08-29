@@ -51,6 +51,15 @@ bool saveMesh(const MeshAsset& mesh, const std::filesystem::path& outPath) {
                 (std::streamsize)(mesh.bones.size() * sizeof(CookedBone)));
         const uint32_t skelSize = (uint32_t)mesh.skeletonBlob.size();
         f.write(reinterpret_cast<const char*>(&skelSize), 4);
+        // v6: the digest leads the bytes it covers, so a reader knows what to
+        // expect before it has allocated for them (BUG-0046). Computed here
+        // rather than trusting mesh.skeletonBlobDigest: the writer is the
+        // authority on what it just wrote, and a caller that filled the struct
+        // by hand must not be able to publish a wrong digest.
+        if (mesh.header.version >= 6) {
+            const uint64_t d = blobDigest(mesh.skeletonBlob);
+            f.write(reinterpret_cast<const char*>(&d), 8);
+        }
         f.write(reinterpret_cast<const char*>(mesh.skeletonBlob.data()), skelSize);
         const uint32_t clipCount = (uint32_t)mesh.clips.size();
         f.write(reinterpret_cast<const char*>(&clipCount), 4);
@@ -62,6 +71,10 @@ bool saveMesh(const MeshAsset& mesh, const std::filesystem::path& outPath) {
             f.write(reinterpret_cast<const char*>(&c.totalTracks), 4);
             const uint32_t blobSize = (uint32_t)c.blob.size();
             f.write(reinterpret_cast<const char*>(&blobSize), 4);
+            if (mesh.header.version >= 6) {
+                const uint64_t d = blobDigest(c.blob);
+                f.write(reinterpret_cast<const char*>(&d), 8);
+            }
             f.write(reinterpret_cast<const char*>(c.blob.data()), blobSize);
         }
     }
@@ -151,7 +164,7 @@ bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
                      inPath.string().c_str());
         return false;
     }
-    if (out.header.version < 2 || out.header.version > 5) {
+    if (out.header.version < 2 || out.header.version > 6) {
         std::fprintf(stderr, "[MeshAsset] Unsupported version %u: %s\n",
                      out.header.version, inPath.string().c_str());
         return false;
@@ -245,9 +258,24 @@ bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
         uint32_t skelSize = 0;
         if (!claim(1, 4, "skeleton size")) return false;
         f.read(reinterpret_cast<char*>(&skelSize), 4);
+        if (out.header.version >= 6) {
+            if (!claim(1, 8, "skeleton digest")) return false;
+            f.read(reinterpret_cast<char*>(&out.skeletonBlobDigest), 8);
+        }
         if (!claim(skelSize, 1, "skeleton blob")) return false;
         out.skeletonBlob.resize(skelSize);
         f.read(reinterpret_cast<char*>(out.skeletonBlob.data()), skelSize);
+        // The whole load fails, rather than dropping the skeleton: a blob whose
+        // digest disagrees means these bytes are not the bytes that were cooked,
+        // and nothing else in the file has a better claim to be trusted. Failing
+        // here is what keeps ozz from ever seeing them (BUG-0046).
+        if (out.header.version >= 6 &&
+            blobDigest(out.skeletonBlob) != out.skeletonBlobDigest) {
+            std::fprintf(stderr, "[MeshAsset] skeleton blob digest mismatch "
+                         "(%u B) — the file is corrupt: %s\n",
+                         skelSize, inPath.string().c_str());
+            return false;
+        }
 
         uint32_t clipCount = 0;
         if (!claim(1, 4, "clip count")) return false;
@@ -255,8 +283,9 @@ bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
         // Each clip costs at least its four length fields, so the remaining
         // bytes bound how many can exist — this stops a huge clipCount from
         // allocating before a single clip has been read.
-        if (!claim(clipCount, 16, "clip headers")) return false;
-        offset -= (size_t)clipCount * 16;        // re-counted precisely below
+        const size_t perClipMin = (out.header.version >= 6) ? 24 : 16;
+        if (!claim(clipCount, perClipMin, "clip headers")) return false;
+        offset -= (size_t)clipCount * perClipMin;        // re-counted precisely below
         out.clips.resize(clipCount);
         for (auto& c : out.clips) {
             uint32_t nameLen = 0;
@@ -273,9 +302,19 @@ bool loadMesh(MeshAsset& out, const std::filesystem::path& inPath) {
             uint32_t blobSize = 0;
             if (!claim(1, 4, "clip blob size")) return false;
             f.read(reinterpret_cast<char*>(&blobSize), 4);
+            if (out.header.version >= 6) {
+                if (!claim(1, 8, "clip digest")) return false;
+                f.read(reinterpret_cast<char*>(&c.blobDigest), 8);
+            }
             if (!claim(blobSize, 1, "clip blob")) return false;
             c.blob.resize(blobSize);
             f.read(reinterpret_cast<char*>(c.blob.data()), blobSize);
+            if (out.header.version >= 6 && blobDigest(c.blob) != c.blobDigest) {
+                std::fprintf(stderr, "[MeshAsset] clip blob digest mismatch "
+                             "(%u B) — the file is corrupt: %s\n",
+                             blobSize, inPath.string().c_str());
+                return false;
+            }
         }
     }
 

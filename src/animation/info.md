@@ -1,7 +1,7 @@
 ---
 status: as-built
-tier: working
-verified: 2026-08-29
+tier: hardened
+verified: 2026-08-30
 parses-external-input: true
 covers:
   - src/animation/
@@ -29,19 +29,25 @@ truncated archive **aborted in debug and was silently accepted in release**, bui
 out of partially uninitialised memory. Fixed by `anim::GuardedStream` plus a patch
 removing ozz's read-side asserts, so both builds now agree and refuse.
 
-> **The tier stays `working`, deliberately.** `hardened` is mechanically
-> available now — the fuzz lane exists and its regression corpus gates — but the
-> explore lane still finds **BUG-0046**, an open defect of a class the stream
-> guard structurally cannot catch: a corrupt COUNT field that ozz reads
-> successfully and then trips its own sanity check while allocating from.
+The explore lane then found a second, deeper class (BUG-0046) that the stream
+guard **structurally cannot catch**: a corrupt COUNT field that ozz reads
+successfully — nothing comes up short — and then allocates from, tripping its own
+sanity check. That one held the tier at `working` until it was fixed properly.
+
+> **The fix is format integrity, because ozz cannot be made safe from the
+> outside.** Mesh format **v6** writes an FNV-1a digest ahead of each opaque
+> blob. `loadMesh` fails the whole load on a mismatch; `decodeCookedSkeleton` and
+> `decodeCookedClips` re-check it before touching ozz. **A missing digest is
+> refused, not trusted** — a pre-v6 skinned mesh must be re-cooked, which
+> `MeshCooker::kVersion` 16 → 17 makes automatic through the DDC.
 >
-> Claiming `hardened` while this subsystem's own fuzz lane finds an open memory
-> defect would be the tier inflation `docs/plans/subsystem-audit.md` argues
-> against. What lifts it is the fix BUG-0046 names: **integrity carried by the
-> cooked format itself** — a digest written by the cooker and verified before ozz
-> sees the bytes — because guarding the stream cannot make a deserializer safe
-> against arbitrary input, and removing ozz's internal sanity checks would make
-> release worse rather than better.
+> `hardened` now, on that evidence: 20 000 explore cases pass where the pre-fix
+> build aborted at case 34, and both repro seeds are in the gating corpus.
+>
+> What this does NOT defend against, so nobody assumes otherwise: an attacker who
+> rewrites a blob can rewrite the digest beside it. FNV-1a detects CORRUPTION —
+> a partial write, a bad disk, a truncated copy. The defence against a hostile
+> source is the DDC's content hash.
 
 ## Purpose
 Skeletal animation: skeleton extraction from FBX (via Assimp), clip sampling,

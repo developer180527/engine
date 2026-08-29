@@ -1,12 +1,13 @@
 ## BUG-0046 — ozz asserts on corrupt counts that a short-read guard cannot see
 - found:     2026-08-29
-- status:    open
+- status:    fixed
 - class:     memory
 - where:     src/animation/cooked_skin.h
 - symptom:   `Assertion failed: (_params.timepoints <= std::numeric_limits<uint16_t>::max()), function Allocate, file animation.cc, line 81` — reached from `decodeCookedClips` on a corrupt clip archive. Survives the BUG-0045 fix.
 - cause:     a different class from BUG-0045 and not reachable by the same guard. The corruption lands in a COUNT field that is still structurally plausible, so ozz reads it successfully — no short read, nothing for `GuardedStream` to see — and then trips its own internal sanity check while ALLOCATING from that count. In release that assert is compiled out too, so ozz would allocate and index against an absurd number instead.
-- pinned-by: none
+- pinned-by: tests/fuzz_cooked_skin_test.cpp
 - lane:      fuzz-explore
-- proof:     `--seed 4648068295214073242` (generator v1), iteration 34 of the default explore run. Deliberately NOT committed to the regression corpus: the corpus is the gating lane and a seed with no fix would make it permanently red.
-- note:      the honest conclusion is architectural, not a patch. ozz's deserializer cannot be made safe against arbitrary bytes by guarding the stream, and removing its internal sanity asserts would make release WORSE rather than better. The fix is to stop handing it untrusted input: the cooked mesh format should carry integrity for these two blobs — a digest written by the cooker and verified before `decodeCookedSkeleton`/`decodeCookedClips` see them. That is a `mesh_asset` version bump and a cooker change, which is why it is filed rather than done here.
-- note:      exposure today is bounded but real: the DDC content-hashes blobs it serves, so the cross-machine path is covered. What is not covered is a partial write, a bad disk, or a hand-modified `.cache/` file — and `engine_build` copies `.cooked` files into `dist/` with no verification at all.
+- proof:     `--seed 4648068295214073242` aborted before the fix and passes after; committed to `tests/fuzz/corpus/cooked_skin/regressions.seeds`. 20 000 fresh explore cases pass where the pre-fix build aborted at case 34.
+- note:      FIXED by mesh format **v6**, exactly as this entry proposed: an FNV-1a digest written ahead of each opaque blob, verified in `loadMesh` (which fails the whole load on a mismatch) and re-verified in `decodeCookedSkeleton`/`decodeCookedClips` before ozz sees a byte. `MeshCooker::kVersion` 16 → 17 re-cooks everything through the DDC. The conclusion was architectural and stayed that way: ozz cannot be made safe from the outside, so it is only ever handed bytes whose digest matched.
+- note:      A MISSING digest is refused, not trusted — the one place this format deliberately does not stay backward-readable. A pre-v6 skinned mesh loads but will not decode its skeleton or clips until re-cooked, because trusting a blob precisely because it is old enough to carry no checksum is the hole being closed. Static meshes are unaffected.
+- note:      what this does NOT defend against, stated so nobody assumes otherwise: an attacker who rewrites the blob can rewrite the digest beside it. FNV-1a detects CORRUPTION — a partial write, a bad disk, a truncated copy. The defence against a hostile SOURCE is the DDC's content hash, and `engine_build` still copies `.cooked` files into `dist/` with no verification of its own.

@@ -102,6 +102,33 @@ inline Skeleton decodeCookedSkeleton(const assetlib::MeshAsset& asset) {
         skel.bones.push_back(std::move(b));
     }
 
+    // ── v6 integrity, checked BEFORE ozz sees a byte (BUG-0046) ────────────
+    // GuardedStream catches a short read. It cannot catch a corrupt COUNT that
+    // ozz reads successfully and then allocates from — that input never comes
+    // up short. A deserializer documented as trusting its input cannot be made
+    // safe from the outside, so the rule is that it only ever receives bytes
+    // whose digest matched.
+    //
+    // A MISSING digest (0) is refused, not trusted. Trusting a blob precisely
+    // because it is old enough not to carry a checksum is the hole this closes;
+    // the MeshCooker version bump re-cooks anything going through the DDC.
+    if (!asset.skeletonBlob.empty()) {
+        const uint64_t want = asset.skeletonBlobDigest;
+        if (want == 0) {
+            LOG_ERROR("Anim", "cooked skeleton carries no integrity digest "
+                      "(pre-v6 mesh) — re-cook the asset");
+            skel.buildBoneMap();
+            return skel;
+        }
+        if (assetlib::blobDigest(asset.skeletonBlob) != want) {
+            LOG_ERROR("Anim", "cooked skeleton blob digest mismatch (%zu B) — "
+                      "refusing to decode corrupt bytes",
+                      asset.skeletonBlob.size());
+            skel.buildBoneMap();
+            return skel;
+        }
+    }
+
     // ozz skeleton from the opaque archive blob.
     {
         GuardedStream gs(asset.skeletonBlob);
@@ -142,6 +169,17 @@ inline Skeleton decodeCookedSkeleton(const assetlib::MeshAsset& asset) {
 inline std::vector<AnimClip> decodeCookedClips(const assetlib::MeshAsset& asset) {
     std::vector<AnimClip> out;
     for (const auto& cc : asset.clips) {
+        // Same rule as the skeleton: verified bytes or none. See above.
+        if (cc.blobDigest == 0) {
+            LOG_ERROR("Anim", "cooked clip carries no integrity digest (pre-v6 "
+                      "mesh) — re-cook the asset");
+            continue;
+        }
+        if (assetlib::blobDigest(cc.blob) != cc.blobDigest) {
+            LOG_ERROR("Anim", "cooked clip blob digest mismatch (%zu B) — "
+                      "refusing to decode corrupt bytes", cc.blob.size());
+            continue;
+        }
         GuardedStream gs(cc.blob);
         ozz::io::IArchive ar(&gs);
         if (!ar.TestTag<ozz::animation::Animation>()) continue;

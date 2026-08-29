@@ -56,11 +56,29 @@ struct CookedBone {
 };
 static_assert(sizeof(CookedBone) == 244 + 0 || true, "");
 
+// FNV-1a over a byte range — the v6 blob digest (see MeshAsset below).
+// Header-inline so the writer, the reader and the animation decoders all compute
+// it from ONE definition; two implementations that must agree on a checksum is
+// the drift this is meant to detect, not cause.
+inline uint64_t blobDigest(const void* data, size_t len) {
+    uint64_t h = 1469598103934665603ull;              // offset basis
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < len; ++i) { h ^= p[i]; h *= 1099511628211ull; }
+    return h;
+}
+inline uint64_t blobDigest(const std::vector<uint8_t>& b) {
+    return blobDigest(b.data(), b.size());
+}
+
 struct CookedClipBlob {
     std::string          name;
     int32_t              mappedTracks = 0;
     int32_t              totalTracks  = 0;
     std::vector<uint8_t> blob;   // ozz animation archive
+    // v6. FNV-1a over `blob`. 0 means "not carried" (a pre-v6 file), which the
+    // decoders treat as UNVERIFIABLE and refuse — see the note on
+    // MeshAsset::skeletonBlobDigest.
+    uint64_t             blobDigest = 0;
 };
 
 struct MeshSubmesh {
@@ -99,6 +117,39 @@ struct MeshAsset {
     std::vector<CookedBone>     bones;
     std::vector<uint8_t>        skeletonBlob;   // ozz skeleton archive
     std::vector<CookedClipBlob> clips;          // embedded takes
+
+    // ── v6: integrity for the two OPAQUE blobs (BUG-0046) ───────────────────
+    // FNV-1a over `skeletonBlob`. 0 means "not carried".
+    //
+    // These two byte ranges are the only part of a cooked mesh this engine does
+    // not parse itself: they go straight into ozz's `IArchive`, a third-party
+    // deserializer whose own comment reads "reading cannot fail" and which
+    // enforces that with debug-only asserts. Guarding the STREAM (BUG-0045)
+    // catches a short read; it cannot catch a corrupt COUNT field that ozz reads
+    // successfully and then allocates from, which is BUG-0046.
+    //
+    // A deserializer that trusts its input cannot be made safe from the outside,
+    // so the fix is to stop handing it unverified bytes. The digest is checked
+    // in TWO places on purpose:
+    //
+    //   * `loadMesh` — the real trust boundary, file bytes becoming a struct. A
+    //     mismatch fails the whole load.
+    //   * `anim::decodeCookedSkeleton` / `decodeCookedClips` — cheap
+    //     defence-in-depth, so a caller that built a MeshAsset by other means
+    //     (a test, a future streaming path) is covered by the same rule.
+    //
+    // ABSENT (0) IS TREATED AS UNVERIFIABLE AND REFUSED, not as "trusted
+    // legacy". A pre-v6 skinned mesh must be re-cooked, which the MeshCooker
+    // version bump makes automatic for anything going through the DDC. The
+    // alternative — trusting a file precisely because it is old enough not to
+    // carry a checksum — is the hole this exists to close.
+    //
+    // FNV-1a rather than BLAKE3, for the same reason cook_result_file.h gives:
+    // this detects CORRUPTION — a partial write, a bad disk, a truncated copy —
+    // and it is not a security boundary. Anyone who can rewrite the blob can
+    // rewrite the digest beside it; what guards the artifact against a hostile
+    // SOURCE is the DDC's content hash.
+    uint64_t                    skeletonBlobDigest = 0;
 
     // ── v4: coarser LOD levels ──────────────────────────────────────────────
     // Level 0 is this mesh; these are 1..lodCount, each a COMPLETE and

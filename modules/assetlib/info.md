@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-26
+verified: 2026-08-30
 parses-external-input: true
 covers:
   - modules/assetlib/
@@ -91,6 +91,36 @@ to draw and no cheaper to store — and VRAM is the tighter budget.
 rather than sniffed, and a v4 level simply has no range table — which reads as one
 range over the whole buffer, exactly what v4 meant. Rejecting those files would break
 every project with a populated cache until a full re-cook, for nothing.
+
+### v6 — integrity for the two OPAQUE blobs (BUG-0046)
+
+A skinned mesh carries the only bytes in this format that assetlib does **not**
+parse: an `ozz::animation::Skeleton` archive and one `ozz::animation::Animation`
+archive per take. Those go straight into ozz's `IArchive`, a third-party
+deserializer whose own source says *"reading cannot fail"* and which enforces
+that with debug-only asserts. Everything else in a cooked mesh is bounds-checked
+by `claim()`; these two were handed over whole.
+
+v6 writes an **FNV-1a digest ahead of each blob**, and `loadMesh` **fails the
+whole load** on a mismatch rather than dropping the blob — bytes that are not the
+bytes that were cooked have no better claim to be trusted than the rest of the
+file. `anim::decodeCookedSkeleton` re-checks the same digest before touching ozz,
+so a caller that built a `MeshAsset` by other means is covered by one rule.
+
+The digest **leads** the bytes it covers, like the LOD count leads its section, so
+a reader knows what to expect before allocating for it. `MeshHeader` is untouched.
+
+**A MISSING DIGEST IS REFUSED, NOT TRUSTED.** This is the one place the format
+deliberately does *not* stay backward-readable: a pre-v6 skinned mesh still loads,
+but its skeleton and clips will not decode until re-cooked. Trusting a blob
+precisely because it is old enough to carry no checksum is the hole being closed,
+and `MeshCooker::kVersion` 16 → 17 re-cooks anything going through the DDC
+automatically. Static meshes are unaffected — they have no blobs.
+
+FNV-1a rather than BLAKE3, for the reason `cook_result_file.h` gives: this detects
+**corruption**, not tampering. Anyone who can rewrite a blob can rewrite the
+digest beside it; what defends against a hostile *source* is the DDC's content
+hash.
 
 **THE LOD SECTION IS THE ONE PLACE A COUNT AND ITS BYTE SIZE ARE STORED SEPARATELY.**
 Everywhere else the bytes are derived from the count

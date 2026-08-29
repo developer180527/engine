@@ -10,3 +10,14 @@
 # plus a patch removing ozz's read-side asserts so debug and release agree.
 # Against the pre-fix tree this seed aborts on archive.h's assert.
 12660276661850738527
+
+# BUG-0046 — a corrupt COUNT field that ozz read successfully and then allocated
+# from, tripping its own sanity check (animation.cc:81, timepoints <= uint16 max).
+# A short-read guard structurally cannot see this: nothing comes up short. Fixed
+# by mesh format v6 — an FNV-1a digest ahead of each opaque blob, so ozz is only
+# ever handed bytes whose digest matched.
+#
+# Found under generator version 1; still reproduces under version 2, which
+# digests the PRISTINE blob and then corrupts it (the cooker-writes-then-disk-
+# corrupts model) rather than corrupting in place with no digest at all.
+4648068295214073242
