@@ -417,3 +417,38 @@ forecloses every platform we do not port ourselves, including any future one.
    no way to learn "nothing was rendered", "another frame is needed", or "the
    renderer is unavailable". A retained UI host pays battery for frames it did
    not need to request. Worth deciding deliberately rather than by omission.
+
+5. **Who owns the OS windows — C++ or the UI toolkit?** *(Raised 2026-08-30 by
+   the planned Rust/egui editor. Recorded HERE rather than with the editor work,
+   because it is an embedder decision that a UI rewrite would otherwise settle by
+   accident and permanently.)*
+
+   | | A — C++ owns windows | B — the toolkit owns them |
+   |---|---|---|
+   | who calls `glfwCreateWindow`/`SDL_CreateWindow` | `IPlatform`, as today | winit, or the toolkit's own backend |
+   | `wsi::WindowHandle` is | `GLFWwindow*` / `SDL_Window*` | a handle no C++ TU can implement against |
+   | the runtime's input stack | unchanged | **loses its source** — §2.2's inversion, forced |
+   | rollout | incremental; new panels beside old ones | all-or-nothing |
+
+   **Recommend A**, and the reason is scoping rather than merit. `wsi::` is used
+   by `runtime/input/input_system.h` for seven operations — `installInputSink`,
+   `pollKeyboard`, `pollMouseButtons`, `cursorPos`, `feedNativeEvent`,
+   `isFocused` — so B does not merely change the editor: it removes the engine
+   input stack's source and *forces* the event-push inversion in §2.2. That is
+   E1 and E4 arriving as a side effect of a UI rewrite, which is the wrong order
+   and the wrong review.
+
+   A is also what keeps the rewrite incremental: a toolkit producing draw data
+   for the existing renderer can land one panel at a time.
+
+   **B is the honest long-term shape** — it is what an embedder-owned window
+   means — and this plan is how to reach it deliberately. Under B, `wsi::` would
+   need window creation it deliberately does not have today, and the handle type
+   would have to become something the host supplies rather than something a C++
+   TU dereferences.
+
+   Related and separate: **multi-viewport is not inherited either way.** Detached
+   panels as real OS windows come from the UI toolkit's own platform backend
+   (`imgui_impl_glfw.cpp` today), never from `wsi::`, which has no window
+   creation. A new toolkit brings its own viewport model, and that is a port
+   rather than a free inheritance.

@@ -44,10 +44,18 @@
 // instead.
 namespace wsi {
 
-// An opaque windowing-library window. In practice this is
-// ImGuiViewport::PlatformHandle for an ImGui host, or the platform's own
-// backendWindowHandle() for the main window. Never dereferenced outside the
-// backend TU.
+// An opaque windowing-library window — a `GLFWwindow*` or `SDL_Window*`,
+// depending on which implementation TU was compiled. Never dereferenced outside
+// that TU.
+//
+// WHOEVER MADE THE WINDOW OWNS IT. Nothing here creates or destroys one: this
+// header is per-window OPERATIONS, and the handles come from somewhere else —
+// the platform's own `backendWindowHandle()` for the main window, or a UI
+// toolkit's viewport backend for a detached panel. ImGui is one such source
+// (`ImGuiViewport::PlatformHandle`) and used to be named here as though it were
+// the definition, which made this look like ImGui plumbing. It is not, and that
+// matters: an editor built on any other toolkit uses this header unchanged, and
+// gets its handles from wherever it makes windows.
 using WindowHandle = void*;
 
 // ── Per-window state ────────────────────────────────────────────────────────
