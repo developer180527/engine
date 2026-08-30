@@ -48,6 +48,10 @@ claim about freshness as much as about tests. See
 
 - **The asset pipeline** — [`architecture/asset-cook-architecture.md`](architecture/asset-cook-architecture.md).
   §0 is a full end-to-end walkthrough, source file to screen.
+- **Hosting the engine** — [`plans/platform-embedder.md`](plans/platform-embedder.md):
+  the host owns the window, the loop and the surface; the engine is a guest.
+  Prerequisite for an iPad shell, a dedicated server, and the RHI's surface
+  question alike.
 - **The renderer** — [`plans/renderer-program.md`](plans/renderer-program.md) is the
   START HERE: what we are building, in what order, and why the reuse boundary sits
   *below* the renderer rather than through it. Then
