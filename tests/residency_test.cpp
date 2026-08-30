@@ -130,6 +130,43 @@ int main() {
         settle(svc);
         CHECK(svc.queryMesh(reloadMe) != 0,
               "evicted path reloads transparently (%s)", reloadMe);
+
+        // ── 4. The guard that decides whether a sweep is worth its scan ─────
+        // frameBegin builds an `inUse` set by walking EVERY entity in EVERY
+        // world before calling evictOverBudget — 0.463 ms at 50 000 entities,
+        // measured. evictOverBudget then discards it on its first line whenever
+        // there is no budget or the cache is under it, and the default budget is
+        // 0 (unbounded), so in the editor and any build without meshBudgetMB the
+        // scan was pure waste, once a second, forever (BUG-0047).
+        //
+        // residencySweepNeeded() is that precondition, asked BEFORE paying for
+        // the scan. It has to agree with evictOverBudget exactly in both
+        // directions: a false yes brings the waste back, and a false NO lets the
+        // cache grow unbounded — which is the bug residency exists to fix, so
+        // the wrong guard is worse than no guard.
+        std::printf("\n-- 4. sweep guard --\n");
+
+        svc.setResidencyBudget(0);
+        CHECK(!svc.residencySweepNeeded(),
+              "no budget -> no sweep (the editor default; this is the 0.46 ms)");
+
+        const uint64_t resident = svc.residentBytes();
+        CHECK(resident > 0, "something is resident to reason about (%llu bytes)",
+              (unsigned long long)resident);
+
+        svc.setResidencyBudget(resident * 4);
+        CHECK(!svc.residencySweepNeeded(), "under budget -> no sweep");
+
+        svc.setResidencyBudget(resident / 2);
+        CHECK(svc.residencySweepNeeded(),
+              "OVER budget -> sweep, or residency does nothing at all");
+
+        // The guard must agree with the thing it guards: when it says yes,
+        // evictOverBudget must actually evict something.
+        const size_t swept = svc.evictOverBudget({});
+        CHECK(swept > 0,
+              "guard said sweep and evictOverBudget agreed (%zu evicted)", swept);
+        svc.setResidencyBudget(0);
     }
 
     bgfx::shutdown();

@@ -57,28 +57,42 @@ bool EngineRuntime::frameBegin(float& dt) {
     // Residency sweep (audit Q6: the loaded-mesh cache grew without bound):
     // once per ~second, evict least-recently-used cooked meshes over the
     // configured budget — but never one a live MeshRenderer still points
-    // at, in EITHER world (yanking a mesh under the renderer = broken
-    // draws). No budget configured (editor default) = no sweep.
+    // at, in EITHER world (yanking a mesh under the renderer = broken draws).
+    //
+    // ASK BEFORE SCANNING. The `used` set below costs a full walk of every
+    // world — 0.463 ms at 50 000 entities, measured — and evictOverBudget
+    // discarded it on its first line whenever no budget was configured or the
+    // cache was already under it. The default budget is 0 (unbounded), set only
+    // when a project supplies meshBudgetMB, so in the editor and in any default
+    // build this ran once a second, forever, and threw the result away
+    // (BUG-0047). The guard is O(cached meshes) and touches no ECS.
+    //
+    // The tick resets whether or not a sweep follows. Folding the guard into
+    // this condition with && would short-circuit past the reset, leaving the
+    // counter pinned at 60 and running the guard EVERY frame instead of every
+    // sixtieth — a cheaper check, sixty times more often.
     if (m_assetService && ++m_residencyTick >= 60) {
         m_residencyTick = 0;
-        ENGINE_PROFILE_SCOPE("AssetResidency");
-        std::unordered_set<uint32_t> used;
-        auto collect = [&](flecs::world& w) {
-            w.each([&](flecs::entity, const MeshRenderer& mr) {
-                if (mr.mesh.valid()) used.insert(mr.mesh.id);
-            });
-            // LOD LEVELS COUNT AS IN USE. After selection the RenderItem the
-            // pipeline dereferences is a level, not MeshRenderer::mesh — so a
-            // set built from MeshRenderer alone would let eviction destroy a
-            // buffer the very next frame draws from.
-            w.each([&](flecs::entity, const LodMesh& lm) {
-                for (uint8_t i = 0; i < lm.count && i < rworld::kMaxLodLevels - 1; ++i)
-                    if (lm.mesh[i].valid()) used.insert(lm.mesh[i].id);
-            });
-        };
-        collect(m_ecs);
-        if (m_gameWorld) collect(*m_gameWorld);
-        m_assetService->evictOverBudget(used);
+        if (m_assetService->residencySweepNeeded()) {
+            ENGINE_PROFILE_SCOPE("AssetResidency");
+            std::unordered_set<uint32_t> used;
+            auto collect = [&](flecs::world& w) {
+                w.each([&](flecs::entity, const MeshRenderer& mr) {
+                    if (mr.mesh.valid()) used.insert(mr.mesh.id);
+                });
+                // LOD LEVELS COUNT AS IN USE. After selection the RenderItem the
+                // pipeline dereferences is a level, not MeshRenderer::mesh — so a
+                // set built from MeshRenderer alone would let eviction destroy a
+                // buffer the very next frame draws from.
+                w.each([&](flecs::entity, const LodMesh& lm) {
+                    for (uint8_t i = 0; i < lm.count && i < rworld::kMaxLodLevels - 1; ++i)
+                        if (lm.mesh[i].valid()) used.insert(lm.mesh[i].id);
+                });
+            };
+            collect(m_ecs);
+            if (m_gameWorld) collect(*m_gameWorld);
+            m_assetService->evictOverBudget(used);
+        }
     }
 
     return true;

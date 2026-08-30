@@ -183,6 +183,20 @@ public:
     void     setResidencyBudget(uint64_t bytes);
     uint64_t residentBytes() const;
 
+    // Could a sweep evict anything at all? Cheap: O(cached meshes), no ECS.
+    //
+    // Call this BEFORE building the `inUse` set. That set costs a full scan of
+    // every world — 0.46 ms at 50 000 entities, measured — and evictOverBudget
+    // discards it on its first line whenever there is no budget or the cache is
+    // already under it. Since the default budget is 0 (unbounded, what the
+    // editor and any project without meshBudgetMB gets), the entire scan was
+    // pure waste in the common configuration (BUG-0047).
+    //
+    // Deliberately not folded INTO evictOverBudget: the expensive part is the
+    // caller's, so only the caller can skip it. A function cannot decline an
+    // argument it has already been handed.
+    bool     residencySweepNeeded() const;
+
     // Evict least-recently-USED loaded meshes until under budget, skipping
     // ids in `inUse` — assets a live MeshRenderer still references must
     // never vanish under the renderer. The runtime calls this periodically

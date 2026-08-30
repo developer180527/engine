@@ -1010,6 +1010,18 @@ uint64_t AssetService::residentBytes() const {
     return sum;
 }
 
+// The same two preconditions evictOverBudget checks, asked BEFORE the caller
+// pays to build `inUse`. Kept adjacent to it deliberately: these two must agree,
+// and a guard that drifts from the thing it guards is worse than no guard —
+// it would skip sweeps that were needed.
+bool AssetService::residencySweepNeeded() const {
+    if (!m_async || m_residencyBudget == 0) return false;
+    std::lock_guard<std::mutex> lk(m_loadedMtx);
+    uint64_t total = 0;
+    for (const auto& [k, e] : m_loadedMeshes) total += e.bytes;
+    return total > m_residencyBudget;
+}
+
 size_t AssetService::evictOverBudget(const std::unordered_set<uint32_t>& inUse) {
     if (!m_async || m_residencyBudget == 0) return 0;
 
