@@ -106,8 +106,9 @@ required.
 - **`PluginRegistry`** (`plugin_registry.h`) + **`IEnginePlugin`**
   (`plugin.h`) — engine subsystem plugins (physics, scripting, audio) with a
   strict per-frame phase order: `onUpdate` → `onPhysicsStep` →
-  `onPostPhysics`. Editor UI is NOT part of this interface — see
-  `src/editor/editor_plugin.h`.
+  `onPostPhysics`. Editor UI is `onEditorUI()`, drawn through the engineUi*
+  facade rather than any toolkit — see `EngineUiBackend` in
+  `include/engine/engine_api.h`.
 - **`AssetService`/`SceneService`** — async asset loading (worker thread
   decode, main thread GPU upload) and binary scene loading. Meshes and textures
   are addressed by cooked PATH; **materials by authored NAME** (`"rust"`, not

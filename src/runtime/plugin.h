@@ -11,9 +11,10 @@ struct RuntimeContext;
 // this interface. The engine calls each lifecycle method at the right moment;
 // plugins are completely decoupled from each other and from editor code.
 //
-// Plugins that also want to draw editor UI additionally implement
-// IEditorPlugin (editor/editor_plugin.h) — the editor discovers it via
-// dynamic_cast. The runtime never calls UI methods.
+// Plugins that also want to draw editor UI override onEditorUI() below and
+// draw through the engineUi* facade (engine/engine_api.h) — five widgets over
+// C types, routed to whatever backend the host registered. The runtime never
+// calls UI methods, and a plugin never sees the UI toolkit.
 //
 // Lifecycle:
 //   onAttach        — registered with engine (startup)

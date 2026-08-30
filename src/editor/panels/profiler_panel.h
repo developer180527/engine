@@ -15,7 +15,7 @@
 //   • Memory — per-frame C++ / flecs allocation counts + the frame arena's
 //              live usage and high-water mark.
 // Pure editor-layer; downcasts to the channel types it knows how to draw
-// (the same pattern as the plugins panel and IEditorPlugin).
+// (the same pattern as the plugins panel).
 
 namespace detail_prof {
 

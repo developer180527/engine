@@ -74,8 +74,8 @@ public:
             guarded(*p, "onPostPhysics", [&] { p->onPostPhysics(gameWorld); });
     }
 
-    // Editor UI is NOT broadcast here — the editor walks all() and
-    // dynamic_casts each plugin to IEditorPlugin (editor/editor_plugin.h).
+    // Editor UI is NOT broadcast here — a host walks all() and calls
+    // onEditorUI() on each plugin, which draws through the engineUi* facade.
     const std::vector<std::shared_ptr<IEnginePlugin>>& all() const {
         return m_plugins;
     }

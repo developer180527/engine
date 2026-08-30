@@ -241,6 +241,13 @@ engine_test(nav_test)
 # the ">=" gating that replaced the "==" which rejected every older module.
 engine_test(api_abi_compat_test)
 engine_test(api_primitives_test)
+
+# ── The editor UI seam, crossed by something that is not ImGui ──────────────
+# EngineApiUiV1 is frozen and had exactly ONE backend (imgui_bgfx.cpp:264),
+# which is how IRenderPipeline decayed into decoration. A planned Rust/egui
+# editor depends on the frozen group NOT being ImGui-shaped; this proves it by
+# registering a second backend rather than by reading the header.
+engine_test(ui_backend_test)
 engine_test(providers_test)
 # Importer-dependent tests — dev posture only (the shipping build compiles
 # the source-import stack out; these have nothing to exercise there).

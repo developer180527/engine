@@ -1,0 +1,12 @@
+## BUG-0048 — a plugin header documented a dynamic_cast that never happened
+- found:     2026-08-30
+- status:    fixed
+- class:     logic
+- where:     src/runtime/plugin.h
+- symptom:   `plugin.h` and `plugin_registry.h` both told a plugin author that editor UI is discovered by `dynamic_cast` to `IEditorPlugin`. The editor does no such cast, `IEditorPlugin` had zero implementors, and two other documents in the same tree already described it as retired.
+- cause:     the interface was retired and its header was not deleted. `src/editor/info.md` and `src/plugins/info.md` were updated to say "`IEditorPlugin` is retired"; `plugin.h:15`, `plugin_registry.h:78`, `src/runtime/docs/info.md:110` and `profiler_panel.h:18` were not. The real mechanism is `IEnginePlugin::onEditorUI()` drawn through the `engineUi*` facade — `plugins_panel.h:61` calls it, and the only `dynamic_cast`s nearby are to CONCRETE plugin types (`JoltPlugin*`, `LuaScriptPlugin*`, `AudioPlugin*`), never to the retired interface.
+- pinned-by: tests/ui_backend_test.cpp
+- lane:      unit
+- proof:     the header is deleted, so the stale comments cannot be restored without reintroducing it. The mechanism they misdescribed is now the one under test: `ui_backend_test` registers a second `EngineUiBackend` and asserts the facade routes to it, which is the path a plugin actually takes. Grep for `IEditorPlugin` returns only the two "is retired" notes.
+- note:      the damage is in WHERE it was written. A defect in a panel is read by whoever edits that panel; this was in `plugin.h`, the first file anyone writing a plugin opens, and it described a mechanism that would not work if attempted. Dead code with live documentation pointing at it is worse than dead code, because the documentation is what gets believed.
+- note:      found by asking whether a planned Rust/egui editor would break the frozen plugin ABI. The answer is no — `EngineApiUiV1` is five toolkit-agnostic functions and `EngineUiBackend` is a host-registered table — and this turned up on the way. The audit was cheap and the thing it found was not what it went looking for.
