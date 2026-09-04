@@ -23,6 +23,7 @@ what order it should be built.
 | `reference/` | File formats and schemas, field by field. Lookup material, not narrative. |
 | `process/` | How we work: the doc contract, the maturity ladder, the roadmap. Also the defect record — [`bug-ledger.md`](process/bug-ledger.md) is the schema and [`bugs/`](process/bugs/) is one file per defect; [`open-questions.md`](process/open-questions.md) is what is known and *not* fixed; [`port-log-windows.md`](process/port-log-windows.md) is what the cross-platform port cost. |
 | `plans/` | Work not yet done. Audits, phased plans, backlog. `plans/future/` is speculative. |
+| `rhi/` | The graphics-abstraction programme, one purpose per file — the decision, its evidence, the design, the migration. [`rhi/workflow.md`](rhi/workflow.md) is how a question becomes a study becomes a decision; [`rhi/studies/`](rhi/studies/) is where the research lands. |
 | `generated/` | Doxygen output. Not written by hand, not reviewed. |
 
 Per-subsystem detail lives in `info.md` next to the code, not here — that is
@@ -52,13 +53,21 @@ claim about freshness as much as about tests. See
   the host owns the window, the loop and the surface; the engine is a guest.
   Prerequisite for an iPad shell, a dedicated server, and the RHI's surface
   question alike.
+- **How much of the machine to take** — [`plans/resource-policy.md`](plans/resource-policy.md):
+  size the engine to the WORK, not to the machine. Thread QoS (measured at
+  14.5x under contention), worker counts, frame pacing, and what upscaling
+  demands of the renderer before it can exist at all.
 - **The renderer** — [`plans/renderer-program.md`](plans/renderer-program.md) is the
   START HERE: what we are building, in what order, and why the reuse boundary sits
   *below* the renderer rather than through it. Then
   [`architecture/renderer-architecture.md`](architecture/renderer-architecture.md)
   for the target design, [`plans/renderer-audit-and-plan.md`](plans/renderer-audit-and-plan.md)
-  for the ranked findings and which are fixed, and
-  [`plans/rhi-design.md`](plans/rhi-design.md) for the GPU-driven RHI itself.
+  for the ranked findings and which are fixed, and **[`rhi/`](rhi/)** for the
+  GPU-driven RHI itself — a directory now, not a file, starting at
+  [`rhi/README.md`](rhi/README.md).
+- **How far off AAA are we?** — [`plans/aaa-gap-analysis.md`](plans/aaa-gap-analysis.md):
+  eight pillars, an evidence line per claim, and the one gap that is not additive.
+  Short version: the expensive half is built, the visible half is not.
 - **Using the engine** — [`guides/engine-api.md`](guides/engine-api.md),
   [`guides/scripting.md`](guides/scripting.md) and its
   [API reference](guides/scripting-api.md),
