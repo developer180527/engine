@@ -5,7 +5,7 @@ covers:
 ---
 # What GPU-driven costs the test suite
 
-*Original `rhi-design.md` §6. Split out 2026-09-01; wording preserved.*
+*Original `rhi-design.md` §6. Split out 2026-09-04; wording preserved.*
 
 ## 6. The cost nobody mentions: this weakens our quality story
 

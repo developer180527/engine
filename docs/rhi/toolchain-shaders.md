@@ -5,7 +5,7 @@ covers:
 ---
 # The shader toolchain — the hidden 40%
 
-*Original `rhi-design.md` §5. Split out 2026-09-01; wording preserved.*
+*Original `rhi-design.md` §5. Split out 2026-09-04; wording preserved.*
 
 ## 5. The shader toolchain
 

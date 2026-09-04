@@ -7,7 +7,7 @@ covers:
 
 > **What this document is.** A pillar-by-pillar comparison against what a
 > shipping AAA engine has, with an evidence line for every claim and no adjective
-> that is not backed by one. Written 2026-09-01.
+> that is not backed by one. Written 2026-09-04.
 >
 > **What it is not.** A roadmap. [`../process/roadmap.md`](../process/roadmap.md)
 > and [`renderer-program.md`](renderer-program.md) decide order. This decides

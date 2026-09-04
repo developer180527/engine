@@ -5,7 +5,7 @@ covers:
 ---
 # Decisions needed before any code
 
-*Original `rhi-design.md` §11. Split out 2026-09-01; wording and numbering
+*Original `rhi-design.md` §11. Split out 2026-09-04; wording and numbering
 preserved — other documents cite "§11.3".*
 
 > **This file is the study phase's exit condition.** By

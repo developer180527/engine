@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-29
+verified: 2026-09-04
 covers:
   - src/core/
 tests:
@@ -36,6 +36,20 @@ include renderer, ECS, or editor headers.
   already holds; the entity-only `getWorldMatrixLerp` remains for callers that
   only have an entity. Passing them in rather than looking them up is worth
   several ms per frame at scene scale — see `src/render/issues.md` R14.
+- **`thread_qos.{h,cpp}`** — tell the OS scheduler what a thread is FOR.
+  Three classes (`Interactive` / `Initiated` / `Utility`) plus a read-only
+  `Unclassified`, applied to the CALLING thread — every platform primitive
+  underneath is self-scoped, so there is deliberately no `setFor(handle)`.
+  Exists because **`pthread_create` does not inherit the creator's class**: it
+  produces `QOS_CLASS_DEFAULT` (21), one step *below* the main thread's
+  `USER_INTERACTIVE` (33), so an unclassified pool runs demoted by omission.
+  Measured at a 14.5x per-thread advantage under contention, and invisible on an
+  idle developer machine — see `docs/plans/resource-policy.md` §3.1.
+  `Unclassified` is a read-only sentinel and `setForCurrentThread` refuses it;
+  it exists so a test can tell "we set this" apart from "nobody did", a
+  distinction the first version of `thread_qos_test` silently could not make.
+  Callers today: the enkiTS pool (`Initiated`) and `CookService::cookLoop`
+  (`Utility`). Pinned by `tests/thread_qos_test.cpp`.
 - **`math_types.h`** — small shared math types.
 - **`entity_id_util.h`** — stable entity id helpers for serialization.
   `findById` is O(n) and is for ONE-OFF lookups only (undo, an editor click). Loaders

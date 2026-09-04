@@ -16,6 +16,7 @@
 #include "core/logger.h"
 #include "core/memory/mem.h"
 #include "core/profiler.h"
+#include "core/thread_qos.h"
 
 namespace jobs {
 namespace {
@@ -117,6 +118,24 @@ void init(uint32_t numWorkers) {
     // decode/streaming/propagation workers. Must be reserved HERE — enkiTS
     // sizes its per-thread arrays at Initialize and cannot grow them later.
     cfg.numExternalTaskThreads = kExternalThreadSlots;
+    // Classify every worker the pool creates. threadStart runs ON the new
+    // thread as its first act inside TaskingThreadFunction (verified in
+    // third_party/enkiTS/src/TaskScheduler.cpp), which is what makes a
+    // self-scoped QoS call correct here; SafeCallback is a plain null check
+    // with no profiling-build guard, so this fires in every configuration.
+    //
+    // Necessary because pthread_create does NOT inherit the creator's class:
+    // without this the pool runs at DEFAULT, one step below the main thread,
+    // by omission. See core/thread_qos.h for the 14.5x measurement.
+    //
+    // Only INTERNAL workers reach this. Threads registered through
+    // kExternalThreadSlots -- a kit's, a provider's -- never run
+    // TaskingThreadFunction, and that is the right outcome: we do not own
+    // them, and silently reclassifying somebody else's thread is exactly the
+    // kind of action-at-a-distance the external-slot design exists to avoid.
+    cfg.profilerCallbacks.threadStart = [](uint32_t) {
+        engine::qos::setForCurrentThread(engine::qos::Class::Initiated);
+    };
     cfg.customAllocator.alloc =
         [](size_t align, size_t size, void*, const char*, int) {
             return mem::alloc(size, align, mem::Tag::Jobs);

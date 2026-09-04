@@ -6,6 +6,7 @@
 #include "assets/cookers/material/material_cooker.h"
 #include "assets/asset_path.h"
 #include "core/logger.h"
+#include "core/thread_qos.h"
 #include <assetlib/scene_asset.h>   // header peek: version-aware staleness
 #include <assetlib/ddc.h>           // DDC budget/LRU pass in collectGarbage
 #include <fstream>
@@ -96,6 +97,16 @@ static bool fileSettled(const std::filesystem::path& p) {
 }
 
 void CookService::cookLoop() {
+    // Cooking exists to yield. It runs while the editor is being used, it can
+    // take minutes, and nothing a user is looking at waits on it.
+    //
+    // This was ASSUMED to be set already: engine_cook_worker.cpp:161 justifies
+    // re-demoting the spawned child with "the parent's cook threads are
+    // QoS-demoted" — and they were not. Nothing in this process set a class on
+    // any thread before this change, so this loop competed with the frame at
+    // DEFAULT while its own child process politely ran at UTILITY.
+    engine::qos::setForCurrentThread(engine::qos::Class::Utility);
+
     while (m_running) {
         // Wait for a cook request
         {

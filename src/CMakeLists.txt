@@ -115,6 +115,7 @@ add_library(engine_core STATIC
     # global new/delete that feeds it
     core/memory/mem.cpp
     core/mem_counters.cpp
+    core/thread_qos.cpp
     ${CMAKE_SOURCE_DIR}/third_party/tlsf/tlsf.c
 )
 

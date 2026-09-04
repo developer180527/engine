@@ -34,6 +34,6 @@ still opens at `4.1`, `phases.md` at `8` — and this table resolves the path.
 New citations should name the file and drop the section number. When the last
 `rhi-design.md §N` reference is gone from the repo, delete this file.
 
-Documents still citing it as of 2026-09-01: `renderer-program.md` (16 sites),
+Documents still citing it as of 2026-09-04: `renderer-program.md` (16 sites),
 `renderer-audit-and-plan.md`, `renderer-vs-production.md`, `platform-embedder.md`,
 `resource-policy.md`, `subsystem-audit.md`, `provider-abi.md`.

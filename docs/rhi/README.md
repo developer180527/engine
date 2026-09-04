@@ -50,7 +50,7 @@ materials. It consumes the RHI; it does not define it.
 ## Section numbers, and why they were kept
 
 These files were split out of a single 508-line `docs/plans/rhi-design.md` on
-2026-09-01. **Twenty-four citations elsewhere in the repo reference that document
+2026-09-04. **Twenty-four citations elsewhere in the repo reference that document
 by section number** — `§4.5`, `§11.3`, `axiom 2`, `§8 G4–G8`. So the split
 preserved the original heading numbers rather than renumbering from 1 in each
 file: `design-axioms.md` still opens at `4.1`, `phases.md` at `8`.

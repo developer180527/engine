@@ -5,7 +5,7 @@ covers:
 ---
 # The API, the frame, and what survives
 
-*Original `rhi-design.md` §4.2–4.4. Split out 2026-09-01; wording preserved.*
+*Original `rhi-design.md` §4.2–4.4. Split out 2026-09-04; wording preserved.*
 
 > `status: target` — this describes intended design. Nothing here exists.
 

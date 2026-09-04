@@ -6,7 +6,7 @@ covers:
 ---
 # What bgfx costs us, and what it does not
 
-*Original `rhi-design.md` §1 and §2.2. Split out 2026-09-01; wording preserved.*
+*Original `rhi-design.md` §1 and §2.2. Split out 2026-09-04; wording preserved.*
 
 > Rungs 1 and 2 on [`workflow.md`](workflow.md) §1 — everything here is measured
 > or counted in this tree, not argued. `verified:` is the date the counts in §2.2

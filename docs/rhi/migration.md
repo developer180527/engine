@@ -5,7 +5,7 @@ covers:
 ---
 # Migration: strangle, never rewrite
 
-*Original `rhi-design.md` §7. Split out 2026-09-01; wording preserved.*
+*Original `rhi-design.md` §7. Split out 2026-09-04; wording preserved.*
 
 ## 7. Migration
 

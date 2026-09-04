@@ -5,7 +5,7 @@ covers:
 ---
 # The axioms — what this API refuses to do
 
-*Original `rhi-design.md` §4.1. Split out 2026-09-01; wording preserved, including
+*Original `rhi-design.md` §4.1. Split out 2026-09-04; wording preserved, including
 the axiom numbering that other documents cite ("axiom 2", "axiom 6").*
 
 ## 4.1 Axioms

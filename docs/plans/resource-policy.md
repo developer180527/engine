@@ -40,7 +40,7 @@ Everything else is a default nobody chose:
 | resource | today | chosen? |
 |---|---|---|
 | worker threads | `jobs::init()` with no argument → enkiTS default, `cores - 1` | no |
-| **thread QoS / priority** | **never set** | no |
+| **thread QoS / priority** | ~~never set~~ **set, as of 2026-09-04** (§3.1) | **yes** |
 | core affinity (P vs E, big.LITTLE) | none | no |
 | frame cap | none | no |
 | vsync | `BGFX_RESET_VSYNC`, hardcoded (`device.cpp:117`) | no |
@@ -105,20 +105,56 @@ compete, and a direct measurement of that case showed all classes within noise.
 It matters on a player's four-core laptop with a browser open, which is the
 shipping condition rather than the desk condition.
 
-Recommended assignment:
+**BUILT 2026-09-04** — `src/core/thread_qos.h`, `tests/thread_qos_test.cpp`.
+The assignment as implemented, with two corrections this table originally got
+wrong:
 
-| thread | class | why |
+| thread | class | state |
 |---|---|---|
-| main / sim | `USER_INTERACTIVE` | already correct |
-| enkiTS workers | `USER_INITIATED` | on the frame's critical path — but see below |
-| async loader | `UTILITY` | it exists to yield |
-| cook worker | `UTILITY` | already correct (`engine_cook_worker.cpp:163`) |
+| main / sim | `USER_INTERACTIVE` | already correct — the OS gives it, measured at 33 |
+| enkiTS workers | `USER_INITIATED` | **done**, via `cfg.profilerCallbacks.threadStart` |
+| ~~async loader~~ | — | **there is no such thread** (see below) |
+| `CookService::cookLoop` | `UTILITY` | **done** — and it was never set, despite a comment claiming it was |
+| cook worker (child process) | `UTILITY` | already correct (`engine_cook_worker.cpp:163`) |
 
 `USER_INITIATED` rather than `USER_INTERACTIVE` for workers is deliberate: eleven
 threads all claiming the top class is how a process starves its own main thread.
 
-Windows: `SetThreadPriority` plus `AvSetMmThreadCharacteristics("Games")`.
-Linux: nice values, or `SCHED_FIFO` where permitted.
+**Correction 1 — the async loader is not a thread.** This table listed it as one.
+`AsyncLoader` owns no thread; it schedules through `jobs::run("io.assetLoad", …)`
+on the shared pool (`async_loader/loader.cpp:96`). You cannot set a scheduling
+class on a job, so that row was not implementable as written. Its work now
+inherits the pool's `USER_INITIATED`, which is arguably too high for streaming —
+but fixing that means a *priority* concept in the job system, not a QoS call, and
+that is a different piece of work.
+
+**Correction 2 — a comment asserted an invariant nobody had established.**
+`engine_cook_worker.cpp:161` justifies re-demoting the spawned child with *"the
+parent's cook threads are QoS-demoted"*. They were not. Before this change
+nothing in the process set a class on any thread, so `CookService`'s loop
+competed with the frame at `DEFAULT` while its own child process politely ran at
+`UTILITY`. Now set at the top of `cookLoop()`, which makes the child's comment
+true for the first time.
+
+**A third fact, found by measurement:** a fresh `pthread` reports
+`QOS_CLASS_DEFAULT` (21) — a real, distinct value, one step below the main
+thread's `USER_INTERACTIVE` (33), not "unspecified". That is what makes the
+non-inheritance a demotion rather than an absence, and `Class::Unclassified`
+exists in the API so a test can tell the two apart.
+
+Windows: `SetThreadPriority`, wired. `AvSetMmThreadCharacteristics("Games")` is
+deliberately *not* called — it requires a matching revert and therefore an owner
+with a lifetime, which a fire-and-forget setter does not have.
+Linux: per-thread `setpriority` with `SYS_gettid` (passing `0` would nice the
+whole process and demote main with it). Raising priority needs privileges we
+will not have, so `Interactive` is a no-op there rather than a failure.
+
+**What the test can and cannot prove.** `thread_qos_test` asserts the pool's
+workers land on `Initiated`, that the calling thread is *not* demoted with them,
+and that an external kit/provider thread keeps the class its owner chose. It
+does not assert that QoS makes anything faster — that is a property of the OS,
+measured once above, not of this code. Strong readback exists only on Apple, so
+the test gates on `classIsObservable()` rather than a platform macro.
 
 ### 3.2 Worker count
 
@@ -198,15 +234,14 @@ and half of it turned out to be wrong.
 
 | # | Work | Why here |
 |---|---|---|
-| **1** | **Thread QoS** on the four thread classes in §3.1 | measured, ~5 lines, and it is the only item with a number. Needs no policy design |
+| ~~**1**~~ | ~~**Thread QoS**~~ — **DONE 2026-09-04.** `src/core/thread_qos.h`, wired into the enkiTS pool and `CookService`; `thread_qos_test` in the unit lane, mutation-checked | measured, and it needed no policy design. Found two doc errors and one false comment on the way |
 | **2** | Frame cap + vsync as configuration rather than a hardcoded reset flag | small, and the 2D case is unserved today |
 | **3** | Worker-count ceiling in `EngineConfig`, defaulting to today's behaviour | no behaviour change until someone sets it |
 | **4** | Wire **both** budget mechanisms to config — `mem::setBudget` and `GpuResourceCache::setBudget`, each currently reachable only from its own test | plumbing, not design |
 | **5** | Resolution scale | the largest GPU lever; needs a render target the renderer does not currently size independently |
 | **6** | Upscaling | blocked on §5's motion vectors and jitter — a renderer-programme dependency, not a policy one |
 
-Items 1–4 need no new architecture and no renderer work. Item 1 is worth doing
-this week and independently of everything else on this page.
+Items 2–4 need no new architecture and no renderer work. Item 1 is done.
 
 ## 8. Open questions
 

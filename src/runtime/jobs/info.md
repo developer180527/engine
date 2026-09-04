@@ -1,12 +1,13 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-29
+verified: 2026-09-04
 covers:
   - src/runtime/jobs/
 tests:
   - tests/jobs_test.cpp
   - tests/stress_jobs.cpp
+  - tests/thread_qos_test.cpp
 ---
 # engine::jobs — the engine-wide task scheduler
 
@@ -36,6 +37,34 @@ behind: a fiber scheduler needs a thread to be fiber-ready before it can run or
 wait on tasks, so *"any thread may call `jobs::run`"* is a facade promise the new
 backend has to keep deliberately rather than inherit. `stress_jobs` case 2 is
 that promise, tested.
+
+## Workers are classified for the OS scheduler
+
+`init()` installs `cfg.profilerCallbacks.threadStart`, which enkiTS calls **on
+each new worker** as its first act inside `TaskingThreadFunction`. It sets
+`engine::qos::Class::Initiated` — one step below the main thread's
+`USER_INTERACTIVE`, because eleven threads all claiming the top class is how a
+process starves its own main thread.
+
+This is necessary rather than decorative: **`pthread_create` does not inherit the
+creating thread's class.** It produces `QOS_CLASS_DEFAULT` (21), a real value one
+step *below* the main thread's 33, so without the hook the entire pool ran
+demoted by omission. Measured at a 14.5x per-thread advantage under contention;
+invisible on an idle developer machine and material on a four-core laptop.
+
+Two constraints on any backend swap:
+
+* the hook must run **on** the worker thread, not on the spawner — every
+  platform primitive underneath is self-scoped;
+* **external threads must keep their owner's class.** A registered kit or
+  provider thread never enters `TaskingThreadFunction`, so it is never
+  reclassified, and `thread_qos_test` §4 pins that. Silently retuning somebody
+  else's decode thread is the same action-at-a-distance the external-slot design
+  exists to avoid.
+
+`SafeCallback` in enkiTS is a plain null check with no profiling-build guard, so
+this fires in every configuration — verified in
+`third_party/enkiTS/src/TaskScheduler.cpp:258`.
 
 ## Backend & the FTL swap contract
 Current backend: **enkiTS** (`jobs_enkits.cpp` — the only TU in the engine
@@ -110,7 +139,15 @@ Default run is a CI smoke size (~0.5 s). `./stress_jobs 5000` is the soak.
   out-of-line base class).
 
 ## Future Work
-- AsyncLoader onto the pool's IO channel (currently its own thread).
+- ~~AsyncLoader onto the pool's IO channel (currently its own thread).~~
+  **Already done, and this line was stale.** `AsyncLoader` owns no thread —
+  `grep` for `std::thread` under `services/async_loader/` returns nothing; it
+  schedules through `jobs::run("io.assetLoad", …)` (`loader.cpp:96`).
+  What remains is the thing this line was really asking for: streaming work
+  currently inherits the pool's `USER_INITIATED`, and there is no way to say
+  "run this at a lower priority than the frame". That is a **job priority**
+  concept in the facade, not a thread to move — noted while wiring thread QoS,
+  which could not express it either.
 - Cook pipeline parallel per-asset cooks.
 - Renderer extraction/culling tasks.
 - C API surface for kits (`engineJobs*`) once a use case appears.

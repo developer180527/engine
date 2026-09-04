@@ -5,7 +5,7 @@ covers:
 ---
 # The G sequence — phases and effort
 
-*Original `rhi-design.md` §8 and §9. Split out 2026-09-01; wording preserved,
+*Original `rhi-design.md` §8 and §9. Split out 2026-09-04; wording preserved,
 including the `G` ids that other documents cite.*
 
 ## 8. Phases, with exit criteria
@@ -37,7 +37,7 @@ Each phase must be independently defensible — no phase justified only by the n
 **G7 and G8 are optional tiers, not baseline.** Neither reaches the stated minimum
 spec — see [`open-decisions.md`](open-decisions.md) decision 3.
 
-> **G2's backend list was corrected on 2026-09-01** from "D3D12 + Vulkan" to
+> **G2's backend list was corrected on 2026-09-04** from "D3D12 + Vulkan" to
 > "Metal 4 + Vulkan", to match [`design-axioms.md`](design-axioms.md) axiom 6.
 > The original line predated the axiom's second rewrite and had been left behind
 > — exactly the kind of internal disagreement this split is meant to make visible.

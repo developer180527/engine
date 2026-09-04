@@ -5,7 +5,7 @@ covers:
 ---
 # Which of our numbers can be trusted, and what that gates
 
-*Original `rhi-design.md` §3 and §3.1. Split out 2026-09-01; wording preserved.*
+*Original `rhi-design.md` §3 and §3.1. Split out 2026-09-04; wording preserved.*
 
 > This is the methods document for the whole directory. Read it before citing any
 > renderer number, here or elsewhere.

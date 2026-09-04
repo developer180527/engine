@@ -5,7 +5,7 @@ covers:
 ---
 # Should we replace bgfx? The standing answer
 
-*Original `rhi-design.md` §0 and §10. Split out 2026-09-01; wording preserved.*
+*Original `rhi-design.md` §0 and §10. Split out 2026-09-04; wording preserved.*
 
 > **Status: proposed, nothing built.** No `verified:` date, because there is
 > nothing as-built to verify. This is a decision and its rationale, written to be

@@ -6,7 +6,7 @@ covers:
 ---
 # How much of the engine would have to move
 
-*Original `rhi-design.md` §2 and §2.1. Split out 2026-09-01; wording preserved.*
+*Original `rhi-design.md` §2 and §2.1. Split out 2026-09-04; wording preserved.*
 
 > Rung 2 on [`workflow.md`](workflow.md) §1 — every number here is a count a
 > script could re-derive from the tree. `verified:` is the date they were taken.

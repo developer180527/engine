@@ -142,6 +142,15 @@ engine_test(event_test)
 engine_test(input_test)
 engine_test(script_host_test)
 engine_test(jobs_test)
+# Thread scheduling classes. Every engine::qos call site is fire-and-forget, so
+# a deleted or never-fired hook produces a build that is merely slower on a
+# machine we do not own — the profile of a call site that quietly stops running.
+# Asserts the pool's workers land on Initiated, that the calling thread is NOT
+# demoted with them, and that an external (kit/provider) thread keeps the class
+# its owner chose. Strong readback exists only on Apple; the test gates on
+# engine::qos::classIsObservable() rather than a platform macro, so a platform
+# that later gains a real getter strengthens it without an edit.
+engine_test(thread_qos_test)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
 engine_test(animator_system_test)

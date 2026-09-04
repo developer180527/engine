@@ -5,7 +5,7 @@ covers:
 ---
 # Ray tracing — designed now, built late
 
-*Original `rhi-design.md` §4.5. Split out 2026-09-01; wording preserved.*
+*Original `rhi-design.md` §4.5. Split out 2026-09-04; wording preserved.*
 
 ## 4.5 Ray tracing, specifically
 
