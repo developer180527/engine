@@ -50,6 +50,41 @@ citations being checkable:
   exist (with `sdl3_platform.cpp` and `window_ops_sdl3.cpp`), and the loop is at
   `runtime_frame.cpp:31` as cited, not in `runtime.cpp`.
 
+### 0.2 What the host decides, and what it never touches
+
+The invariant above says what the engine must not OWN. This says what the host
+must not CONTROL, which is the half that protects a shipped game's performance —
+and the half a reader is right to worry about, because "the host owns the loop"
+sounds like handing the frame to the OS.
+
+> **The host decides WHEN a frame may happen. The engine decides WHAT a frame
+> IS.**
+
+| the host owns | the engine owns, and never surrenders |
+|---|---|
+| the window and its surface | the **job system** and its worker threads |
+| delivering OS events | **memory** — TLSF heaps, tags, the frame arena |
+| saying "a frame may happen now" | the **simulation timestep** and how many steps run |
+| app lifecycle (backgrounded, GPU lost) | extraction, culling, sort order, submission |
+| — | **thread priority and QoS on its own threads** |
+
+Four calls in, one call out. If the left column ever grows past that, the design
+has gone wrong.
+
+**"Host" is not "operating system."** On desktop the host is `engine_player` —
+our own code — and after this change it has MORE control than today, not less:
+`pollEvents()` currently sits inside `frameBegin` where no caller can reorder,
+skip, batch or relocate it. The OS genuinely owns the loop only on iOS/iPadOS,
+where `CADisplayLink` calls you, and that is the platform's rule rather than
+anything this design introduces.
+
+**The seam is not where the time goes.** `runtime_frame.cpp` makes 8 platform
+calls per frame; at ~2 ns for a cross-boundary indirect call that is **16
+nanoseconds against an 8.33 ms budget**. Removing `pollEvents` from the frame is
+a net saving, because a syscall leaves the hot path. What actually costs
+scheduler-wise is thread QoS — measured at **14.5× between classes under
+contention** — and that stays engine-owned precisely so it cannot be lost.
+
 ## 1. What already exists
 
 This document was going to argue for building a seam. Most of it is there:
@@ -136,15 +171,29 @@ The contract must state which of the four `tick` performs, whether any are
 separately callable, and — for a dedicated server — whether rendering is skipped
 or absent.
 
-### 3.2 What `dtSeconds` means
+### 3.2 What `dtSeconds` means — DECIDED: a hint
 
-Wall-clock elapsed, simulation time, or a requested timestep? And what happens
-when a host supplies a hostile value: an enormous `dt` after a breakpoint, zero,
-negative, or two ticks with no render between them.
+Wall-clock elapsed, simulation time, or a requested timestep? The draft left this
+open. It should not be, because the answer protects determinism from every host
+that will ever exist, including the badly written ones.
 
-Today `frameBegin` clamps to `0.05f` and hands the first frame `0.0f`. Once the
-host owns the loop that clamp becomes part of the **contract**, not an internal
-detail: state whether `dt` is trusted, clamped, or a hint.
+> **`dt` is an OBSERVATION, not an instruction.** The host reports that time has
+> passed. The engine clamps it and runs its own fixed timestep with an
+> accumulator, and decides how many simulation steps that buys.
+
+A late `CADisplayLink` callback, a debugger pause, a host that misreads its own
+clock — under a trusted `dt` every one of those becomes jitter in physics. Under
+a hint, none of them can: the worst a bad host achieves is a frame that
+simulates less or more than it should have, never a simulation that behaves
+differently.
+
+This is §0.2's rule applied to time. `frameBegin` already clamps to `0.05f` and
+hands the first frame `0.0f`; the change is that this stops being an internal
+detail and becomes the stated contract, so a host cannot reason its way into
+expecting otherwise.
+
+Still to state: whether two ticks with no render between them are legal, and
+what a zero or negative `dt` does (recommend: legal and ignored, respectively).
 
 ### 3.3 Threading
 
