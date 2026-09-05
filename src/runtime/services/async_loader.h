@@ -12,27 +12,29 @@
 #include <atomic>
 #include <cstdint>
 
-// bgfx::Memory is only ever held BY POINTER in this header — forward-declared
-// so AsyncLoader's interface stops being a transitive gateway to the whole
-// bgfx API for every consumer (audit A.4). The .cpp includes bgfx properly.
-namespace bgfx { struct Memory; }
+// Staging allocations cross this boundary by pointer only. They used to be
+// `const bgfx::Memory*` behind a forward declaration, which kept the bgfx API
+// out of consumers (audit A.4) but still named a backend in the runtime's
+// header — so the type, not just the include, was the coupling. gpu::Blob is
+// opaque by construction (render/gpu.h).
 
+#include "render/gpu.h"
 #include "assets/asset_storage.h"
 #include "animation/skeleton.h"
 #include "animation/animation_clip.h"
 #include <assetlib/asset_registry.h>
 
 // -----------------------------------------------------------------------
-// GPU-ready data — ALL heavy work (parse + decode + bgfx::copy memcpy)
-// done on the worker thread. Main thread only creates bgfx handles, which
-// is submitting a command — O(microseconds), no memcpy, no stall.
+// GPU-ready data — ALL heavy work (parse + decode + the staging memcpy) is
+// done on the worker thread. The main thread only creates handles, which is
+// submitting a command — O(microseconds), no memcpy, no stall.
 // -----------------------------------------------------------------------
 
 struct SubRange { uint32_t indexOffset; uint32_t indexCount; uint32_t matIndex; };
 
 struct MeshGPUData {
-    const bgfx::Memory* vertexMem  = nullptr; // pre-copied by worker
-    const bgfx::Memory* indexMem   = nullptr; // pre-copied by worker
+    gpu::Blob* vertexMem  = nullptr;          // pre-staged by worker
+    gpu::Blob* indexMem   = nullptr;          // pre-staged by worker
     uint32_t  indexCount  = 0;
     bool      use32       = false;
     bool      doubleSided = false;
@@ -45,7 +47,7 @@ struct MeshGPUData {
 };
 
 struct TextureGPUData {
-    const bgfx::Memory* mem = nullptr; // nullptr = no texture
+    gpu::Blob* mem = nullptr;          // nullptr = no texture
     uint16_t w = 0, h = 0;
     uint32_t format = 0;               // assetlib::TextureFormatId (0=RGBA8)
     uint32_t mips   = 1;               // >1 = pre-mipped BC payload
@@ -61,7 +63,7 @@ struct MaterialGPUData {
     std::string    normalMapName;
 };
 
-// Fully prepared asset: all CPU work AND all bgfx::copy() done on worker.
+// Fully prepared asset: all CPU work AND all staging copies done on worker.
 // drainOne() on the main thread just creates handles and spawns the entity.
 struct LoadedAsset {
     std::string                   path;
@@ -71,7 +73,7 @@ struct LoadedAsset {
     std::vector<MeshGPUData>      meshes;
     std::vector<MaterialGPUData>  materials;
 
-    // Animation data (extracted on worker — pure CPU, no bgfx calls).
+    // Animation data (extracted on worker — pure CPU, no GPU calls).
     bool                          hasSkeleton = false;
     Skeleton                      skeleton;
     std::vector<AnimClip>         animClips;
@@ -99,7 +101,7 @@ public:
     void setRegistry(assetlib::AssetRegistry* r) { m_registry = r; }
     void setProjectRoot(const std::filesystem::path& root) { m_projectRoot = root; }
 
-    // Main thread only. O(microseconds) — only creates bgfx handles.
+    // Main thread only. O(microseconds) — only creates GPU handles.
     // Returns true if an asset was processed.
     bool drainOne(AssetStorage& storage);
 

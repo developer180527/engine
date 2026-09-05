@@ -1,8 +1,8 @@
 #pragma once
+#include "render/gpu.h"
 #include <algorithm>
 #include <vector>
 #include <cmath>
-#include <bgfx/bgfx.h>
 #include <bx/math.h>
 #include "render/vertex.h"
 #include "render/asset_registry.h"
@@ -47,10 +47,10 @@ private:
                               std::vector<Vertex>&   verts,
                               std::vector<uint32_t>& idx,
                               const char* name) {
-        auto* vm = bgfx::copy(verts.data(), (uint32_t)(verts.size() * sizeof(Vertex)));
-        auto* im = bgfx::copy(idx.data(),   (uint32_t)(idx.size()   * sizeof(uint32_t)));
-        bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(vm, Vertex::layout());
-        bgfx::IndexBufferHandle  ibh = bgfx::createIndexBuffer(im, BGFX_BUFFER_INDEX32);
+        auto* vm = gpu::copy(verts.data(), (uint32_t)(verts.size() * sizeof(Vertex)));
+        auto* im = gpu::copy(idx.data(),   (uint32_t)(idx.size()   * sizeof(uint32_t)));
+        gpu::VertexBufferHandle vbh = gpu::createVertexBuffer(vm, Vertex::kGpuFormat);
+        gpu::IndexBufferHandle  ibh = gpu::createIndexBuffer(im, gpu::IndexFormat::U32);
         Mesh mesh(vbh, ibh, (uint32_t)idx.size());
         mesh.sourcePath  = std::string("engine://primitive/") + name;
         mesh.doubleSided = false;

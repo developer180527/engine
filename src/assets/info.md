@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-04
+verified: 2026-09-05
 parses-external-input: true
 covers:
   - src/assets/
@@ -92,6 +92,15 @@ format / scheduling).
       default an unknown format id to RGBA8, handing block bytes to the driver
       as raw pixels. It now rejects unknown ids and formats the GPU cannot
       sample, naming the format and pointing at `COOK_TEX_TARGET`.
+    - **That refusal moved to `gpu::textureFormatSupported()` (2026-09-05), and
+      it must be asked BEFORE staging.** Refusing inside `createTexture2D`
+      strands the staged payload for the life of the process — the backend frees
+      staging memory only when a command consumes it — and on content cooked for
+      the wrong target *every* texture takes that path, so the leak is the whole
+      texture set. The predicate is thread-safe (caps are fixed at device
+      creation), so a loader worker asks it before spending the memcpy. Pinned by
+      `tests/gpu_seam_test.cpp`; the refusal is reported once per format, not
+      once per texture.
 - `SceneCooker` — scene JSON → binary for SceneService. Every read goes through
   `core/json_read.h`, not `nlohmann`'s own accessors: the const
   `operator[](size_type)` is UNCHECKED (`"position": []` indexes an empty vector)
@@ -254,7 +263,9 @@ local blob and bypasses the fetch path — otherwise it would just re-download
 the bytes under suspicion).
 
 ## Loaders (`loaders/`)
-`mesh_loader` — reads a `.cooked` mesh and creates bgfx buffers. The fast
+`mesh_loader` — reads a `.cooked` mesh and creates GPU buffers **through
+`render/gpu.h`, never through a graphics API directly** (G1a): it parses and
+validates with no device present, and only the upload needs one. The fast
 path that skips importers entirely. Validate the header version; mismatch
 means "treat as missing" and fall back to import.
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <bgfx/bgfx.h>
+#include "render/gpu.h"
 
 // Standard vertex format for engine-loaded meshes.
 //
@@ -21,20 +21,13 @@ struct Vertex {
     float tangent[4];   // xyz + handedness  16 bytes
     float uv[2];        // u, v in [0, 1]    8 bytes
 
-    // bgfx vertex layout descriptor. Built once at engine init, referenced
-    // every time we create a vertex buffer. Static method so callers don't
-    // have to hold a layout instance around.
-    static bgfx::VertexLayout& layout() {
-        static bgfx::VertexLayout layout = [] {
-            bgfx::VertexLayout l;
-            l.begin()
-                .add(bgfx::Attrib::Position,  3, bgfx::AttribType::Float)
-                .add(bgfx::Attrib::Normal,    3, bgfx::AttribType::Float)
-                .add(bgfx::Attrib::Tangent,   4, bgfx::AttribType::Float)
-                .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
-                .end();
-            return l;
-        }();
-        return layout;
-    }
+    // Which GPU layout describes this struct. The layout DESCRIPTOR itself
+    // lives in render/gpu.cpp: it is the backend's vocabulary, and keeping it
+    // here put <bgfx/bgfx.h> into every file that names a Vertex — including
+    // three asset importers that have no business knowing a graphics API
+    // (docs/rhi/phases.md G1).
+    //
+    // The struct layout above and the descriptor there must agree; gpu.cpp
+    // static_asserts the stride, which is the half a compiler can check.
+    static constexpr gpu::VertexFormat kGpuFormat = gpu::VertexFormat::Standard;
 };

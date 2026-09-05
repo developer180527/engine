@@ -1,22 +1,22 @@
 #pragma once
 // The GPU-FREE frame description (Span, LightItem, RenderItem, ViewCamera,
 // RenderWorld) now lives in render/world/render_world.h so culling, sorting
-// and light packing can be compiled and TESTED without bgfx. What remains here
+// and light packing can be compiled and TESTED without a backend. What remains here
 // is the part that genuinely needs the graphics API: render targets and view
 // ids. See docs/architecture/renderer-architecture.md §5.
 #include "render/world/render_world.h"
 
-#include <bgfx/bgfx.h>
+#include "render/gpu.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 
 // Where a view renders. Lightweight: handles + dims + clear only.
 struct RenderTarget {
-    bgfx::FrameBufferHandle fb = BGFX_INVALID_HANDLE;
+    gpu::FrameBufferHandle fb;
     uint16_t w = 0, h = 0;
     Vec4     clearColor;
-    uint16_t clearFlags = BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH;
+    uint16_t clearFlags = gpu::kClearColor | gpu::kClearDepth;
     float    clearDepth = 1.0f;
 };
 
@@ -28,7 +28,7 @@ struct RenderView {
     Vec4         camPos;             // w = 1
     float        frustum[6][4] = {};
     RenderTarget target;
-    bgfx::ViewId baseViewId = 0;     // engine-allocated; more via RenderContext
+    gpu::ViewId baseViewId = 0;     // engine-allocated; more via RenderContext
     Span<RenderItem> items;          // ALL renderables (unculled) — pipeline culls
     CullStreams      cull;           // SoA cull working set, parallel to `items`
     Span<LightItem>  lights;

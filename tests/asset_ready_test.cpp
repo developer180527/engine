@@ -10,7 +10,7 @@
 #include <cstdio>
 #include <thread>
 
-#include <bgfx/bgfx.h>
+#include "gpu_test_device.h"
 
 #include "runtime/services/asset_service.h"
 #include "render/asset_registry.h"
@@ -40,15 +40,7 @@ int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("asset_ready_test: failed-load visibility gauntlet\n");
 
-    bgfx::renderFrame();                    // single-threaded Noop
-    bgfx::Init init;
-    init.type = bgfx::RendererType::Noop;
-    init.resolution.width  = 16;
-    init.resolution.height = 16;
-    if (!bgfx::init(init)) {
-        std::printf("asset_ready_test: FAIL — bgfx Noop init failed\n");
-        return 1;
-    }
+    if (!initTestDevice()) return 1;
 
     {
         AssetRegistry    meshes;
@@ -86,7 +78,7 @@ int main() {
               "never-requested path is not 'failed'");
     }
 
-    bgfx::shutdown();
+    shutdownTestDevice();
 
     if (g_failures) { std::printf("asset_ready_test: %d FAILURE(S)\n", g_failures); return 1; }
     std::printf("asset_ready_test: ALL PASS\n");

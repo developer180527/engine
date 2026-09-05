@@ -7,6 +7,7 @@
 // its own unit now so that reading "how does a frame get submitted" does not mean
 // reading program creation and shadow matrices first.
 #include <cstring>   // std::memcpy/std::strlen — libc++ pulls these in
+#include "render/gpu_bgfx.h"   // toBgfx — renderer-internal, see G1
                      // transitively, libstdc++ does not, so the Linux legs
                      // are where a missing one surfaces
 #include "render/forward_pipeline.h"
@@ -30,9 +31,10 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
             | (uint32_t)(uint8_t)(v.target.clearColor.y * 255.0f) << 16
             | (uint32_t)(uint8_t)(v.target.clearColor.z * 255.0f) << 8
             | (uint32_t)(uint8_t)(v.target.clearColor.w * 255.0f);
-        bgfx::setViewFrameBuffer(id, v.target.fb);
+        bgfx::setViewFrameBuffer(id, gpu::toBgfx(v.target.fb));
         bgfx::setViewRect(id, 0, 0, v.target.w, v.target.h);
-        bgfx::setViewClear(id, v.target.clearFlags, cc, v.target.clearDepth, 0);
+        bgfx::setViewClear(id, gpu::toBgfxClear(v.target.clearFlags), cc,
+                           v.target.clearDepth, 0);
         bgfx::setViewTransform(id, v.view.ptr(), v.proj.ptr());
         bgfx::touch(id);
 
@@ -229,9 +231,14 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                         for (const auto& tb : mat->textureBinds) {
                             const Texture* t = tb.texture.valid()
                                              ? ctx.textures.getTexture(tb.texture) : nullptr;
-                            const bgfx::TextureHandle h = t ? t->handle
-                                : (tb.fallback == "flatNormal" ? ctx.flatNormalTex
-                                                               : ctx.whiteTex);
+                            // ctx's fallbacks are the RENDERER's own bgfx
+                            // textures; an asset texture is a gpu:: handle.
+                            // Converting here rather than storing bgfx in
+                            // Texture is the whole point of G1.
+                            const bgfx::TextureHandle h = gpu::toBgfx(
+                                t ? t->handle
+                                  : (tb.fallback == "flatNormal" ? ctx.flatNormalTex
+                                                                 : ctx.whiteTex));
                             bgfx::setTexture((uint8_t)tb.stage,
                                 ctx.shaders->uniform(tb.uniform,
                                                      bgfx::UniformType::Sampler),
@@ -257,7 +264,7 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                                | BGFX_STATE_MSAA)
                             : state);
                         bgfx::setTransform(it.model.ptr());
-                        bgfx::setVertexBuffer(0, it.mesh->vbh);
+                        bgfx::setVertexBuffer(0, gpu::toBgfx(it.mesh->vbh));
                         // Once per material. The difference between "the
                         // .cmat loaded" and "the .cmat is what you are looking
                         // at" is exactly this branch being taken.
@@ -296,8 +303,8 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                     bgfx::setUniform(m_uParams, params);
                     bgfx::setUniform(m_uColorFactor, factor);
                     m_boundMat.id   = UINT32_MAX - 1;
-                    m_boundMat.base = ctx.whiteTex;
-                    m_boundMat.norm = ctx.flatNormalTex;
+                    m_boundMat.base = gpu::toBgfx(ctx.whiteTex);
+                    m_boundMat.norm = gpu::toBgfx(ctx.flatNormalTex);
                     ++m_submitStats.materialBinds;
                 }
                 bindDrawState(m_boundMat.base, m_boundMat.norm, state, it);
@@ -350,9 +357,9 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                     drawProgram = m_instancedProgram;
                     bindMaterial(drawMat);               // shared by the whole run
                     bgfx::setInstanceDataBuffer(&idb);
-                    if (sub) bgfx::setIndexBuffer(it.mesh->ibh, sub->indexOffset,
+                    if (sub) bgfx::setIndexBuffer(gpu::toBgfx(it.mesh->ibh), sub->indexOffset,
                                                   sub->indexCount);
-                    else     bgfx::setIndexBuffer(it.mesh->ibh);
+                    else     bgfx::setIndexBuffer(gpu::toBgfx(it.mesh->ibh));
                     bgfx::submit(id, drawProgram);
                     m_instancing = false;
                     ++m_submitStats.draws;
@@ -383,7 +390,7 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                     if (drawBudgetExhausted()) break;
                     drawProgram = defaultProg;   // a data-driven range must not leak
                     bindMaterial(sm.material.valid() ? sm.material : it.material);
-                    bgfx::setIndexBuffer(it.mesh->ibh, sm.indexOffset, sm.indexCount);
+                    bgfx::setIndexBuffer(gpu::toBgfx(it.mesh->ibh), sm.indexOffset, sm.indexCount);
                     bgfx::submit(id, drawProgram);
                     ++m_submitStats.draws;
                     ++m_submitStats.submeshDraws;
@@ -395,9 +402,9 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
 
             drawProgram = defaultProg;
             bindMaterial(drawMat);
-            if (sub) bgfx::setIndexBuffer(it.mesh->ibh, sub->indexOffset,
+            if (sub) bgfx::setIndexBuffer(gpu::toBgfx(it.mesh->ibh), sub->indexOffset,
                                           sub->indexCount);
-            else     bgfx::setIndexBuffer(it.mesh->ibh);
+            else     bgfx::setIndexBuffer(gpu::toBgfx(it.mesh->ibh));
             bgfx::submit(id, drawProgram);
             ++m_submitStats.draws;
             if (sub) ++m_submitStats.submeshDraws;
@@ -421,7 +428,7 @@ void ForwardPipeline::bindDrawState(bgfx::TextureHandle base,
         // instance data (vs_instanced.sc), and a setTransform here would be
         // ignored by that shader while still costing a matrix-cache slot.
         if (!m_instancing) bgfx::setTransform(it.model.ptr());
-        bgfx::setVertexBuffer(0, it.mesh->vbh);
+        bgfx::setVertexBuffer(0, gpu::toBgfx(it.mesh->vbh));
     }
 
 void ForwardPipeline::submitDebugLines(bgfx::ViewId id, RenderContext& ctx) {

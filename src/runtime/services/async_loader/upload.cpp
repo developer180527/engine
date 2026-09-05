@@ -13,7 +13,7 @@
 #include "render/material.h"
 #include "render/cooked_texture.h"   // format-aware BC upload
 
-#include <bgfx/bgfx.h>
+#include "render/gpu.h"
 
 #include <cstring>
 
@@ -52,28 +52,26 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
         return true;
     }
 
-    // Upload materials (handle creation only — data already in bgfx pool)
+    // Upload materials (handle creation only — data already staged)
     std::vector<MaterialHandle> matHandles(req.asset.materials.size());
     for (size_t i = 0; i < req.asset.materials.size(); ++i) {
         const MaterialGPUData& mg = req.asset.materials[i];
         // Format-aware creates: BC7/BC5 blocks + pre-built mips upload
         // exactly as cooked (mem already copied — instant).
         auto createTex = [](const TextureGPUData& t) {
-            return bgfx::createTexture2D(t.w, t.h, t.mips > 1, 1,
-                                         cookedTexBgfxFormat(t.format),
-                                         0, t.mem);
+            return gpu::createTexture2D(t.w, t.h, (uint16_t)t.mips, t.format, t.mem);
         };
         TextureHandle base, norm;
         if (mg.baseColorTexture.mem) {
-            bgfx::TextureHandle th = createTex(mg.baseColorTexture);
-            if (bgfx::isValid(th)) {
+            gpu::TextureHandle th = createTex(mg.baseColorTexture);
+            if (th.valid()) {
                 Texture tex; tex.handle = th;
                 base = storage.textures.addTexture(std::move(tex));
             }
         }
         if (mg.normalMapTexture.mem) {
-            bgfx::TextureHandle th = createTex(mg.normalMapTexture);
-            if (bgfx::isValid(th)) {
+            gpu::TextureHandle th = createTex(mg.normalMapTexture);
+            if (th.valid()) {
                 Texture tex; tex.handle = th;
                 norm = storage.textures.addTexture(std::move(tex));
             }
@@ -98,7 +96,7 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
         matHandles[i] = storage.materials.addMaterial(std::move(mat));
     }
 
-    // Upload meshes (handle creation only — data already in bgfx pool)
+    // Upload meshes (handle creation only — data already staged)
     MeshHandle firstHandle{};
     for (const MeshGPUData& mg : req.asset.meshes) {
         if (!mg.vertexMem || !mg.indexMem) {
@@ -107,13 +105,13 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
             continue;
         }
         // Select vertex layout based on whether this mesh has bone data
-        bgfx::VertexBufferHandle vbh = mg.skinned
-            ? bgfx::createVertexBuffer(mg.vertexMem, SkinnedVertex::layout())
-            : bgfx::createVertexBuffer(mg.vertexMem, Vertex::layout());
+        gpu::VertexBufferHandle vbh = gpu::createVertexBuffer(
+            mg.vertexMem, mg.skinned ? SkinnedVertex::kGpuFormat
+                                     : Vertex::kGpuFormat);
 
-        bgfx::IndexBufferHandle ibh = mg.use32
-            ? bgfx::createIndexBuffer(mg.indexMem, BGFX_BUFFER_INDEX32)
-            : bgfx::createIndexBuffer(mg.indexMem); // instant — no memcpy
+        gpu::IndexBufferHandle ibh = gpu::createIndexBuffer(
+            mg.indexMem, mg.use32 ? gpu::IndexFormat::U32
+                                  : gpu::IndexFormat::U16); // instant — no memcpy
 
         Mesh mesh(vbh, ibh, mg.indexCount);
         mesh.doubleSided = mg.doubleSided;

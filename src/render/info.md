@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-10
+verified: 2026-09-05
 covers:
   - src/render/
 tests:
@@ -110,10 +110,86 @@ Two layers:
 ## Key Data
 - **Registries** — `AssetRegistry` (meshes), `TextureRegistry`,
   `MaterialRegistry`: `Handle<Tag>` dense vectors, slot 0 = null handle.
-- **Vertex formats** — `vertex.h` (static, 52 bytes), `skinned_vertex.h`
-  (68 bytes: pos + normal + tangent + uv + 4×uint8 joints + 4×float weights).
+- **Vertex formats** — `vertex.h` (**48** bytes: pos 12 + normal 12 + tangent 16
+  + uv 8 — this said 52 until 2026-09-04, when `gpu.cpp`'s `static_assert`
+  settled it), `skinned_vertex.h` (68 bytes: the same plus 4×uint8 joints +
+  4×float weights). Neither declares its own GPU layout any more; see below.
 - **`Mesh`** (`mesh.h`) — VB/IB handles + `SubRange` submeshes (skinned
-  imports merge all body parts into one VB/IB with submesh ranges).
+  imports merge all body parts into one VB/IB with submesh ranges). The handles
+  are `gpu::` types, not backend ones.
+
+## The upload seam (`gpu.h`) — G1a
+
+`render/gpu.h` is the ONLY thing outside `src/render/renderer/` that turns
+engine bytes into GPU handles, and `gpu.cpp` is the only TU that implements it.
+Opaque `VertexBufferHandle` / `IndexBufferHandle` / `TextureHandle`, an opaque
+`Blob` for staging, and five operations: stage, create vertex/index/texture,
+destroy.
+
+**The rule it enforces:** *loading produces bytes, uploading produces handles,
+and only the second needs a GPU.* Five files used to do both in one function —
+`asset_service.cpp`, `async_loader/upload.cpp`, `mesh_loader.cpp`,
+`gltf_importer.cpp`, `assimp_importer.cpp` — which is what blocked a headless
+server, a second backend and an embedding host simultaneously.
+
+Three things worth knowing:
+
+* **The two vertex layouts live in `gpu.cpp`**, not on the structs. `Vertex` and
+  `SkinnedVertex` carry a `kGpuFormat` enum instead. `layout()` returned a
+  `bgfx::VertexLayout`, which put the backend into every header that named a
+  vertex — and from there into two asset importers. The struct and its
+  descriptor are now in different files, so `gpu.cpp` `static_assert`s both
+  strides: the half of the agreement a compiler can check.
+* **Texture formats are checked BEFORE staging.** `gpu::textureFormatSupported()`
+  is a thread-safe capability query (caps are fixed at device creation), and
+  every loader asks it on the worker before spending the memcpy. This is not
+  hygiene: refusing inside `createTexture2D` strands the staged payload for the
+  life of the process — the backend frees staging memory only when a command
+  consumes it — and a build cooked for the wrong target takes that path for
+  *every* texture in the scene. `createTexture2D` re-checks as a backstop and
+  prints `BUG:` with the stranded byte count rather than failing quietly.
+  Reported once per format, not once per texture. `tests/gpu_seam_test.cpp`.
+* **`gpu::deviceAvailable()` gates everything.** Set by `Renderer::init`,
+  cleared by `Renderer::shutdown` *before* bgfx goes down. With no device,
+  staging returns null and every create returns invalid — so the asset path
+  runs to completion and simply produces no handles. Tests that want a device
+  use `tests/gpu_test_device.h`, never `bgfx::init` directly.
+* **`gpu_bgfx.h` is the deliberate escape hatch** for `src/render/` only: the
+  passes still call `bgfx::submit`, so they convert back with `gpu::toBgfx()`.
+  It is deleted, not ported, when the RHI lands.
+
+`scripts/check_gpu_seam.py` runs in the `unit` lane and fails the build if any
+file outside `src/render/` includes a graphics API. That is the part that keeps
+this true, because the coupling returns as one `#include` added to fix one
+compile error, not as a decision.
+
+**G1b/G1c, 2026-09-04.** Every renderer header is now backend-free:
+`renderer.h`, `render_view.h`, `render_context.h`, `mesh.h`, `texture.h`,
+`vertex.h`, `skinned_vertex.h`, `asset_registry.h`, `primitive_library.h`. They
+use `gpu::TextureHandle` / `FrameBufferHandle` / `ViewId` / `ClearFlags`, and
+the `.cpp` files convert with `gpu::toBgfx()` at the point of the actual driver
+call.
+
+Two consequences worth stating:
+
+* **A third-party `IRenderPipeline` can be written without a graphics API in
+  scope.** "Swap the whole renderer by assigning a different IRenderPipeline"
+  was not previously a claim anyone outside this repo could act on, because
+  `RenderContext` handed them `bgfx::TextureHandle` and `bgfx::ViewId`.
+* **`gpu::ViewId` is a plain `uint16_t` alias, not an opaque handle.** View ids
+  are compared, incremented and indexed throughout the passes; wrapping them
+  would be ceremony with no defect behind it. Aliasing prejudges nothing — the
+  render graph deletes the concept either way.
+
+`tests/headless_include_probe.cpp` compiles `runtime.h` and the pipeline seam
+with bgfx absent from the include path. That catches what
+`check_gpu_seam.py` cannot: the coupling here was TRANSITIVE, and a header
+inside `src/render/` re-adding an include is legal to the grep and fatal to the
+probe.
+
+**Still open:** `engine_runtime` LINKS bgfx — the runtime calls ~15 `Renderer`
+methods unconditionally, so the symbols are needed even where no device is
+created. See `docs/rhi/phases.md` G1c for the null-renderer decision.
 
 ## Skinning (GPU)
 Bone palettes are uploaded as a vec4 array uniform (`u_boneMatrices`,

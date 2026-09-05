@@ -1,14 +1,14 @@
 #pragma once
-#include <bgfx/bgfx.h>
+#include "render/gpu.h"
 #include <cstdint>
 
 struct Texture {
-    bgfx::TextureHandle handle = BGFX_INVALID_HANDLE;
+    gpu::TextureHandle handle;   // opaque since G1
     uint16_t width  = 0;
     uint16_t height = 0;
 
     Texture() = default;
-    Texture(bgfx::TextureHandle h, uint16_t w, uint16_t ht)
+    Texture(gpu::TextureHandle h, uint16_t w, uint16_t ht)
         : handle(h), width(w), height(ht) {}
 
     Texture(const Texture&)            = delete;
@@ -16,23 +16,18 @@ struct Texture {
 
     Texture(Texture&& o) noexcept
         : handle(o.handle), width(o.width), height(o.height) {
-        o.handle = BGFX_INVALID_HANDLE;
+        o.handle = {};
     }
     Texture& operator=(Texture&& o) noexcept {
         if (this != &o) {
             destroy();
             handle = o.handle; width = o.width; height = o.height;
-            o.handle = BGFX_INVALID_HANDLE;
+            o.handle = {};
         }
         return *this;
     }
     ~Texture() { destroy(); }
-    bool valid() const { return bgfx::isValid(handle); }
+    bool valid() const { return handle.valid(); }
 private:
-    void destroy() {
-        if (bgfx::isValid(handle)) {
-            bgfx::destroy(handle);
-            handle = BGFX_INVALID_HANDLE;
-        }
-    }
+    void destroy() { gpu::destroy(handle); }
 };

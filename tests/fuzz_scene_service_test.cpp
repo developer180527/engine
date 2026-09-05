@@ -40,7 +40,7 @@
 #include <assetlib/scene_asset.h>
 #include <assetlib/mesh_asset.h>
 
-#include <bgfx/bgfx.h>
+#include "gpu_test_device.h"
 #include <flecs.h>
 
 #include <cstring>
@@ -319,13 +319,7 @@ int main(int argc, char** argv) {
 
     // Noop: no window, no driver, but every bgfx handle path runs for real —
     // which is what makes the load/unload resource bookkeeping meaningful.
-    bgfx::renderFrame();
-    bgfx::Init init;
-    init.type = bgfx::RendererType::Noop;
-    init.resolution.width = 16;
-    init.resolution.height = 16;
-    if (!bgfx::init(init)) { std::printf("FAIL bgfx init\n"); return 1; }
-    bgfx::frame();
+    if (!initTestDevice()) return 1;
 
     g_root = fs::temp_directory_path()
            / ("engine-fuzz-sceneservice-" + std::to_string(fuzz::currentPid()));
@@ -346,6 +340,6 @@ int main(int argc, char** argv) {
     const int rc = fuzz::run("scene_service", argc, argv, oneCase);
 
     fs::remove_all(g_root, ec);
-    bgfx::shutdown();
+    shutdownTestDevice();
     return rc;
 }

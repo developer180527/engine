@@ -16,7 +16,8 @@
 #include <assimp/material.h>
 
 #include <stb_image.h>
-#include <bgfx/bgfx.h>
+#include "render/gpu.h"
+#include <assetlib/texture_asset.h>   // kTexRGBA8
 #include <bx/math.h>
 
 #include <algorithm>
@@ -119,7 +120,7 @@ static TextureHandle importTexture(const aiScene*   scene,
                 pixels = (stbi_uc*)malloc(sz);
                 // aiTexel's in-memory layout is BGRA, but its .r/.g/.b/.a
                 // MEMBERS name the components — reading them by name yields
-                // the correct RGBA order for bgfx regardless of byte order.
+                // the correct RGBA order for the GPU regardless of byte order.
                 const aiTexel* src = t->pcData;
                 for (int p = 0; p < w * h; ++p) {
                     pixels[p*4+0] = src[p].r;
@@ -164,14 +165,13 @@ static TextureHandle importTexture(const aiScene*   scene,
 
     if (!pixels || w == 0 || h == 0) return {};
 
-    const bgfx::Memory* mem = bgfx::copy(pixels, (uint32_t)(w * h * 4));
+    gpu::Blob* mem = gpu::copy(pixels, (uint32_t)(w * h * 4));
     stbi_image_free(pixels);   // safe even for malloc'd — stbi_image_free wraps free()
 
-    bgfx::TextureHandle th = bgfx::createTexture2D(
-        (uint16_t)w, (uint16_t)h, false, 1,
-        bgfx::TextureFormat::RGBA8, 0, mem);
+    gpu::TextureHandle th = gpu::createTexture2D(
+        (uint16_t)w, (uint16_t)h, 1, assetlib::kTexRGBA8, mem);
 
-    if (!bgfx::isValid(th)) return {};
+    if (!th.valid()) return {};
 
     Texture tex;
     tex.handle = th;
@@ -309,25 +309,27 @@ static MeshHandle finalizeMesh(const std::vector<VertT>& verts,
                                const Bounds& b, const std::string& sourcePath,
                                AssetStorage& storage) {
     const bool use32 = verts.size() > 65535;
-    bgfx::IndexBufferHandle ibh;
+    gpu::IndexBufferHandle ibh;
     if (use32) {
-        ibh = bgfx::createIndexBuffer(
-            bgfx::copy(indices.data(), (uint32_t)(indices.size()*4)), BGFX_BUFFER_INDEX32);
+        ibh = gpu::createIndexBuffer(
+            gpu::copy(indices.data(), (uint32_t)(indices.size()*4)),
+            gpu::IndexFormat::U32);
     } else {
         std::vector<uint16_t> idx16(indices.begin(), indices.end());
-        ibh = bgfx::createIndexBuffer(
-            bgfx::copy(idx16.data(), (uint32_t)(idx16.size()*2)));
+        ibh = gpu::createIndexBuffer(
+            gpu::copy(idx16.data(), (uint32_t)(idx16.size()*2)),
+            gpu::IndexFormat::U16);
     }
-    bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(
-        bgfx::copy(verts.data(), (uint32_t)(verts.size()*sizeof(VertT))),
-        VertT::layout());
+    gpu::VertexBufferHandle vbh = gpu::createVertexBuffer(
+        gpu::copy(verts.data(), (uint32_t)(verts.size()*sizeof(VertT))),
+        VertT::kGpuFormat);
 
     // Validate before wrapping — a failed GPU allocation must not be stored as
     // a live handle (importer audit: "Unchecked GPU Buffer Creation"; the glTF
     // importer already does this).
-    if (!bgfx::isValid(vbh) || !bgfx::isValid(ibh)) {
-        if (bgfx::isValid(vbh)) bgfx::destroy(vbh);
-        if (bgfx::isValid(ibh)) bgfx::destroy(ibh);
+    if (!vbh.valid() || !ibh.valid()) {
+        gpu::destroy(vbh);
+        gpu::destroy(ibh);
         LOG_ERROR("Assimp", "GPU buffer creation failed for %s", sourcePath.c_str());
         return MeshHandle{};
     }
@@ -388,7 +390,7 @@ MeshImportResult AssimpImporter::load(const std::string& path,
         aiProcess_Triangulate           | // all polys → triangles
         aiProcess_GenSmoothNormals      | // generate normals if absent
         aiProcess_CalcTangentSpace      | // needed for skinned normal mapping
-        aiProcess_FlipUVs               | // match bgfx/Metal UV origin
+        aiProcess_FlipUVs               | // match the Metal/D3D UV origin
         aiProcess_JoinIdenticalVertices | // deduplicate verts
         aiProcess_SortByPType           | // separate point/line/tri prims
         0);

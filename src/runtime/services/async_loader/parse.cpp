@@ -2,8 +2,8 @@
 // One of AsyncLoader's three TUs (loader.cpp queue/lifecycle, parse.cpp CPU
 // import, upload.cpp GPU handle creation). Everything here runs on the job
 // pool: Assimp/glTF parsing, skeleton + clip extraction (ozz), texture
-// decode (stb/cooked), and the bgfx::copy staging memcpys (thread-safe —
-// bgfx's pool allocator wraps malloc). No bgfx HANDLES are created here;
+// decode (stb/cooked), and the gpu::copy staging memcpys (thread-safe —
+// the backend's pool allocator wraps malloc). No GPU HANDLES are created here;
 // that is upload.cpp's main-thread job.
 #include "runtime/services/async_loader.h"
 #include "core/logger.h"
@@ -40,8 +40,8 @@
 #include <cstdlib>
 
 // -----------------------------------------------------------------------
-// Worker thread helpers — zero main-thread calls, bgfx::copy() IS
-// thread-safe (uses bgfx's internal allocator which wraps malloc).
+// Worker thread helpers — zero main-thread calls, gpu::copy() IS
+// thread-safe (uses the backend's internal allocator, which wraps malloc).
 // All memcpy happens here, so drainOne() on the main thread is instant.
 // -----------------------------------------------------------------------
 
@@ -62,8 +62,14 @@ static TextureGPUData tryLoadCookedTexture(
     if (!std::filesystem::exists(cookedAbs)) return {};
     assetlib::TextureAsset asset;
     if (!assetlib::loadTexture(asset, cookedAbs)) return {};
+    // BEFORE staging. gpu::createTexture2D can refuse this format, and a refusal
+    // there strands the staged payload for the life of the process (render/gpu.h).
+    // On content cooked for the wrong target EVERY texture refuses, so checking
+    // first is the difference between one skipped texture and leaking the whole
+    // texture set — and it keeps the memcpy off a path whose answer is known.
+    if (!gpu::textureFormatSupported(asset.header.format)) return {};
     TextureGPUData out;
-    out.mem    = bgfx::copy(asset.pixels.data(), (uint32_t)asset.pixels.size());
+    out.mem    = gpu::copy(asset.pixels.data(), (uint32_t)asset.pixels.size());
     out.w      = (uint16_t)asset.header.width;
     out.h      = (uint16_t)asset.header.height;
     out.format = asset.header.format;   // BC blocks upload as-is
@@ -182,9 +188,9 @@ static TextureGPUData loadTextureGPU(const aiScene*   scene,
 
     if (!px || w == 0 || h == 0) return out;
 
-    // bgfx::copy() on the worker thread — this is the 64MB+ memcpy.
+    // gpu::copy() on the worker thread — this is the 64MB+ memcpy.
     // Keeps the main thread completely free during texture upload prep.
-    out.mem = bgfx::copy(px, (uint32_t)(w * h * 4));
+    out.mem = gpu::copy(px, (uint32_t)(w * h * 4));
     out.w   = (uint16_t)w;
     out.h   = (uint16_t)h;
     stbi_image_free(px);
@@ -193,9 +199,9 @@ static TextureGPUData loadTextureGPU(const aiScene*   scene,
 
 // -----------------------------------------------------------------------
 // processFile — runs entirely on worker thread.
-// Assimp parse + stb_image decode + bgfx::copy (big memcpy).
+// Assimp parse + stb_image decode + gpu::copy (big memcpy).
 // By the time LoadedAsset reaches the main thread, all data is in
-// bgfx's internal pool — handle creation is the only main-thread work.
+// the backend's internal pool — handle creation is the only main-thread work.
 // -----------------------------------------------------------------------
 LoadedAsset AsyncLoader::processFile(const std::string& path,
                                       const std::string& name) {
@@ -235,9 +241,9 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                         h.vertexStride, sizeof(Vertex));
                 } else {
                 MeshGPUData gd;
-                gd.vertexMem  = bgfx::copy(asset.vertexData.data(),
+                gd.vertexMem  = gpu::copy(asset.vertexData.data(),
                                            (uint32_t)asset.vertexData.size());
-                gd.indexMem   = bgfx::copy(asset.indexData.data(),
+                gd.indexMem   = gpu::copy(asset.indexData.data(),
                                            (uint32_t)asset.indexData.size());
                 gd.indexCount  = h.indexCount;
                 gd.use32       = (h.indexStride == 4);
@@ -297,9 +303,11 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                                 sp.compare(sp.size() - 5, 5, ".ctex") == 0) {
                                 assetlib::TextureAsset t;
                                 if (assetlib::loadTexture(
-                                        t, cookedAbs.parent_path() / sp)) {
+                                        t, cookedAbs.parent_path() / sp)
+                                    && gpu::textureFormatSupported(
+                                        t.header.format)) {   // before staging
                                     TextureGPUData g;
-                                    g.mem = bgfx::copy(t.pixels.data(),
+                                    g.mem = gpu::copy(t.pixels.data(),
                                         (uint32_t)t.pixels.size());
                                     g.w = (uint16_t)t.header.width;
                                     g.h = (uint16_t)t.header.height;
@@ -379,7 +387,7 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
     const auto dir = std::filesystem::path(path).parent_path();
     const std::string bn = std::filesystem::path(path).stem().string();
 
-    // Materials + textures (stb_image + bgfx::copy on worker)
+    // Materials + textures (stb_image + gpu::copy on worker)
     out.materials.resize(scene->mNumMaterials);
     for (uint32_t i = 0; i < scene->mNumMaterials; ++i) {
         const aiMaterial* ai = scene->mMaterials[i];
@@ -473,7 +481,7 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
     // ── Skinned FBX: combine all body-part meshes into ONE mesh ───────────
     // Mixamo FBX files often split the character into many meshes (jacket,
     // head, shoes…). They all share the same skeleton but become separate
-    // bgfx vertex buffers if loaded individually — and only the first handle
+    // vertex buffers if loaded individually — and only the first handle
     // is returned. Combine them here into a single VB/IB with submesh ranges
     // so the whole character renders as one entity.
     if (out.hasSkeleton) {
@@ -548,14 +556,14 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                 vertBase += am->mNumVertices;
             }
 
-            mg.vertexMem = bgfx::copy(allVerts.data(),
+            mg.vertexMem = gpu::copy(allVerts.data(),
                 (uint32_t)(allVerts.size() * sizeof(SkinnedVertex)));
             if (use32) {
                 mg.indexCount = (uint32_t)allIdx32.size();
-                mg.indexMem   = bgfx::copy(allIdx32.data(), mg.indexCount * 4);
+                mg.indexMem   = gpu::copy(allIdx32.data(), mg.indexCount * 4);
             } else {
                 mg.indexCount = (uint32_t)allIdx16.size();
-                mg.indexMem   = bgfx::copy(allIdx16.data(), mg.indexCount * 2);
+                mg.indexMem   = gpu::copy(allIdx16.data(), mg.indexCount * 2);
             }
             std::memcpy(mg.boundsMin, bMin, sizeof(bMin));
             std::memcpy(mg.boundsMax, bMax, sizeof(bMax));
@@ -582,10 +590,10 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
         for (uint32_t v = 0; v < vertCount; ++v)
             fillCommon(am, v, verts[v].position, verts[v].normal,
                        verts[v].tangent, verts[v].uv);
-        mg.vertexMem = bgfx::copy(verts.data(),
+        mg.vertexMem = gpu::copy(verts.data(),
                                    (uint32_t)(verts.size() * sizeof(Vertex)));
 
-        // Build index array + bgfx::copy on worker
+        // Build index array + gpu::copy on worker
         mg.use32 = vertCount > 65535;
         if (mg.use32) {
             std::vector<uint32_t> idx;
@@ -594,7 +602,7 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                 for (uint32_t k = 0; k < am->mFaces[f].mNumIndices; ++k)
                     idx.push_back(am->mFaces[f].mIndices[k]);
             mg.indexCount = (uint32_t)idx.size();
-            mg.indexMem   = bgfx::copy(idx.data(), mg.indexCount * 4);
+            mg.indexMem   = gpu::copy(idx.data(), mg.indexCount * 4);
         } else {
             std::vector<uint16_t> idx;
             idx.reserve(am->mNumFaces * 3);
@@ -602,7 +610,7 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                 for (uint32_t k = 0; k < am->mFaces[f].mNumIndices; ++k)
                     idx.push_back((uint16_t)am->mFaces[f].mIndices[k]);
             mg.indexCount = (uint32_t)idx.size();
-            mg.indexMem   = bgfx::copy(idx.data(), mg.indexCount * 2);
+            mg.indexMem   = gpu::copy(idx.data(), mg.indexCount * 2);
         }
 
         // AABB

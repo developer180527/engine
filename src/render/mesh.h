@@ -1,7 +1,7 @@
 #pragma once
 #include <vector>
 
-#include <bgfx/bgfx.h>
+#include "render/gpu.h"
 #include <bx/math.h>
 #include <limits>
 #include <string>
@@ -16,8 +16,11 @@ struct SubmeshRange {
 };
 
 struct Mesh {
-    bgfx::VertexBufferHandle vbh        = BGFX_INVALID_HANDLE;
-    bgfx::IndexBufferHandle  ibh        = BGFX_INVALID_HANDLE;
+    // Opaque since G1 (docs/rhi/phases.md). These were bgfx handles, and that
+    // put <bgfx/bgfx.h> into every file that so much as named a Mesh — which
+    // is how five loaders ended up calling the driver directly.
+    gpu::VertexBufferHandle vbh;
+    gpu::IndexBufferHandle  ibh;
     uint32_t                 indexCount = 0;
     bool                     doubleSided = false;
     MaterialHandle           material;
@@ -70,7 +73,7 @@ struct Mesh {
     }
 
     Mesh() = default;
-    Mesh(bgfx::VertexBufferHandle v, bgfx::IndexBufferHandle i, uint32_t ic)
+    Mesh(gpu::VertexBufferHandle v, gpu::IndexBufferHandle i, uint32_t ic)
         : vbh(v), ibh(i), indexCount(ic) {}
 
     Mesh(const Mesh&)            = delete;
@@ -82,8 +85,8 @@ struct Mesh {
           sourcePath(std::move(o.sourcePath)),
           boundsMin(o.boundsMin), boundsMax(o.boundsMax),
           submeshes(std::move(o.submeshes)) {
-        o.vbh        = BGFX_INVALID_HANDLE;
-        o.ibh        = BGFX_INVALID_HANDLE;
+        o.vbh        = {};
+        o.ibh        = {};
         o.indexCount = 0;
     }
 
@@ -99,8 +102,8 @@ struct Mesh {
             boundsMin   = o.boundsMin;
             boundsMax   = o.boundsMax;
             submeshes   = std::move(o.submeshes);
-            o.vbh       = BGFX_INVALID_HANDLE;
-            o.ibh       = BGFX_INVALID_HANDLE;
+            o.vbh       = {};
+            o.ibh       = {};
             o.indexCount = 0;
         }
         return *this;
@@ -108,11 +111,8 @@ struct Mesh {
 
     ~Mesh() { destroy(); }
 
-    bool valid() const { return bgfx::isValid(vbh) && bgfx::isValid(ibh); }
+    bool valid() const { return vbh.valid() && ibh.valid(); }
 
 private:
-    void destroy() {
-        if (bgfx::isValid(vbh)) { bgfx::destroy(vbh); vbh = BGFX_INVALID_HANDLE; }
-        if (bgfx::isValid(ibh)) { bgfx::destroy(ibh); ibh = BGFX_INVALID_HANDLE; }
-    }
+    void destroy() { gpu::destroy(vbh); gpu::destroy(ibh); }
 };

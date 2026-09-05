@@ -30,6 +30,8 @@
 #include <vector>
 
 #include <bgfx/bgfx.h>
+#include "gpu_test_device.h"
+#include "render/gpu_bgfx.h"   // fromBgfx — the fixture owns real bgfx buffers
 #include <bx/math.h>
 
 #include "render/forward_pipeline.h"
@@ -76,8 +78,7 @@ struct Fixture {
         // The meshes SHARE the fixture's vbh/ibh, so each must forget them
         // before its destructor runs — Mesh::destroy() owns what it holds, and
         // eight Meshes destroying one buffer is a double free.
-        for (auto& m : meshes) { m->vbh = BGFX_INVALID_HANDLE;
-                                 m->ibh = BGFX_INVALID_HANDLE; }
+        for (auto& m : meshes) { m->vbh = {}; m->ibh = {}; }
         meshes.clear();
         if (bgfx::isValid(ibh)) bgfx::destroy(ibh);
         if (bgfx::isValid(vbh)) bgfx::destroy(vbh);
@@ -96,7 +97,7 @@ struct Fixture {
         meshes.push_back(std::make_unique<Mesh>());
         ++nextMeshKey;
         Mesh& m = *meshes.back();
-        m.vbh = vbh; m.ibh = ibh; m.indexCount = 3;
+        m.vbh = gpu::fromBgfx(vbh); m.ibh = gpu::fromBgfx(ibh); m.indexCount = 3;
         m.material = mat; m.doubleSided = doubleSided;
         m.boundsMin = { -0.5f, -0.5f, -0.5f };
         m.boundsMax = {  0.5f,  0.5f,  0.5f };
@@ -405,12 +406,7 @@ int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("render_pipeline_test: ForwardPipeline submission, headless\n");
 
-    bgfx::renderFrame();                      // single-threaded, as the engine does
-    bgfx::Init init;
-    init.type = bgfx::RendererType::Noop;
-    init.resolution.width = 64; init.resolution.height = 64;
-    if (!bgfx::init(init)) { std::printf("FAIL bgfx init\n"); return 1; }
-    bgfx::frame();
+    if (!initTestDevice()) return 1;
 
     {
         Fixture fx;
@@ -431,7 +427,7 @@ int main() {
     }
 
     bgfx::frame();
-    bgfx::shutdown();
+    shutdownTestDevice();
 
     if (g_failures) {
         std::printf("\nrender_pipeline_test: %d FAILURE(S)\n", g_failures);

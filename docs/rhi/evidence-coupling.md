@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-08-28
+verified: 2026-09-05
 covers:
   - src/render/
 ---
@@ -41,6 +41,20 @@ times larger than it is.
 *GPU upload*, which is the same defect in five places and the one that has to be
 fixed for a headless server, a second backend, or an embedding host — all three
 want bytes handed over without a device in the room.
+
+> **RESOLVED 2026-09-04 (G1a).** All five now go through `src/render/gpu.h`:
+> opaque handles, an opaque `gpu::Blob` staging type, and five operations —
+> stage, create vertex/index/texture, destroy. The count of non-test,
+> non-editor files including a graphics API outside `src/render/` is **zero**,
+> and `scripts/check_gpu_seam.py` fails the `unit` lane if that changes.
+>
+> Two things the work turned up that this section did not predict. **The
+> coupling was not in the five files alone** — `Mesh`, `Texture`, `vertex.h`
+> and `skinned_vertex.h` all named bgfx types, so any file that so much as
+> declared a `Mesh` inherited the include; the five were the visible half.
+> And **nine test files called `bgfx::init` by hand**, which the new device
+> flag turned into a silent headless path until they were routed through
+> `tests/gpu_test_device.h`.
 
 **The bx problem is a different project and probably not urgent.** `bx` is
 bgfx's base library, and 18 files depend on it for MATH — `Vec3`, `mtxMul`. That

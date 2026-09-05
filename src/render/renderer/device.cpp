@@ -8,6 +8,8 @@
 // tagged to the Rendering heap. It is a file-static because it must outlive
 // bgfx::shutdown().
 #include "render/renderer.h"
+#include "render/gpu.h"
+#include "render/gpu_bgfx.h"   // fromBgfx — renderer-internal
 
 #include <cstdio>
 #include <cstring>
@@ -119,16 +121,20 @@ bool Renderer::init(void* nwh, int width, int height,
         LOG_ERROR("Renderer", "bgfx init failed — no GPU device");
         return false;
     }
+    // Open the asset path's upload seam. Until this, gpu::create* returns
+    // invalid handles and gpu::copy returns null, so a headless process can
+    // parse assets without ever reaching a driver (render/gpu.h).
+    gpu::setDeviceAvailable(true);
 
     createSceneFB(width, height);
 
     static const uint8_t kFlatNorm[4] = {128, 128, 255, 255};
-    m_flatNormalTex = bgfx::createTexture2D(1, 1, false, 1,
-        bgfx::TextureFormat::RGBA8, 0, bgfx::copy(kFlatNorm, 4));
+    m_flatNormalTex = gpu::fromBgfx(bgfx::createTexture2D(1, 1, false, 1,
+        bgfx::TextureFormat::RGBA8, 0, bgfx::copy(kFlatNorm, 4)));
 
     static const uint32_t kWhite = 0xFFFFFFFFu;
-    m_whiteTex = bgfx::createTexture2D(1, 1, false, 1,
-        bgfx::TextureFormat::RGBA8, 0, bgfx::makeRef(&kWhite, 4));
+    m_whiteTex = gpu::fromBgfx(bgfx::createTexture2D(1, 1, false, 1,
+        bgfx::TextureFormat::RGBA8, 0, bgfx::makeRef(&kWhite, 4)));
 
     // Partitioned on ChildOf — see the declarations in renderer.h for why.
     m_itemQuery = editorWorld.query_builder<const Transform, const MeshRenderer,
@@ -164,8 +170,12 @@ void Renderer::shutdown() {
     // After the pipeline released its programs, before bgfx goes down.
     if (m_shaderLib) { m_shaderLib->shutdown(); m_shaderLib.reset(); }
     destroyTargets();
-    if (bgfx::isValid(m_flatNormalTex)) bgfx::destroy(m_flatNormalTex);
-    if (bgfx::isValid(m_whiteTex))      bgfx::destroy(m_whiteTex);
+    gpu::destroy(m_flatNormalTex);
+    gpu::destroy(m_whiteTex);
+    // Close the seam BEFORE bgfx goes down, so a resource destroyed later —
+    // registries outlive the device on some teardown paths — becomes a no-op
+    // instead of a call into a dead bgfx.
+    gpu::setDeviceAvailable(false);
     bgfx::shutdown();
     m_initialized = false;
 }

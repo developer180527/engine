@@ -12,7 +12,7 @@
 #include <thread>
 #include <unordered_set>
 
-#include <bgfx/bgfx.h>
+#include "gpu_test_device.h"
 
 #include "runtime/services/asset_service.h"
 #include "assets/cookers/mesh/mesh_cooker.h"
@@ -43,11 +43,7 @@ int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("residency_test: bounded asset residency gauntlet\n");
 
-    bgfx::renderFrame();
-    bgfx::Init init;
-    init.type = bgfx::RendererType::Noop;
-    init.resolution.width = 16; init.resolution.height = 16;
-    if (!bgfx::init(init)) { std::printf("FAIL bgfx\n"); return 1; }
+    if (!initTestDevice()) return 1;
 
     // Project layout in temp: cook one tiny OBJ, then clone the cooked file
     // so we have four distinct streamable meshes of identical size.
@@ -169,7 +165,7 @@ int main() {
         svc.setResidencyBudget(0);
     }
 
-    bgfx::shutdown();
+    shutdownTestDevice();
     fs::remove_all(root);
 
     if (g_failures) { std::printf("residency_test: %d FAILURE(S)\n", g_failures); return 1; }

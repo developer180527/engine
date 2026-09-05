@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-04
+verified: 2026-09-05
 parses-external-input: true
 covers:
   - src/runtime/
@@ -240,6 +240,12 @@ systems → animation → `flecs::world::progress()` → scene render.
 - One `EngineRuntime` per process. Not thread-safe; tick on the main thread.
 - bgfx runs single-threaded (`renderFrame` called before `init`).
 - GPU uploads must happen on the main thread (drain queues, not workers).
+- Since G1a the asset path names no graphics API: staging and handle creation go
+  through `render/gpu.h`, and `AsyncLoader`'s `MeshGPUData`/`TextureGPUData`
+  carry an opaque `gpu::Blob*` rather than a backend memory type. A texture's
+  format is checked with `gpu::textureFormatSupported()` on the WORKER, before
+  the staging memcpy — refusing later would strand the payload for the process
+  lifetime (`render/gpu.h`).
 - `RuntimeContext` raw pointers are wired in `initSystems` — all non-null
   after a successful `init()` except `assetLib` when `openAssetDatabase=false`.
 

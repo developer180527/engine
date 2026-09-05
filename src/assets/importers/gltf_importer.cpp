@@ -2,7 +2,8 @@
 
 #include <cgltf.h>
 #include <stb_image.h>
-#include <bgfx/bgfx.h>
+#include "render/gpu.h"
+#include <assetlib/texture_asset.h>   // kTexRGBA8
 
 #include <algorithm>
 #include <cmath>
@@ -36,14 +37,14 @@ const cgltf_accessor* findAttribute(const cgltf_primitive* prim,
     return nullptr;
 }
 
-// Upload raw RGBA pixel data to bgfx and return a Texture.
+// Upload raw RGBA pixel data and return a Texture.
 Texture uploadRGBA(const uint8_t* pixels, int w, int h) {
-    const bgfx::Memory* mem = bgfx::alloc((uint32_t)(w * h * 4));
-    std::memcpy(mem->data, pixels, w * h * 4);
-    bgfx::TextureHandle handle = bgfx::createTexture2D(
-        (uint16_t)w, (uint16_t)h, false, 1,
-        bgfx::TextureFormat::RGBA8, 0, mem);
-    return bgfx::isValid(handle)
+    gpu::Blob* blob = gpu::alloc((uint32_t)(w * h * 4));
+    if (!blob) return {};                       // headless: no device, no upload
+    std::memcpy(gpu::blobData(blob), pixels, (size_t)w * h * 4);
+    gpu::TextureHandle handle = gpu::createTexture2D(
+        (uint16_t)w, (uint16_t)h, 1, assetlib::kTexRGBA8, blob);
+    return handle.valid()
         ? Texture(handle, (uint16_t)w, (uint16_t)h)
         : Texture{};
 }
@@ -262,15 +263,15 @@ MeshImportResult GltfImporter::load(const std::string& path,
     if (indices.empty())
         return MeshImportResult::fail("No triangle primitives: " + path);
 
-    bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(
-        bgfx::copy(vertices.data(), (uint32_t)(vertices.size() * sizeof(Vertex))),
-        Vertex::layout());
-    bgfx::IndexBufferHandle  ibh = bgfx::createIndexBuffer(
-        bgfx::copy(indices.data(),  (uint32_t)(indices.size() * sizeof(uint32_t))),
-        BGFX_BUFFER_INDEX32);
-    if (!bgfx::isValid(vbh) || !bgfx::isValid(ibh)) {
-        if (bgfx::isValid(vbh)) bgfx::destroy(vbh);
-        if (bgfx::isValid(ibh)) bgfx::destroy(ibh);
+    gpu::VertexBufferHandle vbh = gpu::createVertexBuffer(
+        gpu::copy(vertices.data(), (uint32_t)(vertices.size() * sizeof(Vertex))),
+        gpu::VertexFormat::Standard);
+    gpu::IndexBufferHandle  ibh = gpu::createIndexBuffer(
+        gpu::copy(indices.data(),  (uint32_t)(indices.size() * sizeof(uint32_t))),
+        gpu::IndexFormat::U32);
+    if (!vbh.valid() || !ibh.valid()) {
+        gpu::destroy(vbh);
+        gpu::destroy(ibh);
         return MeshImportResult::fail("GPU buffer creation failed: " + path);
     }
 

@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-08-28
+verified: 2026-09-05
 covers:
   - src/render/
 ---
@@ -46,11 +46,14 @@ ECS world ──Renderer::buildView──> RenderView ──> ForwardPipeline::r
 >   a fixed order; they do not declare reads and writes, so nothing derives
 >   barriers or aliases transient targets. Splitting the code was necessary and is
 >   not the same as the graph.
-> * **The seam still leaks.** `include/engine/render.h` — named below as "a real
->   public extension point" — is a 12-line umbrella over `render_pipeline.h`,
->   `render_view.h` and `render_context.h`, and the last two hand out
->   `bgfx::TextureHandle`, `bgfx::FrameBufferHandle` and `bgfx::ViewId`. A second
->   pipeline is expressible; a second *backend* is not.
+> * ~~**The seam still leaks.**~~ **Closed 2026-09-04 (G1b).** `render_view.h`
+>   and `render_context.h` handed out `bgfx::TextureHandle`,
+>   `bgfx::FrameBufferHandle` and `bgfx::ViewId`, so a second pipeline was
+>   expressible and a second *backend* was not. All three are now `gpu::` types
+>   (`src/render/gpu.h`), and `tests/headless_include_probe.cpp` compiles a
+>   third-party `IRenderPipeline` with bgfx absent from the include path.
+>
+>   The umbrella header is unchanged; what changed is what it lets through.
 
 ### 1.2 Measured (fps_shooter, 600 fixed frames, `engine_host --frames 600`)
 

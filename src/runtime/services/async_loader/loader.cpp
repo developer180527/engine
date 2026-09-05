@@ -32,7 +32,7 @@ AsyncLoader::~AsyncLoader() {
         }
         std::this_thread::yield();
     }
-    // Drain pending uploads — bgfx::Memory refs released by bgfx at shutdown
+    // Drain pending uploads — staging blobs are released by the backend at shutdown
     std::lock_guard<std::mutex> lk(m_readyMtx);
     while (!m_ready.empty()) m_ready.pop();
 }
@@ -137,6 +137,6 @@ void AsyncLoader::dispatch(LoadRequest req) {
 
 // -----------------------------------------------------------------------
 // drainOne — main thread only.
-// ALL data is pre-copied. This function only creates bgfx handles and
+// ALL data is pre-copied. This function only creates GPU handles and
 // spawns the entity. Typical cost: <1ms even for complex assets.
 // -----------------------------------------------------------------------

@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-#include <bgfx/bgfx.h>
+#include "gpu_test_device.h"
 
 #include "assets/importers/importer_registry.h"
 #include "assets/importers/gltf_importer.h"
@@ -38,17 +38,9 @@ int main(int argc, char** argv) {
 
     // Single-threaded Noop bgfx: valid handles, no GPU. Must renderFrame()
     // before init to select single-threaded mode (same as the real renderer).
-    bgfx::renderFrame();
-    bgfx::Init init;
-    init.type = bgfx::RendererType::Noop;
-    init.resolution.width  = 16;
-    init.resolution.height = 16;
-    if (!bgfx::init(init)) {
-        std::printf("import_test: FAIL — bgfx Noop init failed\n");
-        return 1;
-    }
+    if (!initTestDevice()) return 1;
 
-    // Registries scoped so cooked Mesh objects (whose dtor calls bgfx::destroy)
+    // Registries scoped so cooked Mesh objects (whose dtor calls gpu::destroy)
     // are torn down while bgfx is still up — shutdown happens after this block.
     // Model paths come from args; with none, fall back to known multi-part repo
     // assets (relative to the repo root, the usual run cwd). Missing defaults
@@ -64,7 +56,7 @@ int main(int argc, char** argv) {
             if (std::filesystem::exists(p)) models.emplace_back(p);
         if (models.empty()) {
             std::printf("import_test: SKIP — no default test models present\n");
-            bgfx::shutdown();
+            shutdownTestDevice();
             return 0;
         }
     }
@@ -141,7 +133,7 @@ int main(int argc, char** argv) {
     }
     }   // registries destroyed here (Mesh dtors run while bgfx is alive)
 
-    bgfx::shutdown();
+    shutdownTestDevice();
     if (g_failures) { std::printf("import_test: FAIL — %d failure(s)\n", g_failures); return 1; }
     std::printf("import_test: PASS — importers merge all submeshes\n");
     return 0;

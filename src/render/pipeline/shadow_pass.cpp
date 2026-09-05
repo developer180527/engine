@@ -3,6 +3,7 @@
 // what lets casters batch), instanced runs, and the per-item fallback for skinned
 // casters and submeshes.
 #include <cstring>   // std::memcpy/std::strlen — libc++ pulls these in
+#include "render/gpu_bgfx.h"   // toBgfx — renderer-internal, see G1
                      // transitively, libstdc++ does not, so the Linux legs
                      // are where a missing one surfaces
 #include "render/forward_pipeline.h"
@@ -129,8 +130,8 @@ void ForwardPipeline::renderShadow(const RenderView& v, RenderContext& ctx,
                         dst += stride;
                     }
                     bgfx::setState(st);
-                    bgfx::setVertexBuffer(0, it.mesh->vbh);
-                    bgfx::setIndexBuffer(it.mesh->ibh);
+                    bgfx::setVertexBuffer(0, gpu::toBgfx(it.mesh->vbh));
+                    bgfx::setIndexBuffer(gpu::toBgfx(it.mesh->ibh));
                     bgfx::setInstanceDataBuffer(&idb);
                     bgfx::submit(sv, m_instancedShadowProgram);
                     ++m_submitStats.shadowDraws;
@@ -151,16 +152,16 @@ void ForwardPipeline::renderShadow(const RenderView& v, RenderContext& ctx,
             if (drawBudgetExhausted()) continue;
             if (oneDraw) {
                 bgfx::setState(st); bgfx::setTransform(it.model.ptr());
-                bgfx::setVertexBuffer(0, it.mesh->vbh);
-                bgfx::setIndexBuffer(it.mesh->ibh);
+                bgfx::setVertexBuffer(0, gpu::toBgfx(it.mesh->vbh));
+                bgfx::setIndexBuffer(gpu::toBgfx(it.mesh->ibh));
                 bgfx::submit(sv, shadowProg);
                 ++m_submitStats.shadowDraws;
             } else {
                 for (const auto& sub : it.mesh->submeshes) {
                     if (drawBudgetExhausted()) break;
                     bgfx::setState(st); bgfx::setTransform(it.model.ptr());
-                    bgfx::setVertexBuffer(0, it.mesh->vbh);
-                    bgfx::setIndexBuffer(it.mesh->ibh, sub.indexOffset, sub.indexCount);
+                    bgfx::setVertexBuffer(0, gpu::toBgfx(it.mesh->vbh));
+                    bgfx::setIndexBuffer(gpu::toBgfx(it.mesh->ibh), sub.indexOffset, sub.indexCount);
                     bgfx::submit(sv, shadowProg);
                     ++m_submitStats.shadowDraws;
                 }

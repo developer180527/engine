@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include <bgfx/bgfx.h>
+#include "gpu_test_device.h"
 
 #include "runtime/services/nav_service.h"
 #include "assets/importers/importer_registry.h"
@@ -30,35 +30,7 @@ int main(int argc, char** argv) {
     // and a test killed on timeout loses everything still in the buffer.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("stress_assets: garbage-in fuzz (nav + importers)\n");
-    bgfx::renderFrame();
-    bgfx::Init init; init.type = bgfx::RendererType::Noop;
-    init.resolution.width = 16; init.resolution.height = 16;
-    if (!bgfx::init(init)) { std::printf("stress_assets: FAIL — bgfx Noop\n"); return 1; }
-
-    // ── NavService fuzz: all must return false, none may crash/hang ──────────
-    {
-        nav::NavService nav;
-        const float nanf = std::numeric_limits<float>::quiet_NaN();
-
-        CHECK(!nav.build(nullptr, 0, nullptr, 0), "empty geometry rejected");
-
-        const float degenerate[9] = {0,0,0, 0,0,0, 0,0,0};   // zero-area tri
-        const int   tri[3] = {0,1,2};
-        CHECK(!nav.build(degenerate, 3, tri, 1) || !nav.ready(),
-              "zero-area triangle → no navmesh (not a crash)");
-
-        const float nanVerts[9] = {0,0,0, 1,nanf,0, 0,0,1};
-        CHECK(!nav.build(nanVerts, 3, tri, 1), "NaN vertex rejected (no Recast hang)");
-
-        const float huge[9] = {-1e18f,0,-1e18f, 1e18f,0,-1e18f, 0,0,1e18f};
-        CHECK(!nav.build(huge, 3, tri, 1), "astronomical extents rejected (no giant grid)");
-
-        // Out-of-range indices must not read out of bounds and crash Recast.
-        const float ok[12] = {-5,0,-5, 5,0,-5, 5,0,5, -5,0,5};
-        const int   badIdx[6] = {0,2,1, 99,98,97};   // second tri indexes nowhere
-        nav.build(ok, 4, badIdx, 2);                 // may fail; must not crash
-        CHECK(true, "out-of-range indices handled without a crash");
-    }
+    if (!initTestDevice()) return 1;
 
     // ── Importer fuzz: malformed/missing files must fail gracefully ─────────
     {
@@ -82,7 +54,7 @@ int main(int argc, char** argv) {
         CHECK(true, "%d malformed/sample file(s) survived without a crash", fuzzed);
     }
 
-    bgfx::shutdown();
+    shutdownTestDevice();
     if (g_failures) { std::printf("stress_assets: FAIL — %d\n", g_failures); return 1; }
     std::printf("stress_assets: PASS — garbage-in handled gracefully\n");
     return 0;

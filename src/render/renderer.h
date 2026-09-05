@@ -6,7 +6,7 @@
 
 class ShaderLibrary;   // render/shader/shader_library.h
 #include <vector>
-#include <bgfx/bgfx.h>
+#include "render/gpu.h"
 #include <flecs.h>
 
 #include "render/render_pipeline.h"   // IRenderPipeline, RenderView, RenderItem, LightItem, RenderTarget, Mat4, Vec4
@@ -48,7 +48,7 @@ public:
               SkeletonRegistry& skeletons);
     void shutdown();
 
-    void resize(int w, int h);          // bgfx::reset
+    void resize(int w, int h);          // backend swapchain reset
     void createSceneFB(int w, int h);   // (re)create the offscreen scene framebuffer
 
     // Shadow-map edge length, from project.json's graphics.shadowResolution.
@@ -70,8 +70,8 @@ public:
     // Frame flip + device caps — the runtime orchestrates THROUGH these so
     // runtime*.cpp never touches bgfx directly (the Renderer owns the whole
     // GPU device lifecycle; audit A.1).
-    void frame();                       // bgfx::frame()
-    bool homogeneousDepth() const;      // bgfx::getCaps()->homogeneousDepth
+    void frame();                       // present
+    bool homogeneousDepth() const;      // clip-space depth convention
 
     void renderScene(const float view[16], const float proj[16]);
     void renderGameView(const float view[16], const float proj[16],
@@ -145,8 +145,11 @@ public:
     };
     LodCensus lodCensus() const;
 
-    bgfx::TextureHandle sceneColorTexture() const { return m_sceneColorTex; }
-    bgfx::TextureHandle gameColorTex()      const { return m_gameColorTex; }
+    // gpu:: handles since G1c. The editor converts with gpu::toBgfx() when it
+    // hands one to ImGui; that is a renderer-side concern and it is allowed
+    // to name a backend. runtime.h is not, and it includes this file.
+    gpu::TextureHandle sceneColorTexture() const { return m_sceneColorTex; }
+    gpu::TextureHandle gameColorTex()      const { return m_gameColorTex; }
     int sceneW() const { return m_sceneW; }
     int sceneH() const { return m_sceneH; }
 
@@ -154,12 +157,12 @@ private:
     float m_simAlpha = 1.0f;
     RenderView    buildView(flecs::world& world, const float view[16],
                             const float proj[16], const RenderTarget& target,
-                            bgfx::ViewId baseViewId);
+                            gpu::ViewId baseViewId);
     RenderContext makeContext();
     // Destroys the scene AND game FBs with their attachments, leaving every
     // handle invalid. Shared by createSceneFB and shutdown, because a resize
     // that forgets the game FB instead of destroying it leaks one per drag
-    // until the bgfx texture pool runs out.
+    // until the backend's texture pool runs out.
     void destroyTargets();
     bool ensureGameFB();     // lazily create at scene FB size; false = skip view
 
@@ -169,7 +172,7 @@ private:
     std::filesystem::path m_shaderCacheRoot;
     // Owns every program built from a .cshader; content-keyed and refcounted,
     // so two materials on one variant share a program. Destroyed in shutdown()
-    // BEFORE bgfx goes down.
+    // BEFORE the device goes down.
     std::unique_ptr<ShaderLibrary> m_shaderLib;
     TextureRegistry*   m_textures    = nullptr;
     MaterialRegistry*  m_materials   = nullptr;
@@ -289,22 +292,22 @@ private:
     // while the model matrix is hot, instead of once per view inside each cull.
     rworld::CullStreamStore m_cull;
 
-    bgfx::ViewId        m_viewCursor    = 5; // first free view past reserved 0..4
-    bgfx::TextureHandle m_flatNormalTex = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle m_whiteTex      = BGFX_INVALID_HANDLE;
+    gpu::ViewId        m_viewCursor    = 5; // first free view past reserved 0..4
+    gpu::TextureHandle m_flatNormalTex;
+    gpu::TextureHandle m_whiteTex;
 
-    bgfx::FrameBufferHandle m_sceneFB       = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle     m_sceneColorTex = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle     m_sceneDepthTex = BGFX_INVALID_HANDLE;
-    bgfx::FrameBufferHandle m_gameFB        = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle     m_gameColorTex  = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle     m_gameDepthTex  = BGFX_INVALID_HANDLE;
+    gpu::FrameBufferHandle m_sceneFB;
+    gpu::TextureHandle     m_sceneColorTex;
+    gpu::TextureHandle     m_sceneDepthTex;
+    gpu::FrameBufferHandle m_gameFB;
+    gpu::TextureHandle     m_gameColorTex;
+    gpu::TextureHandle     m_gameDepthTex;
     int m_sceneW = 1280, m_sceneH = 720;
     int m_backW  = 1280, m_backH  = 720; // backbuffer (window) size
 
-    static constexpr bgfx::ViewId kShadowView  = 0; // depth-from-light (renders first)
-    static constexpr bgfx::ViewId kSceneView   = 1;
-    static constexpr bgfx::ViewId kBgView      = 2; // clears backbuffer
-    static constexpr bgfx::ViewId kResolveView = 3; // MSAA blit resolve
-    static constexpr bgfx::ViewId kGameView    = 4; // game camera view
+    static constexpr gpu::ViewId kShadowView  = 0; // depth-from-light (renders first)
+    static constexpr gpu::ViewId kSceneView   = 1;
+    static constexpr gpu::ViewId kBgView      = 2; // clears backbuffer
+    static constexpr gpu::ViewId kResolveView = 3; // MSAA blit resolve
+    static constexpr gpu::ViewId kGameView    = 4; // game camera view
 };

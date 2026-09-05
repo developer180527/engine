@@ -16,7 +16,7 @@
 #include <fstream>
 #include <thread>
 
-#include <bgfx/bgfx.h>
+#include "gpu_test_device.h"
 
 #include "runtime/services/async_loader.h"
 #include "runtime/jobs/jobs.h"
@@ -46,15 +46,7 @@ int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("async_loader_test: path-key consistency gauntlet\n");
 
-    bgfx::renderFrame();                    // single-threaded Noop mode
-    bgfx::Init init;
-    init.type = bgfx::RendererType::Noop;
-    init.resolution.width  = 16;
-    init.resolution.height = 16;
-    if (!bgfx::init(init)) {
-        std::printf("async_loader_test: FAIL — bgfx Noop init failed\n");
-        return 1;
-    }
+    if (!initTestDevice()) return 1;
     jobs::init();
 
     {
@@ -147,7 +139,7 @@ int main() {
     }   // loader + registries die while bgfx is alive
 
     jobs::shutdown();
-    bgfx::shutdown();
+    shutdownTestDevice();
 
     if (g_failures) { std::printf("async_loader_test: %d FAILURE(S)\n", g_failures); return 1; }
     std::printf("async_loader_test: ALL PASS\n");

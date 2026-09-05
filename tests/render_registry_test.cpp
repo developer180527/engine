@@ -27,8 +27,10 @@
 // Proving submission needs either a real-GPU harness or a counting seam in the
 // pipeline, and neither is invented here for a test alone.
 #include <cstdio>
+#include "render/gpu_bgfx.h"   // fromBgfx — this test owns real bgfx handles
 
 #include <bgfx/bgfx.h>
+#include "gpu_test_device.h"
 
 #include "render/asset_registry.h"
 #include "render/material_registry.h"
@@ -42,11 +44,11 @@ namespace { int g_failures = 0; }
     else { std::printf("  ok    " __VA_ARGS__); std::printf("\n"); } \
 } while (0)
 
-// A 1x1 texture — the cheapest thing bgfx will give a real handle for.
+// A 1x1 texture — the cheapest thing the backend will give a real handle for.
 static Texture makeTexture() {
     static const uint32_t px = 0xFFFFFFFFu;
-    return Texture(bgfx::createTexture2D(1, 1, false, 1,
-                       bgfx::TextureFormat::RGBA8, 0, bgfx::copy(&px, 4)),
+    return Texture(gpu::fromBgfx(bgfx::createTexture2D(1, 1, false, 1,
+                       bgfx::TextureFormat::RGBA8, 0, bgfx::copy(&px, 4))),
                    1, 1);
 }
 
@@ -180,11 +182,7 @@ int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("render_registry_test: mesh/texture/material registry contracts\n");
 
-    bgfx::renderFrame();                    // single-threaded, as the engine does
-    bgfx::Init init;
-    init.type = bgfx::RendererType::Noop;
-    init.resolution.width = 16; init.resolution.height = 16;
-    if (!bgfx::init(init)) { std::printf("FAIL bgfx init\n"); return 1; }
+    if (!initTestDevice()) return 1;
     // getStats() reflects the last SUBMITTED frame, so one frame must go through
     // before the handle counts mean anything.
     bgfx::frame();
@@ -194,7 +192,7 @@ int main() {
     testMeshRegistry();
 
     bgfx::frame();
-    bgfx::shutdown();
+    shutdownTestDevice();
 
     if (g_failures) {
         std::printf("\nrender_registry_test: %d FAILURE(S)\n", g_failures);

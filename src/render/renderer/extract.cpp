@@ -125,7 +125,7 @@ constexpr uint32_t kExtractParallelMin = 2048;
 
 RenderView Renderer::buildView(flecs::world& world, const float view[16],
                                const float proj[16], const RenderTarget& target,
-                               bgfx::ViewId baseViewId) {
+                               gpu::ViewId baseViewId) {
     ENGINE_PROFILE_SCOPE("Render.extract");
     RenderView rv;
     rv.view       = Mat4::from(view);

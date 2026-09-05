@@ -302,6 +302,10 @@ add_library(engine_runtime STATIC
     runtime/frame_stats_channel.cpp
     ${ENGINE_PLATFORM_SOURCES}
     runtime/platform/platform_factory.cpp
+    # The asset path's upload seam (G1). The ONLY TU outside render/renderer/
+    # that turns engine bytes into GPU handles — a second backend adds a
+    # sibling here and nothing in src/assets or src/runtime moves.
+    render/gpu.cpp
     render/renderer.cpp               # pipeline ownership + RenderContext
     # Renderer, one concern per TU (see src/render/info.md).
     render/renderer/device.cpp        # bgfx init/shutdown + Rendering-heap allocator

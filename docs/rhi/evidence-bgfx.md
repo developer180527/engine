@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-08-28
+verified: 2026-09-05
 covers:
   - src/render/
 ---
@@ -62,7 +62,12 @@ can name precisely. Either outcome is worth more than the rest of this directory
 is without it. That spike is [`phases.md`](phases.md) **G0a**, and it is
 [`studies/`](studies/) question 004.
 
-The seam we need also half-exists. `IRenderPipeline` is a real swap point with one
-implementation. But `RenderContext` hands pipelines `bgfx::TextureHandle` and
-`bgfx::ViewId`, so the seam leaks today and has to be closed before it can carry a
-second backend.
+~~The seam we need also half-exists.~~ **Closed 2026-09-04 (G1b).**
+`RenderContext` used to hand pipelines `bgfx::TextureHandle` and `bgfx::ViewId`,
+so the seam leaked and could not have carried a second backend. It now carries
+`gpu::` types, and `tests/headless_include_probe.cpp` compiles a third-party
+`IRenderPipeline` with bgfx absent from the include path.
+
+What remains true is the other half: `IRenderPipeline` still has **one
+implementation**, and one implementation is how a swap point decays. The seam is
+now *able* to carry a second backend; nothing has yet proved that it does.

@@ -3,7 +3,6 @@
 #include "mesh.h"
 #include "core/handle.h"
 
-#include <bgfx/bgfx.h>
 #include <cstdint>
 #include <vector>
 
@@ -50,7 +49,7 @@ public:
     bool removeMesh(MeshHandle h) {
         if (!h.valid() || h.id >= m_meshes.size()) return false;
         if (!m_meshes[h.id].valid()) return false;  // already removed
-        m_meshes[h.id] = Mesh{};   // RAII releases bgfx buffers
+        m_meshes[h.id] = Mesh{};   // RAII releases the GPU buffers
         m_freeSlots.push_back(h.id);
         return true;
     }

@@ -20,7 +20,7 @@
 #include <assetlib/texture_asset.h>
 #include <assetlib/asset_registry.h>
 
-#include <bgfx/bgfx.h>
+#include "render/gpu.h"
 #include <cstring>
 #include <algorithm>
 #include <thread>
@@ -35,11 +35,11 @@
 // Async internals — GPU-ready intermediate types + worker state
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Pre-copied texture pixels (bgfx::copy on worker thread, handle on main).
+// Pre-copied texture pixels (staged on a worker thread, handle on main).
 // Carries the cooked format + mip count so block-compressed (BC7/BC5)
 // payloads upload as-is — the runtime never decodes texels.
 struct TexGPU {
-    const bgfx::Memory* mem = nullptr;
+    gpu::Blob* mem = nullptr;
     uint16_t w = 0, h = 0;
     uint32_t format = 0;      // assetlib::TextureFormatId
     uint32_t mips   = 1;
@@ -48,7 +48,11 @@ struct TexGPU {
 // Worker side: stage a cooked texture's payload for main-thread creation.
 static TexGPU stageTexGPU(const assetlib::TextureAsset& t) {
     TexGPU out;
-    out.mem    = bgfx::copy(t.pixels.data(), (uint32_t)t.pixels.size());
+    // Format check BEFORE the memcpy: createTexture2D's refusal would strand the
+    // staged bytes for the process lifetime (render/gpu.h), and a mis-targeted
+    // build takes that path for every texture in the scene.
+    if (!gpu::textureFormatSupported(t.header.format)) return out;
+    out.mem    = gpu::copy(t.pixels.data(), (uint32_t)t.pixels.size());
     out.w      = (uint16_t)t.header.width;
     out.h      = (uint16_t)t.header.height;
     out.format = t.header.format;
@@ -57,9 +61,8 @@ static TexGPU stageTexGPU(const assetlib::TextureAsset& t) {
 }
 
 // Main thread: one create path for every cooked-texture drain site.
-static bgfx::TextureHandle createTexFromGPU(const TexGPU& t) {
-    return bgfx::createTexture2D(t.w, t.h, t.mips > 1, 1,
-                                 cookedTexBgfxFormat(t.format), 0, t.mem);
+static gpu::TextureHandle createTexFromGPU(const TexGPU& t) {
+    return gpu::createTexture2D(t.w, t.h, (uint16_t)t.mips, t.format, t.mem);
 }
 
 // Pre-copied material data ready for main-thread finalization
@@ -87,8 +90,8 @@ struct ReadyAsset {
     std::string error;
 
     // ── Mesh fields (type == kMesh) ──
-    const bgfx::Memory* vertexMem  = nullptr;
-    const bgfx::Memory* indexMem   = nullptr;
+    gpu::Blob* vertexMem  = nullptr;
+    gpu::Blob* indexMem   = nullptr;
     uint32_t            indexCount  = 0;
     uint32_t            indexStride = 4;
     float               boundsMin[3]{};
@@ -128,7 +131,7 @@ struct AssetService::AsyncState {
     // spawned is a cache the synchronous path cannot use.
     // Guarded by AssetService::m_loadedMtx, which covers both loaded maps.
     std::unordered_map<std::string, TextureHandle>  loadedTextures;
-    // Keys whose load FAILED (parse error, bad file, bgfx buffer failure).
+    // Keys whose load FAILED (parse error, bad file, GPU buffer failure).
     // Without this a failed asset has no handle and is no longer in flight —
     // indistinguishable from "never requested" to pollers like isSceneReady,
     // which then reported scenes containing assets that will never appear
@@ -151,7 +154,7 @@ AssetService::AssetService(Config cfg)
     , m_cacheRoot(cfg.projectRoot.empty() ? std::filesystem::path{}
                                           : cfg.projectRoot / ".cache")
     // Eviction hands the resource back to the registry, whose RAII destroys
-    // the bgfx texture. The cache never calls bgfx itself — that is what keeps
+    // the GPU texture. The cache never calls the GPU itself — that is what keeps
     // it testable without a GPU. No budget yet: eviction needs the reference
     // counts to be complete first (only the sync path is wired), and evicting
     // against partial refcounts would drop textures that are still in use.
@@ -164,7 +167,7 @@ AssetService::~AssetService() {
         m_async->pendingCV.notify_all();
         if (m_async->worker.joinable())
             m_async->worker.join();
-        // Undrained bgfx::Memory refs are freed by bgfx at shutdown.
+        // Undrained staging blobs are freed by the backend at shutdown.
     }
 }
 
@@ -182,7 +185,7 @@ std::string AssetService::resolvePath(const char* cookedPath) const {
 }
 
 // Worker-safe: resolve a texture path and load its cooked pixels.
-// Returns TexGPU with bgfx::copy'd memory (thread-safe), or empty on miss.
+// Returns TexGPU with staged memory (thread-safe), or empty on miss.
 static TexGPU resolveTextureGPU(const char* texPath,
                                  const std::filesystem::path& sourceDir,
                                  assetlib::AssetRegistry* assetLib,
@@ -242,9 +245,9 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
     // ── Dedup by cooked path, and it is not an optimisation ─────────────────
     // Two entities referencing the same mesh must SHARE one pair of GPU buffers.
     // Without this, sync loadMesh created a new vertex+index buffer per CALL, and
-    // bgfx's pool is BGFX_CONFIG_MAX_INDEX_BUFFERS = 4096: a scene of 50 000
+    // the backend's pool is 4096 index buffers: a scene of 50 000
     // entities drawing 176 distinct cooked meshes loaded 4 089 of them and then
-    // failed 45 911 times with "bgfx buffer creation failed", rendering 8% of the
+    // failed 45 911 times with "GPU buffer creation failed", rendering 8% of the
     // scene. The count is the giveaway — it is the handle pool, not the files.
     //
     // Textures already worked this way ("every load of the same cooked texture
@@ -308,21 +311,21 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
         return {};
     }
 
-    auto* vertexMem = bgfx::copy(asset.vertexData.data(),
+    auto* vertexMem = gpu::copy(asset.vertexData.data(),
                                   static_cast<uint32_t>(asset.vertexData.size()));
-    auto* indexMem  = bgfx::copy(asset.indexData.data(),
+    auto* indexMem  = gpu::copy(asset.indexData.data(),
                                   static_cast<uint32_t>(asset.indexData.size()));
 
-    bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(vertexMem,
-        skinned ? SkinnedVertex::layout() : Vertex::layout());
-    bgfx::IndexBufferHandle  ibh = (hdr.indexStride == 4)
-        ? bgfx::createIndexBuffer(indexMem, BGFX_BUFFER_INDEX32)
-        : bgfx::createIndexBuffer(indexMem);
+    gpu::VertexBufferHandle vbh = gpu::createVertexBuffer(vertexMem,
+        skinned ? SkinnedVertex::kGpuFormat : Vertex::kGpuFormat);
+    gpu::IndexBufferHandle  ibh = (hdr.indexStride == 4)
+        ? gpu::createIndexBuffer(indexMem, gpu::IndexFormat::U32)
+        : gpu::createIndexBuffer(indexMem, gpu::IndexFormat::U16);
 
-    if (!bgfx::isValid(vbh) || !bgfx::isValid(ibh)) {
-        if (bgfx::isValid(vbh)) bgfx::destroy(vbh);
-        if (bgfx::isValid(ibh)) bgfx::destroy(ibh);
-        LOG_ERROR("AssetService", "bgfx buffer creation failed: %s", cookedPath);
+    if (!vbh.valid() || !ibh.valid()) {
+        gpu::destroy(vbh);
+        gpu::destroy(ibh);
+        LOG_ERROR("AssetService", "GPU buffer creation failed: %s", cookedPath);
         return {};
     }
 
@@ -392,22 +395,22 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
     uint64_t lodBytes = 0;
     if (result.valid() && !asset.lods.empty() && !skinned) {
         for (const auto& lvl : asset.lods) {
-            // indexData, not indexCount: the count is what gets handed to bgfx
+            // indexData, not indexCount: the count is what gets handed to the GPU
             // as a draw range, and the loader now guarantees the two agree — but
-            // the buffers are what bgfx::copy reads, so test those.
+            // the buffers are what the staging copy reads, so test those.
             if (lvl.indexData.empty() || lvl.vertexData.empty()) continue;
-            auto* lv = bgfx::copy(lvl.vertexData.data(),
+            auto* lv = gpu::copy(lvl.vertexData.data(),
                                   (uint32_t)lvl.vertexData.size());
-            auto* li = bgfx::copy(lvl.indexData.data(),
+            auto* li = gpu::copy(lvl.indexData.data(),
                                   (uint32_t)lvl.indexData.size());
-            bgfx::VertexBufferHandle lvb =
-                bgfx::createVertexBuffer(lv, Vertex::layout());
-            bgfx::IndexBufferHandle lib = (hdr.indexStride == 4)
-                ? bgfx::createIndexBuffer(li, BGFX_BUFFER_INDEX32)
-                : bgfx::createIndexBuffer(li);
-            if (!bgfx::isValid(lvb) || !bgfx::isValid(lib)) {
-                if (bgfx::isValid(lvb)) bgfx::destroy(lvb);
-                if (bgfx::isValid(lib)) bgfx::destroy(lib);
+            gpu::VertexBufferHandle lvb =
+                gpu::createVertexBuffer(lv, Vertex::kGpuFormat);
+            gpu::IndexBufferHandle lib = (hdr.indexStride == 4)
+                ? gpu::createIndexBuffer(li, gpu::IndexFormat::U32)
+                : gpu::createIndexBuffer(li, gpu::IndexFormat::U16);
+            if (!lvb.valid() || !lib.valid()) {
+                gpu::destroy(lvb);
+                gpu::destroy(lib);
                 // A level that fails to allocate is not fatal: extraction walks
                 // back toward finer levels and counts the fallback. Losing
                 // detail budget beats losing the object.
@@ -722,11 +725,25 @@ TextureHandle AssetService::loadTextureFromCooked(
                 return false;
             }
 
-            // Format-aware: BC7/BC5 blocks + mips upload as-is
-            // (render/cooked_texture.h).
-            bgfx::TextureHandle th = createCookedTexture(texAsset);
-            if (!bgfx::isValid(th)) {
-                LOG_ERROR("AssetService", "bgfx texture creation failed: %s",
+            // Format-aware: BC7/BC5 blocks + mips upload as-is. The two
+            // refusals this used to get from createCookedTexture (unknown
+            // format id, format the GPU cannot sample) now live in
+            // gpu::createTexture2D, which is the only door.
+            // Pre-checked, so the staging copy below is never spent on a
+            // payload createTexture2D would refuse (render/gpu.h).
+            if (!gpu::textureFormatSupported(texAsset.header.format)) {
+                LOG_ERROR("AssetService", "unsupported texture format: %s",
+                          absPath.string().c_str());
+                return false;
+            }
+            gpu::TextureHandle th = gpu::createTexture2D(
+                (uint16_t)texAsset.header.width,
+                (uint16_t)texAsset.header.height,
+                (uint16_t)(texAsset.header.mipCount ? texAsset.header.mipCount : 1),
+                texAsset.header.format,
+                gpu::copy(texAsset.pixels.data(), (uint32_t)texAsset.pixels.size()));
+            if (!th.valid()) {
+                LOG_ERROR("AssetService", "GPU texture creation failed: %s",
                           absPath.string().c_str());
                 return false;
             }
@@ -835,9 +852,9 @@ void AssetService::workerLoop() {
                 result.error = "Stride mismatch — re-cook needed";
             } else {
                 const auto& hdr = asset.header;
-                result.vertexMem  = bgfx::copy(asset.vertexData.data(),
+                result.vertexMem  = gpu::copy(asset.vertexData.data(),
                                     static_cast<uint32_t>(asset.vertexData.size()));
-                result.indexMem   = bgfx::copy(asset.indexData.data(),
+                result.indexMem   = gpu::copy(asset.indexData.data(),
                                     static_cast<uint32_t>(asset.indexData.size()));
                 result.indexCount  = hdr.indexCount;
                 result.indexStride = hdr.indexStride;
@@ -857,11 +874,11 @@ void AssetService::workerLoop() {
                 // STAGE EACH .ctex ONCE PER MESH. Materials routinely share an
                 // image — the fps_shooter pistol has 4 material references to
                 // 2 files after the cooker's content dedup — and staging each
-                // reference separately read the file and bgfx::copy'd it again,
+                // reference separately read the file and staged it again,
                 // uploading the same texture twice.
                 //
                 // The skip has to happen HERE, on the worker, not at the drain:
-                // bgfx memory from copy() is only freed when a create call
+                // staging memory from copy() is only freed when a create call
                 // consumes it, so dropping an already-allocated duplicate at
                 // the drain would leak it. Not allocating is the only safe
                 // form of "don't upload this twice".
@@ -1026,7 +1043,7 @@ size_t AssetService::evictOverBudget(const std::unordered_set<uint32_t>& inUse) 
     if (!m_async || m_residencyBudget == 0) return 0;
 
     // Collect eviction candidates under the lock; destroy registry entries
-    // OUTSIDE it (Mesh dtors issue bgfx::destroy — keep lock scopes tight).
+    // OUTSIDE it (Mesh dtors issue gpu::destroy — keep lock scopes tight).
     // The LOD levels ride along, and they have to: `bytes` INCLUDES them, so an
     // eviction that freed only level 0 credited itself with reclaiming memory it
     // left resident — the budget total never came down and the level buffers
@@ -1059,7 +1076,7 @@ size_t AssetService::evictOverBudget(const std::unordered_set<uint32_t>& inUse) 
             // entry. The caller collects both (EngineRuntime::frame) — and it
             // must, because after LOD selection the RenderItem the pipeline
             // dereferences is a LEVEL, not level 0. Evicting a level whose
-            // parent is idle-but-referenced would hand bgfx a destroyed buffer.
+            // parent is idle-but-referenced would hand the GPU a destroyed buffer.
             if (inUse.count(kv->second.h.id)) continue;
             bool levelInUse = false;
             for (MeshHandle lh : kv->second.lods)
@@ -1107,8 +1124,8 @@ int AssetService::pendingCount() const {
 // Async: drainUploads — main thread only
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Pops ONE completed result from the ready queue, creates bgfx handles
-// (O(microseconds) — no memcpy, data already in bgfx's pool), registers
+// Pops ONE completed result from the ready queue, creates GPU handles
+// (O(microseconds) — no memcpy, data already staged), registers
 // in the runtime registries, and stores in the loaded cache for queryMesh/
 // queryTexture. Returns true if an asset was processed.
 
@@ -1139,16 +1156,16 @@ bool AssetService::drainUploads() {
 
     if (item.type == ReadyAsset::kMesh) {
         // ── Finalize mesh ───────────────────────────────────────────
-        bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(
-            item.vertexMem, Vertex::layout());
-        bgfx::IndexBufferHandle  ibh = (item.indexStride == 4)
-            ? bgfx::createIndexBuffer(item.indexMem, BGFX_BUFFER_INDEX32)
-            : bgfx::createIndexBuffer(item.indexMem);
+        gpu::VertexBufferHandle vbh = gpu::createVertexBuffer(
+            item.vertexMem, Vertex::kGpuFormat);
+        gpu::IndexBufferHandle  ibh = (item.indexStride == 4)
+            ? gpu::createIndexBuffer(item.indexMem, gpu::IndexFormat::U32)
+            : gpu::createIndexBuffer(item.indexMem, gpu::IndexFormat::U16);
 
-        if (!bgfx::isValid(vbh) || !bgfx::isValid(ibh)) {
-            if (bgfx::isValid(vbh)) bgfx::destroy(vbh);
-            if (bgfx::isValid(ibh)) bgfx::destroy(ibh);
-            LOG_ERROR("AssetService", "Async bgfx buffer creation failed: %s",
+        if (!vbh.valid() || !ibh.valid()) {
+            gpu::destroy(vbh);
+            gpu::destroy(ibh);
+            LOG_ERROR("AssetService", "Async GPU buffer creation failed: %s",
                       item.key.c_str());
             { std::lock_guard<std::mutex> lk(m_loadedMtx);
               m_async->failedKeys.insert(item.key); }
@@ -1177,7 +1194,7 @@ bool AssetService::drainUploads() {
 
             if (mg.baseColor.mem) {
                 auto th = createTexFromGPU(mg.baseColor);   // format-aware
-                if (bgfx::isValid(th)) {
+                if (th.valid()) {
                     base = m_textures.addTexture(
                         Texture(th, mg.baseColor.w, mg.baseColor.h));
                     if (!mg.baseColorName.empty())
@@ -1193,7 +1210,7 @@ bool AssetService::drainUploads() {
 
             if (mg.normalMap.mem) {
                 auto th = createTexFromGPU(mg.normalMap);
-                if (bgfx::isValid(th)) {
+                if (th.valid()) {
                     norm = m_textures.addTexture(
                         Texture(th, mg.normalMap.w, mg.normalMap.h));
                     if (!mg.normalMapName.empty())
@@ -1226,11 +1243,10 @@ bool AssetService::drainUploads() {
         MeshHandle h = m_meshes.addMesh(std::move(mesh));
         {
             // Residency bookkeeping: GPU-side byte cost + fresh LRU stamp.
-            // (bgfx releases the staging Memory at frame end — reading the
+            // (the backend releases the staging blob at frame end — reading the
             // sizes here, microseconds after handle creation, is safe.)
             const uint64_t bytes =
-                (item.vertexMem ? item.vertexMem->size : 0u) +
-                (item.indexMem  ? item.indexMem->size  : 0u);
+                gpu::blobSize(item.vertexMem) + gpu::blobSize(item.indexMem);
             std::lock_guard<std::mutex> lk(m_loadedMtx);
             m_loadedMeshes[item.key] =
                 {h, bytes, ++m_useClock};
@@ -1240,10 +1256,10 @@ bool AssetService::drainUploads() {
 
     } else {
         // ── Finalize texture ────────────────────────────────────────
-        bgfx::TextureHandle th = createTexFromGPU(item.texData);
+        gpu::TextureHandle th = createTexFromGPU(item.texData);
 
-        if (!bgfx::isValid(th)) {
-            LOG_ERROR("AssetService", "Async bgfx texture creation failed: %s",
+        if (!th.valid()) {
+            LOG_ERROR("AssetService", "Async GPU texture creation failed: %s",
                       item.key.c_str());
             return true;
         }

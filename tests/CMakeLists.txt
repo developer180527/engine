@@ -151,6 +151,14 @@ engine_test(jobs_test)
 # engine::qos::classIsObservable() rather than a platform macro, so a platform
 # that later gains a real getter strengthens it without an edit.
 engine_test(thread_qos_test)
+# The upload seam's BEHAVIOUR, which neither the grep nor the include probe can
+# see. Two contracts: headless produces no handles and never crashes, and the
+# texture format is checked BEFORE staging — because createTexture2D's refusal
+# strands the payload for the life of the process (bgfx frees a Memory only when
+# a command consumes it), and a mis-targeted build takes that path for every
+# texture in the scene. The contract sentence in gpu.h claimed the opposite
+# until review caught it.
+engine_test(gpu_seam_test)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
 engine_test(animator_system_test)
@@ -527,7 +535,104 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/scripts/check_std_includes.py)
     set_tests_properties(std_includes PROPERTIES LABELS unit TIMEOUT 120)
+
+    # ── G1's guard ──────────────────────────────────────────────────────────
+    # Nothing outside src/render/ may include a graphics API. The five files
+    # that used to parse assets and upload them in the same function are the
+    # reason a headless server, a second backend and an embedding host were all
+    # blocked at once (docs/rhi/evidence-coupling.md 2.1).
+    #
+    # Removing that was the easy half. This is the half that keeps it removed,
+    # because the coupling does not return as a decision — it returns as one
+    # #include added to fix one compile error, in a file nobody thinks of as
+    # graphics code. A grep is the only thing that can see that, and a grep
+    # nobody runs is a comment.
+    add_test(NAME gpu_seam
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/scripts/check_gpu_seam.py)
+    set_tests_properties(gpu_seam PROPERTIES LABELS unit TIMEOUT 120)
 endif()
+
+# ── The seam-cost benchmark (perf lane, never a gate) ───────────────────────
+# docs/rhi/swappability.md decides whether "swappable renderer" is compatible
+# with "no performance loss", and §2's five numbers are what turn that from an
+# argument into a measurement. They lived only in the .md until review noted
+# that the document's own §8 rule — no abstraction ships without being measured
+# — cited three precedents that all HAVE committed harnesses, and this one did
+# not. ~130 lines to make the strongest doc in docs/rhi/ reproducible.
+#
+# Deliberately NOT a gate: dispatch cost is a property of the machine and the
+# compiler, not of this repo, so a threshold would fail on somebody's laptop for
+# no defect. `perf` lane, run on purpose:  ctest -L perf
+#
+# BOTH TARGETS ARE FORCED TO -O2, whatever the build type. This is not a
+# preference: the default dev build here is Debug (-g, no -O), and at -O0
+# nothing inlines, so every variant costs the same and the benchmark reports
+# noise. The first run of this harness in a Debug tree said a cross-.dylib call
+# was FASTER than a direct one, which is the shape of a measurement that is
+# measuring the build flags instead of the thing.
+add_library(seam_cost_plugin SHARED perf/seam_cost_plugin.cpp)
+target_compile_options(seam_cost_plugin PRIVATE -O2)
+set_target_properties(seam_cost_plugin PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+add_executable(seam_cost_bench perf/seam_cost_bench.cpp)
+target_compile_options(seam_cost_bench PRIVATE -O2)
+set_target_properties(seam_cost_bench PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+target_compile_definitions(seam_cost_bench PRIVATE
+    ENGINE_SEAM_PLUGIN_PATH="$<TARGET_FILE:seam_cost_plugin>")
+add_dependencies(seam_cost_bench seam_cost_plugin)
+if(UNIX)
+    target_link_libraries(seam_cost_bench PRIVATE ${CMAKE_DL_LIBS})
+endif()
+add_test(NAME seam_cost COMMAND seam_cost_bench 200)
+set_tests_properties(seam_cost PROPERTIES LABELS perf TIMEOUT 300)
+
+# ── G1c: runtime.h must not REACH a graphics API ────────────────────────────
+# The grep above catches a direct #include. It cannot catch the coupling that
+# actually mattered, which was transitive: runtime.h -> render/renderer.h ->
+# bgfx handle members, and before that mesh.h, and before that vertex.h through
+# Vertex::layout(). Each was found by walking `-H` output by hand.
+#
+# So this target is compiled with every engine include directory EXCEPT bgfx's.
+# If anything reachable from runtime.h or the pipeline seam includes
+# <bgfx/bgfx.h>, it fails with "file not found" — the compiler finds all of them
+# at once, and keeps finding them.
+#
+# It deliberately does NOT link engine_runtime: that would inherit bgfx through
+# the PUBLIC include directories, which is the very thing being tested. The
+# include list is therefore spelled out, and a new engine-wide include dir may
+# need adding here — a build failure that says "file not found" for an ENGINE
+# header means this list, not a real coupling.
+#
+# bx is on the list on purpose: it is bgfx's MATH library and is explicitly out
+# of G1's scope (docs/rhi/evidence-coupling.md 2.1).
+add_executable(headless_include_probe headless_include_probe.cpp)
+set_target_properties(headless_include_probe PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+target_compile_definitions(headless_include_probe PRIVATE BX_CONFIG_DEBUG=1)
+target_include_directories(headless_include_probe PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/core
+    ${CMAKE_SOURCE_DIR}/src/components
+    ${CMAKE_SOURCE_DIR}/src/render
+    ${CMAKE_SOURCE_DIR}/modules/assetlib/include
+    ${CMAKE_SOURCE_DIR}/modules/hid/include
+    ${CMAKE_SOURCE_DIR}/third_party/nlohmann
+    ${CMAKE_SOURCE_DIR}/third_party/cgltf
+    ${CMAKE_SOURCE_DIR}/third_party/stb
+    ${CMAKE_SOURCE_DIR}/third_party/tlsf
+    ${CMAKE_SOURCE_DIR}/third_party/flecs/distr
+    ${CMAKE_SOURCE_DIR}/third_party/enkiTS/src
+    ${CMAKE_SOURCE_DIR}/third_party/ozz-animation/include
+    ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bx/include
+    ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bx/include/compat/osx
+)
+add_test(NAME headless_includes
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+                 --target headless_include_probe)
+set_tests_properties(headless_includes PROPERTIES LABELS unit TIMEOUT 300)
 
 # ── Cooked-format conformance (Rust) ────────────────────────────────────────
 # A .cooked file is what a SHIPPED GAME reads, which makes its byte layout an ABI

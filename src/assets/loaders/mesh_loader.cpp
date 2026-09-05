@@ -1,8 +1,8 @@
 #include "assets/loaders/mesh_loader.h"
 #include "assets/asset_storage.h"
+#include "render/gpu.h"
 #include "render/vertex.h"
 #include <assetlib/mesh_asset.h>
-#include <bgfx/bgfx.h>
 #include <cstdio>
 #include <cstring>
 
@@ -39,7 +39,7 @@ MeshHandle load(const std::filesystem::path& cookedPath,
     }
 
     // The header's declared counts MUST match the actual byte payloads. A
-    // truncated .cooked file would let bgfx::copy upload a buffer smaller than
+    // truncated .cooked file would let the staging copy upload a buffer smaller than
     // indexCount claims, and the GPU reads out of bounds at draw time — a
     // driver timeout, not a clean failure (asset audit: "Missing Vector Size
     // and Bound Validation").
@@ -55,24 +55,26 @@ MeshHandle load(const std::filesystem::path& cookedPath,
     }
 
     // Vertex buffer — raw bytes map directly to Vertex layout, zero conversion
-    bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(
-        bgfx::copy(asset.vertexData.data(),
-                   static_cast<uint32_t>(asset.vertexData.size())),
-        Vertex::layout());
+    gpu::VertexBufferHandle vbh = gpu::createVertexBuffer(
+        gpu::copy(asset.vertexData.data(),
+                  static_cast<uint32_t>(asset.vertexData.size())),
+        gpu::VertexFormat::Standard);
 
     // Index buffer — always uint32 from cook pipeline
     const bool use32 = (h.indexStride == 4);
-    bgfx::IndexBufferHandle ibh = bgfx::createIndexBuffer(
-        bgfx::copy(asset.indexData.data(),
-                   static_cast<uint32_t>(asset.indexData.size())),
-        use32 ? BGFX_BUFFER_INDEX32 : BGFX_BUFFER_NONE);
+    gpu::IndexBufferHandle ibh = gpu::createIndexBuffer(
+        gpu::copy(asset.indexData.data(),
+                  static_cast<uint32_t>(asset.indexData.size())),
+        use32 ? gpu::IndexFormat::U32 : gpu::IndexFormat::U16);
 
     // Never register invalid handles — a failed GPU allocation would otherwise
     // crash downstream at draw time (asset audit: "Unchecked GPU Buffer
-    // Allocations").
-    if (!bgfx::isValid(vbh) || !bgfx::isValid(ibh)) {
-        if (bgfx::isValid(vbh)) bgfx::destroy(vbh);
-        if (bgfx::isValid(ibh)) bgfx::destroy(ibh);
+    // Allocations"). This is also the headless path: with no device every
+    // create returns invalid, so the parse above still runs and validates the
+    // file, and only the upload is skipped.
+    if (!vbh.valid() || !ibh.valid()) {
+        gpu::destroy(vbh);
+        gpu::destroy(ibh);
         std::fprintf(stderr, "[MeshLoader] GPU buffer creation failed for %s\n",
                      cookedPath.string().c_str());
         return {};

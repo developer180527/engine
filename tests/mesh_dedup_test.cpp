@@ -27,6 +27,7 @@
 #include <string>
 
 #include <bgfx/bgfx.h>
+#include "gpu_test_device.h"
 
 #include "runtime/services/asset_service.h"
 #include "assets/cookers/mesh/mesh_cooker.h"
@@ -58,12 +59,7 @@ int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("mesh_dedup_test: one cooked mesh must cost one buffer pair\n");
 
-    bgfx::renderFrame();                       // single-threaded, as the engine does
-    bgfx::Init init;
-    init.type = bgfx::RendererType::Noop;
-    init.resolution.width = 16; init.resolution.height = 16;
-    if (!bgfx::init(init)) { std::printf("FAIL bgfx init\n"); return 1; }
-    bgfx::frame();
+    if (!initTestDevice()) return 1;
 
     // Two distinct cooked meshes: the same bytes under two names, which is exactly
     // what a kit of props looks like to the loader.
@@ -183,7 +179,7 @@ int main() {
     std::printf("  note  buffers after teardown: vb %u ib %u\n", end.vb, end.ib);
 
     bgfx::frame();
-    bgfx::shutdown();
+    shutdownTestDevice();
     fs::remove_all(fs::temp_directory_path() / "engine_mesh_dedup_test");
 
     if (g_failures) {

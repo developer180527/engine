@@ -1,4 +1,5 @@
 #include <filesystem>
+#include "render/gpu_bgfx.h"   // toBgfx — the editor draws with ImGui/bgfx
 #pragma once
 #include "runtime/platform/window_ops.h"
 #include "runtime/platform/title_bar.h"  // traffic-light inset for the menu bar
@@ -575,7 +576,7 @@ private:
             flecs::world* renderWorld = inSim ? &m_rt.simWorld() : nullptr;
             m_rt.renderGameView(gameView, gameProj, gameClear, renderWorld);
         }
-        drawGameViewPanel(m_rt.renderer().gameColorTex(), hasCam,
+        drawGameViewPanel(gpu::toBgfx(m_rt.renderer().gameColorTex()), hasCam,
                          m_editor.simState,
                          m_rt.sceneW(), m_rt.sceneH(),
                          [this]{ onPlay(); },
