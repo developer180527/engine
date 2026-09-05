@@ -146,9 +146,14 @@ Three properties worth keeping:
   The runtime no longer chooses between them, which is the specific mistake that
   leaked.
 
-**What it does NOT do: make a lean server.** `engine_runtime` still links bgfx —
-the binary contains both implementations. Excluding the render TUs is a build
-target (`docs/rhi/phases.md` G1c step B) and is not started.
+**A does not make a lean server, and B is the target that does.**
+`engine_runtime` still contains both implementations, which is correct for a
+client. `engine_runtime_server` (src/CMakeLists.txt) is built from the same
+source list minus the ten TUs that name a graphics API, and links with zero bgfx
+symbols and no graphics frameworks — `render/gpu_null.cpp` replaces `gpu.cpp`
+there. The source list is DERIVED from `engine_runtime`'s rather than copied, so
+a new renderer TU is in both automatically and fails the server build if it
+reaches a backend.
 
 ## The upload seam (`gpu.h`) — G1a
 

@@ -160,7 +160,7 @@ Unreal ships both, for different jobs, and so should this engine — in this ord
 | # | Step | Goal | UE's equivalent | Status |
 |---|---|---|---|---|
 | **A** ✅ | **`IRenderer` + `NullRenderer`**, pure virtual so a missing override is a compile error | the same binary runs with no GPU: tests, cook worker, `engine_host`, CI | `FNullDynamicRHI` / `-nullrhi` | **landed 2026-09-05**, `tests/null_renderer_test.cpp` |
-| **B** | **A build target that excludes the render TUs and bgfx** | a lean dedicated server binary | `TargetType.Server` | not started; **this is what G1c's exit criterion actually asks for** |
+| **B** ✅ | **`engine_runtime_server`** — the same source list minus the TUs that name a graphics API | a lean dedicated server binary | `TargetType.Server` | **landed 2026-09-05**, `tests/server_link_probe.cpp` |
 | **C** | **Cook-time class exclusion** | the assets never exist server-side | `NeedsLoadForServer` | not started; **largest win, and a cooker feature** |
 
 **A does not deliver B.** Under A the renderer still links, still runs, and still
@@ -168,8 +168,37 @@ builds draw lists into nothing — which is exactly what `-nullrhi` is, and exac
 what Epic does *not* ship servers as. Anyone expecting A to produce a lean server
 will be disappointed for a structural reason, not a tuning one.
 
-> **A landed 2026-09-05, and the caveat above is now a measured fact rather than
-> a prediction: `engine_runtime` still links bgfx.** `runtime.h` holds a
+> **B landed 2026-09-05 too, and the paragraph above is now history rather than
+> a caveat.** `engine_runtime` still links bgfx — that has not changed and is
+> correct, it is the client library. What is new is a second target beside it:
+>
+> ```
+> engine_host         4030 bgfx symbols   Cocoa, Metal, QuartzCore   29 MB
+> server_link_probe      0 bgfx symbols   (no graphics frameworks)   13 MB
+> ```
+>
+> `engine_runtime_server` is derived from `engine_runtime`'s OWN source list
+> minus ten TUs that name a graphics API, so a new renderer TU is automatically
+> in both and fails the server build if it reaches a backend. It is a TARGET, not
+> an option, because a branch nothing builds is a branch that is already broken —
+> both build on every configure. Unreal makes the same call: `TargetType.Server`
+> is a target, not a flag.
+>
+> Three null halves make it link, each the same header with no backend behind it:
+> `gpu_null.cpp` (which is structurally what `FNullDynamicRHI` is), `NullRenderer`
+> from step A, and `window_ops_null.cpp` — because a server has no windowing
+> library either, which on Linux is the difference between starting on a headless
+> box and failing to load libX11.
+>
+> Two `#if`s in total, both at FACTORIES, which is where a build-time choice
+> belongs: `initRenderer()` does not construct a `Renderer`, and
+> `platform_factory` returns a `HeadlessPlatform`. A third condition keeps source
+> importers out — a server reads cooked binaries only, the same posture
+> `ENGINE_WITH_SOURCE_IMPORTERS=OFF` already describes.
+
+> **The A-does-not-deliver-B caveat, kept because it is still the reason both
+> exist:** `engine_runtime` still contains the whole renderer, and always will.
+> A is what lets that binary run without a GPU; B is a different binary. `runtime.h` holds a
 > `std::unique_ptr<IRenderer>` and names no concrete renderer — `runtime_boot.cpp`
 > is the only runtime TU that knows `Renderer` and `NullRenderer` exist — but the
 > binary contains both. B is untouched.

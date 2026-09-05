@@ -6,10 +6,18 @@
 // PrimitiveLibrary (audit A.1).
 #include "runtime/runtime.h"
 
-// The two IRenderer implementations. This is the ONLY runtime TU that names
-// either — runtime.h holds a std::unique_ptr<IRenderer> and nothing else here
+// The IRenderer implementations. This is the ONLY runtime TU that names either —
+// runtime.h holds a std::unique_ptr<IRenderer> and nothing else in the runtime
 // knows a concrete renderer exists.
+//
+// ENGINE_SERVER_BUILD (G1c step B) drops the real one. It is the single #if the
+// server target needs, and it is here because this file holds the FACTORY: a
+// build-time choice belongs at the point where the choice is made, not sprinkled
+// through the call sites. Everything downstream still calls IRenderer and cannot
+// tell which build it is in.
+#if !ENGINE_SERVER_BUILD
 #include "render/renderer.h"
+#endif
 #include "render/renderer_null.h"
 #include "runtime/platform/glfw_platform.h"
 #include "core/logger.h"
@@ -139,6 +147,17 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
         m_renderer = std::make_unique<NullRenderer>();
         return true;
     }
+#if ENGINE_SERVER_BUILD
+    // A server build has no Renderer to construct. Reaching here means the
+    // platform claimed it can render, which for a server is a configuration
+    // error rather than a state to recover from — say so and stay headless
+    // instead of pretending a device exists.
+    LOG_WARN("Renderer", "server build: platform reports rendering support, but "
+                         "this binary contains no renderer — staying headless");
+    m_headless = true;
+    m_renderer = std::make_unique<NullRenderer>();
+    return true;
+#else
     m_renderer = std::make_unique<Renderer>();
 
     void* nwh = m_platform->nativeWindowHandle();
@@ -149,6 +168,7 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
     return m_renderer->init(nwh, cfg.width, cfg.height,
                            m_ecs, m_assets, m_textures, m_materials,
                            m_skeletons);
+#endif
 }
 
 bool EngineRuntime::initSystems(const EngineConfig& cfg) {
@@ -164,7 +184,11 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     // library; audit A.3 — it was registered unconditionally for every
     // runtime instance including shipped games' headless paths). Shipping
     // builds compile them out entirely (ENGINE_WITH_SOURCE_IMPORTERS=0).
-#if ENGINE_WITH_SOURCE_IMPORTERS
+// && !ENGINE_SERVER_BUILD: a server loads COOKED BINARIES ONLY. The importer
+// TUs are not in that target (they pull Assimp and the glTF parser), so this
+// registration would be an undefined vtable at link time — and it should be:
+// parsing FBX on a dedicated server is not a feature anyone wants back.
+#if ENGINE_WITH_SOURCE_IMPORTERS && !ENGINE_SERVER_BUILD
     if (!m_headless) {
         m_importers.registerImporter(std::make_unique<GltfImporter>());
         m_importers.registerImporter(std::make_unique<AssimpImporter>());

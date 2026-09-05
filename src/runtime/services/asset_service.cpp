@@ -10,7 +10,6 @@
 #include "render/material.h"
 #include "render/vertex.h"
 #include "render/skinned_vertex.h"
-#include "render/cooked_texture.h"   // format-aware BC upload
 #include "animation/cooked_skin.h"        // v3 skinned payload decode
 #include "animation/skeleton_registry.h"
 #include "animation/clip_registry.h"

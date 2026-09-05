@@ -11,7 +11,6 @@
 #include "render/skinned_vertex.h"
 #include "render/texture.h"
 #include "render/material.h"
-#include "render/cooked_texture.h"   // format-aware BC upload
 
 #include "render/gpu.h"
 

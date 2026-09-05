@@ -16,12 +16,25 @@ The problem was that `renderer.h` DECLARED bgfx handle members, and behind it
 `asset_registry.h` and `primitive_library.h` each did the same. All now use
 `gpu::` types.
 
-**What is still true:** `engine_runtime` LINKS bgfx, because the runtime calls
-`Renderer::frame()`, `renderScene()` and about fifteen others unconditionally —
-guarded at runtime by `m_headless`, but compiled in, so the symbols are
-required even in a build that never creates a device. Closing that needs a null
-renderer implementation, which is a design decision recorded in
-`docs/rhi/phases.md` G1c.
+**LINK HALF CLOSED 2026-09-05 (G1c step B).** `engine_runtime` still links bgfx,
+which is correct — it is the client library. Beside it there is now
+`engine_runtime_server`, built from the same source list minus the ten TUs that
+name a graphics API:
+
+```
+engine_host         4030 bgfx symbols   Cocoa, Metal, QuartzCore   29 MB
+server_link_probe      0 bgfx symbols   (no graphics frameworks)   13 MB
+```
+
+A separate target rather than an option, so both build on every configure and
+the server cannot rot. Three null implementations carry it — `gpu_null.cpp`,
+`NullRenderer` and `window_ops_null.cpp` — and two `#if`s, both at factories
+(`initRenderer()` and `platform_factory`). Asserted by
+`tests/server_link_probe.cpp`, which boots and ticks the engine rather than
+merely linking it, since a static library only pulls the objects an executable
+references.
+
+**The whole of this document is now historical.** Every entry above is fixed.
 
 **Why the header half was worth doing on its own:** a transitive include is
 invisible to review and to grep. Every one of the eight headers above was found

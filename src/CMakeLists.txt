@@ -367,6 +367,106 @@ set_source_files_properties(
     PROPERTIES HEADER_FILE_ONLY TRUE
 )
 
+# ── engine_runtime_server — the same engine with no graphics dependency ──────
+# G1c step B (docs/rhi/phases.md). The exit criterion for G1c is "engine_runtime
+# links without bgfx for a server target", and this is that target.
+#
+# A SEPARATE TARGET, NOT AN OPTION, and that is the load-bearing choice. An
+# option would mean one build dir produces either the normal engine or the
+# server one, so CI proves whichever it happened to configure — and this repo's
+# own rule is that a branch nothing builds is a branch that is already broken.
+# Both targets build in every configure, so the server build cannot rot silently.
+# Unreal makes the same call: TargetType.Server is a target, not a flag.
+#
+# WHAT IT DROPS, and each one is a TU that names bgfx:
+#   render/gpu.cpp              -> render/gpu_null.cpp (same symbols, no backend)
+#   render/renderer*.cpp        the device, targets, extraction
+#   render/pipeline/*.cpp       the forward pipeline's passes
+#   render/shader/shader_library.cpp   cooked shader -> GPU program
+#   render/diag/frame_gpu_stats.cpp    samples bgfx::getStats
+#   async_loader/upload.cpp     the main-thread handle-creation half
+#
+# WHAT IT KEEPS, because none of it has ever needed a GPU: the whole simulation,
+# assets, animation, physics, scripting, jobs, nav, audio — plus render/world/
+# (cull, sort, LOD, light packing are pure functions over PODs) and
+# render/shader/shader_select.cpp.
+#
+# WHAT IT STILL LINKS: bx, which is bgfx's MATH library and a separate question
+# on its own schedule (docs/rhi/evidence-coupling.md §2.1). Sweeping it into G1
+# would have made this four times larger for no headless benefit.
+set(ENGINE_SERVER_EXCLUDED
+    # The window backend. A server has no windowing library at ALL — on Linux
+    # that is the difference between starting on a headless box and failing to
+    # load libX11. platform_factory.cpp stays and returns a HeadlessPlatform;
+    # window_ops_null.cpp below supplies the per-window seam.
+    ${ENGINE_PLATFORM_SOURCES}
+    # Source-format import. A server reads cooked binaries only — this is the
+    # same shipping posture ENGINE_WITH_SOURCE_IMPORTERS=OFF describes, applied
+    # to one target instead of the whole tree.
+    runtime/services/async_loader/loader.cpp
+    runtime/services/async_loader/parse.cpp
+    runtime/services/async_loader/upload.cpp
+    assets/importers/gltf_importer.cpp
+    assets/importers/assimp_importer.cpp
+    render/gpu.cpp
+    render/renderer.cpp
+    render/renderer/device.cpp
+    render/renderer/targets.cpp
+    render/renderer/extract.cpp
+    render/pipeline/programs.cpp
+    render/pipeline/opaque_pass.cpp
+    render/pipeline/shadow_pass.cpp
+    render/shader/shader_library.cpp
+    render/diag/frame_gpu_stats.cpp
+)
+
+# Derived from engine_runtime's OWN source list rather than copied. A new TU
+# added above is automatically in the server build too, and if it happens to
+# name bgfx the server link fails and names it — which is the failure we want,
+# rather than two lists drifting apart in silence.
+get_target_property(ENGINE_RUNTIME_SOURCES engine_runtime SOURCES)
+set(ENGINE_SERVER_SOURCES ${ENGINE_RUNTIME_SOURCES})
+foreach(_excluded ${ENGINE_SERVER_EXCLUDED})
+    list(REMOVE_ITEM ENGINE_SERVER_SOURCES ${_excluded})
+endforeach()
+# Shaders are HEADER_FILE_ONLY listings; a server compiles none of them.
+foreach(_shader ${ENGINE_SHADER_SOURCES})
+    list(REMOVE_ITEM ENGINE_SERVER_SOURCES ${_shader})
+endforeach()
+
+add_library(engine_runtime_server STATIC
+    ${ENGINE_SERVER_SOURCES}
+    # The null halves. Each is the same header with no backend behind it, which
+    # is what keeps every caller above identical across the two builds.
+    render/gpu_null.cpp
+    runtime/platform/window_ops_null.cpp
+)
+
+# The one place the runtime names a concrete Renderer is initRenderer()'s
+# factory. This definition removes that branch — a factory is where a build-time
+# choice belongs, and it is the only #if this target needs.
+target_compile_definitions(engine_runtime_server PUBLIC ENGINE_SERVER_BUILD=1)
+
+target_include_directories(engine_runtime_server PUBLIC
+    ${CMAKE_SOURCE_DIR}/third_party/JoltPhysics
+    ${CMAKE_SOURCE_DIR}/third_party/miniaudio
+)
+
+# bgfx, bimg and the platform's window frameworks are ABSENT by construction.
+# bx stays: it is the maths library (see above).
+target_link_libraries(engine_runtime_server PUBLIC
+    engine_core
+    bx
+    flecs_static
+    Jolt
+    lua
+    ozz_animation ozz_animation_offline
+    enkiTS
+    hid
+    Recast Detour
+)
+
+
 target_include_directories(engine_runtime PUBLIC
     ${CMAKE_SOURCE_DIR}/third_party/JoltPhysics
     ${CMAKE_SOURCE_DIR}/third_party/miniaudio

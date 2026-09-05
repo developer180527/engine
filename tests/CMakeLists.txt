@@ -595,6 +595,24 @@ endif()
 add_test(NAME seam_cost COMMAND seam_cost_bench 200)
 set_tests_properties(seam_cost PROPERTIES LABELS perf TIMEOUT 300)
 
+# ── G1c step B: engine_runtime_server LINKS without a graphics API ──────────
+# The exit criterion for G1c, in the only form worth anything: a binary. The
+# include probe below proves the HEADERS are clean; this proves the LINK is,
+# which is the half that was still open after step A — the runtime called
+# Renderer methods whose definitions lived in bgfx TUs, so every binary carried
+# the whole renderer.
+#
+# It links engine_runtime_server (bgfx and bimg absent from its link libraries,
+# and therefore from its include path) and BOOTS the engine, because a static
+# library only pulls the objects an executable references. A probe that merely
+# linked would prove nothing about the TUs it never touched.
+add_executable(server_link_probe server_link_probe.cpp)
+target_link_libraries(server_link_probe PRIVATE engine_runtime_server)
+set_target_properties(server_link_probe PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME server_link COMMAND server_link_probe)
+set_tests_properties(server_link PROPERTIES LABELS unit TIMEOUT 120)
+
 # ── G1c: runtime.h must not REACH a graphics API ────────────────────────────
 # The grep above catches a direct #include. It cannot catch the coupling that
 # actually mattered, which was transitive: runtime.h -> render/renderer.h ->
