@@ -61,7 +61,21 @@ Contrast the numbers honestly:
 | audio control (1–3 calls/frame @ 120 fps) | ~360 | **~1 µs/sec — unmeasurable** |
 | physics bulk sync (2 arrays/step @ 60 Hz) | ~120 | unmeasurable |
 | physics **per body** (5 000 bodies, read+write) | 600 000 | ~1 ms/sec — 0.02 ms/frame, tolerable |
-| renderer **per draw** (100 000 draws @ 120 fps) | 12 000 000 | **~20 ms/sec, ~0.2 ms/frame just in call overhead** — and that ignores the lost inlining and the marshalling |
+| renderer **per draw** (100 000 draws @ 120 fps) | 12 000 000 | **measured 2026-09-04: ~0.059 ms/frame**, not the ~0.2 ms this row estimated — see the correction below |
+
+> **Corrected 2026-09-04.** The per-draw renderer row was an estimate and it was
+> **pessimistic by ~3.4×**. Measured on an M-series machine, a cross-`.dylib`
+> indirect call is 0.68 ns, so 100 000 draws/frame costs **0.059 ms/frame**, not
+> 0.2 — about 0.7% of a 120 fps budget. A monomorphic C++ virtual call costs
+> exactly the same 0.68 ns; what is actually paid for, in both, is lost inlining.
+>
+> **Conclusion 2 below still holds, but not for the reason given here.** Call
+> overhead alone does not disqualify a per-draw seam. What disqualifies it is
+> that GPU-driven rendering has *no per-draw CPU work at all*, so a per-draw ABI
+> would freeze the CPU-driven model into a permanent contract at the moment the
+> engine is trying to leave it. The full argument, the measurement, and the four
+> different things "swappable" means are in
+> [`../rhi/swappability.md`](../rhi/swappability.md).
 
 Two conclusions follow, and the second is the one that will hurt:
 

@@ -65,6 +65,10 @@ claim about freshness as much as about tests. See
   for the ranked findings and which are fixed, and **[`rhi/`](rhi/)** for the
   GPU-driven RHI itself — a directory now, not a file, starting at
   [`rhi/README.md`](rhi/README.md).
+- **Does a swappable renderer cost performance?** —
+  [`rhi/swappability.md`](rhi/swappability.md): no, and the measurement is in it.
+  "Swappable" means four different things; three are free and the fourth (a frozen
+  renderer ABI) is the only irreversible one, so it is the one not being built.
 - **How far off AAA are we?** — [`plans/aaa-gap-analysis.md`](plans/aaa-gap-analysis.md):
   eight pillars, an evidence line per claim, and the one gap that is not additive.
   Short version: the expensive half is built, the visible half is not.

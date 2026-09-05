@@ -31,6 +31,7 @@ the research that is still being done.
 | 10 | [`migration.md`](migration.md) | **How do we get there without breaking `main`?** Strangle, never rewrite. |
 | 11 | [`phases.md`](phases.md) | **In what order, and what does each phase have to prove?** The `G` sequence. |
 | 12 | [`open-decisions.md`](open-decisions.md) | **What is still unanswered?** Live questions only; answered ones move out. |
+| 13 | [`swappability.md`](swappability.md) | **Does making the renderer swappable cost performance?** Four meanings, one measurement, and the one version we deliberately do not build. |
 
 Plus [`workflow.md`](workflow.md) — how a question becomes a study becomes a
 decision, and why studies are not allowed to live in the design documents.
