@@ -1,0 +1,11 @@
+## BUG-0049 — the regression test compared a constant to itself
+- found:     2026-09-05
+- status:    fixed
+- class:     coverage
+- where:     tests/null_renderer_test.cpp
+- symptom:   none. The test passed, and would have passed with the defect it claimed to pin fully restored.
+- cause:     §5 asserted `engineDrawSubmittedCount() == 0` against a `NullRenderer` whose `submittedDrawCount()` was `return 0;`. The chain is engine_api.cpp -> g_drawRenderer->submittedDrawCount() -> the literal, so the assertion compared a constant to itself and the 10 000-iteration loop was decorative — it passed at 10 iterations and at zero. Worse, the SCOPE was wrong: the 480 KB/s leak never lived in NullRenderer, it lived in the runtime's `if (!m_headless) frame(); else endFrame();` branch, and the test never constructed an EngineRuntime at all. It included renderer_null.h and engine_api_binding.h and nothing else.
+- pinned-by: tests/null_renderer_test.cpp
+- lane:      unit
+- proof:     NullRenderer now COUNTS submissions and clears them at frame end, so the count can distinguish "cleared" from "never counted"; §5 boots a real headless EngineRuntime, submits through the real C API, and asserts the count rises and returns to zero across EngineRuntime::frameEnd(). Mutation: restoring `if (!m_headless) m_renderer->frame();` fails five assertions and prints the leak accumulating across frames — 1000, 1500, 2000.
+- note:      the manifest-test shape — a literal checked against itself. The same family as BUG-0016 and BUG-0004: a check that exists, is believed to run, and cannot fail. It was written in the same commit as the fix it was meant to pin, which is exactly when this is easiest to get wrong, because the author knows what the code does and writes an assertion that agrees with it rather than one that constrains it.

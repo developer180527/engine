@@ -254,8 +254,13 @@ private:
             // ---- Camera matrices ----
             float view[16], proj[16];
             m_cam.getViewMatrix(view);
-            bx::mtxProj(proj, m_rt.fov(),
-                        float(m_rt.sceneW()) / float(m_rt.sceneH()),
+            // Guarded like the game-view path below. Unreachable while the
+            // editor always has a device, but sceneH() is 0 on any renderer
+            // without a framebuffer (render/renderer_null.h), and the two
+            // paths disagreeing was a latent divide by zero.
+            const float sceneAspect = m_rt.sceneH() > 0
+                ? float(m_rt.sceneW()) / float(m_rt.sceneH()) : 16.0f / 9.0f;
+            bx::mtxProj(proj, m_rt.fov(), sceneAspect,
                         0.1f, 1000.0f,
                         bgfx::getCaps()->homogeneousDepth);
 

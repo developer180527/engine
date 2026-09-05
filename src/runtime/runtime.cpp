@@ -10,6 +10,8 @@
 // NO <bgfx/bgfx.h> in any of them — GPU work goes exclusively through
 // Renderer / PrimitiveLibrary (audit A.1).
 #include "runtime/runtime.h"
+
+#include "render/renderer_null.h"   // the ctor's default renderer
 #include "core/logger.h"
 #include "runtime/scripting/script_host.h"
 #include "runtime/services/anim_service.h"
@@ -72,7 +74,20 @@ bool ensureFlecsAllocatorHooked() {
 }
 } // namespace engine_detail
 
-EngineRuntime::EngineRuntime()  = default;
+// A NullRenderer from CONSTRUCTION, not from initRenderer(). The public API —
+// resize(), createSceneFB(), renderGameView(), sceneW/H(), renderer() — all
+// dereference m_renderer with no init guard, and the old `Renderer m_renderer`
+// by value was safe to call at any point in the lifecycle. A unique_ptr is not.
+//
+// Our own boot path never exposed it (a failed platform init returns before
+// initRenderer, and shutdown() early-returns on !m_initialized), but an EMBEDDER
+// does: platform-embedder.md gives the host the window and the event loop, so a
+// host resize callback arriving around a failed or in-progress init is exactly
+// this hazard. initRenderer() replaces this; until then it is a working renderer
+// that draws nothing, which makes "never null" a property of the type rather
+// than an argument about ordering.
+EngineRuntime::EngineRuntime()
+    : m_renderer(std::make_unique<NullRenderer>()) {}
 EngineRuntime::~EngineRuntime() = default;
 
 void EngineRuntime::attachPlugins() {

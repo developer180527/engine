@@ -1,0 +1,11 @@
+## BUG-0050 — a unique_ptr renderer was null before init
+- found:     2026-09-05
+- status:    fixed
+- class:     memory
+- where:     src/runtime/runtime.h, src/runtime/runtime.cpp
+- symptom:   none reachable from this repo's own boot path. A SIGSEGV for an embedder whose host resize callback lands around a failed or in-progress init.
+- cause:     G1c step A replaced `Renderer m_renderer` (by value) with `std::unique_ptr<IRenderer>`, and `EngineRuntime::EngineRuntime() = default;` left it null until initRenderer() ran. The by-value member had been callable at ANY lifecycle point; the pointer was not, and the public API dereferences it with no init guard — resize(), createSceneFB(), renderGameView(), sceneW(), sceneH() and renderer(). runtime.h's own comment asserted "never null: boot installs either a Renderer or a NullRenderer before anything can call through it", which was an argument about ordering inside this repo rather than a property of the type. platform-embedder.md hands the host the window and the event loop, so that ordering is exactly what an embedder does not owe us.
+- pinned-by: tests/null_renderer_test.cpp
+- lane:      unit
+- proof:     the constructor now installs a NullRenderer, which initRenderer() replaces. §0 of the test calls sceneW/H(), resize(), createSceneFB() and renderer() on a constructed-but-never-inited EngineRuntime. Mutation: restoring `= default;` builds clean and the test exits 139 (SIGSEGV).
+- note:      the defect was introduced BY the null-object refactor and is the cost of that refactor stated honestly — swapping a value for a pointer moves an invariant from the type into the call order, and the comment claiming otherwise made it look already handled. Found in review, not by a test, because nothing exercised the pre-init window until one was written.

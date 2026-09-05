@@ -74,8 +74,8 @@ Each phase must be independently defensible — no phase justified only by the n
 > — which keeps the assets from existing at all, and belongs in
 > `src/assets/cookers/` rather than in the renderer.
 >
-> And the premise underneath all of it: routing all 18 reachable methods through a
-> virtual is **12 ns per tick, 0.000037% of a 30 Hz server tick**. None of this
+> And the premise underneath all of it: routing all 26 interface methods through a
+> virtual is **~18 ns per tick, 0.00005% of a 30 Hz server tick**. None of this
 > is a performance decision ([`headless.md`](headless.md) §1). Not started.
 
 **G7 and G8 are optional tiers, not baseline.** Neither reaches the stated minimum

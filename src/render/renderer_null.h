@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+
 #include "render/renderer_interface.h"
 
 // ── NullRenderer — does nothing, correctly ──────────────────────────────────
@@ -42,8 +44,11 @@ struct NullRenderer final : IRenderer {
     void setDebugDraw(const dbg::DebugDraw*) override {}
     void setSimAlpha(float) override {}
 
-    void frame() override {}
-    void endFrame() override {}
+    // frame() presents nothing and then ends the frame, exactly as the real
+    // Renderer::frame() does. That equivalence is the point: the runtime calls
+    // frame() unconditionally and must not have to know which renderer it holds.
+    void frame() override { endFrame(); }
+    void endFrame() override { m_submitted.store(0, std::memory_order_relaxed); }
 
     void renderScene(const float[16], const float[16]) override {}
     void renderGameView(const float[16], const float[16], const float[4],
@@ -51,12 +56,23 @@ struct NullRenderer final : IRenderer {
     void renderToBackbuffer(const float[16], const float[16], const float[4],
                             flecs::world*) override {}
 
-    // Accepted and discarded. NOT counted: submittedDrawCount() reports what is
-    // pending presentation, and nothing here is ever pending. A kit that
-    // submits on a server is behaving correctly and must not be told its work
-    // was dropped — droppedExternalDraws() stays 0 for the same reason, since
-    // non-zero there means "the frame is incomplete", which would be a lie.
-    void submitDraw(MeshHandle, MaterialHandle, const float[16]) override {}
+    // COUNTED, then discarded at frame end — the same observable lifecycle the
+    // real renderer has, minus the GPU and minus storing anything.
+    //
+    // Counting is not decoration. `submittedDrawCount()` is what makes the
+    // 480 KB/s leak observable at all: the defect was that nothing on the
+    // headless path ever cleared the pending list, and a count that is always
+    // zero cannot distinguish "cleared" from "never counted". Returning a
+    // constant here would make tests/null_renderer_test.cpp §5 compare a
+    // literal against itself, which is exactly what review caught it doing.
+    //
+    // Atomic because kits submit from the job pool (engineJobsParallelFor), the
+    // same reason the real Renderer takes a lock. Nothing is stored, so there is
+    // no buffer to overflow and no cap is needed — which is why
+    // droppedExternalDraws() below is honestly 0 rather than merely unimplemented.
+    void submitDraw(MeshHandle, MaterialHandle, const float[16]) override {
+        m_submitted.fetch_add(1, std::memory_order_relaxed);
+    }
 
     // ── The three whose value is actually read ─────────────────────────────
     // Every other method above can do nothing. These cannot: a caller uses the
@@ -73,13 +89,25 @@ struct NullRenderer final : IRenderer {
     // ZERO, meaning "there is no scene framebuffer" — which is true, and is
     // what a caller sizing a viewport to it should see. A plausible-looking
     // fake size would be worse: it invites a caller to compute an aspect ratio
-    // from a surface that does not exist. Callers already handle 0 (the
-    // runtime falls back to 16:9 when height is 0).
+    // from a surface that does not exist, and to get a plausible-looking wrong
+    // answer instead of an obvious zero.
+    //
+    // An earlier version of this comment also claimed "callers already handle 0
+    // (the runtime falls back to 16:9 when height is 0)". That fallback is real
+    // but it is in a DIFFERENT path — runtime_frame.cpp guards m_height, the
+    // window size, not sceneH(). The runtime's only uses of sceneW/H are two
+    // pass-through accessors. The real consumers are in editor_app.h and they
+    // disagree with each other: the game-view path guards `sceneW() > 0`, the
+    // scene-view path divides unguarded. Both are unreachable today (the editor
+    // never runs headless) and the scene-view one is now guarded anyway, but the
+    // citation was describing a protection that was not there.
     int sceneW() const override { return 0; }
     int sceneH() const override { return 0; }
 
     // ── Diagnostics: "nothing to report" is the correct answer ─────────────
-    uint32_t submittedDrawCount() const override { return 0; }
+    uint32_t submittedDrawCount() const override {
+        return m_submitted.load(std::memory_order_relaxed);
+    }
     uint32_t droppedExternalDraws() const override { return 0; }
     const IRenderPipeline* pipeline() const override { return nullptr; }
     LodCensus lodCensus() const override { return {}; }
@@ -87,4 +115,9 @@ struct NullRenderer final : IRenderer {
     gpu::TextureHandle gameColorTex() const override { return {}; }
 
     void resetWorldCaches() override {}
+
+private:
+    // Pending submissions THIS frame. Never grows across frames — that is
+    // the invariant the leak violated, and the only state this class has.
+    std::atomic<uint32_t> m_submitted{0};
 };

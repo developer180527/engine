@@ -10,23 +10,27 @@ covers:
 > drive the cost of a "null renderer" to zero?
 >
 > **The answer:** none, because there is nothing to drive to zero. The dispatch
-> cost is 0.000037% of a server tick. What shipping engines actually eliminate is
+> cost is 0.00005% of a server tick. What shipping engines actually eliminate is
 > four to eight orders of magnitude larger, and it is not dispatch.
 
 ## 1. The arithmetic that closes the question
 
-`EngineRuntime` reaches **17 distinct `Renderer` methods**, plus `submitDraw`
-from `engine_api.cpp` — 18 in total (counted 2026-09-05). Only a handful are
-called on any given tick, so treating all 18 as per-tick is a deliberate
-over-estimate. At the 0.68 ns measured in [`swappability.md`](swappability.md)
-§2 (`tests/perf/seam_cost_bench.cpp`), routing every one of them through a
-virtual `IRenderer` costs:
+`IRenderer` has **26 methods** (27 virtuals including the destructor, counted
+2026-09-05 — an earlier version of this section said 18, which was the count of
+distinct methods the runtime *calls* rather than the interface's size, and the
+two are not the same number). Treating all 26 as per-tick is a deliberate
+over-estimate on top of that: most are lifecycle and configuration that run at
+boot or never, and the genuine per-tick figure is closer to six.
+
+At the 0.68 ns measured in [`swappability.md`](swappability.md) §2
+(`tests/perf/seam_cost_bench.cpp`), routing every one of them through a virtual
+costs:
 
 ```
-  18 calls x 0.68 ns  (over-estimate)  =        12 ns per tick
+  26 calls x 0.68 ns  (over-estimate)  =        18 ns per tick
   a 30 Hz server tick                  = 33,333,333 ns
-                                       -> 0.000037% of the tick
-  a 128 Hz tick                        ->  0.00016% of the tick
+                                       -> 0.000053% of the tick
+  a 128 Hz tick                        ->  0.00023% of the tick
 
   calls/tick needed to reach 1% of a 30 Hz tick:  ~490,000
 ```
@@ -45,10 +49,10 @@ be a deliberate decision rather than a side effect.
 
 The instinct behind the question is right. The targets are just much bigger.
 
-| What is eliminated | Scale | vs. the 12 ns |
+| What is eliminated | Scale | vs. the 18 ns |
 |---|---|---|
-| **`present()` / vsync** — a client frame *deliberately blocks* to align with the display | up to 16.7 ms at 60 Hz | **~1,400,000x** |
-| **Swapchain / drawable acquisition** — unbounded, not merely slow | measured **~1 second** in this repo | **~82,000,000x** |
+| **`present()` / vsync** — a client frame *deliberately blocks* to align with the display | up to 16.7 ms at 60 Hz | **~930,000x** |
+| **Swapchain / drawable acquisition** — unbounded, not merely slow | measured **~1 second** in this repo | **~55,000,000x** |
 | **GPU asset loading** — textures, shaders, meshes never leave disk | GB of IO, RAM, VRAM, startup | not comparable; the largest by volume |
 | **Render-only subsystems** — particles, VFX, post, cosmetic animation | whole subsystems | — |
 | Driver, swapchain, display server, compositor | whole dependencies | — |

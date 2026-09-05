@@ -45,9 +45,12 @@ struct LodCensus {
 //   NullRenderer  (render/renderer_null.h) does nothing, correctly
 //
 // ── Why this exists, since it is NOT for performance ────────────────────────
-// Routing all of these through a virtual costs ~12 ns per tick — 0.000037% of
-// a 30 Hz server tick (docs/rhi/headless.md §1). Nobody should defend or
-// attack this design on speed; the number is noise.
+// This interface has 26 methods. Routing EVERY one of them through a virtual
+// once per tick costs ~18 ns — 0.00005% of a 30 Hz server tick
+// (docs/rhi/headless.md §1). The real per-tick number is far smaller, since
+// most of these are lifecycle and configuration that run at boot or never.
+// Nobody should defend or attack this design on speed; the number is noise
+// either way, which is the only reason the loose version of it survived review.
 //
 // It exists because the alternative was `if (!m_headless)` scattered across
 // the runtime, and that design has already shipped a defect: `frame()` was

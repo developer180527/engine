@@ -17,7 +17,12 @@ void engineInputBindManager(input::InputManager* m);
 namespace mem { class FrameArena; }
 void engineMemBindFrameArena(mem::FrameArena* a);
 
-// Host-only: point draw submission at the renderer (nullptr headless/shutdown).
-// Unbound, submitMesh no-ops — a kit that draws runs unchanged on a server.
+// Host-only: point draw submission at the runtime's renderer.
+//
+// NOT nullptr when headless — that was true before IRenderer and is not now. A
+// headless host binds a NullRenderer, which counts submissions and discards them
+// at frame end, so a kit that draws runs unchanged on a server. nullptr means
+// only "before bind or after unbind", i.e. boot and teardown, where submitMesh
+// no-ops.
 struct IRenderer;   // render/renderer_interface.h
 void engineDrawSubmitBindRenderer(IRenderer* r);

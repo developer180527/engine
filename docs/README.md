@@ -70,7 +70,7 @@ claim about freshness as much as about tests. See
   "Swappable" means four different things; three are free and the fourth (a frozen
   renderer ABI) is the only irreversible one, so it is the one not being built.
 - **Running without a GPU** — [`rhi/headless.md`](rhi/headless.md): a null
-  renderer costs 12 ns a tick, so it is not a performance decision. What a server
+  renderer costs ~18 ns a tick, so it is not a performance decision. What a server
   actually stops waiting for is `present()` and drawable acquisition (measured at
   ~1 second in this tree). Also what Unreal ships for servers, verified against
   Epic's docs — and it is not the null RHI.

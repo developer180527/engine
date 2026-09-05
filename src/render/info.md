@@ -124,8 +124,8 @@ Two layers:
 `NullRenderer` (`renderer_null.h`) are its two implementations, and
 `runtime_boot.cpp` is the only runtime TU that names either.
 
-**It is not a performance seam.** All 18 methods through a virtual is ~12 ns a
-tick — 0.000037% of a 30 Hz server tick (`docs/rhi/headless.md` §1). It exists
+**It is not a performance seam.** All 26 methods through a virtual is ~18 ns a
+tick — 0.00005% of a 30 Hz server tick, and most of them are boot-time (`docs/rhi/headless.md` §1). It exists
 because the alternative was `if (!m_headless)` scattered across the runtime, and
 that design shipped a defect: `frame()` was guarded and
 `engineDrawSubmitBindRenderer()` was not, so a dedicated server's submission list
