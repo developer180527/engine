@@ -159,6 +159,13 @@ engine_test(thread_qos_test)
 # texture in the scene. The contract sentence in gpu.h claimed the opposite
 # until review caught it.
 engine_test(gpu_seam_test)
+# The null renderer's BEHAVIOUR. Its completeness is already the compiler's job —
+# IRenderer is pure virtual, so a new method is a build failure until
+# NullRenderer implements it. What a compiler cannot see is the three queries
+# whose null answer must still be MEANINGFUL, and the regression this whole
+# change exists for: a kit submitting draws on a server must be accepted and
+# discarded, never accumulated (the ~480 KB/s leak, issues.md 2026-08-10).
+engine_test(null_renderer_test)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
 engine_test(animator_system_test)

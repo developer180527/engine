@@ -95,7 +95,7 @@ void EngineRuntime::stopSimulation() {
     m_cameraFinder.reset();
     m_eventSweeper.reset();                     // release queries before world dies
     m_animatorSystem.resetWorldCache();
-    m_renderer.resetWorldCaches();
+    m_renderer->resetWorldCaches();
     m_spinnerQuery.reset();          // sim-world query — world dies below
     m_prevSnapQuery.reset();         // ditto: PrevTransform snapshot queries
     m_prevSnapAddQuery.reset();
@@ -171,7 +171,7 @@ void EngineRuntime::tickSimulation(float dt) {
         { ENGINE_PROFILE_SCOPE("Sim.post");    m_plugins.broadcastPostPhysics(w); }
     }
 
-    m_renderer.setSimAlpha(m_simAccumulator / kSimDt);   // leftover fraction
+    m_renderer->setSimAlpha(m_simAccumulator / kSimDt);   // leftover fraction
 
     // Render-rate hook: presentation work (late-latched camera) runs once
     // per FRAME with real dt, after the fixed steps — this is what keeps

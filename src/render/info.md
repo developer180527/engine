@@ -118,6 +118,38 @@ Two layers:
   imports merge all body parts into one VB/IB with submesh ranges). The handles
   are `gpu::` types, not backend ones.
 
+## `IRenderer` and `NullRenderer` — G1c step A
+
+`renderer_interface.h` is what `EngineRuntime` drives; `Renderer` and
+`NullRenderer` (`renderer_null.h`) are its two implementations, and
+`runtime_boot.cpp` is the only runtime TU that names either.
+
+**It is not a performance seam.** All 18 methods through a virtual is ~12 ns a
+tick — 0.000037% of a 30 Hz server tick (`docs/rhi/headless.md` §1). It exists
+because the alternative was `if (!m_headless)` scattered across the runtime, and
+that design shipped a defect: `frame()` was guarded and
+`engineDrawSubmitBindRenderer()` was not, so a dedicated server's submission list
+filled at ~480 KB/s forever (`src/runtime/docs/issues.md`, 2026-08-10). A null
+object has no guard to forget.
+
+Three properties worth keeping:
+
+* **Every method is pure virtual**, so adding one is a compile error until
+  `NullRenderer` implements it. That is why axiom 5's "the second implementation
+  rots" hazard does not apply — it warns about differing ANSWERS, and a
+  do-nothing implementation has none. Mutation-checked.
+* **Three queries are exceptions** and their null values are decisions, not
+  defaults: `homogeneousDepth()` is false, `sceneW()`/`sceneH()` are 0. A
+  plausible fake size would invite an aspect ratio computed off a surface that
+  does not exist. Pinned by `tests/null_renderer_test.cpp`.
+* **`frame()` and `endFrame()` are both on the interface and both unconditional.**
+  The runtime no longer chooses between them, which is the specific mistake that
+  leaked.
+
+**What it does NOT do: make a lean server.** `engine_runtime` still links bgfx —
+the binary contains both implementations. Excluding the render TUs is a build
+target (`docs/rhi/phases.md` G1c step B) and is not started.
+
 ## The upload seam (`gpu.h`) — G1a
 
 `render/gpu.h` is the ONLY thing outside `src/render/renderer/` that turns

@@ -7,6 +7,7 @@
 class ShaderLibrary;   // render/shader/shader_library.h
 #include <vector>
 #include "render/gpu.h"
+#include "render/renderer_interface.h"
 #include <flecs.h>
 
 #include "render/render_pipeline.h"   // IRenderPipeline, RenderView, RenderItem, LightItem, RenderTarget, Mat4, Vec4
@@ -32,24 +33,24 @@ class ShaderLibrary;   // render/shader/shader_library.h
 //   renderer/device.cpp   bgfx up and down (+ the Rendering-heap allocator)
 //   renderer/targets.cpp  framebuffers and the three render* entry points
 //   renderer/extract.cpp  ECS world → RenderView — the per-item hot path
-class Renderer {
+class Renderer final : public IRenderer {
 public:
     // Fixed-timestep render interpolation: extraction lerps
     // PrevTransform -> Transform by alpha (1 = current state, editor default).
-    void setSimAlpha(float a) { m_simAlpha = a; }
+    void setSimAlpha(float a) override { m_simAlpha = a; }
     Renderer();
-    ~Renderer();
+    ~Renderer() override;
     Renderer(const Renderer&)            = delete;
     Renderer& operator=(const Renderer&) = delete;
 
     bool init(void* nwh, int width, int height,
               flecs::world& editorWorld,
               AssetRegistry& assets, TextureRegistry& textures, MaterialRegistry& materials,
-              SkeletonRegistry& skeletons);
-    void shutdown();
+              SkeletonRegistry& skeletons) override;
+    void shutdown() override;
 
-    void resize(int w, int h);          // backend swapchain reset
-    void createSceneFB(int w, int h);   // (re)create the offscreen scene framebuffer
+    void resize(int w, int h) override;          // backend swapchain reset
+    void createSceneFB(int w, int h) override;   // (re)create the offscreen scene framebuffer
 
     // Shadow-map edge length, from project.json's graphics.shadowResolution.
     // The default pipeline's shadow map is the single largest GPU allocation
@@ -59,29 +60,29 @@ public:
     // Safe to call before OR after init(): a change after the pipeline is
     // attached re-attaches it, because the shadow map is created at attach
     // time and never resized. That happens on project open, not per frame.
-    void setShadowResolution(uint32_t px);
+    void setShadowResolution(uint32_t px) override;
 
     // Where cooked shaders live (the project's .cache). Set from openProject,
     // which happens AFTER init() — so this re-attaches the pipeline, exactly as
     // setShadowResolution does, or the programs would already have been built
     // from the compiled-in fallback.
-    void setShaderCacheRoot(const std::filesystem::path& cacheRoot);
+    void setShaderCacheRoot(const std::filesystem::path& cacheRoot) override;
 
     // Frame flip + device caps — the runtime orchestrates THROUGH these so
     // runtime*.cpp never touches bgfx directly (the Renderer owns the whole
     // GPU device lifecycle; audit A.1).
-    void frame();                       // present
-    bool homogeneousDepth() const;      // clip-space depth convention
+    void frame() override;                       // present
+    bool homogeneousDepth() const override;      // clip-space depth convention
 
-    void renderScene(const float view[16], const float proj[16]);
+    void renderScene(const float view[16], const float proj[16]) override;
     void renderGameView(const float view[16], const float proj[16],
-                        const float clearColor[4], flecs::world* gameWorld);
+                        const float clearColor[4], flecs::world* gameWorld) override;
     // Standalone-game path: render a world straight to the backbuffer (no
     // offscreen FB, no ImGui composite). world == nullptr renders the world
     // passed at init(). Uses the same view id as the editor's game FB path —
     // call one or the other per frame, not both.
     void renderToBackbuffer(const float view[16], const float proj[16],
-                            const float clearColor[4], flecs::world* world = nullptr);
+                            const float clearColor[4], flecs::world* world) override;
 
     // ── Bring-your-own-system draw submission ───────────────────────────────
     // Draw a mesh THIS frame with no entity and no component behind it. The
@@ -99,22 +100,22 @@ public:
     // on the job pool (engineJobsParallelFor), so this takes a lock rather than
     // documenting a rule nobody can enforce across a C ABI.
     void submitDraw(MeshHandle mesh, MaterialHandle material,
-                    const float model[16]);
-    uint32_t submittedDrawCount() const;
+                    const float model[16]) override;
+    uint32_t submittedDrawCount() const override;
 
     // Per-frame reset for the submission list. DEVICE-FREE, so the headless
     // runtime calls it too — `frame()` cannot serve that purpose because the
     // runtime only calls frame() when it has a window, which is how submissions
     // came to accumulate forever on a dedicated server.
-    void endFrame();
+    void endFrame() override;
 
     // Submissions dropped this frame because the ceiling was hit — non-zero
     // means the frame is incomplete and some caller is unbounded.
-    uint32_t droppedExternalDraws() const;
+    uint32_t droppedExternalDraws() const override;
 
     // Drop cached queries against the play-mode world — the runtime calls
     // this when that world is destroyed (sim stop).
-    void resetWorldCaches();
+    void resetWorldCaches() override;
 
     // Bring-your-own-renderer: swap the pipeline (default is ForwardPipeline).
     // Safe before or after init(); attaches once the device is ready.
@@ -122,36 +123,23 @@ public:
 
     // Read-only, for diagnostics: what the active pipeline last submitted.
     // Null before init() or if a pipeline was never attached.
-    const IRenderPipeline* pipeline() const { return m_pipeline.get(); }
+    const IRenderPipeline* pipeline() const override { return m_pipeline.get(); }
 
     // Debug-line collector (owned by EngineRuntime) drawn into each world view.
-    void setDebugDraw(const dbg::DebugDraw* dd) { m_debugDraw = dd; }
+    void setDebugDraw(const dbg::DebugDraw* dd) override { m_debugDraw = dd; }
 
-    // How many items last frame's extraction placed at each LOD level, plus how
-    // many hit a broken chain (a level whose mesh handle does not resolve, which
-    // falls back to a finer level). `level[0]` counts only entities that HAVE an
-    // LOD chain and stayed at full detail — items with no chain are not LOD
-    // decisions and are not counted, so all-zero means "nothing in this scene is
-    // authored with LODs", not "LOD is broken".
-    struct LodCensus {
-        uint32_t level[rworld::kMaxLodLevels] = {};
-        uint32_t broken = 0;
-        uint64_t trisDrawn = 0;    // triangles the chosen levels submitted
-        uint64_t trisFull  = 0;    // triangles level 0 everywhere would submit
-        bool empty() const {
-            for (uint32_t n : level) if (n) return false;
-            return broken == 0;
-        }
-    };
-    LodCensus lodCensus() const;
+    // LodCensus moved to render/renderer_interface.h when IRenderer was
+    // introduced — a diagnostic the interface reports cannot live inside one
+    // implementation of it. Its documentation went with it.
+    LodCensus lodCensus() const override;
 
     // gpu:: handles since G1c. The editor converts with gpu::toBgfx() when it
     // hands one to ImGui; that is a renderer-side concern and it is allowed
     // to name a backend. runtime.h is not, and it includes this file.
-    gpu::TextureHandle sceneColorTexture() const { return m_sceneColorTex; }
-    gpu::TextureHandle gameColorTex()      const { return m_gameColorTex; }
-    int sceneW() const { return m_sceneW; }
-    int sceneH() const { return m_sceneH; }
+    gpu::TextureHandle sceneColorTexture() const override { return m_sceneColorTex; }
+    gpu::TextureHandle gameColorTex()      const override { return m_gameColorTex; }
+    int sceneW() const override { return m_sceneW; }
+    int sceneH() const override { return m_sceneH; }
 
 private:
     float m_simAlpha = 1.0f;

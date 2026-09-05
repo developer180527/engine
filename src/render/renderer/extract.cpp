@@ -513,7 +513,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     return rv;
 }
 
-Renderer::LodCensus Renderer::lodCensus() const {
+LodCensus Renderer::lodCensus() const {
     LodCensus c;
     for (std::size_t i = 0; i < rworld::kMaxLodLevels; ++i)
         c.level[i] = m_lodCount[i].load(std::memory_order_relaxed);

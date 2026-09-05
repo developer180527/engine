@@ -19,5 +19,5 @@ void engineMemBindFrameArena(mem::FrameArena* a);
 
 // Host-only: point draw submission at the renderer (nullptr headless/shutdown).
 // Unbound, submitMesh no-ops — a kit that draws runs unchanged on a server.
-class Renderer;
-void engineDrawSubmitBindRenderer(Renderer* r);
+struct IRenderer;   // render/renderer_interface.h
+void engineDrawSubmitBindRenderer(IRenderer* r);

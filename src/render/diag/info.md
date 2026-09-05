@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-26
+verified: 2026-09-05
 covers:
   - src/render/diag/
 tests:
@@ -67,6 +67,12 @@ judging, budgeting and printing at once. Split:
 | `gpu_budget.{h,cpp}` | target tiers, ceilings, PASS/OVER | no | yes |
 | `resource_census.h` | resident resources, owners, duplicates, leaks | no | yes |
 | `diag_report.h` | formatting | no | n/a |
+
+`diag_report.h` includes `render/submit_stats.h` directly as of 2026-09-05. It
+had always used `rdiag::SubmitStats` and always received it TRANSITIVELY, from
+whatever the including TU happened to include first — reordering `engine_host`'s
+includes broke the build, which is the standard proof that an undeclared
+dependency was real.
 | `../render_stats_channel.h` | profiler adapter | yes | n/a |
 
 The split is what makes the subsystem testable at all: `src/render` has no GPU

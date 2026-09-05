@@ -8,6 +8,11 @@
 #include "render/diag/frame_gpu_stats.h"
 #include "render/diag/gpu_budget.h"
 #include "render/diag/resource_census.h"
+// printSubmitStats takes an rdiag::SubmitStats by reference, and this header
+// used to receive that type only TRANSITIVELY — through whatever the including
+// TU happened to include first. Reordering engine_host.cpp's includes broke it,
+// which is the standard proof that the dependency was real and undeclared.
+#include "render/submit_stats.h"
 
 #include <cstdio>
 

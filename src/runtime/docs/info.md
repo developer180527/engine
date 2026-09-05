@@ -98,6 +98,12 @@ required.
   reachable from exactly two TUs — its `IPlatform` and its `window_ops` — and
   `engine_runtime` links only the one selected. Verified: `libglfw3.a` is in the
   SDL3 link line before the change and absent after.
+- **`IRenderer`** (`render/renderer_interface.h`) — what the runtime actually
+  holds, as a `std::unique_ptr`. Two implementations: `Renderer` and
+  `NullRenderer`, chosen once in `initRenderer()` and never asked about again.
+  This replaced `if (!m_headless)` around render calls; four such guards are gone
+  and the five that remain are platform, semantic, or work-skips rather than
+  renderer guards. See `docs/rhi/headless.md`.
 - **`Renderer`** (`renderer.h/.cpp`) — owns the GPU device lifecycle,
   framebuffers, and the swappable `IRenderPipeline`. Borrows the ECS world and
   registries from `EngineRuntime`. See `src/render/info.md` for the pipeline.

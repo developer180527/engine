@@ -69,6 +69,11 @@ claim about freshness as much as about tests. See
   [`rhi/swappability.md`](rhi/swappability.md): no, and the measurement is in it.
   "Swappable" means four different things; three are free and the fourth (a frozen
   renderer ABI) is the only irreversible one, so it is the one not being built.
+- **Running without a GPU** — [`rhi/headless.md`](rhi/headless.md): a null
+  renderer costs 12 ns a tick, so it is not a performance decision. What a server
+  actually stops waiting for is `present()` and drawable acquisition (measured at
+  ~1 second in this tree). Also what Unreal ships for servers, verified against
+  Epic's docs — and it is not the null RHI.
 - **How far off AAA are we?** — [`plans/aaa-gap-analysis.md`](plans/aaa-gap-analysis.md):
   eight pillars, an evidence line per claim, and the one gap that is not additive.
   Short version: the expensive half is built, the visible half is not.

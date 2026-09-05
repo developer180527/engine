@@ -5,6 +5,12 @@
 // NO <bgfx/bgfx.h> in any runtime TU — GPU work goes through Renderer /
 // PrimitiveLibrary (audit A.1).
 #include "runtime/runtime.h"
+
+// The two IRenderer implementations. This is the ONLY runtime TU that names
+// either — runtime.h holds a std::unique_ptr<IRenderer> and nothing else here
+// knows a concrete renderer exists.
+#include "render/renderer.h"
+#include "render/renderer_null.h"
 #include "runtime/platform/glfw_platform.h"
 #include "core/logger.h"
 #include "runtime/scripting/script_host.h"
@@ -121,18 +127,26 @@ bool EngineRuntime::init(const EngineConfig& cfg,
 }
 
 bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
+    // THE ONE PLACE that decides which renderer exists. Everything downstream
+    // calls through IRenderer and never asks again — which is what removed the
+    // scattered `if (!m_headless)` guards around render calls, and with them the
+    // class of bug where one guard is present and an adjacent one is not
+    // (docs/rhi/headless.md §4).
     if (!m_platform->supportsRendering()) {
         // Headless platform — no GPU. ECS, assets, animation, physics and
-        // scripting still run; render entry points become no-ops.
+        // scripting still run; render entry points do nothing, correctly.
         m_headless = true;
+        m_renderer = std::make_unique<NullRenderer>();
         return true;
     }
+    m_renderer = std::make_unique<Renderer>();
+
     void* nwh = m_platform->nativeWindowHandle();
     // Graphics quality from project data, applied BEFORE init so the shadow
     // map is created at the right size the first time (a later openProject
     // re-applies it). This is the engine's largest single GPU allocation.
-    m_renderer.setShadowResolution(m_project.graphics.shadowResolution);
-    return m_renderer.init(nwh, cfg.width, cfg.height,
+    m_renderer->setShadowResolution(m_project.graphics.shadowResolution);
+    return m_renderer->init(nwh, cfg.width, cfg.height,
                            m_ecs, m_assets, m_textures, m_materials,
                            m_skeletons);
 }
@@ -192,19 +206,22 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     // window fallback otherwise. Bindings from the project's input.json.
     m_input.init(m_project.projectRoot);
     engineInputBindManager(&m_input);
-    m_renderer.setDebugDraw(&m_debugDraw);          // collector -> line pass
+    m_renderer->setDebugDraw(&m_debugDraw);          // collector -> line pass
     engineApiBindHost(m_scriptHost.get());
     // The primitive tier: jobs and memory bind to process-wide facades and need
     // nothing here, but frameAlloc and draw submission are runtime-owned.
     engineMemBindFrameArena(&m_frameArena);
-    engineDrawSubmitBindRenderer(&m_renderer);
+    engineDrawSubmitBindRenderer(m_renderer.get());
 
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
         m_ecs, m_assets, m_textures,
         m_materials, m_project, m_importers});
-    // Primitive meshes are GPU buffers — skip them headless (bgfx is never
-    // initialized without a render device; touching it null-derefs the
-    // allocator). Servers/CLI tools run fine without them.
+    // Primitive meshes are GPU buffers — skipped headless. This guard is a
+    // WORK-SKIP, not a safety guard, and the distinction changed in G1a: it used
+    // to say "touching bgfx null-derefs the allocator", which is no longer true
+    // (gpu::copy returns null with no device, render/gpu.h). Calling this
+    // headless would now be harmless — it would just build nothing, slowly. It
+    // stays because servers and CLI tools have no use for a cube.
     if (!m_headless) m_primitives.init(m_assets);
     m_ctx->assetLib      = &m_assetLib;
     m_ctx->primitives    = &m_primitives;

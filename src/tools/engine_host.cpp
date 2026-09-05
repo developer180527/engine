@@ -20,6 +20,9 @@
 #include "runtime/module_loader.h"   // shared dlopen + gauntlet (also used by KitHost)
 #include "core/profiler.h"           // periodic frame-profile dump (dev runner)
 #include "runtime/frame_stats_channel.h"  // frame-time distribution + CSV
+#include "render/render_pipeline.h"      // IRenderPipeline::submitStats — the
+                                        // runtime now hands out IRenderer, whose
+                                        // pipeline() returns this incomplete type
 #include "render/render_stats_channel.h"  // GPU handle churn + VRAM budget
 #include "core/memory/mem.h"         // periodic tagged-heap dump
 #include "render/diag/resource_census.h"   // WHERE the VRAM went

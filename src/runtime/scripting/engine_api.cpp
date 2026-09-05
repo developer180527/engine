@@ -368,14 +368,24 @@ uint64_t engineMemTaggedBytes(uint8_t tag) {
 }
 
 // ── Draw submission ──────────────────────────────────────────────────────────
-static Renderer* g_drawRenderer = nullptr;
-void engineDrawSubmitBindRenderer(Renderer* r) { g_drawRenderer = r; }
+// IRenderer, not Renderer: on a headless host this binds a NullRenderer, so
+// a kit's submitDraw is accepted and discarded rather than reaching a
+// renderer that is not there. Binding used to be UNCONDITIONAL while the
+// frame's reset was gated — the 480 KB/s server leak
+// (src/runtime/docs/issues.md, 2026-08-10).
+static IRenderer* g_drawRenderer = nullptr;
+void engineDrawSubmitBindRenderer(IRenderer* r) { g_drawRenderer = r; }
 
 void engineDrawSubmitMesh(uint32_t meshHandle, uint32_t materialHandle,
                           const float model[16]) {
-    // No renderer means headless, and headless must be a NO-OP rather than an
-    // error: the same kit code runs on a dedicated server, and a system that
-    // draws should simply draw nothing there.
+    // A null g_drawRenderer no longer means "headless" — since IRenderer landed,
+    // a headless host binds a NullRenderer and this pointer is live. It now means
+    // only "before bind or after unbind", i.e. during boot and teardown.
+    //
+    // Headless is handled one level down instead: NullRenderer::submitDraw
+    // accepts and discards. That is the point of the null object — the same kit
+    // code runs on a client and a server, and a system that draws simply draws
+    // nothing there without anyone testing for it.
     if (!g_drawRenderer || !model) return;
     g_drawRenderer->submitDraw(MeshHandle{meshHandle}, MaterialHandle{materialHandle},
                                model);

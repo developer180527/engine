@@ -139,7 +139,7 @@ bool EngineRuntime::openProject(const std::filesystem::path& root) {
     // Cooked shaders resolve by NAME from .cache/shaders — no registry lookup,
     // because a shipped dist has none (engine_player sets
     // openAssetDatabase=false and resolves everything by baked paths).
-    m_renderer.setShaderCacheRoot(cacheRoot);
+    m_renderer->setShaderCacheRoot(cacheRoot);
 
     if (m_sceneService) m_sceneService->setCacheRoot(cacheRoot);
     if (m_platform)     m_platform->setTitle(m_project.name);
@@ -183,6 +183,6 @@ void EngineRuntime::shutdown() {
     m_materials.clear();
     m_textures.clear();
     m_assets.clear();
-    if (!m_headless) m_renderer.shutdown();
+    m_renderer->shutdown();
     if (m_platform) { m_platform->shutdown(); m_platform.reset(); }
 }

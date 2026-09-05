@@ -99,16 +99,19 @@ bool EngineRuntime::frameBegin(float& dt) {
 }
 
 void EngineRuntime::frameEnd() {
-    { ENGINE_PROFILE_SCOPE("bgfx.frame");
-      if (!m_headless) m_renderer.frame();
-      // UNCONDITIONAL, and that is the whole point. Renderer::frame() resets the
-      // external draw-submission list, but it also flips bgfx — so it is gated on
-      // having a window, while engineDrawSubmitBindRenderer() is not. On a
-      // headless server the list therefore filled forever: nothing cleared it and
-      // nothing ever drew it. endFrame() is the device-free half, so it runs on
-      // every path a frame can end on. (frame() calls it too; clearing an already
-      // empty list is free.)
-      else m_renderer.endFrame(); }
+    { ENGINE_PROFILE_SCOPE("Renderer.frame");
+      // UNCONDITIONAL, and that is the whole point.
+      //
+      // This used to read `if (!m_headless) frame(); else endFrame();` — and
+      // the reason it had to is instructive: frame() both presents AND resets
+      // the external draw-submission list, so gating it on having a window
+      // also gated the reset, while engineDrawSubmitBindRenderer() was
+      // ungated. A dedicated server's list filled forever at ~480 KB/s
+      // (src/runtime/docs/issues.md, 2026-08-10).
+      //
+      // With a null object there is no branch to get wrong: NullRenderer::frame()
+      // presents nothing and Renderer::frame() presents, and BOTH end the frame.
+      m_renderer->frame(); }
     prof::Profiler::get().endFrame();
 }
 
@@ -123,13 +126,13 @@ void EngineRuntime::run(const std::function<void(float)>& frame) {
 void EngineRuntime::resize(int w, int h) {
     if (w == m_width && h == m_height) return;
     m_width = w; m_height = h;
-    if (!m_headless) m_renderer.resize(w, h);
+    m_renderer->resize(w, h);
 }
 
 void EngineRuntime::tick(float dt, const float view[16],
                          const float proj[16], bool pauseSystems) {
     tickSystems(dt, pauseSystems);
-    if (!m_headless) m_renderer.renderScene(view, proj);
+    m_renderer->renderScene(view, proj);
 }
 
 bool EngineRuntime::tick(float dt) {
@@ -141,11 +144,11 @@ bool EngineRuntime::tick(float dt) {
     const float aspect = m_height > 0
         ? float(m_width) / float(m_height) : 16.0f / 9.0f;
     if (!m_cameraFinder.find(simWorld(), view, proj, aspect, clear,
-                             m_renderer.homogeneousDepth()))
+                             m_renderer->homogeneousDepth()))
         return false;
 
     flecs::world* world = m_gameWorld ? m_gameWorld.get() : nullptr;
     ENGINE_PROFILE_SCOPE("Render");
-    m_renderer.renderToBackbuffer(view, proj, clear, world);
+    m_renderer->renderToBackbuffer(view, proj, clear, world);
     return true;
 }

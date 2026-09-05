@@ -36,21 +36,47 @@ Each phase must be independently defensible — no phase justified only by the n
 | **G7** | **Inline ray tracing**: BVH management, RT shadows, RTAO, gameplay ray queries | RT shadows replace the shadow map on the fuzz scene at equal or better cost |
 | **G8** | **Mesh shaders / cluster LOD** — where decimation graduates toward Nanite-style clusters | Dense geometry stops costing draws at all |
 
-> **The G1c decision, stated so it is one.** `engine_runtime` still links bgfx
-> because `EngineRuntime` calls `Renderer::frame()`, `renderScene()` and ~15
-> others unconditionally — guarded at runtime by `m_headless`, but compiled in.
-> Two ways to close it, and they are not equivalent:
+> **The G1c decision, corrected 2026-09-05.** This block previously offered a
+> null renderer and conditional compilation as ALTERNATIVES and recommended the
+> first. That framing was wrong, and verifying Unreal's actual mechanisms is
+> what showed it — see [`headless.md`](headless.md) §3.
 >
-> * **`IRenderer` + a null implementation.** The standard answer. Costs a
->   virtual call per frame-level operation (not per draw, so it is noise) and
->   creates a SECOND implementation that can rot — the same hazard axiom 5
->   names for the CPU-driven cull path. It would need its own lane.
-> * **Conditional compilation of the call sites.** No second implementation, but
->   it puts `#if` around the frame loop, and an `#if` branch nothing builds is a
->   branch that is already broken.
+> `engine_runtime` still links bgfx because `EngineRuntime` calls
+> `Renderer::frame()`, `renderScene()` and 15 others unconditionally — guarded
+> at runtime by `m_headless`, but compiled in.
 >
-> Recommend the first, with the null renderer exercised by the existing headless
-> tests rather than by a new one — that is what stops it rotting. Not started.
+> **The two mechanisms are sequential, not alternatives, and Unreal ships both:**
+>
+> * **A — `IRenderer` + `NullRenderer`. LANDED 2026-09-05.** Lets the SAME binary run with no GPU:
+>   tests, the cook worker, `engine_host`, CI. Unreal's equivalent is
+>   `FNullDynamicRHI`, selected by `-nullrhi`, whose official description is
+>   *"Use null rendering hardware interface to run UE headless."* Note it sits at
+>   the RHI layer, so the whole renderer still runs and terminates in a backend
+>   that does nothing.
+> * **B — a build target that excludes the render TUs and bgfx.** Produces a lean
+>   server binary. Unreal's `TargetType.Server`: *"Same as Game, but does not
+>   include any client code."* **This, not A, is what G1c's exit criterion asks
+>   for** — under A the renderer still links and still builds draw lists into
+>   nothing, which is precisely what Epic does NOT ship servers as.
+>
+> **A is done** (`src/render/renderer_interface.h`, `renderer_null.h`,
+> `tests/null_renderer_test.cpp`). It deleted four of the nine scattered
+> `if (!m_headless)` guards — the ones that existed only to avoid calling a dead
+> renderer. The other five are platform, semantic, or genuine work-skips and stay.
+> It was done on correctness rather than performance: the guards' failure mode is proven — one guard
+> present and an adjacent one missing leaked 480 KB/s on a server, silently
+> (`src/runtime/docs/issues.md`, 2026-08-10). With pure virtuals a missing
+> override is a compile error, so axiom 5's rot hazard does not apply to a
+> do-nothing implementation.
+>
+> **Neither is the biggest server win.** That is cook-time class exclusion —
+> Unreal's `UObject::NeedsLoadForServer()` plus `ClassesExcludedOnDedicatedServer`
+> — which keeps the assets from existing at all, and belongs in
+> `src/assets/cookers/` rather than in the renderer.
+>
+> And the premise underneath all of it: routing all 18 reachable methods through a
+> virtual is **12 ns per tick, 0.000037% of a 30 Hz server tick**. None of this
+> is a performance decision ([`headless.md`](headless.md) §1). Not started.
 
 **G7 and G8 are optional tiers, not baseline.** Neither reaches the stated minimum
 spec — see [`open-decisions.md`](open-decisions.md) decision 3.

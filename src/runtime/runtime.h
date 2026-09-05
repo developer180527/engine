@@ -19,7 +19,7 @@
 #include "runtime/runtime_context.h"
 #include "runtime/input/input_manager.h"
 #include "runtime/input/input_latency_channel.h"
-#include "render/renderer.h"
+#include "render/renderer_interface.h"   // IRenderer — NOT the concrete Renderer
 #include "runtime/plugin_registry.h"
 #include "runtime/kit_host.h"
 #include "runtime/event_sweeper.h"
@@ -149,18 +149,21 @@ public:
     void tick(float dt, const float view[16], const float proj[16], bool pauseSystems = false);
 
     void resize(int w, int h);
-    void createSceneFB(int w, int h) { m_renderer.createSceneFB(w, h); }
+    void createSceneFB(int w, int h) { m_renderer->createSceneFB(w, h); }
 
     // GPU-typed accessors (scene/game color textures, etc.) live on
     // renderer() — EngineRuntime's own API names no bgfx types (audit A.1).
     void renderGameView(const float view[16], const float proj[16],
                         const float clearColor[4], flecs::world* gameWorld = nullptr) {
-        m_renderer.renderGameView(view, proj, clearColor, gameWorld);
+        m_renderer->renderGameView(view, proj, clearColor, gameWorld);
     }
-    int sceneW() const { return m_renderer.sceneW(); }
-    int sceneH() const { return m_renderer.sceneH(); }
+    int sceneW() const { return m_renderer->sceneW(); }
+    int sceneH() const { return m_renderer->sceneH(); }
 
-    Renderer&        renderer()     { return m_renderer; }   // pipeline injection, etc.
+    // The INTERFACE, not the concrete renderer. In a headless process this is a
+    // NullRenderer, so every diagnostic below reports "nothing" rather than the
+    // caller needing to ask whether a renderer exists.
+    IRenderer&       renderer()     { return *m_renderer; }
     IPlatform&       platform()     { return *m_platform; }
     bool             headless() const { return m_headless; }
     RuntimeContext&  ctx()          { return *m_ctx; }
@@ -250,7 +253,18 @@ private:
 
     // Render subsystem — owns the device + all render state. Declared after the
     // systems it borrows, so it is destroyed before them.
-    Renderer m_renderer;
+    //
+    // A POINTER TO THE INTERFACE, not a Renderer by value, and never null: boot
+    // installs either a Renderer or a NullRenderer before anything can call
+    // through it. That is what deleted the `if (!m_headless)` guards around
+    // render calls — the runtime no longer decides whether a renderer is there,
+    // only what it does. See docs/rhi/headless.md §4 for the 480 KB/s leak that
+    // design produced.
+    //
+    // It also means runtime.h names no concrete renderer, so this header no
+    // longer reaches a graphics API even transitively (G1c, pinned by
+    // tests/headless_include_probe.cpp).
+    std::unique_ptr<IRenderer> m_renderer;
 
     // Gameplay-tick query on the RENDERED world (simWorld(): the game world
     // during Snapshot play, the edit world otherwise). Cached per world and
