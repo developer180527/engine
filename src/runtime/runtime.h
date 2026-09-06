@@ -72,6 +72,13 @@ struct EngineConfig {
     // sweeps least-recently-used unreferenced meshes back to disk residency
     // once per second (audit Q6: the loaded cache grew without bound).
     int meshBudgetMB = 0;
+
+    // Residency budget for cooked TEXTURES, in MB. 0 = unbounded (editor
+    // default). Separate from meshBudgetMB because the two are evicted by
+    // different mechanisms — textures by refcount, meshes by an ECS in-use scan
+    // — and because texture memory is usually the larger of the two: a 4K BC7
+    // is 11 MB and a scene has hundreds.
+    int textureBudgetMB = 0;
 };
 
 // Frame coordinator: owns platform, the ECS world + content systems, plugin

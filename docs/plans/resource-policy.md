@@ -5,8 +5,10 @@ covers:
 ---
 # Resource policy — how much of the machine to take
 
-> **Status: plan. Nothing here is built** except the one knob §1 records. Every
-> measurement cited was taken on this tree; every design below is a proposal.
+> **Status: plan, but no longer entirely unbuilt.** Thread QoS (§3.1) landed
+> 2026-09-04 and the texture budget 2026-09-06; both are marked in place. Every
+> measurement cited was taken on this tree; everything not marked as built is
+> still a proposal.
 
 ## 0. The principle
 
@@ -45,21 +47,22 @@ Everything else is a default nobody chose:
 | frame cap | none | no |
 | vsync | `BGFX_RESET_VSYNC`, hardcoded (`device.cpp:117`) | no |
 | resolution scale | none | no |
-| memory budgets | **two** mechanisms, neither reachable from config | no |
+| memory budgets | mesh + **texture** now reachable (`meshBudgetMB`, `textureBudgetMB`); `mem::setBudget` still is not | partly |
 | idle / background throttle | none | no |
 
-The memory row deserves its own line, because there are **two separate budget
-systems and no production code sets either**:
+The memory row deserves its own line. There were **two separate budget systems
+and no production code set either**; one is now wired:
 
+* `GpuResourceCache::setBudget(bytes)` — **WIRED 2026-09-06** as
+  `EngineConfig::textureBudgetMB`, evicted on the same ~1 s tick as the mesh
+  sweep. It turned out not to be plumbing: eviction against wrong reference
+  counts drops textures still in use, and `unloadTexture` was bypassing the
+  refcount entirely (BUG-0051). The ctor comment saying eviction "needs the
+  reference counts to be complete first" was the real blocker, and it was
+  correct.
 * `mem::setBudget(Tag, bytes)` — a per-tag ceiling on the tagged heaps that the
-  allocator warns against. Called from `tests/mem_test.cpp` and nowhere else.
-* `GpuResourceCache::setBudget(bytes)` (`render/gpu_resource_cache.h:84`) — the
-  GPU-side eviction budget. Called from `tests/gpu_cache_test.cpp` and nowhere
-  else.
-
-Both are the shape of the right answer, already written, already tested, and
-wired to nothing a developer can reach. That is a cheaper starting point than it
-looks: item 4 in §7 is plumbing, not design.
+  allocator warns against. Still called from `tests/mem_test.cpp` and nowhere
+  else. This one **is** plumbing.
 
 ## 2. Three levels, and most projects use one
 
@@ -237,7 +240,7 @@ and half of it turned out to be wrong.
 | ~~**1**~~ | ~~**Thread QoS**~~ — **DONE 2026-09-04.** `src/core/thread_qos.h`, wired into the enkiTS pool and `CookService`; `thread_qos_test` in the unit lane, mutation-checked | measured, and it needed no policy design. Found two doc errors and one false comment on the way |
 | **2** | Frame cap + vsync as configuration rather than a hardcoded reset flag | small, and the 2D case is unserved today |
 | **3** | Worker-count ceiling in `EngineConfig`, defaulting to today's behaviour | no behaviour change until someone sets it |
-| **4** | Wire **both** budget mechanisms to config — `mem::setBudget` and `GpuResourceCache::setBudget`, each currently reachable only from its own test | plumbing, not design |
+| **4** | ~~Wire **both** budget mechanisms to config~~ — **`GpuResourceCache::setBudget` DONE 2026-09-06** as `EngineConfig::textureBudgetMB`, evicted on the same ~1 s tick as the mesh sweep. `mem::setBudget` is still reachable only from `mem_test.cpp` | plumbing, not design — and the texture half was blocked on correct refcounts, not on plumbing (BUG-0051) |
 | **5** | Resolution scale | the largest GPU lever; needs a render target the renderer does not currently size independently |
 | **6** | Upscaling | blocked on §5's motion vectors and jitter — a renderer-programme dependency, not a policy one |
 

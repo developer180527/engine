@@ -185,6 +185,58 @@ int main() {
         CHECK(textures.getTexture(h) == nullptr, "and the slot is freed");
     }
 
+    // ── 6. Eviction: the payoff, and the thing it must never do ────────────
+    // Wiring evictOverBudget was blocked on the refcounts being right — the
+    // ctor's note said so, and BUG-0051 is why they were not. Now they are, so
+    // the budget can be enforced. The property that makes it SAFE is not that
+    // it frees memory; it is that it refuses to free the wrong thing.
+    {
+        std::printf("\n-- 6. eviction --\n");
+
+        // A second distinct texture, so the cache has something to choose
+        // between and "LRU picks the older one" is a real assertion.
+        const fs::path other = root / ".cache" / "other.ctex";
+        if (!writeCtex(other)) { std::printf("  FAIL  fixture\n"); return 1; }
+        const std::string otherKey = other.lexically_normal().generic_string();
+
+        const TextureHandle held = svc.loadTexture(kRel);        // refs 1, KEPT
+        const TextureHandle loose = svc.loadTexture("other.ctex");
+        svc.unloadTexture(loose);                                 // refs 0
+
+        CHECK(svc.textureCache().refCount(key) == 1 &&
+              svc.textureCache().refCount(otherKey) == 0,
+              "one texture referenced, one at zero");
+
+        // A budget of 1 byte: everything unreferenced must go, and everything
+        // referenced must stay. The extreme value is the point — it removes any
+        // doubt that the survivor survived for the right reason.
+        svc.setTextureBudget(1);
+        CHECK(svc.textureBudget() == 1, "budget set through the service");
+
+        const size_t freed = svc.evictTexturesOverBudget();
+        CHECK(freed > 0, "eviction freed %zu bytes", freed);
+
+        CHECK(textures.getTexture(held) != nullptr,
+              "THE REFERENCED TEXTURE SURVIVED — exceeding a budget is "
+              "recoverable, evicting something a draw still points at is not");
+        CHECK(svc.textureCache().refCount(key) == 1,
+              "and it kept its reference (%u)", svc.textureCache().refCount(key));
+        CHECK(!svc.textureCache().contains(otherKey),
+              "the unreferenced one is gone from the cache");
+        CHECK(textures.getTexture(loose) == nullptr,
+              "and its registry slot is freed — the destroyer ran");
+
+        // Reload after eviction is a MISS that re-uploads, not a hit on a dead
+        // entry. This is the half that the stale-map bug would have broken.
+        const TextureHandle back = svc.loadTexture("other.ctex");
+        CHECK(back.valid(), "and it reloads cleanly afterwards");
+        CHECK(textures.getTexture(back) != nullptr, "into a live registry slot");
+
+        svc.setTextureBudget(0);   // unbounded again
+        CHECK(svc.evictTexturesOverBudget() == 0,
+              "with no budget, eviction is a no-op");
+    }
+
     fs::remove_all(root);
 
     if (g_failures) {

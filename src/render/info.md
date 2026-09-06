@@ -166,10 +166,17 @@ a cold path, and a maintained reverse map would be a second copy of the identity
 relation, which is the state that goes stale in exactly the way this fixes.
 
 **`refs == 0` means EVICTABLE, NOT DEAD.** Releasing the last reference does not
-destroy; eviction is a budget decision. Nothing calls `evictOverBudget()` on the
-texture cache yet, so a released texture is currently retained — the correct side
-to err on, and the refcounts being right is the stated precondition for wiring
-it.
+destroy; eviction is a budget decision, wired 2026-09-06 as
+`EngineConfig::textureBudgetMB` and run on the same ~1 s tick as the mesh sweep.
+
+**Eviction needs no in-use scan, and that is the payoff of the refcounts being
+right.** The mesh sweep walks every world to build an in-use set, because a mesh
+is referenced by components the cache cannot see. A texture is referenced through
+this cache, and `evictOverBudget` never touches a referenced entry — so the
+in-use question is already answered. That was only trustworthy once
+`unloadTexture` stopped bypassing the refcount (BUG-0051), which is exactly what
+the ctor's "eviction needs the reference counts to be complete first" was
+waiting on.
 
 ## The upload seam (`gpu.h`) — G1a
 

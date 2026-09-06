@@ -93,6 +93,25 @@ bool EngineRuntime::frameBegin(float& dt) {
             if (m_gameWorld) collect(*m_gameWorld);
             m_assetService->evictOverBudget(used);
         }
+
+        // Textures, on the same tick and OUTSIDE the guard above.
+        //
+        // The guard exists to avoid the mesh sweep's ECS walk; textures have no
+        // such walk. m_texCache refcounts them and evictOverBudget refuses to
+        // touch a referenced entry, so the in-use question is already answered
+        // and the call is O(1) when no budget is set or the cache is under it.
+        // Putting it inside residencySweepNeeded() would tie texture eviction to
+        // whether MESHES are over their budget, which are unrelated conditions.
+        //
+        // Only trustworthy since BUG-0051: unloadTexture used to remove from the
+        // registry directly, so the refcounts this relies on were wrong, and
+        // evicting against wrong counts drops textures that are still in use.
+        // That is why the ctor's note said eviction had to wait for them.
+        if (const size_t freed = m_assetService->evictTexturesOverBudget()) {
+            ENGINE_PROFILE_SCOPE("TextureResidency");
+            LOG_INFO("AssetService", "texture eviction freed %.1f MB",
+                     (double)freed / (1024.0 * 1024.0));
+        }
     }
 
     return true;

@@ -184,6 +184,28 @@ public:
     // the editor keeps everything). Streaming eviction only makes sense
     // with a budget set (players, big worlds).
     void     setResidencyBudget(uint64_t bytes);
+
+    // ── Texture residency ──────────────────────────────────────────────────
+    // Byte budget for the cooked-texture dedup cache. 0 = unbounded (default).
+    //
+    // Deliberately SEPARATE from the mesh budget above, and much simpler: mesh
+    // eviction needs an ECS walk to build an in-use set, because a mesh is
+    // referenced by components the cache cannot see. A texture is referenced
+    // through m_texCache's own refcount, and evictOverBudget NEVER touches a
+    // referenced entry — so this needs no scan and no guard, and is O(1) when
+    // no budget is set or the cache is under it.
+    //
+    // Those refcounts only became trustworthy when unloadTexture stopped
+    // bypassing them (BUG-0051), which is why this was not wired before: the
+    // ctor's note said "eviction needs the reference counts to be complete
+    // first", and until that fix they were not.
+    void   setTextureBudget(uint64_t bytes);
+    uint64_t textureBudget() const;
+
+    // Release unreferenced cooked textures over the budget, least-recently-used
+    // first. Returns bytes freed. Safe to call every frame; the runtime calls it
+    // on the same ~1 s tick as the mesh sweep.
+    size_t evictTexturesOverBudget();
     uint64_t residentBytes() const;
 
     // Could a sweep evict anything at all? Cheap: O(cached meshes), no ECS.

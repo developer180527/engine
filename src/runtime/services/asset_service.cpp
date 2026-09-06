@@ -1067,6 +1067,22 @@ uint32_t AssetService::queryTexture(const char* cookedPath) const {
     return (it != m_async->loadedTextures.end()) ? it->second.id : 0;
 }
 
+void AssetService::setTextureBudget(uint64_t bytes) {
+    m_texCache.setBudget(static_cast<size_t>(bytes));
+}
+uint64_t AssetService::textureBudget() const {
+    return static_cast<uint64_t>(m_texCache.budget());
+}
+
+size_t AssetService::evictTexturesOverBudget() {
+    // No pre-check needed, unlike the mesh sweep: evictOverBudget's first line
+    // is `budget == 0 || liveBytes <= budget`, which is O(1). The mesh path
+    // needed a guard because ITS expensive part — walking every world to build
+    // an in-use set — happened before the cache was consulted (BUG-0047). There
+    // is no such set here; the refcount IS the in-use answer.
+    return m_texCache.evictOverBudget();
+}
+
 void AssetService::setResidencyBudget(uint64_t bytes) {
     m_residencyBudget = bytes;
 }

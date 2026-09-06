@@ -205,6 +205,9 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     if (cfg.meshBudgetMB > 0)
         m_assetService->setResidencyBudget(
             (uint64_t)cfg.meshBudgetMB * 1024 * 1024);
+    if (cfg.textureBudgetMB > 0)
+        m_assetService->setTextureBudget(
+            (uint64_t)cfg.textureBudgetMB * 1024 * 1024);
 
     // SceneService — built on top of AssetService for binary scene loading.
     // ClipLibrary + registries enable skinned spawn wiring (SkinnedMesh +
