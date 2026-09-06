@@ -278,14 +278,23 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
             // chain and every subsequent one none — 20 000 objects sharing 176
             // meshes would have produced 176 LOD'd entities and looked inert.
             if (outLods) outLods->levels = it->second.lods;
+            // A RETURNED HIT IS AN ACQUISITION (BUG-0052): the caller now holds
+            // a handle a previous caller also holds, and unloadMesh must not
+            // destroy it for both on the first call.
+            //
+            // Incremented at each `return`, NOT once above, because the skinned
+            // fall-through below does not hand back this handle — it drops
+            // through to a full load that REPLACES this entry, so a count taken
+            // before the branch would be discarded with it.
             if (outSkin) {
                 // A cached skinned mesh cannot hand back its skeleton/clip
                 // handles from here, so fall through to a full load rather than
                 // return a mesh whose skin the caller silently never receives.
                 if (m_meshes.getMesh(it->second.h) == nullptr
                     || !m_skeletons) { /* fall through */ }
-                else { return it->second.h; }
+                else { ++it->second.refs; return it->second.h; }
             } else {
+                ++it->second.refs;
                 return it->second.h;
             }
         }
@@ -345,6 +354,15 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
     std::vector<MaterialHandle> matHandles;
     matHandles.reserve(asset.materials.size());
 
+    // Every resolveTexture below is an ACQUIRE on m_texCache. Record the key of
+    // each so unloadMesh can release exactly them — see MeshResidency::textureKeys.
+    std::vector<std::string> texKeys;
+    const auto noteAcquired = [&](TextureHandle t) {
+        if (!t.valid()) return;
+        if (std::string k = m_texCache.keyFor(t); !k.empty())
+            texKeys.push_back(std::move(k));
+    };
+
     for (uint32_t mi = 0; mi < static_cast<uint32_t>(asset.materials.size()); ++mi) {
         const auto& cm = asset.materials[mi];
         // Phase 5 step 4: a mesh-embedded material becomes the standard
@@ -354,10 +372,12 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
         std::string   baseName, normName;
         if (cm.flags & assetlib::kMatFlag_HasBaseColor) {
             base     = resolveTexture(cm.baseColorPath, sourceDir);
+            noteAcquired(base);
             baseName = cm.baseColorPath;
         }
         if (cm.flags & assetlib::kMatFlag_HasNormalMap) {
             norm     = resolveTexture(cm.normalMapPath, sourceDir);
+            noteAcquired(norm);
             normName = cm.normalMapPath;
         }
         Material mat = Material::standard(cm.baseColorFactor, cm.roughness,
@@ -455,7 +475,8 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
         const uint64_t bytes = (uint64_t)asset.vertexData.size()
                              + (uint64_t)asset.indexData.size() + lodBytes;
         std::lock_guard<std::mutex> lk(m_loadedMtx);
-        m_loadedMeshes[key] = { result, bytes, ++m_useClock, lodHandles };
+        m_loadedMeshes[key] = { result, bytes, ++m_useClock, lodHandles,
+                                std::move(texKeys) };
     }
 
     // Skinned payload: decode + register the skeleton and embedded clips
@@ -670,6 +691,19 @@ bool AssetService::unloadMesh(MeshHandle h) {
     // path that receives a chain (SceneService) unloads the levels it was given,
     // and cascading here would free level 0 out from under a second scene that
     // shares it.
+    //
+    // ── AND IT CAN BE SHARED (BUG-0052) ─────────────────────────────────────
+    // This map dedups by path, so N loads of one .cmesh hand N callers the SAME
+    // handle. This function used to end in an unconditional
+    // `m_meshes.removeMesh(h)`, which destroyed the mesh for all of them on the
+    // first call — and because removeMesh recycles the slot with no generation
+    // counter, the survivors went on to draw a live WRONG mesh rather than
+    // nothing. That is exactly BUG-0051, which was fixed for textures in
+    // unloadTexture twenty lines below, and it is reachable the same way: Lua's
+    // assets.unloadMesh.
+    //
+    // So a load/unload PAIR is what this counts. Only the last one destroys.
+    bool destroy = true;
     {
         std::lock_guard<std::mutex> lk(m_loadedMtx);
         for (auto it = m_loadedMeshes.begin(); it != m_loadedMeshes.end(); ) {
@@ -678,9 +712,44 @@ bool AssetService::unloadMesh(MeshHandle h) {
                                                it->second.lods.end(),
                                                [&](MeshHandle l) { return l.id == h.id; })
                                   != it->second.lods.end();
-            it = (isLevel0 || isLevel) ? m_loadedMeshes.erase(it) : std::next(it);
+            if (!isLevel0 && !isLevel) { it = std::next(it); continue; }
+
+            // Another holder is still using it: give back one reference and
+            // leave everything else alone. Not the entry, not the textures, and
+            // above all not the registry slot.
+            //
+            // Only level 0 carries the count — a LOD level is not independently
+            // loadable, so `unloadMesh(level)` is the chain owner disposing of a
+            // piece it was handed and must retire the whole entry, which is the
+            // behaviour the comment above describes.
+            if (isLevel0 && it->second.refs > 1) {
+                --it->second.refs;
+                destroy = false;
+                it = std::next(it);
+                continue;
+            }
+
+            // GIVE BACK THE TEXTURE REFERENCES THIS MESH TOOK. loadMesh acquires
+            // one per material texture; this released none of them, so a scene's
+            // textures stayed at refs > 0 after it was unloaded. Invisible until
+            // texture eviction was wired — at which point the cache correctly
+            // refused to evict them and the budget reclaimed nothing on the
+            // normal path, which is the only path a game uses.
+            //
+            // Safe to release under m_loadedMtx: release() only decrements. It
+            // never destroys and never calls the destroyer, which is what would
+            // re-enter this lock through dropAsyncTexture.
+            for (const std::string& k : it->second.textureKeys)
+                m_texCache.release(k);
+
+            it = m_loadedMeshes.erase(it);
         }
     }
+    // A surviving holder means the mesh stays. Returning TRUE is deliberate: the
+    // caller's unload succeeded — it gave back the reference it took — and the
+    // resource simply outlives it. `false` here would read as "that handle was
+    // not loaded", which is a different and untrue thing.
+    if (!destroy) return true;
     return m_meshes.removeMesh(h);
 }
 bool AssetService::unloadTexture(TextureHandle h) {
@@ -1145,6 +1214,13 @@ size_t AssetService::evictOverBudget(const std::unordered_set<uint32_t>& inUse) 
             // must, because after LOD selection the RenderItem the pipeline
             // dereferences is a LEVEL, not level 0. Evicting a level whose
             // parent is idle-but-referenced would hand the GPU a destroyed buffer.
+            //
+            // MeshResidency::refs is deliberately NOT consulted. It counts
+            // load/unload pairs and every entry here has refs >= 1 by
+            // construction, so gating on it would evict nothing, ever. A mesh is
+            // referenced by components this cache cannot see, which is why the
+            // caller's ECS scan is the liveness answer — and why textures, whose
+            // refcount IS complete, need no scan at all.
             if (inUse.count(kv->second.h.id)) continue;
             bool levelInUse = false;
             for (MeshHandle lh : kv->second.lods)
@@ -1154,7 +1230,20 @@ size_t AssetService::evictOverBudget(const std::unordered_set<uint32_t>& inUse) 
                                kv->second.lods});
             total -= kv->second.bytes;
         }
-        for (const auto& v : victims) m_loadedMeshes.erase(v.key);
+        // RELEASE THE TEXTURE REFERENCES TOO — this is the other path a mesh
+        // entry dies on, and the one that runs without anyone calling unload.
+        // unloadMesh got this and eviction did not, so an evicted mesh left its
+        // textures pinned at refs > 0 forever: the texture budget would then
+        // reclaim nothing, which is the exact failure the mesh half was fixed
+        // for. Same lock-safety note as there — release() only decrements and
+        // never re-enters this lock through the cache's destroyer.
+        for (const auto& v : victims) {
+            auto it = m_loadedMeshes.find(v.key);
+            if (it == m_loadedMeshes.end()) continue;
+            for (const std::string& k : it->second.textureKeys)
+                m_texCache.release(k);
+            m_loadedMeshes.erase(it);
+        }
     }
 
     for (const auto& v : victims) {

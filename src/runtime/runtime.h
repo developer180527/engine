@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 #include "runtime/platform/platform.h"
+#include "core/memory/mem.h"          // mem::Tag — EngineConfig::memBudgetMB
 #include "runtime/camera_util.h"
 #include "runtime/runtime_context.h"
 #include "runtime/input/input_manager.h"
@@ -78,7 +79,42 @@ struct EngineConfig {
     // different mechanisms — textures by refcount, meshes by an ECS in-use scan
     // — and because texture memory is usually the larger of the two: a 4K BC7
     // is 11 MB and a scene has hundreds.
+    //
+    // ── IT BOUNDS THE SYNC PATH ONLY, and that is the opposite population to
+    //    meshBudgetMB. Read this before setting it. ────────────────────────────
+    // Eviction works through `AssetService::m_texCache`, and the ONLY thing that
+    // puts a texture in that cache is the synchronous `loadTexture`. The async
+    // drain registers with the texture registry directly and records into its
+    // own `loadedTextures` map, so async-loaded textures have no refcount, no
+    // byte accounting in the cache, and are invisible to eviction.
+    //
+    // meshBudgetMB is the reverse: it bounds async-loaded meshes. So the two
+    // budgets in this struct cover different halves of the loader, which is not
+    // what the symmetry of their names suggests.
+    //
+    // That makes this budget weakest exactly where a residency budget earns its
+    // keep — streaming. The real fix is to route the async drain through
+    // `m_texCache.acquire()`, which merges the two dedup maps and is a design
+    // change rather than a wiring one; until then this is accurate rather than
+    // complete.
     int textureBudgetMB = 0;
+
+    // ── Per-tag CPU memory ceilings, in MB. 0 = no budget (default) ─────────
+    // Indexed by mem::Tag:
+    //
+    //     cfg.memBudgetMB[(size_t)mem::Tag::Animation] = 64;
+    //
+    // SOFT, AND THE DIFFERENCE FROM THE TWO BUDGETS ABOVE IS THE WHOLE POINT.
+    // meshBudgetMB and textureBudgetMB EVICT — exceeding them frees something.
+    // This one only REPORTS: the allocator logs a warning the first time a tag
+    // crosses its ceiling and then keeps allocating. It is a tripwire for "this
+    // subsystem is bigger than I thought", not a limit, and nothing here will
+    // ever fail an allocation to honour it.
+    //
+    // That is deliberate. A hard CPU cap means deciding what to do when a
+    // gameplay allocation cannot be served, and "crash the game to respect a
+    // number in a config file" is not an answer anyone wants. Reporting is.
+    int memBudgetMB[(size_t)mem::Tag::Count] = {};
 };
 
 // Frame coordinator: owns platform, the ECS world + content systems, plugin

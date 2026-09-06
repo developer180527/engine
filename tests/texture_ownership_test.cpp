@@ -31,6 +31,7 @@
 #include <vector>
 
 #include <assetlib/asset_registry.h>
+#include <assetlib/mesh_asset.h>
 #include <assetlib/texture_asset.h>
 
 #include "animation/clip_registry.h"
@@ -39,6 +40,7 @@
 #include "render/asset_registry.h"
 #include "render/material_registry.h"
 #include "render/texture_registry.h"
+#include "render/vertex.h"
 #include "runtime/services/asset_service.h"
 
 namespace fs = std::filesystem;
@@ -60,6 +62,34 @@ static bool writeCtex(const fs::path& out) {
     t.header.mipCount = 1;
     t.pixels.assign(2 * 2 * 4, 0xFF);
     return assetlib::saveTexture(t, out);
+}
+
+// A cooked mesh whose ONE embedded material names `texRel` as its base colour.
+// The geometry is a single degenerate triangle — this fixture exists to carry a
+// material reference, not to be drawn.
+static bool writeCookedMesh(const fs::path& out, const char* texRel) {
+    assetlib::MeshAsset m;
+    m.header.vertexStride = sizeof(Vertex);
+    m.header.vertexCount  = 3;
+    m.header.indexCount   = 3;
+    m.header.indexStride  = 4;
+    m.header.submeshCount = 1;
+    m.header.materialCount = 1;
+    m.vertexData.assign(3 * sizeof(Vertex), 0);
+    const uint32_t idx[3] = {0, 1, 2};
+    m.indexData.assign(reinterpret_cast<const uint8_t*>(idx),
+                       reinterpret_cast<const uint8_t*>(idx) + sizeof idx);
+
+    assetlib::MeshSubmesh sub;
+    sub.indexOffset = 0; sub.indexCount = 3; sub.materialIndex = 0;
+    m.submeshes.push_back(sub);
+
+    assetlib::CookedMaterial cm;
+    cm.flags = assetlib::kMatFlag_HasBaseColor;
+    std::snprintf(cm.baseColorPath, sizeof cm.baseColorPath, "%s", texRel);
+    m.materials.push_back(cm);
+
+    return assetlib::saveMesh(m, out);
 }
 
 int main() {
@@ -235,6 +265,52 @@ int main() {
         svc.setTextureBudget(0);   // unbounded again
         CHECK(svc.evictTexturesOverBudget() == 0,
               "with no budget, eviction is a no-op");
+    }
+
+    // ── 7. A COOKED MESH owning a texture, then unloaded ───────────────────
+    // The path a game actually uses, and the one the earlier sections did not
+    // reach: nothing here calls loadTexture directly. loadMesh resolves the
+    // mesh's material textures and ACQUIRES a reference for each; unloadMesh
+    // released none of them, so a scene's textures sat at refs > 0 forever.
+    //
+    // That was invisible until texture eviction was wired — at which point the
+    // cache correctly refused to evict them and the budget reclaimed nothing on
+    // the normal path. A feature that works only for direct loadTexture callers
+    // is a feature no game benefits from.
+    {
+        std::printf("\n-- 7. a cooked mesh owns its material textures --\n");
+
+        const fs::path meshTex = root / ".cache" / "meshtex.ctex";
+        const fs::path cooked  = root / ".cache" / "withmat.cooked";
+        if (!writeCtex(meshTex) || !writeCookedMesh(cooked, "meshtex.ctex")) {
+            std::printf("  FAIL  could not author the mesh fixture\n");
+            return 1;
+        }
+        const std::string meshTexKey =
+            meshTex.lexically_normal().generic_string();
+
+        CHECK(svc.textureCache().refCount(meshTexKey) == 0,
+              "the texture starts unreferenced");
+
+        const MeshHandle mh = svc.loadMesh("withmat.cooked");
+        CHECK(mh.valid(), "the cooked mesh loads");
+        CHECK(svc.textureCache().refCount(meshTexKey) == 1,
+              "and loading it ACQUIRED its material texture (%u)",
+              svc.textureCache().refCount(meshTexKey));
+
+        svc.unloadMesh(mh);
+        CHECK(svc.textureCache().refCount(meshTexKey) == 0,
+              "unloading the mesh RELEASES it again (%u) — without this the "
+              "reference is permanent and eviction can never reclaim the "
+              "texture, which is every texture a game loads",
+              svc.textureCache().refCount(meshTexKey));
+
+        // And now it is actually evictable, which is the whole point.
+        svc.setTextureBudget(1);
+        svc.evictTexturesOverBudget();
+        CHECK(!svc.textureCache().contains(meshTexKey),
+              "so a budget can now reclaim it");
+        svc.setTextureBudget(0);
     }
 
     fs::remove_all(root);

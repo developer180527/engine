@@ -98,6 +98,15 @@ required.
   reachable from exactly two TUs — its `IPlatform` and its `window_ops` — and
   `engine_runtime` links only the one selected. Verified: `libglfw3.a` is in the
   SDL3 link line before the change and absent after.
+- **Three budgets, and only two of them evict** (2026-09-06).
+  `EngineConfig::meshBudgetMB` and `textureBudgetMB` free memory; `memBudgetMB[]`
+  is a per-tag SOFT ceiling that warns once and keeps allocating. Conflating them
+  is the mistake the naming invites, so `mem_test` asserts the softness.
+- **`unloadMesh` releases the texture references `loadMesh` took** (2026-09-06).
+  It did not, so a scene's textures stayed at refs > 0 forever — invisible until
+  texture eviction was wired, at which point the cache correctly refused to evict
+  them and the budget reclaimed nothing on the normal path.
+  `MeshResidency::textureKeys` records one key per acquire.
 - **Texture unloading is REFERENCE-BASED** (2026-09-06). `AssetService::
   unloadTexture` releases one reference for a texture `m_texCache` owns and lets
   the cache's destroyer do the eventual registry removal; textures the cache does

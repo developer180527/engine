@@ -205,6 +205,11 @@ public:
     // Release unreferenced cooked textures over the budget, least-recently-used
     // first. Returns bytes freed. Safe to call every frame; the runtime calls it
     // on the same ~1 s tick as the mesh sweep.
+    //
+    // SYNC-PATH TEXTURES ONLY. It evicts from m_texCache, and only loadTexture
+    // populates that; the async drain adds to m_textures directly (see
+    // AsyncState::loadedTextures). Async textures are therefore unbounded by
+    // this budget — the caveat is stated in full on EngineConfig::textureBudgetMB.
     size_t evictTexturesOverBudget();
     uint64_t residentBytes() const;
 
@@ -272,6 +277,42 @@ private:
         // first — otherwise exactly one entity per mesh gets a chain and LOD
         // looks inert at scene scale, which is how it presented.
         std::vector<MeshHandle> lods;
+
+        // The texture cache keys this mesh's load ACQUIRED, one entry per
+        // acquire — two materials sharing an image push it twice, because each
+        // bumped the refcount once.
+        //
+        // Without this, unloadMesh released nothing: loadMesh acquires a
+        // reference for every material texture and unloadMesh only removed the
+        // mesh's own buffers, so a scene's textures sat at refs > 0 forever.
+        // That is not a leak the old code could notice — but the moment texture
+        // eviction was wired it became the reason eviction reclaims nothing on
+        // the normal path, since the cache correctly refuses to evict a
+        // referenced entry. Recording the keys is what makes the release
+        // exact: release what this load took, not what the material happens to
+        // point at now.
+        std::vector<std::string> textureKeys;
+
+        // ── Outstanding loadMesh calls not yet matched by unloadMesh ────────
+        // 1 at the load that created this entry, +1 for every cache HIT, -1 per
+        // unloadMesh. The mesh dies at 0.
+        //
+        // WHY: this map dedups by path, so N loads of one .cmesh hand N callers
+        // the SAME handle. `unloadMesh` used to end in an unconditional
+        // `m_meshes.removeMesh(h)`, which destroyed it for all of them on the
+        // first call — and AssetRegistry::removeMesh recycles the slot off a
+        // free list with no generation counter, so the survivors did not read
+        // garbage, they read a live WRONG mesh. That is BUG-0051's exact shape
+        // one resource type over (BUG-0052); reachable from Lua as
+        // assets.unloadMesh.
+        //
+        // NOT the same question eviction asks. evictOverBudget decides liveness
+        // from an ECS in-use scan, because a mesh is referenced by components
+        // the cache cannot see, and every entry here has refs >= 1 by
+        // construction — so refcounts could never drive it. This counts
+        // load/unload PAIRS and gates destruction only on that path. The two
+        // coexist deliberately; see evictOverBudget for the other half.
+        uint32_t refs = 1;
     };
     mutable std::mutex                             m_loadedMtx;
     // `mutable` alongside m_useClock: queryMesh() is const and must still

@@ -154,8 +154,33 @@ int main() {
         //
         // The sequence below is exactly that, and it is reachable from
         // SceneService::unloadScene and from Lua's assets.unloadMesh.
+        // ── ONE unload is no longer enough, and that is BUG-0052's fix ──────
+        // This section used to call unloadMesh ONCE and expect the slot freed.
+        // That expectation WAS the defect: loadMesh dedups by path, so every
+        // load above handed another caller the same handle, and one unload
+        // destroying it for all of them is what BUG-0052 records.
+        // MeshResidency::refs now counts load/unload PAIRS, so a real
+        // destruction needs every reference given back — and the recycled-slot
+        // hazard this section exists for still needs a real destruction to set
+        // it up, so the references are drained rather than the assertion
+        // weakened.
+        //
+        // kLoads + 1, and the +1 is not slack: section 3's
+        // `CHECK(svc.loadMesh(...) == first)` above is itself a load and takes a
+        // reference like any other. Spelled out rather than looped-until-null so
+        // that adding a load without adding an unload FAILS here instead of
+        // being absorbed.
+        const int kSharedLoads = kLoads + 1;
         const uint32_t recycled = first.id;
-        CHECK(svc.unloadMesh(first), "unloading the shared mesh succeeds");
+        CHECK(svc.unloadMesh(first),
+              "one unload of a %d-times-shared mesh succeeds and does NOT "
+              "destroy it (BUG-0052)", kSharedLoads);
+        CHECK(meshes.getMesh(first) != nullptr,
+              "...the mesh is still resident for the other %d holders",
+              kSharedLoads - 1);
+        for (int i = 1; i < kSharedLoads; ++i) svc.unloadMesh(first);
+        CHECK(meshes.getMesh(first) == nullptr,
+              "and only the LAST of %d unloads destroys it", kSharedLoads);
         MeshHandle taken = svc.loadMesh("meshs/other2.cooked");
         CHECK(taken.valid(), "another mesh loads afterwards (handle %u)", taken.id);
         CHECK(taken.id == recycled,

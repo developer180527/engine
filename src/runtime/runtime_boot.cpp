@@ -209,6 +209,15 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
         m_assetService->setTextureBudget(
             (uint64_t)cfg.textureBudgetMB * 1024 * 1024);
 
+    // Per-tag CPU ceilings. Soft: the allocator warns once per tag and keeps
+    // going (see EngineConfig::memBudgetMB). Applied here rather than in
+    // mem::init() because they are PROJECT policy, and mem:: has no idea a
+    // project exists — it is the layer everything else allocates through.
+    for (size_t t = 0; t < (size_t)mem::Tag::Count; ++t)
+        if (cfg.memBudgetMB[t] > 0)
+            mem::setBudget((mem::Tag)t,
+                           (uint64_t)cfg.memBudgetMB[t] * 1024 * 1024);
+
     // SceneService — built on top of AssetService for binary scene loading.
     // ClipLibrary + registries enable skinned spawn wiring (SkinnedMesh +
     // Animator with clip binding) for cooked scenes.

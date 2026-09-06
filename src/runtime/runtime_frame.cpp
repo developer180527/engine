@@ -107,11 +107,18 @@ bool EngineRuntime::frameBegin(float& dt) {
         // registry directly, so the refcounts this relies on were wrong, and
         // evicting against wrong counts drops textures that are still in use.
         // That is why the ctor's note said eviction had to wait for them.
-        if (const size_t freed = m_assetService->evictTexturesOverBudget()) {
-            ENGINE_PROFILE_SCOPE("TextureResidency");
+        // The scope wraps the CALL, not the log line. It used to sit inside the
+        // `if`, which opened it after evictTexturesOverBudget() had already
+        // returned — so "TextureResidency" timed a LOG_INFO, and a pass that
+        // freed nothing produced no sample at all. Given BUG-0047 was precisely
+        // a residency path that ran every second and threw the result away, the
+        // zero-freed case is the one most worth being able to see.
+        size_t freedTex = 0;
+        { ENGINE_PROFILE_SCOPE("TextureResidency");
+          freedTex = m_assetService->evictTexturesOverBudget(); }
+        if (freedTex)
             LOG_INFO("AssetService", "texture eviction freed %.1f MB",
-                     (double)freed / (1024.0 * 1024.0));
-        }
+                     (double)freedTex / (1024.0 * 1024.0));
     }
 
     return true;

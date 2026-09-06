@@ -172,6 +172,14 @@ engine_test(null_renderer_test)
 # texture other materials were still drawing, and TextureRegistry recycles slots
 # with no generation counter. Authors a real .ctex and drives the real load path.
 engine_test(texture_ownership_test)
+# BUG-0052, the same defect one resource type over and found by asking whether
+# it was. `unloadMesh` ended in an unconditional `m_meshes.removeMesh(h)` for a
+# resource m_loadedMeshes dedups by path, so the first unload destroyed a mesh
+# other callers held — and AssetRegistry recycles slots with no generation
+# counter either. Also pins that the LAST unload gives the material's texture
+# references back, which is what lets the texture budget reclaim anything on the
+# normal path.
+engine_test(mesh_ownership_test)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
 engine_test(animator_system_test)

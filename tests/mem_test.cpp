@@ -277,6 +277,40 @@ int main() {
     }
 
     mem::logStats("mem_test end");
+    // ── Budgets are SOFT, and that is a contract, not an omission ──────────
+    // EngineConfig::memBudgetMB reaches mem::setBudget at boot. What it does
+    // NOT do is enforce: exceeding a tag's ceiling logs once and the allocation
+    // still succeeds. A test is the right place to pin that, because "the
+    // budget did nothing" and "the budget is soft" look identical from outside
+    // and only one of them is the design.
+    //
+    // Deliberately different from the TEXTURE budget wired the same week, which
+    // really does evict. Two things called "budget" in one config, one of which
+    // frees memory and one of which does not, is exactly the pair worth having
+    // an assertion between.
+    {
+        std::printf("\n-- soft budgets --\n");
+        constexpr mem::Tag kTag = mem::Tag::Nav;   // quiet in this test process
+
+        mem::setBudget(kTag, 1);                   // one byte
+        CHECK(mem::stats(kTag).budgetBytes == 1,
+              "the budget is recorded (%llu)",
+              (unsigned long long)mem::stats(kTag).budgetBytes);
+
+        void* p = mem::alloc(64 * 1024, alignof(max_align_t), kTag);
+        CHECK(p != nullptr,
+              "an allocation 65536x over the ceiling still SUCCEEDS — the "
+              "budget reports, it does not enforce, and nothing fails an "
+              "allocation to honour a number in a config file");
+        CHECK(mem::stats(kTag).currentBytes >= 64 * 1024,
+              "and the bytes are counted against the tag regardless (%llu)",
+              (unsigned long long)mem::stats(kTag).currentBytes);
+        mem::free(p);
+
+        mem::setBudget(kTag, 0);
+        CHECK(mem::stats(kTag).budgetBytes == 0, "0 clears the budget");
+    }
+
     if (g_failures) {
         std::printf("mem_test: FAIL — %d failure(s)\n", g_failures);
         return 1;

@@ -47,7 +47,7 @@ Everything else is a default nobody chose:
 | frame cap | none | no |
 | vsync | `BGFX_RESET_VSYNC`, hardcoded (`device.cpp:117`) | no |
 | resolution scale | none | no |
-| memory budgets | mesh + **texture** now reachable (`meshBudgetMB`, `textureBudgetMB`); `mem::setBudget` still is not | partly |
+| memory budgets | **all three reachable** — `meshBudgetMB`, `textureBudgetMB` (both evict) and `memBudgetMB[]` (soft, reports only) | **yes** |
 | idle / background throttle | none | no |
 
 The memory row deserves its own line. There were **two separate budget systems
@@ -60,9 +60,15 @@ and no production code set either**; one is now wired:
   refcount entirely (BUG-0051). The ctor comment saying eviction "needs the
   reference counts to be complete first" was the real blocker, and it was
   correct.
-* `mem::setBudget(Tag, bytes)` — a per-tag ceiling on the tagged heaps that the
-  allocator warns against. Still called from `tests/mem_test.cpp` and nowhere
-  else. This one **is** plumbing.
+* `mem::setBudget(Tag, bytes)` — **WIRED 2026-09-06** as
+  `EngineConfig::memBudgetMB[]`, indexed by `mem::Tag`. This one *was* plumbing.
+  **It is SOFT and that is a contract, not a shortfall**: the allocator warns
+  once per tag and keeps going. A hard CPU cap means deciding what to do when a
+  gameplay allocation cannot be served, and "crash the game to respect a number
+  in a config file" is not an answer — so it is a tripwire for "this subsystem
+  is bigger than I thought", not a limit. `mem_test` asserts the softness
+  directly, because "the budget did nothing" and "the budget is soft" look
+  identical from outside and only one is the design.
 
 ## 2. Three levels, and most projects use one
 
@@ -240,7 +246,7 @@ and half of it turned out to be wrong.
 | ~~**1**~~ | ~~**Thread QoS**~~ — **DONE 2026-09-04.** `src/core/thread_qos.h`, wired into the enkiTS pool and `CookService`; `thread_qos_test` in the unit lane, mutation-checked | measured, and it needed no policy design. Found two doc errors and one false comment on the way |
 | **2** | Frame cap + vsync as configuration rather than a hardcoded reset flag | small, and the 2D case is unserved today |
 | **3** | Worker-count ceiling in `EngineConfig`, defaulting to today's behaviour | no behaviour change until someone sets it |
-| **4** | ~~Wire **both** budget mechanisms to config~~ — **`GpuResourceCache::setBudget` DONE 2026-09-06** as `EngineConfig::textureBudgetMB`, evicted on the same ~1 s tick as the mesh sweep. `mem::setBudget` is still reachable only from `mem_test.cpp` | plumbing, not design — and the texture half was blocked on correct refcounts, not on plumbing (BUG-0051) |
+| **4** | ~~Wire **both** budget mechanisms to config~~ — **DONE 2026-09-06.** `textureBudgetMB` evicts on the mesh sweep's tick; `memBudgetMB[]` sets soft per-tag ceilings | the texture half was NOT plumbing — it was blocked on correct refcounts (BUG-0051), and then on `unloadMesh` never releasing the references `loadMesh` took, without which eviction reclaimed nothing on the path a game uses. The `mem::` half really was plumbing |
 | **5** | Resolution scale | the largest GPU lever; needs a render target the renderer does not currently size independently |
 | **6** | Upscaling | blocked on §5's motion vectors and jitter — a renderer-programme dependency, not a policy one |
 
