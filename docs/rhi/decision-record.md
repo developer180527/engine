@@ -17,9 +17,10 @@ covers:
 
 "bgfx is a lowest common denominator over a dozen APIs, most of them legacy" is
 true and it is not what is costing us anything today. The measured bottleneck in
-this engine is `Render.extract` — **CPU 24.8 ms against GPU 9.11 ms at 50 000 real
-props** (`src/render/issues.md` R20). An RHI rewrite does not touch that 18.8 ms
-of extraction. Done in the wrong order, this project is four months of work for a
+this engine is `Render.extract` — **18.8 ms of a 24.8 ms CPU frame, against
+9.11 ms GPU, at 50 000 real props** (`src/render/issues.md` R20; the frame's other
+6.0 ms are expand 3.2, submit 1.4, cull 0.85, shadow 0.19). An RHI rewrite does
+not touch that 18.8 ms of extraction. Done in the wrong order, this project is four months of work for a
 frame time that does not move, and the repo has a standing rule against exactly
 that kind of change (NEON was declined on a 0.4%-of-frame measurement).
 

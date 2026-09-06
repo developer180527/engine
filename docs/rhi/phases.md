@@ -36,6 +36,40 @@ Each phase must be independently defensible — no phase justified only by the n
 | **G7** | **Inline ray tracing**: BVH management, RT shadows, RTAO, gameplay ray queries | RT shadows replace the shadow map on the fuzz scene at equal or better cost |
 | **G8** | **Mesh shaders / cluster LOD** — where decimation graduates toward Nanite-style clusters | Dense geometry stops costing draws at all |
 
+> ## ⚠️ The highest-value renderer work is not in this table
+>
+> *(Added 2026-09-05, after two readers in one week concluded from this table that
+> G0a was the next thing to do. It is not, and this table is why they thought so.)*
+>
+> **The measured bottleneck is `Render.extract` at 18.8 ms of a 24.8 ms CPU frame**
+> ([`../../src/render/issues.md`](../../src/render/issues.md) R20). The fix for it
+> is a **retained scene** — and that work is
+> [`../plans/renderer-program.md`](../plans/renderer-program.md) **P3**, which has
+> no `G` number and therefore does not appear here at all.
+>
+> Three things follow, and none of them is obvious from the rows above:
+>
+> 1. **P3 runs entirely on bgfx.** No RHI, no new backend, no G0a, no bindless.
+>    It is available today and it attacks the actual bottleneck.
+>    [`open-decisions.md`](open-decisions.md) decision 5 already recommends it
+>    *"in parallel with G0–G1"*, and decision 5 is described there as "the one
+>    that could move the frame time **this month**".
+> 2. **G0a does not gate it.** G0a decides whether *G2–G6* are worth a year. It
+>    does not decide anything about P3.
+> 3. **G6 is currently overloaded with P3's work.** As written, G6 contains the
+>    persistent scene, the upload system, GPU culling, HZB, indirect buffers and
+>    the synchronisation for all of it. Landing P3 first is what makes G6 a phase
+>    rather than a project.
+>
+> `renderer-program.md` §9 is the lifetime design P3 needs — slot ownership,
+> generational ids, GPU-safe retirement, structural vs ordinary changes — and §9.6
+> gives its exit criterion as a curve over object count rather than a single
+> number. **Read that before reading G2 onward.**
+>
+> This table is not wrong; it is *scoped*. It orders the RHI by dependency. It has
+> never claimed to order the renderer programme by when the work pays, and
+> `renderer-program.md` §4's P↔G mapping is the document that does.
+
 > **The G1c decision, corrected 2026-09-05.** This block previously offered a
 > null renderer and conditional compilation as ALTERNATIVES and recommended the
 > first. That framing was wrong, and verifying Unreal's actual mechanisms is

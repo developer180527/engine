@@ -31,7 +31,7 @@ say it.
 
 | rung | means | example in this directory |
 |---|---|---|
-| **1. Measured here** | a number from this tree, on named hardware, on a named date | `Render.extract` 24.8 ms CPU / 9.11 ms GPU at 50 000 props |
+| **1. Measured here** | a number from this tree, on named hardware, on a named date | `Render.extract` 18.8 ms of a 24.8 ms CPU frame / 9.11 ms GPU at 50 000 props |
 | **2. Counted here** | a fact about the tree a script could re-derive | "~72 distinct `bgfx::` symbols"; "5 files couple loading to GPU upload" |
 | **3. Vendor specification** | a normative document from the API owner | Metal 4 resources are untracked by default; `descriptor_indexing` is core in Vulkan 1.2 |
 | **4. Reproduced elsewhere** | a number someone else published with method | a shipped engine's stated draw-call budgets |

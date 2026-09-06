@@ -161,9 +161,9 @@ that everything downstream inherits, which is why it has its own programme
 ([`../rhi/`](../rhi/)) rather than a backlog entry.
 
 **The measured bottleneck is not the renderer's feature set anyway.**
-`Render.extract` costs **24.8 ms CPU against 9.11 ms GPU at 50 000 props**
-(`src/render/issues.md` R20). Adding post-processing to that frame would be
-decorating a CPU stall.
+`Render.extract` costs **18.8 ms of a 24.8 ms CPU frame, against 9.11 ms GPU, at
+50 000 props** (`src/render/issues.md` R20). Adding post-processing to that frame
+would be decorating a CPU stall.
 
 ## 4. Present, but not deep
 

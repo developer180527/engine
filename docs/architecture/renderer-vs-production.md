@@ -145,7 +145,8 @@ the submission model is the limit.
    count triangles rather than entities.
 
    Note also that LOD was never going to move the CURRENT bottleneck, which is extraction
-   (CPU 24.8 ms vs GPU 9.11 at 50 k real props). It reduces GPU triangles and draws.
+   (18.8 ms of a 24.8 ms CPU frame, vs GPU 9.11, at 50 k real props). It reduces GPU
+   triangles and draws.
 3. **Indirect submission — and bindless, which is a different question.** *(Split
    2026-08-28; this row previously read "Indirect + bindless submission… bgfx
    supports it", which is half wrong.)*
