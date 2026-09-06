@@ -284,14 +284,49 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
             //
             // Incremented at each `return`, NOT once above, because the skinned
             // fall-through below does not hand back this handle — it drops
-            // through to a full load that REPLACES this entry, so a count taken
-            // before the branch would be discarded with it.
+            // through to a full load that installs a DIFFERENT one. A count
+            // taken before the branch would attach this caller to a handle it
+            // never receives. The old entry's own count is not lost; it is
+            // carried out of the way with the entry (see below).
             if (outSkin) {
                 // A cached skinned mesh cannot hand back its skeleton/clip
                 // handles from here, so fall through to a full load rather than
                 // return a mesh whose skin the caller silently never receives.
                 if (m_meshes.getMesh(it->second.h) == nullptr
-                    || !m_skeletons) { /* fall through */ }
+                    || !m_skeletons) {
+                    // ── SUPERSEDED, NOT ABANDONED ───────────────────────────
+                    // The full load below ends in `m_loadedMeshes[key] = {...}`,
+                    // which OVERWRITES this entry. Left alone, that discards two
+                    // things this entry is the only record of:
+                    //
+                    //   - its textureKeys, so the references loadMesh acquired
+                    //     for the superseded mesh's materials are never given
+                    //     back and the texture budget reclaims nothing;
+                    //   - its refs, so if more than one caller holds the old
+                    //     handle they each reach `removeMesh` through the
+                    //     no-entry path below and destroy it more than once —
+                    //     BUG-0052 again, into a slot with no generation counter.
+                    //
+                    // This is not a corner. m_skeletons is declared in the header
+                    // and assigned NOWHERE in the tree, so `!m_skeletons` is
+                    // always true and every skinned load past the first takes
+                    // this branch.
+                    //
+                    // So re-key the entry instead of letting it be overwritten.
+                    // unloadMesh matches entries by HANDLE, not by key, so the
+                    // old holders still find it, still decrement, and the last
+                    // of them still releases its textures and its registry slot.
+                    // Eviction likewise walks the whole map and gates on the ECS
+                    // in-use scan, so a superseded entry is reclaimable exactly
+                    // like any other. Nothing looks this key up by path — the
+                    // two find() sites want the live entry, which is the one the
+                    // load below installs.
+                    auto node = m_loadedMeshes.extract(it);
+                    node.key() = key + "\n#superseded:"
+                               + std::to_string(++m_useClock);
+                    m_loadedMeshes.insert(std::move(node));
+                    // `it` is dead here; the fall-through uses only `key`.
+                }
                 else { ++it->second.refs; return it->second.h; }
             } else {
                 ++it->second.refs;

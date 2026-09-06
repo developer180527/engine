@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-06
+verified: 2026-09-07
 parses-external-input: true
 covers:
   - src/runtime/
@@ -107,6 +107,16 @@ required.
   texture eviction was wired, at which point the cache correctly refused to evict
   them and the budget reclaimed nothing on the normal path.
   `MeshResidency::textureKeys` records one key per acquire.
+- **A skinned load SUPERSEDES the cache entry, it does not overwrite it**
+  (2026-09-07). A caller passing `outSkin` cannot be served from the cache, so it
+  falls through to a full load — and because `AssetService::m_skeletons` is
+  assigned nowhere in the tree, that fall-through is universal, not rare. The
+  full load's `m_loadedMeshes[key] = {...}` used to discard the old entry, taking
+  with it both the texture references that load had acquired and its `refs`, so
+  the two fixes above were dead on every skinned mesh. The entry is now re-keyed
+  to `"<path>\n#superseded:<n>"`: `unloadMesh` and `evictOverBudget` match by
+  HANDLE and walk the whole map, so old holders still drain correctly, while
+  path lookups reach only the new entry. Pinned by `mesh_ownership_test` §6–§7.
 - **Texture unloading is REFERENCE-BASED** (2026-09-06). `AssetService::
   unloadTexture` releases one reference for a texture `m_texCache` owns and lets
   the cache's destroyer do the eventual registry removal; textures the cache does

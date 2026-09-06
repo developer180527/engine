@@ -200,6 +200,92 @@ int main() {
               "and this handle has none left to give");
     }
 
+    // ── 6. The SKINNED path, where the fix above did not reach ─────────────
+    // `loadMesh` only returns a cached handle when the caller wants no skin. A
+    // caller passing `outSkin` falls through to a full load, because a cache
+    // entry cannot hand back the skeleton and clip handles — and that fall
+    // through is not rare, it is UNIVERSAL: `AssetService::m_skeletons` is
+    // declared in the header and assigned nowhere in the tree, so the
+    // `!m_skeletons` disjunct is always true.
+    //
+    // The full load ended in `m_loadedMeshes[key] = {...}`, an OVERWRITE. The
+    // superseded entry was the only record of the texture references its own
+    // load had acquired, so they were never given back: the count below settled
+    // at 1 with no mesh left holding it, and the texture budget could never
+    // reclaim that texture again. Sections 1–4 could not see this — none of
+    // them pass `outSkin`.
+    //
+    // The fix re-keys the superseded entry instead of dropping it. Both meshes
+    // are then separately owned and separately released.
+    {
+        std::printf("\n-- 6. a skinned load supersedes rather than abandons --\n");
+        AssetService::MeshSkin skinA{}, skinB{};
+        const MeshHandle sa = svc.loadMesh(kRel, &skinA);
+        const MeshHandle sb = svc.loadMesh(kRel, &skinB);
+        CHECK(sa.valid() && sb.valid() && sa.id != sb.id,
+              "two skinned loads produce two meshes (%u, %u) — the fall-through "
+              "does not dedup, which is the behaviour that supersedes the entry",
+              sa.id, sb.id);
+        CHECK(svc.textureCache().refCount(texKey) == 2,
+              "each load acquired the material's texture (%u)",
+              svc.textureCache().refCount(texKey));
+
+        // NOT discriminating, and measured: with the re-key removed this still
+        // passes, because a handle with no entry falls to the unconditional
+        // removeMesh at the bottom of unloadMesh and reports true from there.
+        // The two assertions that move under the mutation are the refcounts.
+        CHECK(svc.unloadMesh(sa),
+              "the superseded mesh unloads — its entry is still findable by "
+              "handle under its re-keyed name");
+        CHECK(svc.textureCache().refCount(texKey) == 1,
+              "and it gave back ITS reference (%u). Before the fix the overwrite "
+              "took that record with it and this stayed at 2",
+              svc.textureCache().refCount(texKey));
+
+        CHECK(svc.unloadMesh(sb), "the live entry unloads too");
+        CHECK(svc.textureCache().refCount(texKey) == 0,
+              "leaving nothing referenced (%u) — the texture is evictable again",
+              svc.textureCache().refCount(texKey));
+        CHECK(meshes.getMesh(sa) == nullptr && meshes.getMesh(sb) == nullptr,
+              "and both meshes are destroyed, neither leaked into the handle pool");
+    }
+
+    // ── 7. Superseding an entry that MORE THAN ONE caller holds ────────────
+    // §6 covers the leak. This covers the destruction hazard, which needs a
+    // count above 1 on the entry being superseded — reachable by loading a mesh
+    // unskinned twice and then skinned once, in that order.
+    //
+    // Dropping the entry there loses the count, and both holders of the old
+    // handle then reach `removeMesh` through the no-entry path. The first
+    // destroys; `AssetRegistry::removeMesh` recycles the slot off a free list
+    // with no generation counter, so the second holder goes on drawing whatever
+    // the next addMesh puts there. That is BUG-0052 exactly, surviving inside
+    // the fix for BUG-0052.
+    {
+        std::printf("\n-- 7. superseding a SHARED entry --\n");
+        const MeshHandle p = svc.loadMesh(kRel);
+        const MeshHandle q = svc.loadMesh(kRel);
+        CHECK(p.valid() && p.id == q.id, "two unskinned holders, one handle (%u)", p.id);
+
+        AssetService::MeshSkin skin{};
+        const MeshHandle r = svc.loadMesh(kRel, &skin);
+        CHECK(r.valid() && r.id != p.id,
+              "a skinned load then supersedes their entry with a new mesh (%u)", r.id);
+
+        CHECK(svc.unloadMesh(p),
+              "the first of the two shared holders gives its reference back");
+        CHECK(meshes.getMesh(q) != nullptr,
+              "and the superseded mesh is STILL RESIDENT for the second (%u) — "
+              "the count travelled with the entry instead of being dropped", q.id);
+
+        CHECK(svc.unloadMesh(q), "the second holder leaves");
+        CHECK(meshes.getMesh(q) == nullptr, "and now it is destroyed, once");
+        CHECK(svc.unloadMesh(r), "the live entry unloads independently");
+        CHECK(svc.textureCache().refCount(texKey) == 0,
+              "with every texture reference given back (%u)",
+              svc.textureCache().refCount(texKey));
+    }
+
     fs::remove_all(root);
 
     if (g_failures) {

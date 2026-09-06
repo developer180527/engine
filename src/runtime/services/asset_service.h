@@ -294,8 +294,15 @@ private:
         std::vector<std::string> textureKeys;
 
         // ── Outstanding loadMesh calls not yet matched by unloadMesh ────────
-        // 1 at the load that created this entry, +1 for every cache HIT, -1 per
-        // unloadMesh. The mesh dies at 0.
+        // 1 at the load that created this entry, +1 for every cache HIT THAT
+        // RETURNS THIS HANDLE, -1 per unloadMesh. The mesh dies at 0.
+        //
+        // The exclusion matters: a skinned hit does not return this handle, it
+        // falls through to a full load. See loadMesh — that path re-keys this
+        // entry to "<path>\n#superseded:<n>" and installs a fresh one, so an
+        // entry can outlive its path binding while its old holders drain. Such
+        // keys are never found by path; nothing looks them up, and unloadMesh
+        // and evictOverBudget both walk entries rather than keys.
         //
         // WHY: this map dedups by path, so N loads of one .cmesh hand N callers
         // the SAME handle. `unloadMesh` used to end in an unconditional
