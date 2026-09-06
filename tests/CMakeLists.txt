@@ -166,6 +166,12 @@ engine_test(gpu_seam_test)
 # change exists for: a kit submitting draws on a server must be accepted and
 # discarded, never accumulated (the ~480 KB/s leak, issues.md 2026-08-10).
 engine_test(null_renderer_test)
+# Texture ownership. AssetService::unloadTexture was `return
+# m_textures.removeTexture(h);` — a direct registry removal for a resource that
+# m_texCache refcounts and dedups by path, so the FIRST unload destroyed a
+# texture other materials were still drawing, and TextureRegistry recycles slots
+# with no generation counter. Authors a real .ctex and drives the real load path.
+engine_test(texture_ownership_test)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
 engine_test(animator_system_test)

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-05
+verified: 2026-09-06
 parses-external-input: true
 covers:
   - src/runtime/
@@ -98,6 +98,13 @@ required.
   reachable from exactly two TUs — its `IPlatform` and its `window_ops` — and
   `engine_runtime` links only the one selected. Verified: `libglfw3.a` is in the
   SDL3 link line before the change and absent after.
+- **Texture unloading is REFERENCE-BASED** (2026-09-06). `AssetService::
+  unloadTexture` releases one reference for a texture `m_texCache` owns and lets
+  the cache's destroyer do the eventual registry removal; textures the cache does
+  not own — the async drain and the importers add to the registry directly — are
+  removed directly, and the async path->handle map is invalidated in the same
+  operation. It used to be a bare `removeTexture`, which destroyed shared
+  textures on the first unload (BUG-0051).
 - **`IRenderer`** (`render/renderer_interface.h`) — what the runtime actually
   holds, as a `std::unique_ptr`. Two implementations: `Renderer` and
   `NullRenderer`, chosen once in `initRenderer()` and never asked about again.

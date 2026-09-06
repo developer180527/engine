@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-09-05
+verified: 2026-09-06
 covers:
   - src/render/
 ---

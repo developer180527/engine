@@ -142,6 +142,27 @@ public:
     bool contains(const std::string& key) const {
         return m_entries.find(key) != m_entries.end();
     }
+
+    // The key that owns `h`, or "" if this cache does not own it.
+    //
+    // WHY THIS EXISTS: every other operation here is key-based, because the KEY
+    // is the identity — a handle is a slot index the registry recycles. But an
+    // unload API that takes a handle (a script calling assets.unloadTexture, a
+    // scene releasing what it was given) has only the handle, and without this
+    // it had no way to reach the refcount. It removed the resource from the
+    // registry directly instead, which destroyed textures other materials were
+    // still using and left this cache pointing at a recycled slot.
+    //
+    // A LINEAR SCAN, deliberately. Unload is a cold path — scene teardown and
+    // script calls — and a maintained reverse map would be a second copy of the
+    // identity relation, which is the kind of duplicated state that goes stale
+    // in exactly the way this function exists to fix. If unload ever becomes hot
+    // enough to matter, measure it before adding the map.
+    std::string keyFor(const Handle& h) const {
+        for (const auto& kv : m_entries)
+            if (kv.second.handle == h) return kv.first;
+        return {};
+    }
     uint32_t refCount(const std::string& key) const {
         auto it = m_entries.find(key);
         return it == m_entries.end() ? 0u : it->second.refs;

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-05
+verified: 2026-09-06
 covers:
   - src/render/
 tests:
@@ -154,6 +154,22 @@ symbols and no graphics frameworks — `render/gpu_null.cpp` replaces `gpu.cpp`
 there. The source list is DERIVED from `engine_runtime`'s rather than copied, so
 a new renderer TU is in both automatically and fails the server build if it
 reaches a backend.
+
+## Texture ownership: the cache is the authority
+
+`GpuResourceCache` refcounts by KEY, because a handle is a slot index the
+registry recycles. `keyFor(handle)` (added 2026-09-06) is the reverse lookup an
+unload API needs — without it `AssetService::unloadTexture` had no way to reach
+the refcount and removed from `TextureRegistry` directly, destroying textures
+other materials still referenced (BUG-0051). A linear scan on purpose: unload is
+a cold path, and a maintained reverse map would be a second copy of the identity
+relation, which is the state that goes stale in exactly the way this fixes.
+
+**`refs == 0` means EVICTABLE, NOT DEAD.** Releasing the last reference does not
+destroy; eviction is a budget decision. Nothing calls `evictOverBudget()` on the
+texture cache yet, so a released texture is currently retained — the correct side
+to err on, and the refcounts being right is the stated precondition for wiring
+it.
 
 ## The upload seam (`gpu.h`) — G1a
 

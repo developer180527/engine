@@ -152,12 +152,20 @@ AssetService::AssetService(Config cfg)
     , m_projectRoot(cfg.projectRoot)
     , m_cacheRoot(cfg.projectRoot.empty() ? std::filesystem::path{}
                                           : cfg.projectRoot / ".cache")
-    // Eviction hands the resource back to the registry, whose RAII destroys
-    // the GPU texture. The cache never calls the GPU itself — that is what keeps
-    // it testable without a GPU. No budget yet: eviction needs the reference
-    // counts to be complete first (only the sync path is wired), and evicting
-    // against partial refcounts would drop textures that are still in use.
-    , m_texCache([this](const TextureHandle& h) { m_textures.removeTexture(h); })
+    // THE ONE PLACE a cache-owned texture actually dies. Eviction hands the
+    // resource back to the registry, whose RAII destroys the GPU texture; the
+    // cache never calls the GPU itself, which is what keeps it testable without
+    // one. Both the registry slot AND the async path->handle map are released
+    // here, together, so no caller can free one without the other — see
+    // unloadTexture, which used to free the slot and leave both maps naming it.
+    //
+    // No budget yet: eviction needs the reference counts to be complete first
+    // (only the sync path is wired), and evicting against partial refcounts
+    // would drop textures still in use.
+    , m_texCache([this](const TextureHandle& h) {
+          dropAsyncTexture(h);
+          m_textures.removeTexture(h);
+      })
 {}
 
 AssetService::~AssetService() {
@@ -675,7 +683,52 @@ bool AssetService::unloadMesh(MeshHandle h) {
     }
     return m_meshes.removeMesh(h);
 }
-bool AssetService::unloadTexture(TextureHandle h)  { return m_textures.removeTexture(h); }
+bool AssetService::unloadTexture(TextureHandle h) {
+    // A texture can be SHARED. m_texCache dedups by path and refcounts, so two
+    // materials referencing the same .ctex hold one handle between them — and
+    // this used to be `return m_textures.removeTexture(h);`, which destroyed it
+    // on the first unload regardless. The second material then drew from a freed
+    // slot, and because TextureRegistry recycles slots off a free list with no
+    // generation counter, that slot soon belonged to an unrelated texture.
+    // Renders something plausible, hides the problem — the same failure
+    // unloadMaterial's name-cache invalidation below exists to prevent.
+    //
+    // Two populations, and they need different handling:
+    if (const std::string key = m_texCache.keyFor(h); !key.empty()) {
+        // CACHE-OWNED (the sync cooked path). Drop one reference and stop. The
+        // cache decides when the resource actually dies — refs == 0 means
+        // EVICTABLE, NOT DEAD (render/gpu_resource_cache.h), and its destroyer
+        // does the registry removal.
+        //
+        // CONSEQUENCE, stated because it is a real behaviour change: nothing
+        // currently calls evictOverBudget() on this cache and no budget is set,
+        // so a cache-owned texture is now retained until one of those is wired.
+        // That is the ctor's existing "eviction needs the reference counts to be
+        // complete first" gap, and retaining is the correct side to err on —
+        // exceeding a budget is recoverable, drawing from a freed slot is not.
+        return m_texCache.release(key);
+    }
+
+    // NOT CACHE-OWNED: the async drain (drainOne adds to the registry directly)
+    // and importer-created textures. Nothing else references these through a
+    // refcount, so a direct removal is right — but the async path->handle map
+    // must let go in the same operation, or queryTexture() keeps handing out a
+    // handle whose slot has been recycled.
+    dropAsyncTexture(h);
+    return m_textures.removeTexture(h);
+}
+
+// Forget any async path -> handle entry naming `h`. Called wherever a texture
+// actually dies: the direct-unload path above, and the cache's destroyer.
+void AssetService::dropAsyncTexture(TextureHandle h) {
+    if (!m_async) return;
+    std::lock_guard<std::mutex> lk(m_loadedMtx);
+    for (auto it = m_async->loadedTextures.begin();
+         it != m_async->loadedTextures.end(); ) {
+        it = (it->second.id == h.id) ? m_async->loadedTextures.erase(it)
+                                     : std::next(it);
+    }
+}
 bool AssetService::unloadMaterial(MaterialHandle h) {
     if (!m_materials.removeMaterial(h)) return false;
     // The name cache must let go in the same breath. MaterialHandle is a bare

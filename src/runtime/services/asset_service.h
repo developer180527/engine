@@ -148,6 +148,9 @@ public:
     // ----- Unload -----
 
     bool unloadMesh(MeshHandle h);
+    // Releases one reference for a cache-owned texture; removes directly for
+    // one that is not (async/importer). See the definition — a texture can be
+    // shared, and this used to destroy it on the first unload.
     bool unloadTexture(TextureHandle h);
     bool unloadMaterial(MaterialHandle h);
 
@@ -225,6 +228,10 @@ private:
     // the mapping, TextureRegistry still owns the resource.
     // See docs/plans/renderer-audit-and-plan.md Phase 1.
     gpucache::GpuResourceCache<TextureHandle> m_texCache;
+
+    // Drops any async path -> handle entry naming `h`. Called from both places a
+    // texture can actually die, so the map cannot outlive the slot it names.
+    void dropAsyncTexture(TextureHandle h);
 
     // ── Loaded-mesh cache: path -> handle, shared by the SYNC and ASYNC paths
     // It lives here, not inside AsyncState, because it is a resource cache and
