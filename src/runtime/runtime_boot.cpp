@@ -5,6 +5,7 @@
 // NO <bgfx/bgfx.h> in any runtime TU — GPU work goes through Renderer /
 // PrimitiveLibrary (audit A.1).
 #include "runtime/runtime.h"
+#include "runtime/sim_classification.h"
 
 // The IRenderer implementations. This is the ONLY runtime TU that names either —
 // runtime.h holds a std::unique_ptr<IRenderer> and nothing else in the runtime
@@ -177,6 +178,10 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     // runtime's world (the game world in Snapshot mode registers in
     // startSimulation). Kits register their own at attach/sim-start.
     MetaRegistry::registerAll(m_ecs);
+    // Which components ARE the simulation, as data. Separate from the meta
+    // registration above on purpose: reflection and reproducibility are
+    // different questions (runtime/sim_classification.cpp).
+    simhash::registerClassification(m_ecs);
     m_clipLibrary = std::make_unique<ClipLibrary>();
     // Source-format importers exist to produce GPU meshes — headless runs
     // (dedicated server, CI sim) have no device to feed, so don't stand up

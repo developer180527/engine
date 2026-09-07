@@ -1,11 +1,12 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-29
+verified: 2026-09-08
 covers:
   - src/components/
 tests:
   - tests/component_abi_test.cpp
+  - tests/determinism_gate_test.cpp
   - tests/event_test.cpp
   - tests/sim_purity_check.cpp
   - tests/stress_churn.cpp
@@ -81,6 +82,32 @@ No logic beyond trivial helpers — systems and plugins own behavior.
   `remove<T>()` (leaves an orphaned `(EventStale, T)` staleness marker). Events
   are MESSAGES; persistent-within-session markers (e.g. combat::Died) stay
   plain SerdeTransient STATE, cleared by their owner.
+
+## Every component carries a classification
+
+`sim_state.h` adds a second frozen property alongside the layout ABI above:
+**is this component simulation state?** Its type carries exactly one of
+`SimState` or `SimExempt`, registered in `runtime/sim_classification.cpp`.
+
+It exists because a simulation that is not reproducible cannot have behavioural
+regression tests. `tests/determinism_gate_test.cpp` hashes classified component
+state after every tick and compares runs; the governing rule for what to hash is
+**every field that can influence future simulation behaviour** — not every
+field, and not the fields that happen to be serialized. `Animator::fade` is in
+(it is a crossfade duration and changes the pose sampled on later ticks);
+`Camera` is out entirely.
+
+**Adding a component means classifying it.** `simhash::auditCoverage()` fails on
+any data component present in a world carrying neither tag, so the default is
+not "silently uncovered" but "the gate tells you to classify it". Every
+exemption carries a written reason and the registry refuses one without it — an
+exemption with no reason is indistinguishable from an oversight.
+
+This is deliberately NOT the same question as `SerdeTransient`, and the two
+disagree in both directions: `Light.intensity` is serialized and is not
+simulation state; `CollisionEvents` is `SerdeTransient` and IS simulation state.
+Reflection asks what the inspector and the scene format can see; classification
+asks what a divergence would be observable in.
 
 ## Rules
 - Components must stay POD-ish and serializable: every field either round-

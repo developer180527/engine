@@ -362,6 +362,27 @@ jobs:
       - name: Test (fuzz regression corpus)
         run: ctest --test-dir build -L fuzz-regress --output-on-failure --timeout 600
 
+      # ── The determinism gate — REPORTS, DOES NOT GATE ────────────────────
+      # continue-on-error, and for the same reason the experimental build legs
+      # have it: this measures a property the engine does not yet have, so a
+      # failing step here is information, not a broken commit. Same promotion
+      # discipline too — as each tier's causes are closed, drop its kKnown entry
+      # in tests/determinism_gate_test.cpp and move that tier into the gating
+      # `unit` lane so it cannot regress.
+      #
+      # It only exits non-zero on an UNEXPECTED divergence or a failed assertion;
+      # the divergences this tree already knows about are reported as EXPECTED
+      # with their causes named. So a red step here genuinely means something
+      # new, which is what stops it becoming CI wallpaper.
+      #
+      # Gating leg only: it is a property of the simulation, not of the
+      # platform, and running it three times would just repeat the same answer.
+      - name: Test (determinism gate, non-gating)
+        if: matrix.name == 'macOS (arm64, AppleClang)'
+        continue-on-error: true
+        shell: bash
+        run: ctest --test-dir build -L determinism --output-on-failure --timeout 600
+
       # Documentation/maturity contract (docs/process/engineering-standards.md): doc
       # front-matter must match the tree, tier claims must have evidence, and
       # ENGINE_STATUS.md must be regenerated. Platform-independent, so it runs

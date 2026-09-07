@@ -1,12 +1,13 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-07
+verified: 2026-09-08
 parses-external-input: true
 covers:
   - src/runtime/
 tests:
   - tests/sim_world_test.cpp
+  - tests/determinism_gate_test.cpp
   - tests/asset_ready_test.cpp
   - tests/async_loader_test.cpp
   - tests/script_host_test.cpp
@@ -267,6 +268,42 @@ engine.run([&](float dt) { ...; engine.tick(dt, view, proj); ... });
 `frameBegin(dt)`: poll events → minimize-wait → resize → clamped dt (≤50ms)
 → drain async GPU uploads. `frameEnd()`: `bgfx::frame()`. `tick()`: gameplay
 systems → animation → `flecs::world::progress()` → scene render.
+
+## Is the simulation reproducible? (`sim_hash.h`, `sim_classification.cpp`)
+
+Until 2026-09-08 nothing measured it, so the sim had structural tests ("does the
+query follow the world") and none that asserted "these inputs produce this
+outcome". `tests/determinism_gate_test.cpp` is the instrument;
+`runtime/sim_hash.cpp` is the mechanism.
+
+**It measures ECS-OBSERVABLE determinism.** It hashes classified components. It
+does not hash `JPH::PhysicsSystem`, `lua_State`, `AnimatorSystem::m_contexts` or
+kit members, so a green tier means "nothing that reaches a component diverged" —
+not "the simulation is bit-identical". That window is real; see the test header.
+
+The lane is `determinism`, **non-gating on purpose**: it reports divergences the
+engine currently has. It exits non-zero only on an *unexpected* one, so a red
+step means something new rather than the same known state.
+
+### What it found on the first run
+
+| | |
+|---|---|
+| `Spinner` at frame rate | `tickSystems()` runs the spinner query with FRAME dt, so `Transform` — a hashed component — advances at render rate. `m_animatorSystem.tick(dt)` two lines below has the identical defect. This is the engine's ONE demo gameplay system. |
+| Collision order is a thread race | contacts arrive from Jolt workers and land in `CollisionEvents`, which scripts iterate. Divergent run-to-run in the same process. |
+| `m_ecs.progress()` takes no `delta_time` | flecs documents `0` as "automatically measure the time passed since the last frame", so the ECS pipeline advances on wall time. Inert today (no systems registered), live the moment a kit registers one. |
+| `hid::nowNs()` inside the fixed step | the tick boundary is wall-clock. Inert while nothing in the gate's tiers reads input. |
+
+None of these are fixed here. Recording them is what the instrument is for.
+
+### Two things a harness driving this loop must know
+
+* `tick(float)` **already calls `tickSimulation`** (`runtime_frame.cpp`). Calling
+  both — which `sim_world_test.cpp` and `soak_engine.cpp` do — advances the
+  accumulator by 2x dt per iteration.
+* In `SimMode::InPlace` the animator advances in `tickSystems()`, which
+  `tickSimulation` never reaches. A harness driving `tickSimulation` alone
+  animates nothing.
 
 ## Invariants
 - One `EngineRuntime` per process. Not thread-safe; tick on the main thread.

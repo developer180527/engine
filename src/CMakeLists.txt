@@ -299,6 +299,11 @@ add_library(engine_runtime STATIC
     runtime/runtime_boot.cpp
     runtime/runtime_frame.cpp
     runtime/runtime_sim.cpp
+    # The determinism gate's mechanism: a canonical digest of ECS-observable
+    # simulation state, plus the classification registry that decides what
+    # counts. GPU-free by construction — see tests/sim_purity_check.cpp.
+    runtime/sim_hash.cpp
+    runtime/sim_classification.cpp
     runtime/frame_stats_channel.cpp
     ${ENGINE_PLATFORM_SOURCES}
     runtime/platform/platform_factory.cpp

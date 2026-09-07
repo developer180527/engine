@@ -180,6 +180,25 @@ engine_test(texture_ownership_test)
 # references back, which is what lets the texture budget reclaim anything on the
 # normal path.
 engine_test(mesh_ownership_test)
+
+# ── The determinism gate — NON-GATING BY DESIGN ─────────────────────────────
+# Label `determinism`, deliberately NOT `unit`: this test is an instrument and
+# it is EXPECTED to report divergences on day one. A gate that fails cannot
+# gate, and a red gating test is how a suite stops being trusted.
+#
+# Its output distinguishes EXPECTED divergence (a cause this tree already knows
+# about, named in the test's kKnown table) from UNEXPECTED — only the latter
+# exits non-zero. A known divergence that STOPS firing is also reported, so a
+# fix is noticed rather than quietly turning the entry into a lie.
+#
+# PROMOTION: as each tier's causes are closed, remove its kKnown entry and move
+# it into the gating `unit` lane. Same discipline as ci.yml's experimental
+# matrix — "flip it the moment it first goes green, so it can't regress".
+#
+# It links engine_runtime and boots a REAL headless EngineRuntime per run,
+# adding plugins one tier at a time (Jolt, Lua) so a divergence is attributed to
+# a subsystem instead of reported as "the world differs".
+engine_test(determinism_gate_test LABEL determinism TIMEOUT 300)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
 engine_test(animator_system_test)

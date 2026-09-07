@@ -4,6 +4,7 @@
 // fixed-timestep loop, and the per-frame system tick.
 // NO <bgfx/bgfx.h> — sim never touches the GPU.
 #include "runtime/runtime.h"
+#include "runtime/sim_classification.h"
 #include "core/logger.h"
 #include "runtime/scripting/script_host.h"
 #include "runtime/scripting/script_services.h"
@@ -45,6 +46,7 @@ bool EngineRuntime::startSimulation(SimMode mode) {
         // Fresh world: engine schemas must exist before the snapshot populates
         // it, or engine reflected components would all land in Pending.
         MetaRegistry::registerAll(*m_gameWorld);
+        simhash::registerClassification(*m_gameWorld);
         SceneSerializer::loadIntoWorld(m_simSnapshot, *m_gameWorld, storage);
     }
 
