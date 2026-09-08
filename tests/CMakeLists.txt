@@ -219,7 +219,8 @@ add_test(NAME determinism_gate_gating COMMAND determinism_gate_test --gating)
 # putting it in `unit` anyway would make CI a coin flip and teach people to
 # re-run until green, which is worse than not gating at all.
 #
-# Move this to `unit` when BUG-0055 closes. Nothing else blocks it.
+# Move this to `unit` when BUG-0056 closes. BUG-0055 is fixed; BUG-0056 is the
+# jobs-facade abort found underneath it, and it is the only thing left blocking.
 set_tests_properties(determinism_gate_gating PROPERTIES LABELS determinism TIMEOUT 300)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
