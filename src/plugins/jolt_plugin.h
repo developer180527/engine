@@ -1,5 +1,7 @@
 #pragma once
 #include <memory>
+#include <algorithm>
+#include <map>
 #include <unordered_map>
 #include <thread>
 
@@ -320,7 +322,21 @@ public:
 
     flecs::query<const Transform, const RigidBody>           m_bodySyncQ;
     flecs::query<const Transform, const CharacterController> m_charSyncQ;
-    std::unordered_map<flecs::entity_t, JPH::BodyID>              m_entityToBody;
+    // ── std::map, NOT unordered_map, and the reason is ITERATION order ─────
+    // These are walked to DRIVE the simulation, not merely looked up:
+    // syncRuntimeBodies destroys bodies in this order — and Jolt's own docs
+    // (Architecture.md) require bodies to be added and removed in the same
+    // order for determinism, because BodyID recycling feeds its contact sort —
+    // while updateCharacters steps characters in m_characters' order, where
+    // character-vs-character interaction makes that order observable.
+    //
+    // An unordered_map's order depends on insertion history and allocator
+    // layout, so it differed between two runs in the same process. These are
+    // walked once per tick and hold tens to hundreds of entries; an RB-tree
+    // walk is not measurable against CharacterVirtual::ExtendedUpdate. If it
+    // ever is, keep a hash map for LOOKUP and add a sorted vector for
+    // ITERATION — but only with a measurement.
+    std::map<flecs::entity_t, JPH::BodyID>                        m_entityToBody;
     std::unordered_map<JPH::BodyID, flecs::entity_t, BodyIDHash>  m_bodyToEntity;
 
     // Character controllers
@@ -331,8 +347,8 @@ public:
         float     gravityScale = 1.0f;
         float     stepHeight   = 0.3f;
     };
-    std::unordered_map<flecs::entity_t, JPH::Ref<JPH::CharacterVirtual>> m_characters;
-    std::unordered_map<flecs::entity_t, CharState>                       m_charState;
+    std::map<flecs::entity_t, JPH::Ref<JPH::CharacterVirtual>>           m_characters;
+    std::map<flecs::entity_t, CharState>                                 m_charState;
 
     // ── Collision events (thread-safe queue) ───────────────────────────
     std::mutex                   m_collisionMutex;
@@ -363,8 +379,41 @@ public:
         std::vector<CollisionPair> local;
         { std::lock_guard lock(m_collisionMutex); local = std::move(m_pendingCollisions); }
 
-        // Build per-entity event map
-        std::unordered_map<flecs::entity_t, CollisionEvents> evMap;
+        // ── SORT: contacts arrive in THREAD-ARRIVAL order ───────────────────
+        // OnContactAdded/OnContactRemoved run on Jolt's worker threads and push
+        // under m_collisionMutex, so `local`'s order is a race — and that is
+        // not an internal detail: it becomes the order of
+        // CollisionEvents::entered and ::exited, which scripts iterate, so two
+        // identical runs dispatched gameplay callbacks in different orders.
+        // tests/determinism_gate_test.cpp reported it as tier=physics A/A'
+        // diverging on CollisionEvents (BUG-0054).
+        //
+        // Sorted HERE, at the source, and deliberately NOT in the hasher: a
+        // defensively-sorting digest would have hidden this while gameplay
+        // still observed it.
+        //
+        // The key normalises the pair (min, max) so a contact reported as (a,b)
+        // in one run and (b,a) in another lands in the same place, then breaks
+        // ties on the enter flag and the raw first id so the order is total.
+        std::sort(local.begin(), local.end(),
+            [](const CollisionPair& x, const CollisionPair& y) {
+                const uint32_t xa = x.a.GetIndexAndSequenceNumber();
+                const uint32_t xb = x.b.GetIndexAndSequenceNumber();
+                const uint32_t ya = y.a.GetIndexAndSequenceNumber();
+                const uint32_t yb = y.b.GetIndexAndSequenceNumber();
+                const uint32_t xlo = std::min(xa, xb), xhi = std::max(xa, xb);
+                const uint32_t ylo = std::min(ya, yb), yhi = std::max(ya, yb);
+                if (xlo != ylo) return xlo < ylo;
+                if (xhi != yhi) return xhi < yhi;
+                if (x.enter != y.enter) return x.enter < y.enter;
+                return xa < ya;
+            });
+
+        // Build per-entity event map. ORDERED: the apply loop below runs inside
+        // a defer scope, so this map's iteration order IS the order of the
+        // flecs command buffer — an unordered_map put a hash-table walk in
+        // charge of the sequence of structural changes.
+        std::map<flecs::entity_t, CollisionEvents> evMap;
         for (auto& p : local) {
             auto i1 = m_bodyToEntity.find(p.a);
             auto i2 = m_bodyToEntity.find(p.b);

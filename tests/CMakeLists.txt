@@ -210,7 +210,17 @@ engine_test(determinism_gate_test LABEL determinism TIMEOUT 300)
 # Promotion is automatic: delete a kKnown entry in the test because you fixed
 # its cause, and that pair joins this lane on the next build. No second list.
 add_test(NAME determinism_gate_gating COMMAND determinism_gate_test --gating)
-set_tests_properties(determinism_gate_gating PROPERTIES LABELS unit TIMEOUT 300)
+# ── LABEL `determinism`, NOT `unit`, AND THAT IS NOT ABOUT DETERMINISM ───────
+# Determinism-wise this is ready to gate: all ten tier/comparison pairs pass and
+# a mutation of any of the three fixes turns it red. What blocks it from `unit`
+# is BUG-0055 — the process traps under `ctest -j4` roughly one run in ten,
+# inside JoltPlugin::onSimulationStop, because Jolt jobs run on a general
+# work-stealing pool. A test that traps one run in ten cannot gate anything, and
+# putting it in `unit` anyway would make CI a coin flip and teach people to
+# re-run until green, which is worse than not gating at all.
+#
+# Move this to `unit` when BUG-0055 closes. Nothing else blocks it.
+set_tests_properties(determinism_gate_gating PROPERTIES LABELS determinism TIMEOUT 300)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
 engine_test(animator_system_test)

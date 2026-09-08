@@ -13,7 +13,10 @@
 // being picked up by both a worker and the barrier wait is safe — the loser
 // of the CAS skips.
 
+#include <atomic>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <thread>
 
 #include <Jolt/Jolt.h>
@@ -27,6 +30,41 @@ public:
     JoltJobsAdapter(JPH::uint maxJobs, JPH::uint maxBarriers) {
         JobSystemWithBarrier::Init(maxBarriers);
         m_jobs.Init(maxJobs, maxJobs);
+    }
+
+    // ── WAIT FOR EVERY QUEUED JOB BEFORE THE FREE LIST DIES ─────────────────
+    // QueueJob is fire-and-forget: it hands a raw Job* to the engine pool and
+    // does not wait. Nothing else did either, so destroying this adapter while
+    // a `physics.job` was still queued freed the pages that job's lambda was
+    // about to touch — `job->Execute(); job->Release();` against returned
+    // memory. Jolt's own ~FixedSizeFreeList assert caught it in Debug
+    //
+    //     JPH_ASSERT(mNumFreeObjects == mNumPages * mPageSize)
+    //
+    // reached from JoltPlugin::onSimulationStop. With asserts compiled out it
+    // is a silent use-after-free instead. It needed CPU contention to show:
+    // normally the queue has drained by the time Play stops (BUG-0055).
+    //
+    // Spinning is the right shape here rather than a condition variable: this
+    // runs once per Play->Stop, the outstanding work is microseconds of already
+    // running physics jobs, and the engine pool is still alive at this point
+    // (jobs::shutdown happens later, in EngineRuntime::shutdown). Yielding lets
+    // the workers finish.
+    ~JoltJobsAdapter() override {
+        const auto deadline = std::chrono::steady_clock::now()
+                            + std::chrono::seconds(5);
+        while (m_queued.load(std::memory_order_acquire) != 0) {
+            if (std::chrono::steady_clock::now() > deadline) {
+                // Report rather than hang or corrupt. If this ever fires, the
+                // pool stopped draining and the next line is a real UAF.
+                std::fprintf(stderr, "[Jolt] FATAL: %u physics job(s) still "
+                             "queued after 5s; refusing to free the job list "
+                             "under them.\n",
+                             m_queued.load(std::memory_order_relaxed));
+                std::abort();
+            }
+            std::this_thread::yield();
+        }
     }
 
     int GetMaxConcurrency() const override {
@@ -57,9 +95,14 @@ protected:
         // JobSystemThreadPool. Execute() no-ops if the barrier wait already
         // ran this job.
         job->AddRef();
-        jobs::run("physics.job", [job] {
+        m_queued.fetch_add(1, std::memory_order_relaxed);
+        jobs::run("physics.job", [this, job] {
             job->Execute();
             job->Release();
+            // RELEASED LAST, and after Release: the destructor treats zero as
+            // "no lambda can still touch m_jobs", so decrementing any earlier
+            // would reopen the window it exists to close.
+            m_queued.fetch_sub(1, std::memory_order_release);
         });
     }
 
@@ -74,4 +117,7 @@ protected:
 private:
     using AvailableJobs = JPH::FixedSizeFreeList<Job>;
     AvailableJobs m_jobs;
+    // Jobs handed to the engine pool that have not finished. The destructor's
+    // wait condition; see it for why this exists.
+    std::atomic<JPH::uint32> m_queued{0};
 };

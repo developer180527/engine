@@ -115,6 +115,15 @@ struct SimStateRegistry {
 // canonicalIndex is assigned by declaration order and is what orders the hash.
 // It is deliberately NOT the component path: renaming a component for
 // readability must not silently change the determinism protocol.
+//
+// THE COST, stated because it is real: the protocol is now the ORDER OF THE
+// registerClassification() CALLS. Reordering those lines changes every hash in
+// the tree — silently, since nothing about a reorder looks like a protocol
+// change. Neither scheme (nor a path-sorted one) is stable across binaries, and
+// this gate only ever compares hashes produced by ONE binary, so the exposure
+// is bounded. If a hash ever has to survive across builds — a golden value
+// checked into the repo, a cross-machine lane — this is the first thing that
+// has to become explicit rather than positional.
 bool declareId(flecs::world&, flecs::entity comp, HashFn);
 bool exemptId (flecs::world&, flecs::entity comp, const char* reason);
 

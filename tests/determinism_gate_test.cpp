@@ -76,7 +76,14 @@
 #include <string>
 #include <vector>
 
+#include <ozz/animation/offline/animation_builder.h>
+#include <ozz/animation/offline/raw_animation.h>
+
+#include "animation/clip_registry.h"
+#include "animation/ozz_bridge.h"
+#include "animation/skeleton_registry.h"
 #include "components/animator.h"
+#include "components/skinned_mesh.h"
 #include "components/character_controller.h"
 #include "components/name.h"
 #include "components/rigid_body.h"
@@ -233,18 +240,25 @@ static void testHashSensitivity() {
 // ════════════════════════════════════════════════════════════════════════════
 // Tiers and run shapes
 // ════════════════════════════════════════════════════════════════════════════
-struct Tier { const char* name; bool spinner, scripting, physics; };
+struct Tier { const char* name; bool spinner, animator, scripting, physics; };
 static const Tier kTiers[] = {
     // A genuinely STATIC world. Nothing moves, so A/B must match — this is the
     // instrument's baseline, and if it ever fails the hash itself is wrong and
     // nothing below it is worth reading.
-    { "static",    false, false, false },
+    { "static",    false, false, false, false },
     // Spinner is the engine's one demo gameplay system, and it turns out to be
     // frame-rate driven — see the kKnown entry. Separating it from `static` is
     // what makes the baseline mean anything.
-    { "spinner",   true,  false, false },
-    { "scripting", true,  true,  false },
-    { "physics",   true,  true,  true  },
+    { "spinner",   true,  false, false, false },
+    // The animator tier the plan specified and the first build of this file
+    // never created. Its absence mattered: three comments in the frame-rate fix
+    // claimed "the gate caught it" about Animator::time when no entity in any
+    // tier had ever carried an Animator. Skeleton and clip are built through
+    // ozz's offline builders, so this needs no Assimp and no asset files — the
+    // same fixture animator_system_test.cpp uses.
+    { "animator",  false, true,  false, false },
+    { "scripting", true,  true,  true,  false },
+    { "physics",   true,  true,  true,  true  },
 };
 
 // A divergence this tree already knows about, with its cause named. The point
@@ -253,26 +267,34 @@ static const Tier kTiers[] = {
 // reported so a fix is noticed instead of quietly turning the entry into a lie.
 struct Known { const char* tier; const char* cmp; const char* cause; };
 static const Known kKnown[] = {
-    // ── CLOSED 2026-09-08: spinner and scripting A/B ────────────────────────
-    // Their entries used to live here. The gate found the coupling (Spinner and
-    // the animator both ran at FRAME dt in tickSystems, writing hashed
-    // components at render rate), the fix moved both clocks into the fixed step
-    // at kSimDt, and this table shrank — which is the whole loop working. Both
-    // tiers are now in the GATING `unit` lane via --gating, so they cannot
-    // regress.
+    // ── EMPTY, AS OF 2026-09-08, AND THAT IS THE HEADLINE ───────────────────
+    // Every tier and both comparisons are now in the GATING lane (--gating runs
+    // exactly the pairs with no entry here). Three causes were found by this
+    // gate and closed:
     //
-    // What is left is physics, and the two rows are ONE cause: contacts are
-    // pushed from Jolt worker threads under a mutex, so their order is a thread
-    // race, and that order lands in CollisionEvents — a component scripts
-    // iterate. A/B sees it too because A/B runs the same physics.
-    { "physics",   "A/A'", "collision events are pushed from Jolt worker threads "
-                           "in thread-race order into CollisionEvents, a component "
-                           "scripts iterate. JoltPlugin::updateCharacters and "
-                           "syncRuntimeBodies also iterate unordered_maps" },
-    { "physics",   "A/B",  "same cause as A/A' — the thread race is present at any "
-                           "frame cadence. NOT render-rate coupling: the Transform "
-                           "divergence this row used to carry is gone" },
+    //   Spinner   ran in tickSystems() at FRAME dt, writing Transform.
+    //   Animator  same function, two lines below, writing Animator::time.
+    //             Both clocks moved into the fixed step at kSimDt
+    //             (BUG-0053, runtime_sim.cpp).
+    //   Contacts  arrived from Jolt worker threads in thread-race order and
+    //             became the order of CollisionEvents::entered/exited, which
+    //             scripts iterate. Sorted at the source, and the maps whose
+    //             iteration drives body destruction and character stepping
+    //             became ordered (BUG-0054, jolt_plugin.h).
+    //
+    // ── ADDING A ROW HERE SILENTLY REMOVES A PAIR FROM THE GATING LANE ──────
+    // Promotion is automatic and so is DEMOTION, which is the asymmetry to
+    // watch: a row added to shut the gate up looks identical, in the full
+    // lane's output, to a divergence that was always known. So kExpectGating
+    // below pins the count, and shrinking the gating lane fails the test until
+    // someone updates that number deliberately.
 };
+// How many (tier, comparison) pairs the gating lane is expected to cover. It is
+// kTiers x 2 minus kKnown's size, and it is written down rather than computed
+// so that SHRINKING the gating lane is a deliberate act. Without it, adding a
+// kKnown row would quietly demote a pair and every lane would still be green.
+static constexpr int kExpectGating = 10;   // 5 tiers x 2 comparisons, 0 known
+
 static const Known* findKnown(const char* tier, const char* cmp) {
     for (const auto& k : kKnown)
         if (!std::strcmp(k.tier, tier) && !std::strcmp(k.cmp, cmp)) return &k;
@@ -282,7 +304,37 @@ static const Known* findKnown(const char* tier, const char* cmp) {
 // A small world built in CODE, not from a .scene file: no filesystem, no
 // directory_iterator, no cooked assets, nothing that could vary for a reason
 // unrelated to the simulation.
-static void buildWorld(flecs::world& w, const Tier& t) {
+// A flat identity skeleton and an empty-track clip, both through ozz's offline
+// builders: no Assimp, no files, no cook. Lifted from animator_system_test.cpp,
+// which is where this shape is already proven.
+static Skeleton makeSkeleton(int boneCount) {
+    Skeleton s;
+    s.bones.resize((size_t)boneCount);
+    for (int i = 0; i < boneCount; ++i) {
+        s.bones[(size_t)i].name        = "b" + std::to_string(i);
+        s.bones[(size_t)i].parentIndex = (i == 0) ? -1 : 0;
+    }
+    s.buildBoneMap();
+    anim::buildOzzSkeleton(s);
+    return s;
+}
+static AnimClip makeClip(const Skeleton& skel, float duration) {
+    AnimClip clip;
+    if (!skel.ozz) return clip;
+    ozz::animation::offline::RawAnimation raw;
+    raw.duration = duration;
+    raw.tracks.resize((size_t)skel.ozz->num_joints());
+    ozz::animation::offline::AnimationBuilder builder;
+    ozz::unique_ptr<ozz::animation::Animation> built = builder(raw);
+    if (!built) return clip;
+    clip.name     = "gate_clip";
+    clip.duration = duration;
+    clip.ozz      = std::shared_ptr<const ozz::animation::Animation>(
+        built.release(), ozz::Deleter<ozz::animation::Animation>());
+    return clip;
+}
+
+static void buildWorld(flecs::world& w, const Tier& t, EngineRuntime& engine) {
     for (int i = 0; i < 24; ++i) {
         Transform tr{};
         tr.position = { (float)i * 0.37f, 4.0f + (float)i * 0.11f, (float)(i % 5) };
@@ -293,6 +345,34 @@ static void buildWorld(flecs::world& w, const Tier& t) {
             .set<Name>({ "prop_" + std::to_string(i) });
         if (t.spinner) e.set<Spinner>({ 0.9f + (float)i * 0.01f, 0.4f });
     }
+
+    if (t.animator) {
+        // Registered ONCE and shared: the handles are what the components
+        // carry, and Animator::clip is deliberately not hashed (a session-local
+        // id) while clipPath and clipIndex are.
+        const Skeleton skel = makeSkeleton(4);
+        const AnimClip clip = makeClip(skel, 2.0f);
+        for (int i = 0; i < 8; ++i) {
+            SkinnedMesh sm{};
+            sm.skeleton = engine.skeletons().add(Skeleton(skel));
+            Animator a{};
+            a.clip     = engine.clips().add(AnimClip(clip));
+            a.clipPath = "gate_clip";
+            a.playing  = true;
+            a.looping  = true;
+            a.speed    = 0.7f + (float)i * 0.05f;   // distinct phases per entity
+            a.time     = (float)i * 0.13f;
+            Transform tr{};
+            tr.position = { (float)i, 0.0f, 0.0f };
+            tr.rotation = { 0, 0, 0, 1 };
+            tr.scale    = { 1, 1, 1 };
+            w.entity().set<Transform>(tr)
+                      .set<Name>({ "skinned_" + std::to_string(i) })
+                      .set<SkinnedMesh>(sm)
+                      .set<Animator>(a);
+        }
+    }
+
     if (!t.physics) return;
 
     // The physics tier must actually EXERCISE the hazards it claims to look
@@ -356,9 +436,21 @@ struct RunResult {
     bool ok = false;
 };
 
+// A one-ULP nudge applied to one component of one entity at a chosen tick. This
+// is how the END-TO-END path gets tested: not just that the digest is
+// value-sensitive (section 2 does that on a bare world), but that runOnce ->
+// firstDiff -> explain() reports the RIGHT tick and names the RIGHT component
+// type. The plan called this "the one that matters" and the first build of this
+// file skipped it.
+struct Perturb {
+    int  atTick = -1;
+    bool applied = false;
+};
+
 static void runOnce(const Tier& t, int framesPerTick, int nTicks,
                     RunResult& out, int detailAtTick,
-                    simhash::HashReport* detail) {
+                    simhash::HashReport* detail,
+                    Perturb* perturb = nullptr) {
     EngineConfig cfg;
     cfg.openAssetDatabase = false;
     cfg.autoDetectProject = false;
@@ -381,7 +473,7 @@ static void runOnce(const Tier& t, int framesPerTick, int nTicks,
     engine.attachPlugins();
 
     flecs::world& w = engine.simWorld();
-    buildWorld(w, t);
+    buildWorld(w, t, engine);
 
     simhash::auditCoverage(w, out.unclassifiedStart);
 
@@ -395,6 +487,16 @@ static void runOnce(const Tier& t, int framesPerTick, int nTicks,
     out.perTick.reserve((size_t)nTicks);
     for (int tick = 0; tick < nTicks; ++tick) {
         for (int f = 0; f < framesPerTick; ++f) engine.tick(dt);
+        if (perturb && tick == perturb->atTick && !perturb->applied) {
+            // The smallest change the engine can represent, on a live
+            // component, mid-run. A text-based digest prints this identically.
+            w.query_builder<Transform, const Name>().build()
+                .each([&](flecs::entity, Transform& tr, const Name& n) {
+                    if (perturb->applied || n.value != "prop_3") return;
+                    tr.position.x = std::nextafterf(tr.position.x, INFINITY);
+                    perturb->applied = true;
+                });
+        }
         const bool want = (detail && tick == detailAtTick);
         out.perTick.push_back(simhash::hashWorld(w, want ? detail : nullptr));
     }
@@ -526,6 +628,41 @@ int main(int argc, char** argv) {
     testDigestPrimitives();
     testHashSensitivity();
 
+    // ── 2b. END TO END: the gate reports the right tick and the right type ──
+    {
+        std::printf("\n-- 2b. a one-ULP perturbation, through the whole gate --\n");
+        const Tier& t = kTiers[0];                    // static: nothing else moves
+        const int   kAt = 37, kN = 60;
+
+        RunResult a, b;
+        Perturb   p{ kAt, false };
+        runOnce(t, 1, kN, a, -1, nullptr);            // clean
+        runOnce(t, 1, kN, b, -1, nullptr, &p);        // nudged at tick kAt
+
+        CHECK(p.applied, "the perturbation was applied");
+        const int d = firstDiff(a.perTick, b.perTick);
+        CHECK(d == kAt,
+              "the gate reports the perturbation at tick %d (expected %d) — "
+              "not just that the digest changed, but that the run loop and "
+              "firstDiff locate it", d, kAt);
+
+        // ...and that explain() names Transform, not merely "something differs".
+        simhash::HashReport ra, rb;
+        RunResult da, db;
+        Perturb   p2{ kAt, false };
+        runOnce(t, 1, kAt + 1, da, kAt, &ra);
+        runOnce(t, 1, kAt + 1, db, kAt, &rb, &p2);
+        std::string named;
+        for (const auto& [name, ha] : ra.perType) {
+            auto it = std::find_if(rb.perType.begin(), rb.perType.end(),
+                                   [&](const auto& q) { return q.first == name; });
+            if (it != rb.perType.end() && it->second != ha) named += name + " ";
+        }
+        CHECK(named == "Transform ",
+              "and names exactly the component that changed: \"%s\"",
+              named.c_str());
+    }
+
     const int kTicks = 240;
     std::printf("\n-- 3. A vs A' (same process, two sequential runs) --\n");
     for (const auto& t : kTiers) {
@@ -539,18 +676,35 @@ int main(int argc, char** argv) {
         compare(t, "A/B", 1, 2, kTicks);
     }
 
+    // ── The gating lane must not have shrunk ────────────────────────────────
+    {
+        int covered = 0;
+        for (const auto& t : kTiers)
+            for (const char* c : { "A/A'", "A/B" })
+                if (!findKnown(t.name, c)) ++covered;
+        CHECK(covered == kExpectGating,
+              "the gating lane covers %d of %d tier/comparison pairs "
+              "(expected %d) — if this dropped, a kKnown row was added and "
+              "quietly DEMOTED a pair that used to be gated. That is allowed, "
+              "but it has to be a deliberate act: update kExpectGating in the "
+              "same change and say why",
+              covered, (int)(sizeof(kTiers) / sizeof(kTiers[0])) * 2,
+              kExpectGating);
+    }
+
     std::printf("\n-- findings this gate does not fix --\n");
     std::printf("  * hid::nowNs() is read INSIDE the fixed step "
                 "(runtime_sim.cpp, m_input.beginTick) — the tick boundary is "
                 "wall-clock. Inert here because no tier reads input.\n");
-    std::printf("  * m_ecs.progress() at tickSystems() takes NO delta_time, and "
-                "flecs documents 0 as \"automatically measure the time passed "
-                "since the last frame\" — the ECS pipeline advances on wall "
-                "time. Inert today (no systems are registered) and live the "
-                "moment a kit registers one.\n");
+    std::printf("  * (CLOSED 2026-09-08) m_ecs.progress() used to take NO "
+                "delta_time — flecs documents 0 as \"automatically measure the "
+                "time passed since the last frame\", i.e. a wall clock in the "
+                "ECS pipeline. It now takes an explicit dt, and the SIM world's "
+                "progress moved into the fixed step.\n");
 
     std::printf("\n%s: %d unexpected divergence(s), %d possibly-fixed, "
                 "%d assertion failure(s)\n",
                 "determinism_gate_test", g_unexpected, g_fixed, g_failures);
+
     return g_failures ? 1 : 0;
 }

@@ -53,7 +53,14 @@ simulation state. The bone palette is not — `SkinnedMesh` is `SimExempt`
 Before the split both ran in one `tick()` called at frame rate, so
 `Animator::time` advanced at render rate: the same content simulated at 1
 frame/tick and 2 frames/tick diverged on the first tick.
-`tests/determinism_gate_test.cpp` found it and now gates against it.
+
+**How that is known**, because the first version of this paragraph overstated
+it: `tests/determinism_gate_test.cpp` has an `animator` tier that builds skinned
+entities through ozz's offline builders, and reverting the split makes that
+tier's A/B comparison diverge at tick 0. It is in the gating lane, so the split
+cannot regress. The gate did *not* originally catch this — it found `Spinner`,
+the same defect two lines away in `tickSystems`, and the animator was inferred
+from proximity until the tier was built.
 
 Two things the split is careful about, both of which a naive version gets wrong:
 

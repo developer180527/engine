@@ -290,8 +290,8 @@ step means something new rather than the same known state.
 | | |
 |---|---|
 | ~~`Spinner` at frame rate~~ **FIXED** | `tickSystems()` ran the spinner query with FRAME dt, so `Transform` — a hashed component — advanced at render rate, and `m_animatorSystem.tick(dt)` two lines below had the identical defect. Both clocks now advance in the fixed step at `kSimDt`; see below. |
-| Collision order is a thread race | contacts arrive from Jolt workers and land in `CollisionEvents`, which scripts iterate. Divergent run-to-run in the same process. |
-| `m_ecs.progress()` takes no `delta_time` | flecs documents `0` as "automatically measure the time passed since the last frame", so the ECS pipeline advances on wall time. Inert today (no systems registered), live the moment a kit registers one. |
+| ~~Collision order is a thread race~~ **FIXED** | contacts arrived from Jolt workers and became the order of `CollisionEvents`, which scripts iterate — divergent run-to-run in the same process. Sorted at the source, and the maps whose iteration drives body destruction and character stepping are now ordered (BUG-0054). |
+| ~~`m_ecs.progress()` takes no `delta_time`~~ **FIXED** | flecs documents `0` as "automatically measure the time passed since the last frame", so the ECS pipeline advanced on wall time. It now takes an explicit `dt`, and the sim world's `progress` moved into the fixed step. |
 | `hid::nowNs()` inside the fixed step | the tick boundary is wall-clock. Inert while nothing in the gate's tiers reads input. |
 
 None of these are fixed here. Recording them is what the instrument is for.
@@ -323,9 +323,31 @@ services the *edit* world now passes an explicit `dt`. It used to take no
 argument at all, which flecs documents as "automatically measure the time passed
 since the last frame".
 
-**Editor behaviour is unchanged.** When no session is running, spinners and
-animation still preview at frame rate; `sim_world_test` covers both that and
-Snapshot play.
+**Editor behaviour: one deliberate change.** When no session is running,
+spinners and animation still preview at frame rate, and a gizmo drag
+(`pauseSystems`) behaves as before; `sim_world_test` covers that and Snapshot
+play.
+
+What *did* change is `SimState::Paused`. Pausing leaves `m_simulating` true and
+simply stops calling `tickSimulation`, so gameplay clocks used to keep advancing
+at frame rate while the sim was paused — and now they stop. That is the correct
+behaviour rather than a regression (`Transform` and `Animator::time` are
+simulation state, and a paused simulation advancing its own state is the bug),
+but it is a change and the first version of this paragraph claimed there wasn't
+one.
+
+### What the gate has closed, and what it still cannot see
+
+All five tiers and both comparisons are in the **gating** lane as of
+2026-09-08 — the three causes it found (Spinner, the animator, contact
+ordering) are fixed and pinned. `--gating` promotes automatically as `kKnown`
+rows are deleted; a `kExpectGating` count guards the reverse, so adding a row
+to quiet the gate fails the test until someone changes that number on purpose.
+
+It still measures **ECS-observable** determinism only. `JPH::PhysicsSystem`,
+`lua_State` and `AnimatorSystem::m_contexts` are hashed only through their
+consequences, and `hid::nowNs()` is still read inside the fixed step — inert
+while no tier reads input, and the next thing to close if one does.
 
 ### Two things a harness driving this loop must know
 

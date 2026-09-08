@@ -177,8 +177,13 @@ void EngineRuntime::tickSimulation(float dt) {
         // components they write — Transform for the spinner, Animator::time for
         // the animator — advanced at render rate. The same content simulated at
         // 1 frame/tick and 2 frames/tick produced different world state on the
-        // very first tick; tests/determinism_gate_test.cpp caught it, and the
-        // spinner is the engine's ONE demo gameplay system.
+        // very first tick.
+        //
+        // tests/determinism_gate_test.cpp measures BOTH, in separate tiers, and
+        // both are in its gating lane. The spinner is what it found first, and
+        // it is the engine's ONE demo gameplay system; the animator tier was
+        // added afterwards, when a review pointed out that this comment had
+        // been claiming measurement for a tier that did not exist.
         //
         // ADVANCE only. Sampling the pose is presentation and stays on the
         // frame (see AnimatorSystem::advance/sample) — which also means a hitch

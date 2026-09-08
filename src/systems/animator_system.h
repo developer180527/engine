@@ -73,8 +73,15 @@ public:
     //
     // Before this split both happened in one tick() called at FRAME rate, so
     // `Animator::time` advanced at render rate. tests/determinism_gate_test.cpp
-    // caught it: the same content simulated at 1 frame/tick and 2 frames/tick
-    // produced different component state, on the first tick.
+    // measures it directly: its `animator` tier builds skinned entities through
+    // ozz's offline builders, and with this split reverted that tier's A/B
+    // comparison diverges on the first tick.
+    //
+    // Worth recording how that claim was earned, because for a day it was not:
+    // the gate's first build had no animator tier at all. It found the SPINNER
+    // — the same defect two lines away in tickSystems — and this comment
+    // asserted measurement for the animator on the strength of proximity. The
+    // tier exists now, so the claim is rung 1 rather than rung 6.
     //
     // Splitting them also stops a hitch multiplying the expensive half — the
     // accumulator can run up to 4 fixed steps in one frame, and sampling four
