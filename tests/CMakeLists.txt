@@ -210,18 +210,23 @@ engine_test(determinism_gate_test LABEL determinism TIMEOUT 300)
 # Promotion is automatic: delete a kKnown entry in the test because you fixed
 # its cause, and that pair joins this lane on the next build. No second list.
 add_test(NAME determinism_gate_gating COMMAND determinism_gate_test --gating)
-# ── LABEL `determinism`, NOT `unit`, AND THAT IS NOT ABOUT DETERMINISM ───────
-# Determinism-wise this is ready to gate: all ten tier/comparison pairs pass and
-# a mutation of any of the three fixes turns it red. What blocks it from `unit`
-# is BUG-0055 — the process traps under `ctest -j4` roughly one run in ten,
-# inside JoltPlugin::onSimulationStop, because Jolt jobs run on a general
-# work-stealing pool. A test that traps one run in ten cannot gate anything, and
-# putting it in `unit` anyway would make CI a coin flip and teach people to
-# re-run until green, which is worse than not gating at all.
+# ── PROMOTED to the gating `unit` lane, 2026-09-08 ──────────────────────────
+# All ten tier/comparison pairs pass and a mutation of any of the three fixes
+# the gate found — Spinner and the animator at frame rate (BUG-0053), collision
+# events in thread-race order (BUG-0054) — turns it red.
 #
-# Move this to `unit` when BUG-0056 closes. BUG-0055 is fixed; BUG-0056 is the
-# jobs-facade abort found underneath it, and it is the only thing left blocking.
-set_tests_properties(determinism_gate_gating PROPERTIES LABELS determinism TIMEOUT 300)
+# It was held in `determinism` for a while, and not for a determinism reason:
+# the process aborted under `ctest -j4` about one run in four, then one in ten,
+# then one in fourteen, as BUG-0055 (Jolt jobs re-entering on a stealing pool)
+# and BUG-0056 (a job control block registered while it still read as complete)
+# were found underneath it and closed. A test that aborts under load cannot gate
+# anything. Thirty consecutive runs at the load that reproduced those, and six
+# consecutive full suites, are what earned the promotion.
+#
+# The FULL run stays in the non-gating `determinism` lane above: it reports
+# every tier including any future kKnown divergence, while this one fails on any
+# divergence in a pair that is supposed to hold.
+set_tests_properties(determinism_gate_gating PROPERTIES LABELS unit TIMEOUT 300)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
 engine_test(animator_system_test)

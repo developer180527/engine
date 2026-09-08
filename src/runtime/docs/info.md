@@ -338,7 +338,7 @@ one.
 
 ### What the gate has closed, and what it still cannot see
 
-All five tiers and both comparisons are in the **gating** lane as of
+All five tiers and both comparisons are in the **gating `unit`** lane as of
 2026-09-08 — the three causes it found (Spinner, the animator, contact
 ordering) are fixed and pinned. `--gating` promotes automatically as `kKnown`
 rows are deleted; a `kExpectGating` count guards the reverse, so adding a row

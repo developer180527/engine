@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-04
+verified: 2026-09-08
 covers:
   - src/runtime/jobs/
 tests:
@@ -37,6 +37,33 @@ behind: a fiber scheduler needs a thread to be fiber-ready before it can run or
 wait on tasks, so *"any thread may call `jobs::run`"* is a facade promise the new
 backend has to keep deliberately rather than inherit. `stress_jobs` case 2 is
 that promise, tested.
+
+## `run()` registers AFTER queueing, not before (BUG-0056)
+
+The order of these two statements in `jobs::run` is load-bearing:
+
+```cpp
+g_ts.AddTaskSetToPipe(task.get());     // FIRST
+{ lock; g_inflight.push_back(task); }  // then register
+```
+
+`g_inflight` exists to keep a pending block alive for callers who discard the
+handle — which is most of them. `pumpMain()` sweeps it by asking
+`GetIsComplete()`, and in enkiTS that is `m_RunningCount == 0` where the counter
+**starts at zero**. So a task that has been constructed but not yet queued reads
+as *complete*.
+
+Registering first therefore admitted a block in a state where the sweep's test
+was meaningless, and a sweep landing between the two statements dropped the
+registry's reference to a job that had not run yet. The caller then discarded
+the handle, the refcount hit zero, and the block was freed while sitting in the
+pipe — `ENKI_ASSERT(GetIsComplete())` in `~ICompletable`, or a use-after-free
+with asserts off.
+
+**`run()` is also not always asynchronous**, which is the related thing to know
+before using it: `SplitAndAddTask` executes a task inline on the submitting
+thread when that thread's pipe is full. `JoltJobsAdapter` has to defer around
+that (BUG-0055), and any caller that must not re-enter itself does too.
 
 ## Workers are classified for the OS scheduler
 

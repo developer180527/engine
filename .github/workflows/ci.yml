@@ -362,7 +362,10 @@ jobs:
       - name: Test (fuzz regression corpus)
         run: ctest --test-dir build -L fuzz-regress --output-on-failure --timeout 600
 
-      # ── The determinism gate — REPORTS, DOES NOT GATE ────────────────────
+      # ── The determinism gate — the FULL run reports, --gating GATES ───────
+      # The --gating half now runs in the `unit` step above, so a regression in
+      # any tier that is supposed to hold fails the build. This step is the full
+      # diagnostic run: every tier, including any known divergence, non-gating.
       # continue-on-error, and for the same reason the experimental build legs
       # have it: this measures a property the engine does not yet have, so a
       # failing step here is information, not a broken commit. Same promotion

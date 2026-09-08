@@ -181,11 +181,32 @@ JobHandle run(const char* name, std::function<void()> fn) {
     if (!ensureThreadRegistered()) { fn(); return {}; }
 
     auto task = std::make_shared<RunTask>(name, std::move(fn));
+
+    // ── PIPE FIRST, THEN REGISTER, and the order is the whole fix ───────────
+    // enkiTS's GetIsComplete() is `m_RunningCount == 0`, and m_RunningCount
+    // starts at ZERO — so a task that has been constructed but not yet added to
+    // the pipe reads as COMPLETE. Registering it in that state opened a window:
+    //
+    //     push to g_inflight        (reads complete: running count still 0)
+    //   > pumpMain() sweeps it out  (registry ref dropped — it "finished")
+    //     AddTaskSetToPipe          (running count 1; now genuinely pending)
+    //     return, caller discards the handle -> refcount 0 -> ~RunTask
+    //     -> ~ICompletable -> ENKI_ASSERT(GetIsComplete()) on a QUEUED task
+    //
+    // Every jobs::run caller that ignores the handle is exposed, which is most
+    // of them (JoltJobsAdapter::QueueJob among them). It needed the sweep to
+    // land inside a two-statement window, hence load-dependent (BUG-0056).
+    //
+    // Adding to the pipe first closes it: after this call the task either has a
+    // non-zero running count or has genuinely finished, so the sweep's
+    // completion test means what the registry assumes it means. The local
+    // shared_ptr above keeps the block alive across both steps, and pushing an
+    // already-finished task is harmless — the next sweep removes it.
+    g_ts.AddTaskSetToPipe(task.get());
     {
         std::lock_guard<std::mutex> lk(g_inflightMu);
         g_inflight.push_back(task);
     }
-    g_ts.AddTaskSetToPipe(task.get());
     return {task};   // handle co-owns the block — stashing is safe
 }
 
