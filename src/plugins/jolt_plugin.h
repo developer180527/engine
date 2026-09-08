@@ -164,6 +164,45 @@ public:
 
     void onSimulationStop() override {
         if (!m_physics) return;
+        // ── DRAIN FIRST, while everything the jobs touch is still alive ─────
+        // QueueJob is fire-and-forget, so a `physics.job` can still be running
+        // here. It holds a Job* from the adapter's free list and steps a
+        // PhysicsSystem this function is about to destroy, so the wait belongs
+        // BEFORE both — not at m_jobSystem.reset() further down, which would
+        // free m_physics out from under it.
+        //
+        // On a stall we LEAK the adapter rather than free it under a live job.
+        // The alternative is aborting, and this runs from the editor's Stop
+        // button: killing the process there costs the user their unsaved scene,
+        // while leaking one job list costs a few KB in a session that is
+        // already in trouble.
+        //
+        // ── WHAT THE LEAK ACTUALLY BUYS, stated exactly ────────────────────
+        // It keeps alive what the adapter owns: the Job the worker is inside,
+        // the free list backing it, m_queued and m_deferred. It does NOT make
+        // a stalled job safe, and an earlier version of this comment implied it
+        // did. That job runs
+        //
+        //     step->mContext->mPhysicsSystem->JobFindCollisions(step, ...)
+        //
+        // which also reaches m_physics — reset a few lines below — and `step`,
+        // a PhysicsUpdateContext that lived on PhysicsSystem::Update's stack
+        // and was gone before this function was ever called. Leaking m_physics
+        // too would not close that: the context dangles first.
+        //
+        // So the honest framing is that a 30-second stall is already undefined
+        // behaviour, and this removes ONE of several dangling pointers. It is
+        // chosen not because it makes the failure safe but because it makes it
+        // survivable often enough for the user to save, where abort never is.
+        if (m_jobSystem && !m_jobSystem->drain()) {
+            LOG_ERROR("Physics", "physics jobs did not finish in 30s — leaking "
+                                 "the job adapter rather than freeing it under "
+                                 "them. This removes ONE dangling pointer, not "
+                                 "all of them: the pool is stuck and the "
+                                 "process is already in undefined behaviour. "
+                                 "Save your work and restart.");
+            (void)m_jobSystem.release();     // deliberate, see above
+        }
         auto& bi = m_physics->GetBodyInterface();
         for (auto& [eid, bid] : m_entityToBody) {
             bi.RemoveBody(bid);
@@ -176,7 +215,7 @@ public:
         m_bodySyncQ = {};        // queries must die before their world
         m_charSyncQ = {};
         m_physics.reset();
-        m_jobSystem.reset();
+        m_jobSystem.reset();     // already drained above; its dtor's wait is a no-op
         m_tempAllocator.reset();
         m_accumulator = 0.0f;
         LOG_INFO("Physics", "Simulation stop");
@@ -323,19 +362,48 @@ public:
     flecs::query<const Transform, const RigidBody>           m_bodySyncQ;
     flecs::query<const Transform, const CharacterController> m_charSyncQ;
     // ── std::map, NOT unordered_map, and the reason is ITERATION order ─────
-    // These are walked to DRIVE the simulation, not merely looked up:
-    // syncRuntimeBodies destroys bodies in this order — and Jolt's own docs
-    // (Architecture.md) require bodies to be added and removed in the same
-    // order for determinism, because BodyID recycling feeds its contact sort —
-    // while updateCharacters steps characters in m_characters' order, where
-    // character-vs-character interaction makes that order observable.
+    // ORDERED ONLY WHERE THE ORDER IS OBSERVED. Both maps below are walked to
+    // DRIVE the simulation, not merely looked up: syncRuntimeBodies destroys
+    // bodies in m_entityToBody's order — and Jolt's own docs (Architecture.md)
+    // require bodies to be added and removed in the same order for determinism,
+    // because BodyID recycling feeds its contact sort — while updateCharacters
+    // steps characters in m_characters' order, where character-vs-character
+    // interaction makes that order observable.
     //
-    // An unordered_map's order depends on insertion history and allocator
-    // layout, so it differed between two runs in the same process. These are
-    // walked once per tick and hold tens to hundreds of entries; an RB-tree
+    // ── WHAT THIS IS AND IS NOT EVIDENCE FOR (corrected 2026-09-08) ────────
+    // The original note here said an unordered_map's order "differed between
+    // two runs in the same process". MEASURED, and that is not true: libc++'s
+    // std::hash<uint64_t> is the identity function and is not seeded, so for
+    // the same keys inserted in the same order the bucket layout — and the
+    // iteration order — is identical, run to run and even process to process.
+    // Reverting either map to unordered_map leaves the determinism gate GREEN,
+    // including with the mid-run despawns added to exercise the destroy loop.
+    // The divergence BUG-0054 actually measured was the CONTACT order, and the
+    // sort in dispatchCollisionEvents is what fixed it.
+    //
+    // These stay ordered anyway, for a weaker but real reason: an
+    // unordered_map's order is a function of INSERTION HISTORY and bucket
+    // count, while std::map's is a function of the live key set alone. Two runs
+    // that reach the same set of bodies by different spawn/despawn paths — a
+    // streaming world, or A/B where a despawn lands in a different frame — get
+    // the same order from one and not necessarily from the other. Jolt's own
+    // Architecture.md asks for a consistent add/remove order for the same
+    // reason: BodyID recycling feeds its contact sort.
+    //
+    // So: prior-art plus a robustness argument, NOT a measurement. Anyone
+    // tempted to revert these should know the gate will not stop them.
+    //
+    // Cost: walked once per tick over tens to hundreds of entries; an RB-tree
     // walk is not measurable against CharacterVirtual::ExtendedUpdate. If it
     // ever is, keep a hash map for LOOKUP and add a sorted vector for
     // ITERATION — but only with a measurement.
+    //
+    // The LOOKUP-ONLY maps stay hashed: m_bodyToEntity below and m_charState
+    // further down are only ever find/erase/operator[], never iterated, so
+    // ordering them would buy no determinism and cost a tree descent on every
+    // access. m_charState is the one to watch — it is looked up once per
+    // character per fixed step, from INSIDE the loop over m_characters, whose
+    // order already fixes the sequence.
     std::map<flecs::entity_t, JPH::BodyID>                        m_entityToBody;
     std::unordered_map<JPH::BodyID, flecs::entity_t, BodyIDHash>  m_bodyToEntity;
 
@@ -348,7 +416,11 @@ public:
         float     stepHeight   = 0.3f;
     };
     std::map<flecs::entity_t, JPH::Ref<JPH::CharacterVirtual>>           m_characters;
-    std::map<flecs::entity_t, CharState>                                 m_charState;
+    // Hashed on purpose — see the note on m_entityToBody. This one is never
+    // iterated; updateCharacters reaches it as `m_charState[eid]` from inside
+    // the walk over m_characters, so the sequence is already determined and
+    // ordering this map would only add a tree descent per character per step.
+    std::unordered_map<flecs::entity_t, CharState>                       m_charState;
 
     // ── Collision events (thread-safe queue) ───────────────────────────
     std::mutex                   m_collisionMutex;

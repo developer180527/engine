@@ -266,7 +266,12 @@ static const Tier kTiers[] = {
 // reports, an UNKNOWN one fails, and a known entry that STOPS firing is also
 // reported so a fix is noticed instead of quietly turning the entry into a lie.
 struct Known { const char* tier; const char* cmp; const char* cause; };
-static const Known kKnown[] = {
+// A std::vector and not a C array, because this list is EMPTY and `Known k[] =
+// {}` declares a zero-size array — a GNU extension, ill-formed in ISO C++, so
+// the table being empty (the good outcome) is the case that would break a
+// pedantic build. A vector is legal at any size and needs no count maintained
+// beside it.
+static const std::vector<Known> kKnown = {
     // ── EMPTY, AS OF 2026-09-08, AND THAT IS THE HEADLINE ───────────────────
     // Every tier and both comparisons are now in the GATING lane (--gating runs
     // exactly the pairs with no entry here). Three causes were found by this
@@ -487,6 +492,37 @@ static void runOnce(const Tier& t, int framesPerTick, int nTicks,
     out.perTick.reserve((size_t)nTicks);
     for (int tick = 0; tick < nTicks; ++tick) {
         for (int f = 0; f < framesPerTick; ++f) engine.tick(dt);
+
+        // ── DESPAWN, so the body-DESTRUCTION order is actually exercised ────
+        // syncRuntimeBodies walks m_entityToBody and destroys the bodies whose
+        // entity has died, and Jolt's Architecture.md requires bodies to be
+        // added and removed in a consistent order for determinism because
+        // BodyID recycling feeds its contact sort. Nothing here ever destroyed
+        // an entity, so that loop only ever ran over survivors — the hazard was
+        // named in the ordered-map comment and never reached by the test.
+        //
+        // HONEST LABEL: this exercises the destroy path but does NOT
+        // discriminate the ordered map. Measured — reverting m_entityToBody to
+        // an unordered_map leaves this green, with or without these despawns,
+        // because libc++'s std::hash<uint64_t> is unseeded identity and two
+        // runs with the same insertion sequence get the same bucket order. The
+        // reason those maps are ordered is a robustness argument, not something
+        // this gate can see; jolt_plugin.h says so at the declaration. What
+        // these despawns DO buy is coverage of syncRuntimeBodies' removal path
+        // at all, which had none.
+        //
+        // Deterministic by construction: a fixed tick, and a name predicate
+        // rather than an iteration-order pick.
+        if (t.physics && tick == 90) {
+            std::vector<flecs::entity> doomed;
+            w.query_builder<const Name, const RigidBody>().build()
+                .each([&](flecs::entity e, const Name& n, const RigidBody&) {
+                    for (const char* v : { "box_7", "box_12", "box_23", "box_31" })
+                        if (n.value == v) doomed.push_back(e);
+                });
+            for (flecs::entity e : doomed) e.destruct();
+        }
+
         if (perturb && tick == perturb->atTick && !perturb->applied) {
             // The smallest change the engine can represent, on a live
             // component, mid-run. A text-based digest prints this identically.

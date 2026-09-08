@@ -69,3 +69,7 @@ modules/net/target/
 tests/audio_conformance/target/
 tests/cooked_format/target/
 tests/module_abi/target/
+
+# Stray zero-byte file committed by accident in 965caf2; untracked here so a
+# shell redirect that recreates it does not show up as a repo change.
+/empty

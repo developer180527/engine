@@ -52,39 +52,60 @@ public:
     // running physics jobs, and the engine pool is still alive at this point
     // (jobs::shutdown happens later, in EngineRuntime::shutdown). Yielding lets
     // the workers finish.
-    ~JoltJobsAdapter() override {
+    //
+    // RETURNS TRUE IF THE ADAPTER IS SAFE TO DESTROY, and the caller must act
+    // on false by LEAKING it. The owner has to make that call because the
+    // destructor cannot: once ~JoltJobsAdapter is running there is no way to
+    // un-destroy the object, so aborting is all that is left. This is a plugin,
+    // and onSimulationStop runs from the editor's Stop button — killing the
+    // process there costs the user their unsaved scene, while leaking one job
+    // list costs a few KB. JoltPlugin::onSimulationStop does it properly.
+    //
+    // 30s, and the number is not a latency budget. This deadline exists to turn
+    // a use-after-free into a LOUD, RECOVERABLE failure, so it should only ever
+    // fire on a genuine stall. It was 5s and that was too tight: measured, it
+    // fired once in twenty runs with four competing physics processes
+    // saturating the machine, where the pool is legitimately starved.
+    [[nodiscard]] bool drain() {
         // DROP anything still deferred, without running it. Those jobs each
         // hold a reference taken in QueueJob, and a Job whose refcount never
         // reaches zero is never returned to the free list — which is exactly
-        // what the assert below checks. Executing them here instead would run
-        // physics work against a PhysicsSystem that is being torn down; the
-        // simulation is over by this point (onSimulationStop runs after
-        // Update has returned and its barriers have completed), so releasing
-        // is both safe and correct.
+        // what Jolt's ~FixedSizeFreeList assert checks. Executing them here
+        // instead would run physics work against a PhysicsSystem that is being
+        // torn down; the simulation is over by this point (onSimulationStop
+        // runs after Update has returned and its barriers have completed), so
+        // releasing is both safe and correct.
         {
             std::vector<Job*> pending;
             { std::lock_guard lock(m_deferMtx); pending.swap(m_deferred); }
             for (Job* j : pending) j->Release();
         }
-        // 30s, and the number is not a latency budget. This deadline exists to
-        // turn a use-after-free into a LOUD failure rather than a silent one,
-        // so it should only ever fire on a genuine stall. It was 5s and that
-        // was too tight: measured, it aborted once in twenty runs with four
-        // competing physics processes saturating the machine, where the pool is
-        // legitimately starved rather than stuck.
         const auto deadline = std::chrono::steady_clock::now()
                             + std::chrono::seconds(30);
         while (m_queued.load(std::memory_order_acquire) != 0) {
-            if (std::chrono::steady_clock::now() > deadline) {
-                // Report rather than hang or corrupt. If this ever fires, the
-                // pool stopped draining and the next line is a real UAF.
-                std::fprintf(stderr, "[Jolt] FATAL: %u physics job(s) still "
-                             "queued after 30s; refusing to free the job list "
-                             "under them.\n",
-                             m_queued.load(std::memory_order_relaxed));
-                std::abort();
-            }
+            if (std::chrono::steady_clock::now() > deadline) return false;
             std::this_thread::yield();
+        }
+        return true;
+    }
+
+    ~JoltJobsAdapter() override {
+        // LAST RESORT ONLY. Reaching a failed drain() here means the free list
+        // is about to be released while a worker is still inside
+        // `job->Execute()` against it, and there is no way to un-destroy an
+        // object mid-destructor — so aborting is the honest end of the road,
+        // not a policy choice. The policy choice lives at the call site, which
+        // leaks this object instead. That matters because this is a PLUGIN:
+        // onSimulationStop runs from the editor's Stop button, and killing the
+        // process there would take the user's unsaved scene with it. A one-off
+        // leak of a job list is the cheaper failure by a wide margin.
+        if (!drain()) {
+            std::fprintf(stderr, "[Jolt] FATAL: %u physics job(s) still queued "
+                         "after 30s, and the adapter is being destroyed anyway "
+                         "— the owner did not call drain(). Aborting rather "
+                         "than freeing the job list under a running job.\n",
+                         m_queued.load(std::memory_order_relaxed));
+            std::abort();
         }
     }
 
@@ -108,6 +129,32 @@ public:
                         const JobFunction& fnIn,
                         JPH::uint32 numDependencies = 0) override {
         // See QueueJob for why this wrapper exists.
+        //
+        // ── IT COSTS AN ALLOCATION PER JOB, AND HERE IS THE NUMBER ─────────
+        // JobFunction is std::function<void()>, 32 bytes — over libc++'s
+        // 24-byte inline buffer — so capturing one by value heap-allocates,
+        // and Job's constructor then copies again (it takes const&, so there
+        // is no move to hand it). Three constructions where the unwrapped path
+        // had two.
+        //
+        // MEASURED 2026-09-08, because the note on JoltPlugin::m_entityToBody
+        // asks for a measurement in the other direction and this deserves the
+        // same bar:
+        //   * 68 ns per job, wrapped vs plain, at -O2.
+        //   * 13 758 CreateJob calls over 240 sim ticks in the gate's physics
+        //     tier = ~57 jobs/tick, so ~3.9 us/tick, 0.23 ms per wall second.
+        //   * The same tier's physics step costs ~1.6 ms/tick in this Debug
+        //     build. That makes the wrapper ~0.24% of it, and the honest
+        //     caveat is that Debug flatters the ratio: the wrapper number is
+        //     -O2 and the step number is not. Even assuming Release makes
+        //     physics 10x faster, this stays around 2%.
+        //
+        // KEPT at that price. The cheap alternative — raise the depth inside
+        // submit()'s lambda, which is free — covers only the jobs OUR pool
+        // runs. Jolt's Barrier::Wait executes jobs directly on the waiting
+        // thread, and JobFindCollisions spawning from inside itself on that
+        // thread is exactly the case BUG-0055 was, so dropping that coverage
+        // trades a real correctness hazard for sub-1%.
         const JobFunction fn = [fnIn] { DepthScope inJob; fnIn(); };
         // Same policy as JobSystemThreadPool: the free list is sized so
         // exhaustion is a bug; if it happens, wait for jobs to complete.
@@ -185,10 +232,50 @@ protected:
     // non-nested QueueJob path and after every job this adapter runs, so a
     // deferred job reaches a worker as soon as any thread leaves Jolt — with
     // the step barrier as the backstop if none does.
+    //
+    // ── ITERATIVE, AND THE RE-ENTRY GUARD IS WHY ────────────────────────────
+    // submit() -> jobs::run can run the job INLINE on this thread — the very
+    // enkiTS behaviour that made QueueJob defer in the first place — and that
+    // inline job ends by calling flushDeferred() again. Written as a plain
+    // loop, this therefore recursed into itself once per still-deferred job,
+    // with a depth bounded only by the free list (thousands) and reached
+    // exactly under the contention that produces deferrals.
+    //
+    // The guard makes a nested call a no-op and the OUTER loop re-drains, so
+    // the work is identical and the stack is one frame deep. Thread-local, not
+    // a member: another worker flushing concurrently is fine and must not be
+    // blocked. No lock is held across submit(), so this never deadlocks.
+    // PER THREAD, and `static` so it is shared by every adapter on this thread.
+    // One adapter exists (JoltPlugin owns the only one), and if a second ever
+    // did, a nested flush of B inside A's flush would be skipped while only A's
+    // loop re-drains — B's jobs would then wait for the step barrier. Correct,
+    // but slower, and worth knowing before adding a second adapter.
+    static bool& flushing() { static thread_local bool f = false; return f; }
+
+    // RAII, NOT `busy = false` at the end, and the difference is not stylistic.
+    // submit() -> jobs::run heap-allocates (make_shared<RunTask>, plus the
+    // std::function), exceptions are on in this build, and nothing here
+    // catches. A single bad_alloc escaping the loop would leave the flag SET
+    // for the life of the thread, turning every later flushDeferred() on it
+    // into a silent no-op — deferred jobs would fall back to the step barrier
+    // forever. A transient failure becoming permanent silent degradation is a
+    // worse bug than the recursion this guard was added to prevent.
+    struct FlushGuard {
+        bool& f;
+        explicit FlushGuard(bool& b) : f(b) { f = true; }
+        ~FlushGuard() { f = false; }
+    };
+
     void flushDeferred() {
-        std::vector<Job*> pending;
-        { std::lock_guard lock(m_deferMtx); pending.swap(m_deferred); }
-        for (Job* j : pending) { submit(j); j->Release(); }
+        bool& busy = flushing();
+        if (busy) return;                  // the outer loop will take these
+        FlushGuard guard(busy);
+        for (;;) {
+            std::vector<Job*> pending;
+            { std::lock_guard lock(m_deferMtx); pending.swap(m_deferred); }
+            if (pending.empty()) break;
+            for (Job* j : pending) { submit(j); j->Release(); }
+        }
     }
 
     void QueueJobs(Job** jobs, JPH::uint numJobs) override {
