@@ -50,6 +50,10 @@
 
 class AnimatorSystem {
 public:
+    // Which half of a tick's work to do. Declared here because run() names it
+    // in its signature, and a member type must exist before that point.
+    enum class Phase { Advance, Sample };
+
     void init(flecs::world& ecs,
               SkeletonRegistry& skeletons,
               AnimClipRegistry& clips) {
@@ -60,17 +64,49 @@ public:
         installReleaseHook(ecs);
     }
 
-    // Tick the world the system was init()ed with (cached query).
-    void tick(float dt) {
+    // ── ADVANCE and SAMPLE are separate, and that separation is the point ───
+    // `Animator::time` and the crossfade clocks are SIMULATION STATE: they are
+    // hashed components (components/sim_state.h), so they must advance exactly
+    // once per fixed step at kSimDt. Sampling — ozz, blending, the bone palette
+    // — is PRESENTATION: it reads the already-advanced time and belongs on the
+    // frame.
+    //
+    // Before this split both happened in one tick() called at FRAME rate, so
+    // `Animator::time` advanced at render rate. tests/determinism_gate_test.cpp
+    // caught it: the same content simulated at 1 frame/tick and 2 frames/tick
+    // produced different component state, on the first tick.
+    //
+    // Splitting them also stops a hitch multiplying the expensive half — the
+    // accumulator can run up to 4 fixed steps in one frame, and sampling four
+    // poses when only the last is ever seen is pure waste.
+    //
+    // tick() keeps both, for the EDITOR preview: with no simulation running
+    // there is no fixed step to hang the clocks on, and animation is expected
+    // to play at frame rate in the viewport.
+    void tick(float dt) { advance(dt); sample(); }
+    void advance(float dt) {
         if (!m_skeletons || !m_clips) return;
         collect(m_query);
-        stepAll(dt);
+        stepAll(dt, Phase::Advance);
+    }
+    void sample() {
+        if (!m_skeletons || !m_clips) return;
+        collect(m_query);
+        stepAll(0.0f, Phase::Sample);
     }
 
     // Tick an arbitrary world — the play-mode snapshot world. The query is
     // cached per world; the runtime calls resetWorldCache() when the
     // snapshot world is destroyed (sim stop).
     void tick(flecs::world& world, float dt) {
+        advance(world, dt);
+        sample(world);
+    }
+    void advance(flecs::world& world, float dt) { run(world, dt, Phase::Advance); }
+    void sample (flecs::world& world)           { run(world, 0.0f, Phase::Sample); }
+
+private:
+    void run(flecs::world& world, float dt, Phase phase) {
         if (!m_skeletons || !m_clips) return;
         // ── The hook is PER WORLD, and this world is not the one init() saw ──
         // Component hooks are world state, so registering on the editor world in
@@ -84,9 +120,10 @@ public:
             m_hookedWorld = world.c_ptr();
         }
         collect(m_worldQuery.get(world));
-        stepAll(dt);
+        stepAll(dt, phase);
     }
 
+public:
     void resetWorldCache() {
         m_worldQuery.reset();
         m_contexts.clear();   // sim-world entity ids die with the world
@@ -209,23 +246,30 @@ private:
     // PARALLEL: entities are independent (own context, own components, own
     // crossfade state; registries are read-only during the tick), so this is
     // a flat parallelFor. Grain 1 — one entity's sampling is real work.
-    void stepAll(float dt) {
-        jobs::parallelFor("anim.sample", (uint32_t)m_work.size(), 1,
+    void stepAll(float dt, Phase phase) {
+        jobs::parallelFor(phase == Phase::Advance ? "anim.advance" : "anim.sample",
+            (uint32_t)m_work.size(), 1,
             [&](uint32_t begin, uint32_t end) {
                 for (uint32_t i = begin; i < end; ++i)
-                    step(*m_work[i].anim, *m_work[i].skin, *m_work[i].ctx, dt);
+                    step(*m_work[i].anim, *m_work[i].skin, *m_work[i].ctx,
+                         dt, phase);
             });
     }
 
     // Advance time, sample the clip, write the bone palette for one entity.
-    void step(Animator& anim, SkinnedMesh& skin, AnimContext& ctx, float dt) {
+    void step(Animator& anim, SkinnedMesh& skin, AnimContext& ctx, float dt,
+              Phase phase) {
+        // hasSkinMatrices and the palette are PRESENTATION, so the advance
+        // phase leaves them alone. An entity with a broken skeleton keeps
+        // exactly the behaviour it had before the split, including not
+        // advancing its clock.
         const Skeleton* skel = m_skeletons->get(skin.skeleton);
         if (!skel || skel->boneCount() == 0 || !skel->ozz) {
-            skin.hasSkinMatrices = false;
+            if (phase == Phase::Sample) skin.hasSkinMatrices = false;
             return;
         }
         if (skel->boneCount() > kMaxBones2) {
-            skin.hasSkinMatrices = false;
+            if (phase == Phase::Sample) skin.hasSkinMatrices = false;
             return;
         }
 
@@ -233,9 +277,18 @@ private:
 
         // No clip: render bind pose (raw-matrix path — precision invariant).
         if (!clip || !clip->valid()) {
-            computeBindPosePalette(*skel, skin);
+            if (phase == Phase::Sample) computeBindPosePalette(*skel, skin);
             return;
         }
+
+        if (phase == Phase::Sample) {
+            sampleOne(anim, skin, ctx, *skel, *clip);
+            return;
+        }
+
+        // ══ ADVANCE ═══════════════════════════════════════════════════════
+        // Everything below mutates simulation state and nothing else:
+        // Animator::time, Animator::playing, and the crossfade clocks.
 
         // Advance time
         if (anim.playing) {
@@ -274,6 +327,43 @@ private:
         ctx.lastClip = anim.clip;
         ctx.lastTime = anim.time;
 
+        // ── Fade progress ──────────────────────────────────────────────────
+        // Hoisted out of the sampling block, where it used to sit between the
+        // two SamplingJobs. These are CLOCKS, so they belong in this phase; the
+        // sampler now recomputes alpha from them instead of advancing them.
+        if (ctx.prevClip.valid()) {
+            const AnimClip* prevClip = m_clips->get(ctx.prevClip);
+            if (!prevClip || !prevClip->valid()) {
+                ctx.prevClip = {};
+            } else {
+                ctx.fadeElapsed += dt;
+                const float alpha = ctx.fadeDuration > 0.0f
+                    ? std::min(ctx.fadeElapsed / ctx.fadeDuration, 1.0f) : 1.0f;
+                if (alpha >= 1.0f) {
+                    ctx.prevClip = {};                 // fade complete
+                } else {
+                    // The outgoing clip keeps advancing (looped) so it does not
+                    // freeze mid-blend.
+                    ctx.prevTime += dt * anim.speed;
+                    if (prevClip->duration > 0.0f) {
+                        ctx.prevTime = std::fmod(ctx.prevTime, prevClip->duration);
+                        if (ctx.prevTime < 0.0f) ctx.prevTime += prevClip->duration;
+                    }
+                }
+            }
+        }
+    }
+
+    // ══ SAMPLE ═════════════════════════════════════════════════════════════
+    // Pure presentation: reads the clocks Phase::Advance moved and writes the
+    // bone palette. It mutates no component the determinism gate hashes, which
+    // is precisely why it is allowed to keep running at frame rate.
+    void sampleOne(const Animator& anim, SkinnedMesh& skin, AnimContext& ctx,
+                   const Skeleton& skelRef, const AnimClip& clipRef) {
+        const Skeleton* skel = &skelRef;
+        const AnimClip* clip = &clipRef;
+        ctx.ensure(*skel->ozz);
+
         // ── ozz: compressed clip -> SoA locals -> model-space matrices ──────
         ozz::animation::SamplingJob sample;
         sample.animation = clip->ozz.get();
@@ -286,18 +376,12 @@ private:
         const ozz::math::SoaTransform* finalLocals = ctx.locals.data();
         const AnimClip* prev = ctx.prevClip.valid() ? m_clips->get(ctx.prevClip) : nullptr;
         if (prev && prev->valid()) {
-            ctx.fadeElapsed += dt;
+            // READ ONLY. fadeElapsed and prevTime were advanced in
+            // Phase::Advance; touching them here would double-step the fade
+            // whenever the frame rate and the tick rate differ.
             const float alpha = ctx.fadeDuration > 0.0f
                 ? std::min(ctx.fadeElapsed / ctx.fadeDuration, 1.0f) : 1.0f;
-            if (alpha >= 1.0f) {
-                ctx.prevClip = {};   // fade complete
-            } else {
-                // Outgoing clip keeps advancing (looped) so it doesn't freeze.
-                ctx.prevTime += dt * anim.speed;
-                if (prev->duration > 0.0f) {
-                    ctx.prevTime = std::fmod(ctx.prevTime, prev->duration);
-                    if (ctx.prevTime < 0.0f) ctx.prevTime += prev->duration;
-                }
+            if (alpha < 1.0f) {
                 ozz::animation::SamplingJob samplePrev;
                 samplePrev.animation = prev->ozz.get();
                 samplePrev.context   = ctx.samplingPrev.get();

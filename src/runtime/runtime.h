@@ -353,4 +353,6 @@ private:
     bool initSystems(const EngineConfig& cfg);
     void buildDefaultScene();
     void tickSystems(float dt, bool paused);
+    // Spinner's one body — fixed step during a session, frame when previewing.
+    void stepSpinners(flecs::world& w, float dt);
 };

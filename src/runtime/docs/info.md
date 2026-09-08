@@ -289,12 +289,43 @@ step means something new rather than the same known state.
 
 | | |
 |---|---|
-| `Spinner` at frame rate | `tickSystems()` runs the spinner query with FRAME dt, so `Transform` — a hashed component — advances at render rate. `m_animatorSystem.tick(dt)` two lines below has the identical defect. This is the engine's ONE demo gameplay system. |
+| ~~`Spinner` at frame rate~~ **FIXED** | `tickSystems()` ran the spinner query with FRAME dt, so `Transform` — a hashed component — advanced at render rate, and `m_animatorSystem.tick(dt)` two lines below had the identical defect. Both clocks now advance in the fixed step at `kSimDt`; see below. |
 | Collision order is a thread race | contacts arrive from Jolt workers and land in `CollisionEvents`, which scripts iterate. Divergent run-to-run in the same process. |
 | `m_ecs.progress()` takes no `delta_time` | flecs documents `0` as "automatically measure the time passed since the last frame", so the ECS pipeline advances on wall time. Inert today (no systems registered), live the moment a kit registers one. |
 | `hid::nowNs()` inside the fixed step | the tick boundary is wall-clock. Inert while nothing in the gate's tiers reads input. |
 
 None of these are fixed here. Recording them is what the instrument is for.
+
+### Clocks advance in the fixed step; poses are sampled on the frame
+
+The fix for what the gate found, and the shape is worth stating because it is
+the rule for every gameplay system added from here:
+
+> **A component the simulation owns advances at `kSimDt`, inside the fixed step.
+> Anything derived from it for display runs on the frame.**
+
+`AnimatorSystem` is now split along exactly that line. `advance()` moves
+`Animator::time`, `Animator::playing` and the crossfade clocks — simulation
+state, hashed. `sample()` runs ozz, blending and the bone palette — presentation,
+reading the already-advanced time and hashed by nothing. `tick()` is still both,
+for the editor viewport, where there is no fixed step to hang a clock on.
+
+Splitting rather than simply moving the whole thing has a second payoff: the
+accumulator can run up to four fixed steps in one frame, and the old shape would
+have sampled four poses to show one. Now it advances four clocks and samples
+once.
+
+`Spinner` moved the same way, into `stepSpinners()` — ONE body called from two
+places at two rates, because two copies of that loop is how the two would drift.
+
+`w.progress()` moved into the fixed step too, and the frame-rate call that
+services the *edit* world now passes an explicit `dt`. It used to take no
+argument at all, which flecs documents as "automatically measure the time passed
+since the last frame".
+
+**Editor behaviour is unchanged.** When no session is running, spinners and
+animation still preview at frame rate; `sim_world_test` covers both that and
+Snapshot play.
 
 ### Two things a harness driving this loop must know
 

@@ -171,6 +171,27 @@ void EngineRuntime::tickSimulation(float dt) {
         { ENGINE_PROFILE_SCOPE("Sim.update");  m_plugins.broadcastUpdate(w, kSimDt); }
         { ENGINE_PROFILE_SCOPE("Sim.physics"); m_plugins.broadcastPhysicsStep(w, kSimDt); }
         { ENGINE_PROFILE_SCOPE("Sim.post");    m_plugins.broadcastPostPhysics(w); }
+
+        // ── Gameplay clocks, at kSimDt, INSIDE the step ────────────────────
+        // Both of these used to run once per FRAME with the frame's dt, so the
+        // components they write — Transform for the spinner, Animator::time for
+        // the animator — advanced at render rate. The same content simulated at
+        // 1 frame/tick and 2 frames/tick produced different world state on the
+        // very first tick; tests/determinism_gate_test.cpp caught it, and the
+        // spinner is the engine's ONE demo gameplay system.
+        //
+        // ADVANCE only. Sampling the pose is presentation and stays on the
+        // frame (see AnimatorSystem::advance/sample) — which also means a hitch
+        // that runs four fixed steps advances four clocks and samples one pose,
+        // instead of doing the expensive half four times over.
+        { ENGINE_PROFILE_SCOPE("Sim.spinner"); stepSpinners(w, kSimDt); }
+        { ENGINE_PROFILE_SCOPE("Sim.animClock");
+          if (m_gameWorld) m_animatorSystem.advance(w, kSimDt);
+          else             m_animatorSystem.advance(kSimDt); }
+        // The flecs pipeline is part of the simulation, so it belongs here at a
+        // fixed dt rather than outside at the frame's. Zero systems are
+        // registered today, which is exactly why moving it is cheap now.
+        { ENGINE_PROFILE_SCOPE("Sim.progress"); w.progress(kSimDt); }
     }
 
     m_renderer->setSimAlpha(m_simAccumulator / kSimDt);   // leftover fraction
@@ -185,9 +206,25 @@ void EngineRuntime::tickSimulation(float dt) {
     // like in-place simulation. (In-place mode: simWorld() == m_ecs, which
     // tickSystems already animates and progresses — don't double-tick.)
     if (m_gameWorld) {
-        m_animatorSystem.tick(*m_gameWorld, dt);
-        m_gameWorld->progress(dt);
+        // SAMPLE only — the clock advanced inside the fixed loop above, and
+        // m_gameWorld->progress() moved there with it. Calling tick() here
+        // would advance Animator::time a second time, at frame rate, which is
+        // the defect this change exists to remove.
+        m_animatorSystem.sample(*m_gameWorld);
     }
+}
+
+// ONE body for the spinner, called from two places at two rates: the fixed step
+// during a session, the frame when previewing in the editor. Two copies of this
+// loop is how the two would drift — the same argument extraction makes for
+// "ONE body, serial or parallel".
+void EngineRuntime::stepSpinners(flecs::world& w, float dt) {
+    m_spinnerQuery.get(w)
+        .each([dt](flecs::entity, Transform& t, const Spinner& s) {
+            const bx::Quaternion qY = bx::fromAxisAngle({0,1,0}, s.speedYaw   * dt);
+            const bx::Quaternion qP = bx::fromAxisAngle({1,0,0}, s.speedPitch * dt);
+            t.rotation = bx::normalize(bx::mul(qP, bx::mul(qY, t.rotation)));
+        });
 }
 
 void EngineRuntime::tickSystems(float dt, bool paused) {
@@ -200,28 +237,46 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
                          InputSystem::get().uiCapturesMouse());
     m_input.pump();
     if (!m_simulating) m_input.beginTick(hid::nowNs());
-    if (!paused) {
+    // ── EDITOR PREVIEW ONLY, and the guard is the whole point ───────────────
+    // Spinner writes Transform, a component the determinism gate hashes. Run at
+    // FRAME dt it advanced at render rate, so identical content simulated at
+    // two different frame rates diverged on the first tick. While a simulation
+    // is running it now advances in the fixed step (tickSimulation), once per
+    // kSimDt.
+    //
+    // It still runs here when NOT simulating, because that is the editor
+    // viewport preview and there is no fixed step to hang it on — the same
+    // split animation has always had ("animation runs even when gameplay
+    // systems are paused"). Nothing hashes the edit world outside a session.
+    if (!paused && !m_simulating) {
         // Spin in the world the user is LOOKING AT: the snapshot game world
         // during Play, the edit world otherwise. The old query was built
         // once on m_ecs, so Snapshot-play spinners froze while the hidden
         // edit world kept animating (audit H.2).
-        m_spinnerQuery.get(simWorld())
-            .each([dt](flecs::entity, Transform& t, const Spinner& s) {
-                const bx::Quaternion qY =
-                    bx::fromAxisAngle({0,1,0}, s.speedYaw   * dt);
-                const bx::Quaternion qP =
-                    bx::fromAxisAngle({1,0,0}, s.speedPitch * dt);
-                t.rotation = bx::normalize(bx::mul(qP, bx::mul(qY, t.rotation)));
-            });
+        stepSpinners(simWorld(), dt);
     }
     // Animation runs even when gameplay systems are paused — the editor
     // scrubber and preview should always animate. During Snapshot play the
     // game world is animated per fixed step in tickSimulation; sampling the
     // hidden edit world's animators too was pure waste (audit H.2).
+    // SAMPLE at frame rate; ADVANCE only when there is no fixed step to do it
+    // (editor preview). During a session the clock moved in tickSimulation.
     { ENGINE_PROFILE_SCOPE("Animation");
-      if (!m_gameWorld) m_animatorSystem.tick(dt); }
+      if (!m_gameWorld) {
+          if (m_simulating) m_animatorSystem.sample();
+          else              m_animatorSystem.tick(dt);
+      } }
     // Edit world stays serviced even during Snapshot play — editor panels
     // still operate on it (deferred ops, observers); progress when idle is
     // near-free. The game world progresses at fixed dt in tickSimulation.
-    { ENGINE_PROFILE_SCOPE("ECS.progress"); m_ecs.progress(); }
+    // An EXPLICIT dt. progress() with no argument means delta_time = 0, which
+    // flecs documents as "automatically measure the time passed since the last
+    // frame" — a wall clock reaching the ECS pipeline. During a session the sim
+    // world progresses in the fixed step instead; this call keeps servicing the
+    // EDIT world (deferred ops, observers, editor panels), which is why it is
+    // skipped when the edit world IS the sim world.
+    if (!(m_simulating && !m_gameWorld)) {
+        ENGINE_PROFILE_SCOPE("ECS.progress");
+        m_ecs.progress(dt);
+    }
 }

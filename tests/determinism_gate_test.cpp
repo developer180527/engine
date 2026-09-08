@@ -50,6 +50,15 @@
 // — tick(float) at runtime_frame.cpp:164 ALREADY calls tickSimulation, so those
 // loops advance the accumulator by 2x dt per iteration.
 //
+// ── HERMETIC BY CONSTRUCTION, and it was not at first ───────────────────────
+// The world is built in code and cfg.projectRoot points at an empty temp
+// directory. Both matter. Leaving projectRoot EMPTY is not neutral:
+// LuaScriptPlugin resolves `m_projectRoot / "scripts" / "autorun"`, which with
+// an empty root is a RELATIVE path against the working directory — so run from
+// the repo root the scripting tier picked up ./scripts/autorun/*.lua and
+// executed them, in `fs::directory_iterator` order. A determinism gate whose
+// result depends on where it was launched from is not one.
+//
 // ── NO INPUT IS DRIVEN, and that is deliberate for v1 ───────────────────────
 // InputManager::beginTick is called inside the fixed step with hid::nowNs(), a
 // wall clock. No tier here reads input — the worlds are driven by Spinner,
@@ -62,6 +71,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -243,22 +253,25 @@ static const Tier kTiers[] = {
 // reported so a fix is noticed instead of quietly turning the entry into a lie.
 struct Known { const char* tier; const char* cmp; const char* cause; };
 static const Known kKnown[] = {
-    // MEASURED, not predicted. The plan hypothesised the animator would be the
-    // first render-rate coupling this found; the gate found Spinner first,
-    // which is the same architectural defect one layer lower down and in the
-    // ONE gameplay system this engine ships. tickSystems() runs it with FRAME
-    // dt (runtime_sim.cpp, m_spinnerQuery), so its Transform — a hashed
-    // component — advances at render rate. The animator sits in the same
-    // function, two lines below, with the same problem.
-    { "spinner",   "A/B",  "the Spinner system runs in tickSystems() with FRAME dt, "
-                           "so Transform advances at render rate. m_animatorSystem"
-                           ".tick(dt) two lines below has the identical defect" },
-    { "scripting", "A/B",  "inherits the spinner tier" },
-    { "physics",   "A/B",  "inherits the spinner tier" },
-    { "physics",   "A/A'", "JoltPlugin::updateCharacters iterates an unordered_map, "
-                           "syncRuntimeBodies destroys in unordered_map order, and "
-                           "collision events are pushed from worker threads in "
-                           "thread-race order into a component scripts read" },
+    // ── CLOSED 2026-09-08: spinner and scripting A/B ────────────────────────
+    // Their entries used to live here. The gate found the coupling (Spinner and
+    // the animator both ran at FRAME dt in tickSystems, writing hashed
+    // components at render rate), the fix moved both clocks into the fixed step
+    // at kSimDt, and this table shrank — which is the whole loop working. Both
+    // tiers are now in the GATING `unit` lane via --gating, so they cannot
+    // regress.
+    //
+    // What is left is physics, and the two rows are ONE cause: contacts are
+    // pushed from Jolt worker threads under a mutex, so their order is a thread
+    // race, and that order lands in CollisionEvents — a component scripts
+    // iterate. A/B sees it too because A/B runs the same physics.
+    { "physics",   "A/A'", "collision events are pushed from Jolt worker threads "
+                           "in thread-race order into CollisionEvents, a component "
+                           "scripts iterate. JoltPlugin::updateCharacters and "
+                           "syncRuntimeBodies also iterate unordered_maps" },
+    { "physics",   "A/B",  "same cause as A/A' — the thread race is present at any "
+                           "frame cadence. NOT render-rate coupling: the Transform "
+                           "divergence this row used to carry is gone" },
 };
 static const Known* findKnown(const char* tier, const char* cmp) {
     for (const auto& k : kKnown)
@@ -323,6 +336,20 @@ static void buildWorld(flecs::world& w, const Tier& t) {
     }
 }
 
+// A directory with no project.json, no scripts and no assets — created once and
+// reused, so every run of every tier sees the same (empty) content.
+static const std::filesystem::path& hermeticRoot() {
+    static const std::filesystem::path p = [] {
+        std::filesystem::path d = std::filesystem::temp_directory_path()
+                                / "engine_determinism_gate_root";
+        std::error_code ec;
+        std::filesystem::remove_all(d, ec);
+        std::filesystem::create_directories(d, ec);
+        return d;
+    }();
+    return p;
+}
+
 struct RunResult {
     std::vector<uint64_t> perTick;
     std::vector<std::string> unclassifiedStart, unclassifiedEnd;
@@ -336,6 +363,15 @@ static void runOnce(const Tier& t, int framesPerTick, int nTicks,
     cfg.openAssetDatabase = false;
     cfg.autoDetectProject = false;
     cfg.defaultScene      = false;
+    // AN EMPTY PROJECT ROOT, AND IT MUST BE SET ─────────────────────────────
+    // Leaving it empty is not neutral: LuaScriptPlugin::collectAutorunScripts
+    // resolves `m_projectRoot / "scripts" / "autorun"` and, with an empty root,
+    // that is a RELATIVE path against the current working directory. Run from
+    // the repo root the scripting tier picked up ./scripts/autorun/*.lua and
+    // executed them — so the tier's behaviour depended on where the binary was
+    // launched from, and a `directory_iterator` (unordered) chose the order.
+    // A determinism gate whose result depends on its CWD is not one.
+    cfg.projectRoot = hermeticRoot();
 
     EngineRuntime engine;
     if (!engine.init(cfg, std::make_unique<HeadlessPlatform>())) return;
@@ -466,19 +502,42 @@ static void compare(const Tier& t, const char* cmp, int fptA, int fptB,
     explain(t, fptA, fptB, d);
 }
 
-int main() {
+// ── --gating ────────────────────────────────────────────────────────────────
+// Runs ONLY the (tier, comparison) pairs with no kKnown entry, and any
+// divergence in those is a hard failure. The `unit` lane runs this; the full
+// diagnostic run stays in the non-gating `determinism` lane.
+//
+// PROMOTION IS AUTOMATIC, and that is the point: delete a kKnown entry because
+// you fixed its cause, and that pair enters the gating lane on the next build
+// with no CMake edit and no second list to keep in sync. A promotion someone
+// has to remember is a promotion that does not happen.
+static bool gatingOnly(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i)
+        if (!std::strcmp(argv[i], "--gating")) return true;
+    return false;
+}
+
+int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    std::printf("determinism_gate_test: ECS-observable determinism\n");
+    const bool gating = gatingOnly(argc, argv);
+    std::printf("determinism_gate_test: ECS-observable determinism%s\n",
+                gating ? " [--gating: only pairs with no known divergence]" : "");
 
     testDigestPrimitives();
     testHashSensitivity();
 
     const int kTicks = 240;
     std::printf("\n-- 3. A vs A' (same process, two sequential runs) --\n");
-    for (const auto& t : kTiers) compare(t, "A/A'", 1, 1, kTicks);
+    for (const auto& t : kTiers) {
+        if (gating && findKnown(t.name, "A/A'")) continue;
+        compare(t, "A/A'", 1, 1, kTicks);
+    }
 
     std::printf("\n-- 4. A vs B (1 frame/tick vs 2 — render-rate coupling) --\n");
-    for (const auto& t : kTiers) compare(t, "A/B", 1, 2, kTicks);
+    for (const auto& t : kTiers) {
+        if (gating && findKnown(t.name, "A/B")) continue;
+        compare(t, "A/B", 1, 2, kTicks);
+    }
 
     std::printf("\n-- findings this gate does not fix --\n");
     std::printf("  * hid::nowNs() is read INSIDE the fixed step "

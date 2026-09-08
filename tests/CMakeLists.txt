@@ -199,6 +199,18 @@ engine_test(mesh_ownership_test)
 # adding plugins one tier at a time (Jolt, Lua) so a divergence is attributed to
 # a subsystem instead of reported as "the world differs".
 engine_test(determinism_gate_test LABEL determinism TIMEOUT 300)
+
+# ── ...and the half of it that already holds, GATING ────────────────────────
+# Same binary, --gating: it runs only the (tier, comparison) pairs with no known
+# divergence and fails on any divergence in them. As of 2026-09-08 that is the
+# static, spinner and scripting tiers on both comparisons — the render-rate
+# coupling the gate found in Spinner and the animator is fixed, so those tiers
+# must not regress.
+#
+# Promotion is automatic: delete a kKnown entry in the test because you fixed
+# its cause, and that pair joins this lane on the next build. No second list.
+add_test(NAME determinism_gate_gating COMMAND determinism_gate_test --gating)
+set_tests_properties(determinism_gate_gating PROPERTIES LABELS unit TIMEOUT 300)
 # Hermetic: builds skeletons/clips through ozz's offline builders, so it needs
 # no Assimp and no asset files (unlike anim_pose_test/clip_binding_test).
 engine_test(animator_system_test)
