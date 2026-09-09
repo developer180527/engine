@@ -233,6 +233,93 @@ inline bool safeInvert(float out[16], const float m[16], float eps = 1e-8f) {
     return true;
 }
 
+// ── worldToLocalMatrix ─────────────────────────────────────────────────────
+// The one place a world pose is brought back under a parent.
+//
+// FOUR SITES HAND-ROLLED THIS AND ALL FOUR IGNORED safeInvert's BOOL —
+// jolt_plugin.h (bodies and characters), gizmo.h, hierarchy_panel.h. On a
+// singular parent every one of them silently used IDENTITY as the inverse,
+// which does not mean "no parent": it means the child's LOCAL transform is
+// overwritten with its WORLD one, so the entity jumps by the parent's full
+// pose. A child under a parent 100 units away teleports 100 units, once, with
+// no diagnostic.
+//
+// ── WHY IT CLAMPS RATHER THAN DECLINES ─────────────────────────────────────
+// A previous draft proposed declining — leave the local pose alone and freeze
+// the entity. That leaves it permanently stuck with no repair path, even after
+// it is reparented under a healthy ancestor, because the freeze has no way to
+// notice the parent got better. Clamping the degenerate axes to a small
+// non-zero scale is what game engines do and it is RECOVERABLE: the frame the
+// parent stops being singular, the child is correct again.
+//
+// A zero scale is not exotic — it is how content hides things, and how a
+// spring or a shrink animation passes through zero on its way somewhere else.
+// Returns false when the clamp was needed, so a caller that cares can say so.
+// How many times a singular parent had to be clamped. A counter and not a log
+// line per call: this sits in a per-frame path, and a parent that is singular
+// this frame is singular every frame until the content changes.
+inline uint64_t g_singularParentClamps = 0;
+
+inline bool worldToLocalMatrix(float outLocal[16], const float world[16],
+                               const float parentWorld[16]) {
+    float parentInv[16];
+    if (safeInvert(parentInv, parentWorld)) {
+        bx::mtxMul(outLocal, world, parentInv);
+        return true;
+    }
+
+    // Singular. Rebuild the parent with every degenerate axis clamped away
+    // from zero, KEEPING ITS SIGN so a mirrored parent stays mirrored, and
+    // invert that instead.
+    bx::Vec3 p{0,0,0}; bx::Quaternion r{0,0,0,1}; bx::Vec3 s{1,1,1};
+    decomposeMatrix(parentWorld, p, r, s);
+    constexpr float kMinScale = 1e-4f;
+    auto clamp = [](float v) {
+        if (v > kMinScale || v < -kMinScale) return v;
+        return v < 0.0f ? -kMinScale : kMinScale;   // +0.0 and -0.0 both go +
+    };
+    s = { clamp(s.x), clamp(s.y), clamp(s.z) };
+
+    // Scale then rotate then translate, through the QUATERNION rather than
+    // bx::mtxSRT's Euler angles, so a rotated parent survives the repair
+    // unchanged instead of going through a conversion that need not round-trip.
+    float rot[16]; bx::mtxFromQuaternion(rot, r);
+    float scl[16]; bx::mtxScale(scl, s.x, s.y, s.z);
+    float fixed[16]; bx::mtxMul(fixed, scl, rot);
+    fixed[12] = p.x; fixed[13] = p.y; fixed[14] = p.z;
+
+    ++g_singularParentClamps;
+    if (g_singularParentClamps == 1)
+        LOG_WARN("Transform", "a parent transform is singular (a zero or "
+                 "near-zero scale); its children's local poses are computed "
+                 "against a clamped copy rather than against identity, which "
+                 "is what used to happen and moved them by the parent's whole "
+                 "pose. Warned once; g_singularParentClamps counts the rest.");
+
+    if (!safeInvert(parentInv, fixed)) {
+        // Should be unreachable — every axis is now at least kMinScale — so if
+        // it happens the parent matrix is not an SRT at all (shear, NaN) and
+        // there is no local pose to compute. Leave the caller's value alone
+        // rather than inventing one.
+        return false;
+    }
+    bx::mtxMul(outLocal, world, parentInv);
+    return false;
+}
+
+// Same, decomposed. `outScale` is optional — the physics write-back keeps the
+// entity's authored scale rather than adopting the one it derives.
+inline bool worldToLocalPose(bx::Vec3& outPos, bx::Quaternion& outRot,
+                             bx::Vec3* outScale,
+                             const float world[16], const float parentWorld[16]) {
+    float local[16];
+    const bool ok = worldToLocalMatrix(local, world, parentWorld);
+    bx::Vec3 s{1,1,1};
+    decomposeMatrix(local, outPos, outRot, s);
+    if (outScale) *outScale = s;
+    return ok;
+}
+
 // ── isAncestorOf ───────────────────────────────────────────────────────────
 // True if `ancestor` appears on the ChildOf chain above `node`. Depth-capped
 // so an already-cyclic graph can't hang the walk. Read-only: safe to call

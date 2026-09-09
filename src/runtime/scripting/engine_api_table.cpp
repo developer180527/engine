@@ -77,6 +77,11 @@ const EngineApiTableV1* engineApiHostTable(void) {
         { ENGINE_API_LOG_V,
           engineLogCategory, engineLogEnabled, engineLogWrite,
           engineLogSetAudience },
+        // A second physics group rather than an append inside the first: an
+        // append there would shift audio, assets, anim, ui and nav, and a
+        // module compiled against the old layout would read one group where
+        // another now lives. Appended at the end, this shifts nothing.
+        { ENGINE_API_PHYSICS2_V, engineTeleport },
     };
     // Re-published on every call: absent (0) until a UI backend registers.
     t.ui.version = engineUiHasBackend() ? ENGINE_API_UI_V : 0;

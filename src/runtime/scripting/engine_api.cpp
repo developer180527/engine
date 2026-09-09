@@ -141,6 +141,14 @@ bool engineCharGrounded(EngineEntity e) {
     ScriptHost* h = hostWithWorld();
     return h ? h->charGrounded(resolve(h, e)) : false;
 }
+// core.setTransform does NOT move a simulated entity: the physics write-back
+// overwrites it from the body at the end of the step (BUG-0057). This is the
+// call that works, and it moves the body, the Transform and the interpolation
+// history together with velocity cleared.
+bool engineTeleport(EngineEntity e, float x, float y, float z) {
+    ScriptHost* h = hostWithWorld();
+    return h ? h->teleport(resolve(h, e), x, y, z) : false;
+}
 
 // ── Audio ────────────────────────────────────────────────────────────────────
 uint32_t enginePlaySound(const char* p) {

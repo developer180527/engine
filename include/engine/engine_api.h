@@ -103,6 +103,9 @@ EngineRaycastHit engineRaycast(float ox, float oy, float oz,
 void engineCharMove(EngineEntity e, float vx, float vz);
 void engineCharJump(EngineEntity e, float speed);
 bool engineCharGrounded(EngineEntity e);
+/* Move a physics-owned entity. engineSetTransform does NOT: the physics
+ * write-back overwrites it at the end of the step. Returns false if no body. */
+bool engineTeleport(EngineEntity e, float x, float y, float z);
 
 /* ── Navigation (no-op until a navmesh is baked) ──────────────────────────────
  * Path queries over the engine's navmesh (Recast/Detour) — kits get world-space

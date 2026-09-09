@@ -288,13 +288,13 @@ inline void drawHierarchyPanel(EngineContext& ctx, bool* open) {
         if (reparentOp.newParent && reparentOp.newParent.is_alive()) {
             reparentOp.child.add(flecs::ChildOf, reparentOp.newParent);
             // Compute child local = child_world * inverse(parent_world)
-            float parentWorld[16], parentInv[16];
+            float parentWorld[16];
             getWorldMatrix(reparentOp.newParent, parentWorld);
-            safeInvert(parentInv, parentWorld);
             bx::Vec3 lPos{0,0,0}; bx::Quaternion lRot{0,0,0,1}; bx::Vec3 lScale{1,1,1};
-            float localMtx[16];
-            bx::mtxMul(localMtx, childWorld, parentInv);
-            decomposeMatrix(localMtx, lPos, lRot, lScale);
+            // A singular parent is clamped, not inverted to identity — dropping
+            // a child onto a zero-scaled parent used to move it by the parent's
+            // whole pose, silently, as part of the drop.
+            worldToLocalPose(lPos, lRot, &lScale, childWorld, parentWorld);
             Transform& t = reparentOp.child.get_mut<Transform>();
             t.position = lPos; t.rotation = lRot; t.scale = lScale;
         } else {

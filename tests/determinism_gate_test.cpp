@@ -199,6 +199,8 @@ static void testHashSensitivity() {
         b.destruct();
         CHECK(simhash::hashWorld(w) == base, "...and removing it restores it");
 
+
+        a.set<Spinner>({1.0f, 0.0f});
         a.set<Spinner>({1.0f, 0.0f});
         const uint64_t withComp = simhash::hashWorld(w);
         CHECK(withComp != base, "ADDING a component changes the hash");
@@ -214,6 +216,35 @@ static void testHashSensitivity() {
         w3.entity().set<Transform>(t).set<Name>({"a"});
         CHECK(simhash::hashWorld(w2) != simhash::hashWorld(w3),
               "two identical entities do not collapse into one");
+    }
+
+    // ── the ChildOf target ─────────────────────────────────────────────────
+    // A parent link decides the entity's WORLD pose, which is what physics
+    // spawns against and what the renderer draws — while `Transform` itself is
+    // BIT-IDENTICAL through a reparent. Until this was hashed, the whole class
+    // of "the same local pose under a different ancestor" was invisible here.
+    {
+        flecs::world w; fresh(w);
+        Transform t{}; t.rotation = {0,0,0,1}; t.scale = {1,1,1};
+        flecs::entity p1 = w.entity().set<Transform>(t).set<Name>({"p1"});
+        flecs::entity p2 = w.entity().set<Transform>(t).set<Name>({"p2"});
+        flecs::entity c  = w.entity().set<Transform>(t).set<Name>({"c"});
+
+        const uint64_t rootless = simhash::hashWorld(w);
+        c.child_of(p1);
+        const uint64_t under1 = simhash::hashWorld(w);
+        CHECK(under1 != rootless,
+              "PARENTING an entity changes the hash, with its Transform "
+              "untouched — the local pose is identical either way");
+
+        c.child_of(p2);
+        CHECK(simhash::hashWorld(w) != under1,
+              "and moving it to a DIFFERENT parent changes it again");
+
+        c.remove(flecs::ChildOf, flecs::Wildcard);
+        CHECK(simhash::hashWorld(w) == rootless,
+              "...and unparenting restores it — 0 for 'no parent', so removal "
+              "is a change rather than silence");
     }
 
     // ── auditCoverage actually looks ───────────────────────────────────────
@@ -448,6 +479,39 @@ static void buildWorld(flecs::world& w, const Tier& t, EngineRuntime& engine) {
                       .set<Name>({ "skinned_" + std::to_string(i) })
                       .set<SkinnedMesh>(sm)
                       .set<Animator>(a);
+        }
+    }
+
+    // ── Parented entities ──────────────────────────────────────────────────
+    // Under a rotated, UNIFORMLY scaled parent, and the uniformity is
+    // deliberate: a rotated NON-uniform parent introduces shear, which SRT
+    // cannot represent, so a divergence there would be an inherent limitation
+    // of the transform representation rather than a bug this gate should
+    // report. The non-uniform case is pinned separately, in section 6.
+    //
+    // These carry Spinner rather than a RigidBody because a physics body on a
+    // child entity is now REFUSED (stage 3b) — while parented, its world pose
+    // would be decided by the parent and by physics at once. So what this
+    // exercises is getWorldMatrix through a rotated ancestor and the ChildOf
+    // target now in hashWorld, which is where the gap was.
+    {
+        Transform pt{};
+        pt.position = { 3.0f, 2.0f, -1.0f };
+        pt.rotation = { 0.0f, 0.3826834f, 0.0f, 0.9238795f };   // 45 deg about Y
+        pt.scale    = { 2.0f, 2.0f, 2.0f };                      // UNIFORM
+        flecs::entity parent = w.entity()
+            .set<Transform>(pt).set<Name>({ "parent_rot" });
+        if (t.spinner) parent.set<Spinner>({ 0.35f, 0.2f });
+        for (int i = 0; i < 4; ++i) {
+            Transform ct{};
+            ct.position = { (float)i * 0.6f, 0.5f, 0.0f };
+            ct.rotation = { 0, 0, 0, 1 };
+            ct.scale    = { 1, 1, 1 };
+            flecs::entity c = w.entity()
+                .set<Transform>(ct)
+                .set<Name>({ "child_" + std::to_string(i) });
+            if (t.spinner) c.set<Spinner>({ 0.7f + (float)i * 0.05f, 0.3f });
+            c.child_of(parent);
         }
     }
 

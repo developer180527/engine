@@ -157,6 +157,19 @@ uint64_t hashWorld(flecs::world& w, HashReport* detail) {
             entry.hash(e, p, ed);
         }
 
+        // ── The ChildOf target ─────────────────────────────────────────────
+        // A parent link is simulation state: it decides the entity's WORLD
+        // pose, which is what physics spawns against and what the renderer
+        // draws, while `Transform` — the only thing hashed until now — stays
+        // identical through a reparent. So the whole class of "the same local
+        // pose under a different ancestor" was invisible to this gate.
+        //
+        // 0 when unparented, so REMOVING a parent is a change rather than
+        // silence. The raw id is already this function's sort key and all
+        // twelve pairs are green on it, so hashing one more adds no
+        // instability the hash does not already depend on.
+        ed.u64((uint64_t)ecs_get_target(w, raw, EcsChildOf, 0));
+
         // (EventStale, T) — an event's age decides whether a consumer still
         // sees it, so it is simulation state.
         std::vector<uint32_t> stale;

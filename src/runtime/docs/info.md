@@ -10,6 +10,7 @@ tests:
   - tests/determinism_gate_test.cpp
   - tests/sim_command_test.cpp
   - tests/move_composition_test.cpp
+  - tests/transform_authority_test.cpp
   - tests/asset_ready_test.cpp
   - tests/async_loader_test.cpp
   - tests/script_host_test.cpp
@@ -446,6 +447,74 @@ order into Jolt — and asserts it is not a no-op: 17 280 contributions accepted
   called `charMove` and read velocity back in the same tick would see the old
   value. Nothing in the tree does — but `Kits/` and `fps_shooter/` are
   gitignored, so no test here can see them.
+
+## Transform authority (`transform_authority.h`)
+
+Stage 3b, and deliberately a **backstop rather than the mechanism**. Stages 1–3a
+removed the *reasons* gameplay had to write a physics-owned field: locomotion
+composes through commands, teleport exists, kinematic bodies are gameplay-owned.
+This catches the writes that happen anyway and turns a silent drop into a named
+report — the phase, the entity, and the field.
+
+| entity kind | position | rotation | scale |
+|---|---|---|---|
+| plain (no physics) | gameplay | gameplay | gameplay |
+| `RigidBody` Static | **physics** | **physics** | gameplay |
+| `RigidBody` Dynamic | **physics** | **physics** | gameplay |
+| `RigidBody` Kinematic | gameplay | gameplay | gameplay |
+| `CharacterController` | **physics** | gameplay | gameplay |
+
+**Per field, not per entity**, and that is what makes it usable. An earlier draft
+hashed one digest per entity, which would report a perfectly legal `scale` write
+as a violation — and a watcher that fires on correct code gets muted, at which
+point it is worse than nothing because it looks like coverage. `Scale` is not in
+the `Field` enum at all, so it cannot be added back by accident.
+
+Two rows differ from what the plan specified, both for reasons implementation
+surfaced. **Kinematic is gameplay-owned** — the plan had it with Dynamic, but a
+kinematic body's pose is by definition the one gameplay decides (BUG-0058). **A
+character's rotation is gameplay-owned even though physics reads it** —
+`pushEcsToPhysics` pushes it into `CharacterVirtual` and never reads it back
+(BUG-0059); reading is not owning.
+
+`ENGINE_TRANSFORM_AUTHORITY` is 2 in debug (records + one warning per
+entity/field/phase), 1 in release (count only), 0 compiled out. The baseline is
+re-based around every legitimate writer — teleport dispatch, the physics step —
+and checked after `onUpdate`, `onPostPhysics`, `stepSpinners` and `onFrame`.
+
+**What it cannot see, stated precisely.** A write *undone within one phase*. An
+earlier draft claimed such a write "cannot alter the simulation's result"; that
+is too strong — another system reading `Transform` mid-phase can branch on the
+transient value. The correct statement is three instruments, not one: this
+watcher sees **final-state ownership**, the determinism gate sees **observable
+divergence**, and **neither** sees a transient read-back.
+`transform_authority_test.cpp` §4 asserts the blind spot rather than leaving it
+to be discovered.
+
+Mutation-verified both ways. Dropping the re-baseline after the physics step
+produces **12 false positives** in a session where physics is the only writer —
+every falling body — which is precisely the failure mode that gets a watcher
+switched off.
+
+**Two spawns are now refused rather than half-working.** A `RigidBody` or
+`CharacterController` on an entity **inside a hierarchy** is refused: a body
+lives at world root, and while parented its world pose would be decided by the
+parent and by physics at once, silently and continuously — the one rule the
+previous draft admitted it could not enforce, because the watcher sees local
+writes and not the world-pose change a parent induces. Refusal *is* checkable,
+it is what AAA engines do (attachment is a constraint), and it removes the
+desync class rather than documenting it. And an entity carrying **both** a
+`RigidBody` and a `CharacterController` gets the controller; nothing prevented
+this before and both write-backs fought over one `Transform` in query order.
+
+`hashWorld` now hashes the **`ChildOf` target** (0 for none, so removal is a
+change). A parent link decides the world pose while `Transform` stays
+bit-identical through a reparent, so "the same local pose under a different
+ancestor" was invisible to the gate. The `moves` and every other tier gained
+parented entities under a rotated, **uniformly** scaled parent — uniform
+deliberately, since a rotated non-uniform parent introduces shear that SRT
+cannot represent, which would be a limitation of the representation rather than
+a bug. All 12 pairs stayed green.
 
 **What this substrate gives, and what it does not.** Replay — *same initial
 state + the same recorded commands ⇒ same result* — is served by recording

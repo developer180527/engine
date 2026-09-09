@@ -328,6 +328,9 @@ engine_test(sim_world_test)
 # a kinematic body that could not be moved, a character whose collision shape
 # never rotated, and the gameplay pose write that is silently discarded.
 engine_test(physics_authority_test)
+# Stage 3b: the authority backstop. BOTH halves — a staged violation is
+# reported with its field and phase, and correct code is silent.
+engine_test(transform_authority_test)
 engine_test(keymap_test)
 engine_test(nav_test)
 # The PRIMITIVE tier of the engine API table (jobs / memory / drawSubmit) — the

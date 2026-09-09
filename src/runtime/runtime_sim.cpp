@@ -73,6 +73,7 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     m_movesDispatched = 0;
     m_movesUnresolved = 0;
     m_teleportsDispatched = 0;
+    m_authority.reset();
     m_scriptHost->beginSession();   // invalidate entity refs from prior runs
     // Lazily dlopen the project's kits and attach them — they join the registry
     // BEFORE the broadcast so their onSimulationStart fires with everyone else.
@@ -117,6 +118,7 @@ void EngineRuntime::stopSimulation() {
     m_scriptHost->setAudioService(nullptr);
     m_scriptHost->setCommandBuffer(nullptr);   // no fixed step, no composition
     m_stableIdCache.clear();                   // entries point into a dead world
+    m_authority.reset();                       // its query outlives the world otherwise
     m_gameWorld.reset();
     m_simSnapshot.clear();
     m_simulating = false;
@@ -189,8 +191,14 @@ void EngineRuntime::tickSimulation(float dt) {
         // the frame rate — BUG-0053's defect class inside the subsystem meant
         // to remove it. Outside this window submit() refuses and counts.
         m_commands.setSubmissionOpen(true);
+        // ── The authority baseline ─────────────────────────────────────────
+        // Re-based around every LEGITIMATE writer and checked after every phase
+        // that must not write, so a violation names the phase that made it
+        // rather than "the world differs". See runtime/transform_authority.h.
+        m_authority.rebase(w);
         { ENGINE_PROFILE_SCOPE("Sim.update");  m_plugins.broadcastUpdate(w, kSimDt); }
         m_commands.setSubmissionOpen(false);
+        m_authority.check(w, "onUpdate");
 
         // ── The tick's commands become canonical HERE ───────────────────────
         // Everything gameplay asked for during onUpdate is now in the buffer,
@@ -210,10 +218,15 @@ void EngineRuntime::tickSimulation(float dt) {
         // physics service is called once per entity in ascending EntityId
         // order. Before this, JoltPlugin::charMove stored its argument and the
         // last caller in the tick erased the rest.
+        // Teleport writes Transform, and legitimately: it is the command that
+        // exists so gameplay does not have to write the field directly.
         { ENGINE_PROFILE_SCOPE("Sim.moves"); dispatchMoves(w); }
+        m_authority.rebase(w);
 
         { ENGINE_PROFILE_SCOPE("Sim.physics"); m_plugins.broadcastPhysicsStep(w, kSimDt); }
+        m_authority.rebase(w);          // physics owns these fields; it just wrote them
         { ENGINE_PROFILE_SCOPE("Sim.post");    m_plugins.broadcastPostPhysics(w); }
+        m_authority.check(w, "onPostPhysics");
 
         // ── Gameplay clocks, at kSimDt, INSIDE the step ────────────────────
         // Both of these used to run once per FRAME with the frame's dt, so the
@@ -233,6 +246,7 @@ void EngineRuntime::tickSimulation(float dt) {
         // that runs four fixed steps advances four clocks and samples one pose,
         // instead of doing the expensive half four times over.
         { ENGINE_PROFILE_SCOPE("Sim.spinner"); stepSpinners(w, kSimDt); }
+        m_authority.check(w, "stepSpinners");
         { ENGINE_PROFILE_SCOPE("Sim.animClock");
           if (m_gameWorld) m_animatorSystem.advance(w, kSimDt);
           else             m_animatorSystem.advance(kSimDt); }
@@ -253,6 +267,9 @@ void EngineRuntime::tickSimulation(float dt) {
     // per FRAME with real dt, after the fixed steps — this is what keeps
     // look latency at frame rate even when sim ticks slower.
     { ENGINE_PROFILE_SCOPE("Sim.frame"); m_plugins.broadcastFrame(w, dt); }
+    // Render rate, so a write here is frame-rate-coupled as well as
+    // unauthorised — BUG-0053's class on top of an ownership violation.
+    m_authority.check(w, "onFrame");
 
     // Snapshot mode runs in a separate world that tickSystems never touches —
     // run animation and the flecs pipeline here so play mode behaves exactly

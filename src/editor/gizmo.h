@@ -136,9 +136,10 @@ inline void drawGizmo(EngineContext& ctx,
         // Bring the manipulated world matrix back to local before extracting.
         float local[16];
         if (hasParent) {
-            float parentInv[16];
-            safeInvert(parentInv, parentWorld);
-            bx::mtxMul(local, ctx.gizmoState.matrix, parentInv);   // local = world * parent^-1
+            // local = world * parent^-1, with a singular parent CLAMPED rather
+            // than inverted to identity — which used to jump the entity by the
+            // parent's whole pose the first time anyone dragged it.
+            worldToLocalMatrix(local, ctx.gizmoState.matrix, parentWorld);
         } else {
             std::memcpy(local, ctx.gizmoState.matrix, sizeof(local));
         }

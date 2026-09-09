@@ -26,6 +26,7 @@
 #include "runtime/event_sweeper.h"
 #include "runtime/sim_command.h"
 #include "runtime/move_compose.h"
+#include "runtime/transform_authority.h"
 #include <unordered_map>
 #include <vector>
 #include <cstdint>
@@ -236,6 +237,10 @@ public:
     uint64_t movesDispatched() const { return m_movesDispatched; }
     uint64_t movesUnresolved() const { return m_movesUnresolved; }
     uint64_t teleportsDispatched() const { return m_teleportsDispatched; }
+    // The authority backstop: who wrote a pose field physics owns. Compiled out
+    // in retail (ENGINE_TRANSFORM_AUTHORITY 0); a backstop, not the mechanism —
+    // stages 1-3a removed the reasons to write these fields at all.
+    authority::Watcher& transformAuthority() { return m_authority; }
     // One recorded tick: what it was told to do, and WHICH tick it was.
     struct RecordedTick {
         uint64_t                       tick = 0;   // m_simFrame at execution
@@ -411,6 +416,7 @@ private:
     uint64_t                      m_movesDispatched = 0;
     uint64_t                      m_movesUnresolved = 0;
     uint64_t                      m_teleportsDispatched = 0;
+    authority::Watcher            m_authority;
     std::vector<RecordedTick>     m_cmdRing;
     size_t                        m_cmdRingHead  = 0;
     bool                          m_cmdRecording = false;

@@ -11,6 +11,7 @@
 #include "components/collision_events.h"
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include "components/rigid_body.h"
 #include "components/character_controller.h"
 #include "core/transform.h"
@@ -212,6 +213,7 @@ public:
         m_bodyToEntity.clear();
         m_characters.clear();   // JPH::Ref releases each CharacterVirtual
         m_charState.clear();
+        m_warnedSpawn.clear();
         m_bodySyncQ = {};        // queries must die before their world
         m_charSyncQ = {};
         m_physics.reset();
@@ -467,6 +469,10 @@ public:
     // access. m_charState is the one to watch — it is looked up once per
     // character per fixed step, from INSIDE the loop over m_characters, whose
     // order already fixes the sequence.
+    // Warn-once per entity for a refused spawn: syncRuntimeBodies retries every
+    // step for as long as the entity exists, so without this it is one log line
+    // per entity per frame.
+    std::unordered_set<flecs::entity_t>                           m_warnedSpawn;
     std::map<flecs::entity_t, JPH::BodyID>                        m_entityToBody;
     std::unordered_map<JPH::BodyID, flecs::entity_t, BodyIDHash>  m_bodyToEntity;
 
@@ -579,7 +585,58 @@ public:
         ecs.defer_end(); // flush deferred structural changes
     }
 
+    // ── Two spawns that are REFUSED, loudly, rather than half-working ───────
+    //
+    // A PHYSICS BODY INSIDE A HIERARCHY. The body lives at world root and the
+    // write-back converts its pose back under the parent every step, so while
+    // the parent is still the ancestor chain is merely wasteful — but the
+    // moment the parent MOVES, the child's world pose is decided by two things
+    // at once: the parent's transform and the body's own simulation. They
+    // disagree, silently and continuously, and nothing in the engine can see
+    // it: the authority watcher observes local writes, not the world-pose
+    // change a parent induces. That is the one rule the previous draft admitted
+    // it could not enforce.
+    //
+    // So it is not a rule, it is a refusal: the body is not created, the entity
+    // stays gameplay-owned and moves with its parent like any other child. That
+    // IS checkable, it is what AAA engines do — bodies live at world root and
+    // attachment is a CONSTRAINT — and it removes the desync class entirely
+    // rather than documenting it. Physics constraints are future work; until
+    // they exist this is a loud limitation instead of a quiet corruption.
+    bool refuseSpawn(flecs::entity e, const char* what) {
+        flecs::entity par = e.target(flecs::ChildOf);
+        if (par && par.is_alive() && par.has<Transform>()) {
+            if (m_warnedSpawn.insert(e.id()).second)
+                LOG_WARN("Physics", "%s NOT created for entity %llu: it is a "
+                         "child of %llu. A simulated body must live at world "
+                         "root — while parented, its pose would be decided by "
+                         "the parent and by physics at the same time, with no "
+                         "way to detect the disagreement. Unparent it, or "
+                         "leave it gameplay-owned.",
+                         what, (unsigned long long)e.id(),
+                         (unsigned long long)par.id());
+            return true;
+        }
+        return false;
+    }
+
     void spawnBody(flecs::entity e, const Transform& t, const RigidBody& rb) {
+        if (refuseSpawn(e, "RigidBody")) return;
+        // BOTH COMPONENTS: the character controller wins. Nothing prevented
+        // this before and both write-backs would fight over one Transform,
+        // every step, with the winner decided by query order. The controller
+        // wins because it is the more specific statement of intent — an entity
+        // with a CharacterController is a character, and the RigidBody on it is
+        // almost always a leftover.
+        if (e.has<CharacterController>()) {
+            if (m_warnedSpawn.insert(e.id()).second)
+                LOG_WARN("Physics", "entity %llu has BOTH a RigidBody and a "
+                         "CharacterController; the body is refused and the "
+                         "controller owns it. Two write-backs over one "
+                         "Transform would fight in query order.",
+                         (unsigned long long)e.id());
+            return;
+        }
         // Apply entity scale to shape dimensions so physics matches visual size.
         // Without this, a plane scaled (10,1,10) would have a 1x1x1 collision box.
         const float sx = std::max(t.scale.x, 0.001f);
@@ -653,6 +710,7 @@ public:
     }
 
     void spawnCharacter(flecs::entity e, const Transform&, const CharacterController& cc) {
+        if (refuseSpawn(e, "CharacterController")) return;
         float radius  = std::max(0.05f, cc.radius);
         float halfCyl = std::max(0.0f, cc.height * 0.5f - radius);
         JPH::ShapeRefC capsule = JPH::CapsuleShapeSettings(halfCyl, radius).Create().Get();
@@ -719,8 +777,11 @@ public:
                     float world[16]; bx::mtxIdentity(world);
                     world[12]=rx; world[13]=ry; world[14]=rz;
                     float parentWorld[16]; getWorldMatrix(par, parentWorld);
-                    float parentInv[16];   safeInvert(parentInv, parentWorld);
-                    float local[16];       bx::mtxMul(local, world, parentInv);
+                    float local[16];
+                    // Clamps a singular parent instead of silently inverting to
+                    // identity, which moved the child by the parent's whole
+                    // pose. See core/transform_utils.h.
+                    worldToLocalMatrix(local, world, parentWorld);
                     t.position = {local[12], local[13], local[14]};
                 } else {
                     t.position = {rx, ry, rz};
@@ -806,11 +867,11 @@ public:
                     bx::mtxFromQuaternion(world, bx::Quaternion{q.GetX(),q.GetY(),q.GetZ(),q.GetW()});
                     world[12]=p.GetX(); world[13]=p.GetY(); world[14]=p.GetZ();
                     float parentWorld[16]; getWorldMatrix(par, parentWorld);
-                    float parentInv[16];   safeInvert(parentInv, parentWorld);
-                    float local[16];       bx::mtxMul(local, world, parentInv);
-                    bx::Vec3 lp{0,0,0}; bx::Quaternion lr{0,0,0,1}; bx::Vec3 ls{1,1,1};
-                    decomposeMatrix(local, lp, lr, ls);
-                    t.position = lp; t.rotation = lr; // scale stays local
+                    bx::Vec3 lp{0,0,0}; bx::Quaternion lr{0,0,0,1};
+                    // nullptr scale: the authored local scale is kept, not the
+                    // one derived from a matrix physics never scaled.
+                    worldToLocalPose(lp, lr, nullptr, world, parentWorld);
+                    t.position = lp; t.rotation = lr;
                 } else {
                     t.position = {p.GetX(), p.GetY(), p.GetZ()};
                     t.rotation = {q.GetX(), q.GetY(), q.GetZ(), q.GetW()};

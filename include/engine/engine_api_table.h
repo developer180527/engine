@@ -77,6 +77,7 @@ extern "C" {
 #define ENGINE_API_MEMORY_V  1  /* tagged heaps + the per-frame arena          */
 #define ENGINE_API_DRAWSUB_V 1  /* submit geometry with no entity/component    */
 #define ENGINE_API_LOG_V     1  /* the engine's own log ring, by category      */
+#define ENGINE_API_PHYSICS2_V 1 /* teleport — the pose change that WORKS       */
 
 typedef struct EngineApiCoreV1 {
     uint32_t version;
@@ -125,6 +126,26 @@ typedef struct EngineApiPhysicsV1 {
     void (*charJump)(EngineEntity, float);
     bool (*charGrounded)(EngineEntity);
 } EngineApiPhysicsV1;
+
+/* ── Physics, group 2 ────────────────────────────────────────────────────────
+ * A NEW GROUP rather than an append inside EngineApiPhysicsV1, and the choice
+ * is the point. Appending to a group in the middle of the table shifts every
+ * group after it — audio, assets, anim, ui, nav — so a module compiled against
+ * the old layout reads `audio` where `assets` now lives. That is exactly what
+ * ENGINE_API_GROUP_AT exists to catch, and it forces every module to rebuild.
+ * Appended at the END of the table, this shifts nothing: an older module keeps
+ * working and simply never sees the group.
+ *
+ * teleport is here because writing an entity's transform does NOT move a
+ * physics body — the write-back overwrites it from the body at the end of the
+ * step (BUG-0057). core.setTransform therefore silently does nothing on a
+ * simulated entity, and this is the call that works. Returns false when the
+ * entity has no body the backend owns; the transform is still set either way,
+ * so a plain entity teleports too. */
+typedef struct EngineApiPhysics2V1 {
+    uint32_t version;
+    bool (*teleport)(EngineEntity, float, float, float);
+} EngineApiPhysics2V1;
 
 typedef struct EngineApiAudioV1 {
     uint32_t version;
@@ -293,6 +314,9 @@ typedef struct EngineApiTableV1 {
     /* Appended, so every offset above is untouched and only structSize moves —
      * which is exactly what an older module is allowed to ignore. */
     EngineApiLogV1        log;
+    /* Appended for the same reason as everything above it: a new GROUP moves
+     * only structSize, which an older module is allowed to ignore. */
+    EngineApiPhysics2V1   physics2;
 } EngineApiTableV1;
 
 /* ── Frozen layout ───────────────────────────────────────────────────────────
@@ -367,6 +391,7 @@ ENGINE_API_FROZEN(EngineApiJobsV1,        32);
 ENGINE_API_FROZEN(EngineApiMemoryV1,      48);
 ENGINE_API_FROZEN(EngineApiDrawSubmitV1,  24);
 ENGINE_API_FROZEN(EngineApiLogV1,         40);
+ENGINE_API_FROZEN(EngineApiPhysics2V1,    16);
 
 /* Group offsets. Derived from the sizes above (8-byte aligned, cumulative from
  * structSize's 4 bytes plus 4 of padding), and asserted rather than trusted. */
@@ -383,6 +408,7 @@ ENGINE_API_GROUP_AT(jobs,       656);
 ENGINE_API_GROUP_AT(memory,     688);
 ENGINE_API_GROUP_AT(drawSubmit, 736);
 ENGINE_API_GROUP_AT(log,        760);
+ENGINE_API_GROUP_AT(physics2,   800);
 
 /* First and last pointer of each group — the boundaries a reorder shifts. */
 ENGINE_API_FIELD_AT(EngineApiJobsV1,       workerCount,     8);
@@ -393,6 +419,7 @@ ENGINE_API_FIELD_AT(EngineApiDrawSubmitV1, submitMesh,      8);
 ENGINE_API_FIELD_AT(EngineApiDrawSubmitV1, submittedCount, 16);
 ENGINE_API_FIELD_AT(EngineApiLogV1,        category,        8);
 ENGINE_API_FIELD_AT(EngineApiLogV1,        setAudience,    32);
+ENGINE_API_FIELD_AT(EngineApiPhysics2V1,   teleport,        8);
 
 /* Host-side: the filled table (engine_api_table.cpp). */
 const EngineApiTableV1* engineApiHostTable(void);

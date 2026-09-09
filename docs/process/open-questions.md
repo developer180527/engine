@@ -138,3 +138,31 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   - **where** src/core/memory/info.md
   - **trigger** any vendored dependency bump; cheap for the libraries with a
     trivial construct-one-object path (Lua, flecs, ozz)
+
+## Transform authority, left open by stage 3b (2026-09-09)
+
+- **Scale does not reach a collider.** `spawnBody` sizes shapes from
+  `RigidBody`'s half-extents, not from `Transform.scale`, so scaling an entity
+  at runtime changes what is drawn and not what is collided with. Scale is
+  therefore gameplay-owned and the authority watcher deliberately never reports
+  it — which is correct for the watcher and leaves the underlying mismatch
+  unresolved. Re-creating the shape on a scale change is the obvious fix and is
+  a cost nobody has measured.
+- **Attachment without constraints.** Physics bodies are now refused inside
+  hierarchies, which removes a silent desync class and removes the only way to
+  attach a body to something — a turret on a tank, a held object. Physics
+  constraints are the real answer and do not exist. Until they do this is a loud
+  limitation rather than a quiet corruption, which is the trade that was chosen.
+- **Authority is derived at runtime; AAA declares it at author time.** UE's
+  `Mobility` is set in the editor and validated when the actor is placed. Here
+  it is derived from `RigidBody::bodyType` and enforced by a debug watcher, so
+  the first time a designer learns their write is dropped is when the watcher
+  fires. Surfacing the derived authority in the inspector and validating on
+  scene load is cheap and not done.
+- **Backend-shaped authority.** The table keys off `RigidBody::bodyType` and
+  `CharacterController`, both Jolt-shaped. A second physics backend, or a
+  non-physics mover, needs this generalised.
+- **The C ABI carries teleport and not the rest.** `EngineApiPhysics2V1` has
+  `teleport` only. A native kit still cannot submit a `MoveContribution`, set a
+  kinematic target, or switch a body type — those have no C entry point, and
+  `SetBodyType` has no implementation at all.

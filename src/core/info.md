@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-04
+verified: 2026-09-09
 covers:
   - src/core/
 tests:
@@ -19,6 +19,25 @@ include renderer, ECS, or editor headers.
 ## Contents
 - **`handle.h`** — `Handle<Tag>`: type-safe uint32_t wrapper for registry
   slots. Slot 0 is reserved as the null handle in every registry.
+- **`worldToLocalMatrix` / `worldToLocalPose`** (`transform_utils.h`,
+  2026-09-09) — the ONE place a world pose is brought back under a parent.
+  Four sites hand-rolled it — `jolt_plugin.h` for bodies and for characters,
+  `gizmo.h`, `hierarchy_panel.h` — and **all four ignored `safeInvert`'s
+  return value**. On a singular parent every one of them used IDENTITY as the
+  inverse, which does not mean "no parent": it means the child's LOCAL
+  transform is overwritten with its WORLD one, so the entity jumps by the
+  parent's full pose, once, with no diagnostic. A child under a parent 100
+  units away moves 100 units.
+
+  It **clamps rather than declines.** Declining — leave the pose alone and
+  freeze the entity — leaves it stuck with no repair path even after it is
+  reparented under a healthy ancestor, because the freeze has no way to notice
+  the parent got better. Clamping the degenerate axes to ±1e-4 (sign preserved,
+  so a mirrored parent stays mirrored) is what game engines do and is
+  recoverable the frame the parent stops being singular. A zero scale is not
+  exotic: it is how content hides things, and how a shrink animation passes
+  through zero on the way somewhere else. `g_singularParentClamps` counts;
+  warned once, because a parent singular this frame is singular every frame.
 - **`transform.h` / `transform_utils.h`** — position/rotation(quat)/scale
   component + matrix composition helpers (bx conventions, row-major).
   `Transform::getMatrix` writes the SRT matrix directly rather than composing
