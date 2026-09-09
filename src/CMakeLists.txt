@@ -107,6 +107,12 @@ add_library(engine_core STATIC
     # Project management — scaffolding new projects (canonical v2 layout)
     project/project_scaffold.cpp
 
+    # The tick command record: what the simulation was TOLD to do, separate
+    # from the state it produced. In engine_core, not engine_runtime, because
+    # it has no runtime dependency and a server, a replay tool or a netcode
+    # client needs it without the frame loop (runtime/sim_command.h).
+    runtime/sim_command.cpp
+
     # Single-header library implementation TUs (CPU decode only)
     assets/importers/stb_impl.cpp
     assets/importers/cgltf_impl.cpp

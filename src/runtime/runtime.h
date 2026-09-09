@@ -24,6 +24,7 @@
 #include "runtime/plugin_registry.h"
 #include "runtime/kit_host.h"
 #include "runtime/event_sweeper.h"
+#include "runtime/sim_command.h"
 #include "core/transform.h"
 #include "components/spinner.h"
 #include "systems/animator_system.h"
@@ -216,6 +217,16 @@ public:
     // Plugins — register via plugins().add(...) after init(), then call
     // attachPlugins() once. detachAll happens automatically in shutdown().
     PluginRegistry&  plugins()      { return m_plugins; }
+    // The tick's command buffer. Gameplay submits here instead of mutating
+    // simulation state directly; see runtime/sim_command.h.
+    simcmd::Buffer&  commands()     { return m_commands; }
+    // Replay capture. Off by default: recording every tick of a long session
+    // is only wanted by a test, a replay tool or a netcode client.
+    void  setCommandRecording(bool on, size_t ticks = 4096);
+    bool  commandRecording() const { return m_cmdRecording; }
+    // Commands recorded `ticksAgo` ticks back (0 = the tick just completed).
+    // Empty if that tick is outside the ring or recording was off.
+    const std::vector<simcmd::SimCommand>& recordedTick(size_t ticksAgo) const;
     KitHost&         kits()         { return m_kits; }   // manifest kits + load status
     // Mid-play single-kit control (Plug-in Manager Load/Unload buttons).
     // No-ops while not simulating — kits only exist during Play.
@@ -349,10 +360,28 @@ private:
     uint64_t                      m_simFrame   = 0;
     EventSweeper                  m_eventSweeper;      // ages event components / tick
 
+    // ── The tick command record ─────────────────────────────────────────────
+    // What the simulation was TOLD to do, kept separate from the state it
+    // produced. Submitted during onUpdate, sorted into a canonical order
+    // before physics consumes it, recorded, then cleared.
+    //
+    // The ring is what makes replay and rollback ONE mechanism rather than
+    // two: `same initial state + same commands => same resulting state` is the
+    // invariant, and tests/determinism_gate_test.cpp already measures the
+    // right-hand side. Bounded, because an unbounded record of a long session
+    // is a leak with a respectable name.
+    simcmd::Buffer                               m_commands;
+    std::vector<std::vector<simcmd::SimCommand>> m_cmdRing;
+    size_t                                       m_cmdRingHead  = 0;
+    bool                                         m_cmdRecording = false;
+
     bool initRenderer(const EngineConfig& cfg);
     bool initSystems(const EngineConfig& cfg);
     void buildDefaultScene();
     void tickSystems(float dt, bool paused);
     // Spinner's one body — fixed step during a session, frame when previewing.
     void stepSpinners(flecs::world& w, float dt);
+    // Copy this tick's commands into the replay ring. Called at the end of
+    // every fixed step, before the buffer is cleared.
+    void recordTickCommands();
 };

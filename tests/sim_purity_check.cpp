@@ -15,6 +15,7 @@
 // Growing this list IS the A.* migration; never shrink it.
 #include "runtime/camera_util.h"          // pure math since A.2
 #include "runtime/event_sweeper.h"
+#include "runtime/sim_command.h"         // the tick command record
 #include "runtime/sim_hash.h"            // the determinism gate's digest
 #include "runtime/sim_classification.h"  // ...and what it considers simulation
 #include "runtime/world_query_cache.h"

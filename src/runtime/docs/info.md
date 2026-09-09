@@ -1,13 +1,14 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-08
+verified: 2026-09-09
 parses-external-input: true
 covers:
   - src/runtime/
 tests:
   - tests/sim_world_test.cpp
   - tests/determinism_gate_test.cpp
+  - tests/sim_command_test.cpp
   - tests/asset_ready_test.cpp
   - tests/async_loader_test.cpp
   - tests/script_host_test.cpp
@@ -335,6 +336,44 @@ behaviour rather than a regression (`Transform` and `Animator::time` are
 simulation state, and a paused simulation advancing its own state is the bug),
 but it is a change and the first version of this paragraph claimed there wasn't
 one.
+
+## The tick command record (`sim_command.h`)
+
+Stage 1 of moving the engine from *"N systems mutate world state and the last
+one wins"* to
+
+```
+per-tick commands -> one simulation -> authoritative state -> presentation
+```
+
+`simcmd::Buffer` records what the simulation was **told to do** each tick,
+separately from the state that produced. Gameplay submits during `onUpdate`;
+the buffer is sorted into a canonical order **before physics consumes it**, then
+recorded and cleared.
+
+**The property it exists for:** execution order is a function of the commands —
+`(entity, source, kind, seq)` — **not of submission order**. That is precisely
+what last-writer-wins lacked, and it is why two systems acting on one entity no
+longer depend on plugin registration order for their outcome. Pinned by 200
+randomised shuffles in `tests/sim_command_test.cpp`; removing the sort reddens
+three assertions.
+
+Two deliberate choices worth knowing:
+
+* **`entity` is `EntityId::value`, not a raw `flecs::entity_t`.** Raw ids are
+  fine inside one process — `simhash::hashWorld` already sorts by them — but a
+  command stream outlives a process: a replay file, a rollback buffer, a packet.
+* **`source` is the axis a Transform-permission model could not express.** A
+  network correction, a cutscene, AI, player input and an ability are all
+  "gameplay" with different priority; stage 2's composition rules key off it.
+
+It lives in `engine_core`, not `engine_runtime`, so a server or replay tool gets
+it without the frame loop — which is also why its FNV comes from
+`addon_protocol.h` (stdlib-only) rather than `game_module.h` (pulls flecs).
+
+`EngineRuntime::setCommandRecording()` turns on a bounded ring of recent ticks.
+Off by default: recording every tick of a long session is wanted by a test, a
+replay tool or a netcode client, not by a game.
 
 ### What the gate has closed, and what it still cannot see
 

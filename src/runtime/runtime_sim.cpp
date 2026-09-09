@@ -5,6 +5,7 @@
 // NO <bgfx/bgfx.h> — sim never touches the GPU.
 #include "runtime/runtime.h"
 #include "runtime/sim_classification.h"
+#include "runtime/sim_command.h"
 #include "core/logger.h"
 #include "runtime/scripting/script_host.h"
 #include "runtime/scripting/script_services.h"
@@ -169,6 +170,19 @@ void EngineRuntime::tickSimulation(float dt) {
         // Explicit phase order so script intent lands in the SAME physics
         // step: scripts set intent -> physics applies it -> contacts dispatch.
         { ENGINE_PROFILE_SCOPE("Sim.update");  m_plugins.broadcastUpdate(w, kSimDt); }
+
+        // ── The tick's commands become canonical HERE ───────────────────────
+        // Everything gameplay asked for during onUpdate is now in the buffer.
+        // Sorting before physics consumes it is what makes the result
+        // independent of submission order — the property last-writer-wins
+        // lacked, and the reason two systems acting on one entity no longer
+        // depend on plugin registration order for their outcome.
+        //
+        // The record is kept for the whole tick rather than cleared here: the
+        // replay ring copies it after the step, and a divergence report wants
+        // to say what the tick was TOLD to do, not only what it produced.
+        m_commands.sortForExecution();
+
         { ENGINE_PROFILE_SCOPE("Sim.physics"); m_plugins.broadcastPhysicsStep(w, kSimDt); }
         { ENGINE_PROFILE_SCOPE("Sim.post");    m_plugins.broadcastPostPhysics(w); }
 
@@ -197,6 +211,11 @@ void EngineRuntime::tickSimulation(float dt) {
         // fixed dt rather than outside at the frame's. Zero systems are
         // registered today, which is exactly why moving it is cheap now.
         { ENGINE_PROFILE_SCOPE("Sim.progress"); w.progress(kSimDt); }
+
+        // Record what this tick was told to do, then start the next tick's
+        // buffer empty. The ring is bounded; see EngineRuntime::m_cmdRing.
+        recordTickCommands();
+        m_commands.clear();
     }
 
     m_renderer->setSimAlpha(m_simAccumulator / kSimDt);   // leftover fraction
@@ -223,6 +242,40 @@ void EngineRuntime::tickSimulation(float dt) {
 // during a session, the frame when previewing in the editor. Two copies of this
 // loop is how the two would drift — the same argument extraction makes for
 // "ONE body, serial or parallel".
+// ── The replay ring ─────────────────────────────────────────────────────────
+// A bounded copy of what each recent tick was told to do. Bounded because an
+// unbounded record of a long session is a leak with a respectable name; a ring
+// is also exactly the shape rollback wants (re-simulate the last N ticks).
+//
+// OFF BY DEFAULT. Recording every tick costs a vector copy per tick and is only
+// wanted by a test, a replay tool, or a netcode client — the same reasoning
+// that keeps the profiler and the memory counters opt-in.
+void EngineRuntime::setCommandRecording(bool on, size_t ticks) {
+    m_cmdRecording = on;
+    m_cmdRing.assign(on ? (ticks ? ticks : 1) : 0, {});
+    m_cmdRingHead = 0;
+}
+
+void EngineRuntime::recordTickCommands() {
+    if (!m_cmdRecording || m_cmdRing.empty()) return;
+    // Already sorted into canonical order before physics consumed it, so what
+    // is stored is what was EXECUTED, not what happened to be submitted first.
+    m_cmdRing[m_cmdRingHead] = m_commands.commands();
+    m_cmdRingHead = (m_cmdRingHead + 1) % m_cmdRing.size();
+}
+
+const std::vector<simcmd::SimCommand>&
+EngineRuntime::recordedTick(size_t ticksAgo) const {
+    static const std::vector<simcmd::SimCommand> kEmpty;
+    if (!m_cmdRecording || m_cmdRing.empty() || ticksAgo >= m_cmdRing.size())
+        return kEmpty;
+    // head points at the NEXT slot to write, so the tick just completed is
+    // head-1. Unsigned arithmetic, hence the += size before the modulo.
+    const size_t i = (m_cmdRingHead + m_cmdRing.size() - 1 - ticksAgo)
+                   % m_cmdRing.size();
+    return m_cmdRing[i];
+}
+
 void EngineRuntime::stepSpinners(flecs::world& w, float dt) {
     m_spinnerQuery.get(w)
         .each([dt](flecs::entity, Transform& t, const Spinner& s) {

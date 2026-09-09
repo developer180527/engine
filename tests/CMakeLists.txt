@@ -198,6 +198,12 @@ engine_test(mesh_ownership_test)
 # It links engine_runtime and boots a REAL headless EngineRuntime per run,
 # adding plugins one tier at a time (Jolt, Lua) so a divergence is attributed to
 # a subsystem instead of reported as "the world differs".
+# Stage 1 of the command architecture: the record of what the simulation was
+# TOLD to do each tick, separate from the state it produced. The property it
+# exists for is that EXECUTION ORDER IS A FUNCTION OF THE COMMANDS, not of
+# submission order — which is what last-writer-wins lacked.
+engine_test(sim_command_test LIB engine_core)
+
 engine_test(determinism_gate_test LABEL determinism TIMEOUT 300)
 
 # ── ...and the half of it that already holds, GATING ────────────────────────
