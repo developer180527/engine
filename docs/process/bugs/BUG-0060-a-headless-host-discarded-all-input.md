@@ -1,0 +1,11 @@
+## BUG-0060 — a headless host discarded all input
+- found:     2026-09-09
+- status:    fixed
+- class:     logic
+- where:     src/runtime/runtime_sim.cpp
+- symptom:   every key press and every mouse motion event was silently dropped in a host with no window. No error, no warning, no counter — the input system reported healthy, the action map reported healthy, and every query returned "nothing is pressed". A headless server replaying a recorded input stream, or a determinism tier driving one, would receive nothing at all and look like it had simply chosen to do nothing.
+- cause:     `tickSystems` sets the focus gate every frame from `InputSystem::get().windowFocused()`, which is `wsi::isFocused(m_window)` — and with a null window that reads as NOT FOCUSED. `InputManager::accept` then drops every press and every motion event while unfocused, which is correct behaviour for a game that has lost focus to another window: acting on input meant for someone else is worse than missing it. The gate was written for the case where a window exists and never asked what it should mean when one does not. `m_lookTotal` accumulates INSIDE that guard, so the look channel read zero too.
+- pinned-by: tests/sim_intent_test.cpp
+- lane:      unit
+- proof:     `m_input.setFocused(m_headless ? true : InputSystem::get().windowFocused())`. Without a window there is no other window the input could belong to, so the gate has nothing to protect and "focused" is the honest answer. Found by the stage-5 intent test, which measured ZERO look motion through a `ReplaySource` that was delivering plenty — and specifically by its non-vacuity assertion, because the property under test (the per-tick delta is identical at 1 and 2 frames per tick) is trivially satisfied when both are zero. The test now asserts the motion is non-zero alongside asserting it is equal.
+- note:      the class of bug is a GATE INHERITED BY A CONTEXT IT WAS NOT WRITTEN FOR. Nothing about the focus check is wrong; it simply had no answer for "no window" and the default answer happened to be the destructive one. Worth remembering when the next platform-derived flag reaches the simulation — `uiCapturesKeyboard`/`uiCapturesMouse` are read the same way one line below, and are inert headless only because their defaults are false rather than because anyone decided so.

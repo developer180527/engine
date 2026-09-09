@@ -11,6 +11,7 @@ tests:
   - tests/sim_command_test.cpp
   - tests/move_composition_test.cpp
   - tests/transform_authority_test.cpp
+  - tests/sim_intent_test.cpp
   - tests/asset_ready_test.cpp
   - tests/async_loader_test.cpp
   - tests/script_host_test.cpp
@@ -430,14 +431,25 @@ nor can be broken by an unsorted one. `tests/move_composition_test.cpp` checks
 it with 200 randomised arrival orders over 14 contributions, comparing the
 conflict counters as well as the movement.
 
-**What the shuffle check can and cannot catch** (corrected 2026-09-09 — an
-earlier note here claimed a last-writer-wins mutation reddens it at 160/200,
-and it does not; re-measured, that line stays at 0 mismatches). The shuffle
-compares every arrival order against a baseline computed by the *same* fold, so
-it detects order-DEPENDENCE and is blind to a rule that is wrong but
-deterministic — the same distinction the `moves` gate tier makes below. The
-tie-break is pinned by the explicit assertions in §4 and §5 instead: inverting
-it to last-writer-wins reddens four of them.
+**What the shuffle check can and cannot catch.** It compares every arrival
+order against a baseline computed by the *same* fold, so it detects
+order-DEPENDENCE and is blind to a rule that is wrong but DETERMINISTIC — the
+same distinction the `moves` gate tier makes below, where the instrument
+measures reproducibility and not correctness. Which mutation you try decides
+whether it says anything, and the two available ones fall on opposite sides
+(both re-measured 2026-09-09 against the 14-contribution fixture):
+
+| mutation | shuffle | explicit assertions |
+|---|---|---|
+| last-writer-wins (`addTo` → `setFrom`) | **144/200 mismatch** | 3 |
+| tie-break inversion (`seq <` → `seq >`) | **0 mismatch** | 4 |
+
+Last-writer-wins makes the result depend on which additive is folded last,
+which the shuffle moves — so the shuffle catches it. Inverting the tie-break
+changes the answer without making it order-dependent, so the shuffle cannot
+see it and the §4/§5 assertions are what pin it. An earlier version of this
+paragraph attached the "0 mismatches" figure to the last-writer-wins row; the
+structural point was right and the example was the wrong one of the two.
 
 The `moves` tier in `determinism_gate_test.cpp` covers the *path* rather than
 the rule — the per-tick fold, `EntityId`→entity resolution, and the dispatch
@@ -531,6 +543,63 @@ parented entities under a rotated, **uniformly** scaled parent — uniform
 deliberately, since a rotated non-uniform parent introduces shear that SRT
 cannot represent, which would be a limitation of the representation rather than
 a bug. All 12 pairs stayed green.
+
+## The intent layer (`sim_intent.h`)
+
+Stage 5, and the layer stage 1 deliberately **named without building** so that
+`MoveContribution` would not be mistaken for it. Two records, two questions:
+
+| record | what it holds | property | serves |
+|---|---|---|---|
+| `Intent` | what was **asked** | re-derivable | rollback, prediction |
+| `SimCommand` | what was **decided** | replayable | replay, divergence reports |
+
+Recording derived commands is enough for replay, because nothing is recomputed.
+It is not enough for rollback: a correction changes the world state the AI
+derived its contribution *from*, so the contribution has to be **re-derived**,
+which means re-running the logic, which means having the logic's inputs.
+
+**Intent is in the game's terms, not the device's.** Recording HID usages and
+button bits would bake the current bindings into every stream — edit
+`input.json` and yesterday's recording means something else — and would be
+unusable by AI, which has no device. So intent carries `moveX/moveY` from the
+action map, a look delta in raw counts (sensitivity stays a gameplay tuning
+value), and action bitsets indexed by an **ordered declaration** the game makes
+once. `ActionSet::declarationHash` travels with a stream, so replaying against a
+different list is a detected mismatch rather than a controller acting on the
+wrong bits and being debugged as a logic bug.
+
+**Sampled once per tick, inside the fixed step**, and that is the half that
+closes stage 4's stated gap. `CameraLook` stopped the render-rate write reaching
+hashed state and explicitly did **not** make look deterministic, because a
+controller latched the device in `onFrame` — which runs *after* the fixed steps
+— and fed the resulting heading into movement and raycasts. `onUpdate` therefore
+saw one frame's accumulation at 1 frame/tick and two at 2. Sampling in the fixed
+step makes a controller reading `intents()` tick-driven by construction;
+presentation may still latch at render rate, which is the presentation split
+applied to input. The sampler diffs `lookTotal` against **its own cursor** rather
+than calling `consumeLook`, because that drains a single shared cursor and would
+silently starve a kit that also calls it — `input_manager.h` states exactly this.
+
+Measured two ways. `tests/sim_intent_test.cpp` drives a real engine at both
+cadences and compares the recorded streams byte for byte; the `input` tier in
+`determinism_gate_test.cpp` does it through the **world hash** over 240 ticks,
+so its A/B row reads as *the same mouse motion at two frame rates must simulate
+identically*. That tier is what the gate's header promised since it was written
+("the moment a tier reads input, ReplaySource is how to make it deterministic")
+and could not have existed before this stage — the A/B comparison would have
+diverged on the input itself.
+
+**Two fixture defects worth recording, because both produced a green result for
+the wrong reason.** The gate tier initially also ran the contribution driver,
+whose Ability `Override` discarded the intent driver's Gameplay `Additive` — the
+composition rule working as designed, silently neutralising the thing under
+test; the tier stayed green under a mutation that samples per frame, and the
+player ended at the *identical* position at both cadences. And the tier's first
+fixture emitted one event per **tick**, so the tick's whole motion arrived on the
+first frame and the first sample took all of it either way. Both are now
+`moves = false` and motion split across the tick's frames, and the per-frame
+mutation diverges at tick 0.
 
 **What this substrate gives, and what it does not.** Replay — *same initial
 state + the same recorded commands ⇒ same result* — is served by recording

@@ -59,14 +59,26 @@
 // executed them, in `fs::directory_iterator` order. A determinism gate whose
 // result depends on where it was launched from is not one.
 //
-// ── NO INPUT IS DRIVEN, and that is deliberate for v1 ───────────────────────
-// InputManager::beginTick is called inside the fixed step with hid::nowNs(), a
-// wall clock. No tier here reads input — the worlds are driven by Spinner,
-// animation and physics — so the clock cannot reach anything hashed, and
-// feeding a ReplaySource would add machinery that proves nothing yet. The wall
-// clock is reported as a finding below rather than papered over. The moment a
-// tier reads input, ReplaySource (input_sources.h, already used in
-// input_test.cpp:322) is how to make it deterministic.
+// ── INPUT IS DRIVEN, as of stage 5 (2026-09-09) ─────────────────────────────
+// This comment used to say no tier reads input, that it was deliberate for v1,
+// and that "the moment a tier reads input, ReplaySource is how to make it
+// deterministic". The `input` tier is that tier and ReplaySource is how.
+//
+// It was not possible earlier, and the reason is worth keeping: a controller
+// latched the mouse in onFrame, at RENDER rate, and fed the resulting heading
+// into movement — so the A/B comparison (1 vs 2 frames per tick) would have
+// diverged by construction, on the input rather than on anything this gate was
+// built to find. Stage 5 samples intent once per TICK inside the fixed step
+// (runtime/sim_intent.h), which makes the A/B row for this tier read as **the
+// same mouse motion at two frame rates must simulate identically** — measured
+// through the intent sample, the contribution fold, EntityId resolution, the
+// character controller and Jolt.
+//
+// InputManager::beginTick is still called with hid::nowNs(), a wall clock, and
+// that is still a finding reported below: the events this tier feeds carry
+// small monotonic stamps, so they always fold on the tick they arrive in and
+// the clock cannot decide anything. A stream whose stamps straddled a real
+// tick boundary would be a different matter.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -97,6 +109,9 @@
 #include "components/meta_registry.h"
 #include "runtime/sim_classification.h"
 #include "runtime/sim_hash.h"
+#include "runtime/sim_intent.h"
+#include "runtime/input/input_manager.h"
+#include "runtime/input/input_sources.h"
 
 namespace { int g_failures = 0; }
 #define CHECK(cond, ...) do {                                       \
@@ -339,30 +354,111 @@ private:
     uint64_t        m_tick     = 0;
 };
 
-struct Tier { const char* name; bool spinner, animator, scripting, physics, moves; };
+// ── The intent driver (the `input` tier) ────────────────────────────────────
+// This file has said since it was written that NO TIER READS INPUT, and that
+// the moment one did, ReplaySource would be how to make it deterministic. This
+// is that tier, and it closes the instrument's largest stated blind spot.
+//
+// It is also the strongest available form of stage 5's property. The unit test
+// compares two recorded INTENT streams at 1 and 2 frames per tick; this
+// compares two WORLD HASHES over 240 ticks, through the intent sample, the
+// contribution fold, EntityId resolution, the character controller and Jolt.
+// The A/B comparison is literally "the same mouse motion at two frame rates
+// must simulate identically" — which, before the intent layer, it did not,
+// because a controller latched the device in onFrame and fed the result into
+// movement.
+static long g_intentTicks = 0;
+
+class IntentPlugin final : public IEnginePlugin {
+public:
+    const char* name()    const override { return "GateIntent"; }
+    const char* version() const override { return "1.0.0"; }
+    void onAttach(RuntimeContext&) override {}
+    void onDetach() override {}
+    void onSimulationStart(flecs::world&) override {}
+    void onSimulationStop() override {}
+
+    void onUpdate(flecs::world&, float) override {
+        if (!m_intents || !m_commands) return;
+        const simintent::Intent* in = m_intents->find(m_player);
+        if (!in) return;
+        ++g_intentTicks;
+        // A miniature controller: turn the look delta into a heading and steer
+        // along it. Deliberately the shape the FPS kit has — yaw accumulated
+        // from mouse counts, feeding the MOVEMENT direction — because that is
+        // the coupling being measured, not the camera.
+        m_yaw += in->lookDx * 0.0025f;
+        const float fx = -std::sin(m_yaw), fz = -std::cos(m_yaw);
+        m_commands->submit(simcmd::move::contribution(
+            m_player, simcmd::Source::Gameplay,
+            fx * 1.5f + in->moveX, fz * 1.5f + in->moveY, 0.0f,
+            simcmd::move::Mode::Additive));
+    }
+
+    void bind(simintent::Buffer* i, simcmd::Buffer* c, uint64_t player) {
+        m_intents = i; m_commands = c; m_player = player;
+    }
+
+private:
+    simintent::Buffer* m_intents  = nullptr;
+    simcmd::Buffer*    m_commands = nullptr;
+    uint64_t           m_player   = 0;
+    float              m_yaw      = 0.0f;
+};
+
+// The player's stable id in the input tier's world. Fixed, for the reason the
+// `moves` tier's ids are fixed: generateEntityId() is random_device-seeded.
+static constexpr uint64_t kGatePlayer = 0x5EED10C0DEull;
+
+static const char* kGateInputConfig = R"({
+  "contexts": [
+    { "name": "Gameplay",
+      "actions": [
+        { "name": "Fire", "type": "digital", "bindings": ["mouse:left"] },
+        { "name": "Move", "type": "axis2",
+          "bindings": ["key:W:+y","key:S:-y","key:D:+x","key:A:-x"] }
+      ] }
+  ]
+})";
+
+struct Tier { const char* name; bool spinner, animator, scripting, physics, moves, input; };
 static const Tier kTiers[] = {
     // A genuinely STATIC world. Nothing moves, so A/B must match — this is the
     // instrument's baseline, and if it ever fails the hash itself is wrong and
     // nothing below it is worth reading.
-    { "static",    false, false, false, false, false },
+    { "static",    false, false, false, false, false, false },
     // Spinner is the engine's one demo gameplay system, and it turns out to be
     // frame-rate driven — see the kKnown entry. Separating it from `static` is
     // what makes the baseline mean anything.
-    { "spinner",   true,  false, false, false, false },
+    { "spinner",   true,  false, false, false, false, false },
     // The animator tier the plan specified and the first build of this file
     // never created. Its absence mattered: three comments in the frame-rate fix
     // claimed "the gate caught it" about Animator::time when no entity in any
     // tier had ever carried an Animator. Skeleton and clip are built through
     // ozz's offline builders, so this needs no Assimp and no asset files — the
     // same fixture animator_system_test.cpp uses.
-    { "animator",  false, true,  false, false, false },
-    { "scripting", true,  true,  true,  false, false },
-    { "physics",   true,  true,  true,  true,  false },
+    { "animator",  false, true,  false, false, false, false },
+    { "scripting", true,  true,  true,  false, false, false },
+    { "physics",   true,  true,  true,  true,  false, false },
     // Stage 2's dispatch path: contributions composed per tick, resolved from
     // EntityId, and driven into the character controller. A superset of
     // `physics`, so a divergence here that `physics` does not show is
     // attributable to composition or resolution rather than to Jolt.
-    { "moves",     true,  true,  true,  true,  true  },
+    { "moves",     true,  true,  true,  true,  true,  false },
+    // A tier DRIVEN BY A RECORDED INPUT STREAM, which this file could not have
+    // before stage 5: the device is sampled once per TICK, so the same events
+    // produce the same simulation at either frame cadence. Read the A/B row
+    // for this tier as "the same mouse motion at 1 and 2 frames per tick".
+    //
+    // moves=FALSE, and that is load-bearing rather than tidiness. With the
+    // contribution driver also running, its Ability OVERRIDE outranked the
+    // intent driver's Gameplay ADDITIVE and discarded it — the composition
+    // rule working exactly as designed, and silently neutralising the thing
+    // under test. The tier stayed GREEN under a mutation that samples intent
+    // per frame instead of per tick, because the player's movement was never
+    // coming from the intent at all. Measured before it was fixed: the player
+    // ended at the identical position at both cadences.
+    { "input",     true,  true,  true,  true,  false, true  },
 };
 
 // A divergence this tree already knows about, with its cause named. The point
@@ -402,7 +498,7 @@ static const std::vector<Known> kKnown = {
 // kTiers x 2 minus kKnown's size, and it is written down rather than computed
 // so that SHRINKING the gating lane is a deliberate act. Without it, adding a
 // kKnown row would quietly demote a pair and every lane would still be green.
-static constexpr int kExpectGating = 12;   // 6 tiers x 2 comparisons, 0 known
+static constexpr int kExpectGating = 14;   // 7 tiers x 2 comparisons, 0 known
 
 static const Known* findKnown(const char* tier, const char* cmp) {
     for (const auto& k : kKnown)
@@ -568,6 +664,17 @@ static void buildWorld(flecs::world& w, const Tier& t, EngineRuntime& engine) {
         // component this file started adding everywhere.
         if (t.moves) e.set<EntityId>({ 0x9E3779B97F4A7C15ull + (uint64_t)i });
     }
+
+    // The player the input tier steers — its own character, so the six above
+    // keep behaving exactly as they do in the `moves` tier and a divergence
+    // here is attributable to the intent path rather than to a changed world.
+    if (t.input) {
+        CharacterController pc{};
+        w.entity().set<Transform>({ {0.0f, 2.0f, 3.0f}, {0,0,0,1}, {1,1,1} })
+                  .set<Name>({ "player" })
+                  .set<CharacterController>(pc)
+                  .set<EntityId>({ kGatePlayer });
+    }
 }
 
 // A directory with no project.json, no scripts and no assets — created once and
@@ -624,6 +731,32 @@ static void runOnce(const Tier& t, int framesPerTick, int nTicks,
 
     if (t.physics)   engine.plugins().add(std::make_shared<JoltPlugin>());
     if (t.scripting) engine.plugins().add(std::make_shared<LuaScriptPlugin>());
+    // ── A SCRIPTED DEVICE ───────────────────────────────────────────────────
+    // Installed BEFORE attachPlugins, so the manager is bound before anything
+    // reads it. The events are added per tick in the loop below rather than
+    // preloaded, so the stream is spread across frames the way a real one is —
+    // at 2 frames/tick the tick's motion arrives on one frame and is sampled
+    // on the next boundary, which is exactly the case that used to diverge.
+    input::ReplaySource* device = nullptr;
+    if (t.input) {
+        auto src = std::make_unique<input::ReplaySource>();
+        device = src.get();
+        device->addDevice({1, hid::DeviceClass::Mouse,    0x1234, 0x5678, 42, "mouse"});
+        device->addDevice({2, hid::DeviceClass::Keyboard, 0, 0, 43, "kbd"});
+        engine.inputManager().initWithSource(std::move(src));
+        engine.inputManager().loadConfigText(kGateInputConfig);
+        engine.actionSet().declare("Fire");
+        engine.actionSet().declare("Move");
+        engine.setLocalController(kGatePlayer);
+    }
+
+    std::shared_ptr<IntentPlugin> intentDriver;
+    if (t.input) {
+        intentDriver = std::make_shared<IntentPlugin>();
+        intentDriver->bind(&engine.intents(), &engine.commands(), kGatePlayer);
+        engine.plugins().add(intentDriver);
+    }
+
     std::shared_ptr<ContributionPlugin> contrib;
     if (t.moves) {
         contrib = std::make_shared<ContributionPlugin>();
@@ -647,8 +780,32 @@ static void runOnce(const Tier& t, int framesPerTick, int nTicks,
     // (kSimDt / framesPerTick) each. Frame cadence changes; sim time does not.
     const float dt = (1.0f / 60.0f) / (float)framesPerTick;
     out.perTick.reserve((size_t)nTicks);
+    uint64_t evStamp = 1;
     for (int tick = 0; tick < nTicks; ++tick) {
-        for (int f = 0; f < framesPerTick; ++f) engine.tick(dt);
+        // A deterministic "hand": a slow sweep with a reversal, so the heading
+        // the driver integrates is not monotonic and a sign error would show.
+        // Integers, so no float accumulates in the DEVICE — the arithmetic
+        // under test belongs to the engine, not the fixture.
+        const int dx = ((tick / 20) % 2) ? -8 : 10;
+        const int dy = ((tick / 13) % 2) ?  4 : -2;
+
+        for (int f = 0; f < framesPerTick; ++f) {
+            // ── THE MOTION IS SPLIT ACROSS THE TICK'S FRAMES ────────────────
+            // The same total per tick, delivered in framesPerTick pieces, so
+            // the two runs differ ONLY in cadence. This matters more than it
+            // looks: the first version of this fixture emitted one event per
+            // TICK, and a mutation that samples intent per FRAME instead of
+            // per tick left the tier GREEN — because the tick's whole motion
+            // arrived on the first frame, so the first sample took all of it
+            // either way. A tier that cannot fail under the defect it exists
+            // to catch is the BUG-0049 shape this file warns about; splitting
+            // the motion is what makes the A/B row mean what it says.
+            if (device)
+                device->addEvent({ evStamp++, 1, hid::EventType::MouseMotion,
+                                   0, 0, dx / framesPerTick,
+                                   dy / framesPerTick });
+            engine.tick(dt);
+        }
 
         // ── DESPAWN, so the body-DESTRUCTION order is actually exercised ────
         // syncRuntimeBodies walks m_entityToBody and destroys the bodies whose
@@ -910,6 +1067,10 @@ int main(int argc, char** argv) {
               "2, and a command that resolves to nothing moves nothing while "
               "still hashing as reproducible",
               g_movesDispatched, g_movesUnresolved);
+        CHECK(g_intentTicks > 0,
+              "and the input tier's driver saw an intent on %ld ticks — a tier "
+              "whose controller never ran would report 'reproducible' for the "
+              "reason an empty physics world once did", g_intentTicks);
         CHECK(g_contribRefused == 0,
               "and none were refused out of phase (%ld) — the submission "
               "window is open across broadcastUpdate, end to end",

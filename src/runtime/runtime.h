@@ -26,6 +26,7 @@
 #include "runtime/event_sweeper.h"
 #include "runtime/sim_command.h"
 #include "runtime/move_compose.h"
+#include "runtime/sim_intent.h"
 #include "runtime/transform_authority.h"
 #include <unordered_map>
 #include <vector>
@@ -225,6 +226,23 @@ public:
     // The tick's command buffer. Gameplay submits here instead of mutating
     // simulation state directly; see runtime/sim_command.h.
     simcmd::Buffer&  commands()     { return m_commands; }
+
+    // ── The tick's intents — what controllers ASKED for ─────────────────────
+    // Sampled ONCE PER TICK inside the fixed step, before onUpdate, so a
+    // controller reading this is tick-driven by construction rather than
+    // reading a device at render rate and feeding the result into simulation.
+    // See runtime/sim_intent.h for why this is a second record and not a
+    // replacement for the command buffer.
+    simintent::Buffer&    intents()   { return m_intents; }
+    // The actions sampled into Intent::held/pressed/released, in bit order.
+    // A game declares its list once; the order is the bit index, and the set's
+    // declarationHash travels with a recorded stream so a mismatch is detected.
+    simintent::ActionSet& actionSet() { return m_actionSet; }
+    // Whose intent the engine samples from the local device each tick. 0 (the
+    // default) means none — a headless server, or a host feeding intent from
+    // the network instead. EntityId::value, not a flecs id.
+    void     setLocalController(uint64_t entityId) { m_localController = entityId; }
+    uint64_t localController() const { return m_localController; }
     // Replay capture. Off by default: recording every tick of a long session
     // is only wanted by a test, a replay tool or a netcode client.
     void  setCommandRecording(bool on, size_t ticks = 4096);
@@ -241,9 +259,12 @@ public:
     // in retail (ENGINE_TRANSFORM_AUTHORITY 0); a backstop, not the mechanism —
     // stages 1-3a removed the reasons to write these fields at all.
     authority::Watcher& transformAuthority() { return m_authority; }
-    // One recorded tick: what it was told to do, and WHICH tick it was.
+    // One recorded tick: what was ASKED, what it was TOLD to do, and WHICH
+    // tick it was. Both records, because they answer different questions —
+    // replay needs the commands, rollback needs the intents (sim_intent.h).
     struct RecordedTick {
-        uint64_t                       tick = 0;   // m_simFrame at execution
+        uint64_t                        tick = 0;   // m_simFrame at execution
+        std::vector<simintent::Intent>  intents;
         std::vector<simcmd::SimCommand> cmds;
     };
     // The tick recorded `ticksAgo` steps back (0 = the tick just completed).
@@ -402,6 +423,14 @@ private:
     // without assuming a regularity that a hitch destroys. m_simFrame is
     // already maintained; storing it is 8 bytes and makes this a record.
     simcmd::Buffer                m_commands;
+    simintent::Buffer             m_intents;
+    simintent::ActionSet          m_actionSet;
+    uint64_t                      m_localController = 0;
+    // The intent sampler's OWN look cursor. consumeLook() drains a single
+    // shared cursor, so using it here would starve a kit that also calls it —
+    // input_manager.h states exactly this and prescribes diffing lookTotal
+    // instead for a second consumer.
+    double                        m_lookCursorX = 0.0, m_lookCursorY = 0.0;
     // Reused across ticks so composing a tick's movement allocates nothing in
     // the steady state — the same reason the PrevTransform queries are cached.
     std::vector<simcmd::ResolvedMove> m_resolvedMoves;
@@ -433,6 +462,8 @@ private:
     // Composes the tick's MoveContributions and drives the physics character
     // service once per entity, in ascending EntityId order.
     void dispatchMoves(flecs::world& w);
+    // Device -> Intent, once per fixed step. See sim_intent.h.
+    void sampleLocalIntent();
     // EntityId::value -> live entity, or an empty entity. See m_stableIdCache.
     flecs::entity resolveStableId(flecs::world& w, uint64_t id);
 };

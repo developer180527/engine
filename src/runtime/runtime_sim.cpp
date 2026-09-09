@@ -73,6 +73,12 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     m_movesDispatched = 0;
     m_movesUnresolved = 0;
     m_teleportsDispatched = 0;
+    m_intents.clear();
+    m_intents.setSubmissionOpen(false);
+    // A fresh session re-bases the look cursor: the totals are cumulative and
+    // never reset, so carrying yesterday's cursor would hand tick one every
+    // count the mouse produced while the editor was open.
+    m_input.lookTotal(&m_lookCursorX, &m_lookCursorY);
     m_authority.reset();
     m_scriptHost->beginSession();   // invalidate entity refs from prior runs
     // Lazily dlopen the project's kits and attach them — they join the registry
@@ -190,6 +196,16 @@ void EngineRuntime::tickSimulation(float dt) {
         // open when the caller ran, making the tick's command set depend on
         // the frame rate — BUG-0053's defect class inside the subsystem meant
         // to remove it. Outside this window submit() refuses and counts.
+        // ── Device -> Intent, ONCE PER TICK ────────────────────────────────
+        // Before onUpdate, so gameplay reads intent that was sampled at the
+        // simulation's rate rather than a device at the frame's. This is what
+        // stage 4 said it did not fix: CameraLook stopped the render-rate write
+        // reaching hashed state, and the SIMULATION still read a frame-rate
+        // accumulation. See runtime/sim_intent.h.
+        m_intents.setSubmissionOpen(true);
+        { ENGINE_PROFILE_SCOPE("Sim.intent"); sampleLocalIntent(); }
+        m_intents.sortForExecution();
+
         m_commands.setSubmissionOpen(true);
         // ── The authority baseline ─────────────────────────────────────────
         // Re-based around every LEGITIMATE writer and checked after every phase
@@ -259,6 +275,9 @@ void EngineRuntime::tickSimulation(float dt) {
         // buffer empty. The ring is bounded; see EngineRuntime::m_cmdRing.
         recordTickCommands();
         m_commands.clear();
+        // Intents stay open across onUpdate — a kit or an AI system submits its
+        // own alongside the sampled one — and close with the tick.
+        m_intents.clear();
     }
 
     m_renderer->setSimAlpha(m_simAccumulator / kSimDt);   // leftover fraction
@@ -325,6 +344,54 @@ flecs::entity EngineRuntime::resolveStableId(flecs::world& w, uint64_t id) {
     flecs::entity found = findById(w, id);
     if (found) m_stableIdCache[id] = found.id();
     return found;
+}
+
+// ── Device -> Intent, once per fixed step ───────────────────────────────────
+// The whole point of the layer: this runs INSIDE the fixed step, so what a
+// controller reads is a function of the tick and not of how many frames the
+// tick happened to be split into.
+//
+// It is a no-op until a game names its controller (setLocalController) — a
+// headless server has no local device, and a host driving intent from the
+// network wants to fill the buffer itself rather than have a device
+// contribute alongside it.
+void EngineRuntime::sampleLocalIntent() {
+    if (m_localController == 0) return;
+
+    simintent::Intent in{};
+    in.entity = m_localController;
+    in.source = 0;                       // simcmd::Source::Gameplay — the player
+
+    // ── The look delta, diffed against OUR OWN cursor ───────────────────────
+    // NOT consumeLook(). That drains a single shared cursor, so calling it here
+    // would silently starve a kit that also calls it — input_manager.h states
+    // exactly this and prescribes diffing lookTotal for a second consumer.
+    //
+    // Diffing per TICK is what makes this frame-rate-independent: the totals
+    // only ever grow, so whatever the mouse produced between the last tick and
+    // this one lands in this tick, whether that was one pump or four.
+    double lx = 0.0, ly = 0.0;
+    m_input.lookTotal(&lx, &ly);
+    in.lookDx = (float)(lx - m_lookCursorX);
+    in.lookDy = (float)(ly - m_lookCursorY);
+    m_lookCursorX = lx;
+    m_lookCursorY = ly;
+
+    // Axes and actions through the action map, so intent is in the GAME's terms
+    // — a recorded stream survives a re-bind, and an AI can produce the same
+    // struct with no device at all.
+    m_input.axis2("Move", &in.moveX, &in.moveY);
+
+    const auto& names = m_actionSet.names();
+    for (size_t i = 0; i < names.size(); ++i) {
+        const char* n = names[i].c_str();
+        const uint32_t bit = 1u << i;
+        if (m_input.actionDown(n))     in.held     |= bit;
+        if (m_input.actionPressed(n))  in.pressed  |= bit;
+        if (m_input.actionReleased(n)) in.released |= bit;
+    }
+
+    m_intents.submit(in);
 }
 
 void EngineRuntime::dispatchMoves(flecs::world& w) {
@@ -406,7 +473,8 @@ void EngineRuntime::recordTickCommands() {
     // The tick number goes in with it: a stream whose slots cannot say which
     // tick they are can only be checked against per-tick state hashes by
     // assuming no gaps, and gaps are exactly what a hitch produces.
-    m_cmdRing[m_cmdRingHead] = { m_simFrame, m_commands.commands() };
+    m_cmdRing[m_cmdRingHead] =
+        { m_simFrame, m_intents.intents(), m_commands.commands() };
     m_cmdRingHead = (m_cmdRingHead + 1) % m_cmdRing.size();
 }
 
@@ -436,7 +504,19 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
     jobs::pumpMain();   // drain job->main-thread requests; sweep finished jobs
     // Input: drain sources, mirror UI/focus gates, fold a tick snapshot.
     // (Per-frame tick today; slots into the fixed-timestep loop when it lands.)
-    m_input.setFocused(InputSystem::get().windowFocused());
+    // ── A HEADLESS HOST HAS NO WINDOW TO BE FOCUSED ─────────────────────────
+    // wsi::isFocused on a null window reads as "not focused", and
+    // InputManager::accept drops every press and every motion event while
+    // unfocused (correctly — a game must not act on input meant for another
+    // window). So a headless host silently discarded ALL input, with no
+    // diagnostic: a server replaying a recorded stream, or a determinism tier
+    // driving one, would receive nothing and look like it simply did nothing.
+    // Found by the stage-5 intent test, which measured zero motion through a
+    // ReplaySource that was delivering plenty.
+    //
+    // Without a window there is no other window for the input to belong to,
+    // so the gate has nothing to protect and the honest answer is "focused".
+    m_input.setFocused(m_headless ? true : InputSystem::get().windowFocused());
     m_input.setUICapture(InputSystem::get().uiCapturesKeyboard(),
                          InputSystem::get().uiCapturesMouse());
     m_input.pump();
