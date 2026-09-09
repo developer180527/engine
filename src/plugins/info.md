@@ -1,13 +1,14 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-08
+verified: 2026-09-09
 covers:
   - src/plugins/
 tests:
   - tests/providers_test.cpp
   - tests/stress_physics.cpp
   - tests/determinism_gate_test.cpp   # the physics tier pins the contact sort
+  - tests/physics_authority_test.cpp  # kinematic movability, character rotation, teleport
 ---
 # Plugins
 
@@ -119,3 +120,49 @@ Both run through the same `PluginRegistry` broadcasts.
 ## Future Work
 - Split plugin headers into backend (runtime-clean) + editor UI parts.
 - Service locator instead of concrete plugin types in script bindings.
+
+## Who may move a physics entity (2026-09-09)
+
+Stage 3a of the command architecture closed three defects that a
+Transform-permission model could not have reached, because each was a *missing
+operation* rather than an unauthorised one.
+
+**`pushEcsToPhysics` runs once per Jolt SUBSTEP**, before `PhysicsSystem::Update`,
+and carries the two things physics does not own into the backend:
+
+- **Kinematic bodies are driven from the ECS `Transform`** via `MoveKinematic`
+  (BUG-0058). Nothing in the tree had ever driven a kinematic pose — no
+  `MoveKinematic`, no `SetPositionAndRotation` — so moving platforms, lifts and
+  doors were unbuildable, silently. Per *substep* and not per call: MoveKinematic
+  reaches its target by setting a velocity over the substep's dt, so pushing once
+  and stepping four times would overshoot by three. `MoveKinematic` rather than
+  `SetPosition` because the implied velocity is the point — it is what pushes
+  dynamic bodies riding the platform.
+- **A character's ECS rotation is pushed into `CharacterVirtual::SetRotation`**
+  (BUG-0059). The controller holds its own `mRotation` feeding
+  `GetWorldTransform`, `GetTransformedShape` and the shape offset, and nothing
+  had ever set it: the visual turned and the capsule did not. Pushed **in** and
+  never read back, so rotation stays gameplay-owned and kits are unaffected.
+
+**`writeBackTransforms` now returns for anything that is not `Dynamic`.**
+Kinematic is gameplay-owned in *both* directions — writing the physics pose back
+would round-trip gameplay's own value through a velocity integration that does
+not land exactly on its target (measured: 5.0 comes back as 4.99999952). The
+plan's authority table had Kinematic as physics-owned; implementing it is what
+showed that was wrong.
+
+**Teleport is the pose change gameplay *is* allowed to make** (BUG-0057). A raw
+`Transform` write on a dynamic body is still discarded, deliberately — physics
+owning the pose is what makes the simulation single-authority — so the fix was to
+give the intent a name rather than to let the write through. `Cmd::Teleport` is
+atomic across three things a Transform write cannot coordinate: the body pose,
+the ECS `Transform`, and `PrevTransform`. That last one matters more than it
+looks: `PrevTransform` is snapshotted at the top of the fixed step, so without
+moving it the renderer interpolates across the gap and draws the entity *sliding*
+to its destination. Velocity is cleared in both branches, and the character
+branch subtracts `footOffset` because a `CharacterVirtual`'s reference point is
+the feet.
+
+Reaches Lua (`entity:teleport`) and the C++ `ScriptHost`. **Not the frozen C
+ABI** — `EngineApiPhysicsV1` is layout-frozen, so a native kit cannot teleport
+until `EngineApiPhysics2V1` is appended in stage 3b.

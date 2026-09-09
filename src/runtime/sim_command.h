@@ -183,6 +183,44 @@ inline Mode  mode(const SimCommand& c) {
 
 }  // namespace move
 
+// ── Teleport's payload ──────────────────────────────────────────────────────
+// A pose change that is a DISCONTINUITY: no velocity is implied by it, and the
+// interpolation history moves with it so the renderer does not draw a streak
+// across the gap. Rotation is optional — most teleports keep the entity facing
+// the way it was, and a caller that must not disturb rotation should not have
+// to know the current one to say so.
+namespace tele {
+
+inline constexpr int kSlotX       = 0;
+inline constexpr int kSlotY       = 1;
+inline constexpr int kSlotZ       = 2;
+inline constexpr int kSlotQX      = 3;   // valid only when kSlotHasRot is 1
+inline constexpr int kSlotQY      = 4;
+inline constexpr int kSlotQZ      = 5;
+inline constexpr int kSlotQW      = 6;
+inline constexpr int kSlotHasRot  = 7;   // read through `u`, not `a`
+
+inline SimCommand to(uint64_t entity, Source source, float x, float y, float z) {
+    SimCommand c{};
+    c.kind = Cmd::Teleport; c.source = source; c.entity = entity;
+    c.a[kSlotX] = x; c.a[kSlotY] = y; c.a[kSlotZ] = z;
+    c.u[kSlotHasRot] = 0;
+    return c;
+}
+
+inline SimCommand toPose(uint64_t entity, Source source, float x, float y, float z,
+                         float qx, float qy, float qz, float qw) {
+    SimCommand c = to(entity, source, x, y, z);
+    c.a[kSlotQX] = qx; c.a[kSlotQY] = qy;
+    c.a[kSlotQZ] = qz; c.a[kSlotQW] = qw;
+    c.u[kSlotHasRot] = 1;
+    return c;
+}
+
+inline bool hasRotation(const SimCommand& c) { return c.u[kSlotHasRot] != 0; }
+
+}  // namespace tele
+
 // ── The tick's commands ─────────────────────────────────────────────────────
 // Submitted during broadcastUpdate ONLY, then ordered canonically and executed
 // within the same fixed step.

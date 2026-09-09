@@ -1,0 +1,11 @@
+## BUG-0059 — a character's collision shape never rotated
+- found:     2026-09-09
+- status:    fixed
+- class:     logic
+- where:     src/plugins/jolt_plugin.h
+- symptom:   a `CharacterController` entity's visual turned and its COLLISION SHAPE did not. Latent today and not observable through any collision result, which is the whole difficulty: it becomes visible only when a shape stops being radially symmetric about the turn axis — an offset capsule, a non-capsule shape, or a character that pitches or rolls rather than only yawing.
+- cause:     `JPH::CharacterVirtual` holds its own `mRotation` (`CharacterVirtual.h:621`), which feeds `GetWorldTransform`, `GetTransformedShape` and the shape's offset. `spawnCharacter` constructed the controller with `JPH::Quat::sIdentity()` and NOTHING IN THE ENGINE HAS EVER CALLED `SetRotation`. Position was synchronised in both directions from the first commit; rotation was synchronised in neither. The controller's shape is a capsule centred on the vertical axis, so for an upright character yawing about Y the untransformed shape is indistinguishable from the correct one — the defect had no observable consequence to report it.
+- pinned-by: tests/physics_authority_test.cpp
+- lane:      unit
+- proof:     `pushEcsToPhysics` pushes the entity's WORLD rotation (from `getWorldMatrix`, the same source `spawnCharacter` uses for position) into `SetRotation` before each substep. Rotation is pushed IN and never read back, so it stays gameplay-owned and no kit changes. The test reads the rotation the `CharacterVirtual` actually holds through a diagnostic accessor rather than inferring it from a collision — because no collision this test could stage would differ. Mutation: dropping the `SetRotation` call leaves the controller at identity (0.0000, 1.0000) and fails the assertion.
+- note:      the diagnostic accessor `JoltPlugin::characterRotation` exists because the alternative was staging a contrived asymmetric-shape collision to observe a value that can simply be read. A test that can only see this bug through a collision it had to invent is a test that would not have caught it in the first place.

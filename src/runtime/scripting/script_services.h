@@ -49,6 +49,24 @@ struct IPhysicsService {
     virtual void charMove (flecs::world& /*w*/, flecs::entity_t /*e*/, float /*vx*/, float /*vz*/) {}
     virtual void charJump (flecs::world& /*w*/, flecs::entity_t /*e*/, float /*speed*/)            {}
     virtual bool charIsGrounded(flecs::world& /*w*/, flecs::entity_t /*e*/)                        { return false; }
+
+    // ── Teleport: the pose change gameplay IS allowed to make ───────────────
+    // A gameplay write to a dynamic body's Transform is silently discarded —
+    // writeBackTransforms overwrites it from the body at the end of every step
+    // (BUG-0057). It has to be, because two authorities over one pose is the
+    // defect this whole architecture exists to remove. So the answer is not to
+    // let the write through, it is to give the intent a name.
+    //
+    // Teleport is ATOMIC where a Transform write is not: the body's pose, the
+    // ECS Transform and the interpolation history all move together, and
+    // VELOCITY IS CLEARED — a body that reappears across the map carrying the
+    // momentum it had before is the classic teleport bug. Returns false when
+    // the entity has no body this backend owns.
+    virtual bool teleport(flecs::world& /*w*/, flecs::entity_t /*e*/,
+                          float /*x*/, float /*y*/, float /*z*/,
+                          const float* /*quatXYZW, or null to keep rotation*/) {
+        return false;
+    }
 };
 
 struct IAudioService {

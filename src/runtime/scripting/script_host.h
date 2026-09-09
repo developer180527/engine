@@ -228,6 +228,33 @@ public:
     // Bound by the runtime for the length of a session; null in the editor and
     // in any host with no fixed step, where the direct path above is correct.
     void setCommandBuffer(simcmd::Buffer* b) { m_commands = b; }
+
+    // ── teleport — the pose change gameplay IS allowed to make ──────────
+    // Writing `t.position` on an entity with a dynamic body does nothing: the
+    // physics write-back overwrites it from the body at the end of the step,
+    // silently (BUG-0057). That has to stay true — two authorities over one
+    // pose is the defect this architecture removes — so the intent gets a name
+    // instead. As a command it is ordered with the rest of the tick, and the
+    // body pose, the Transform and the interpolation history move together
+    // with velocity cleared.
+    //
+    // Same EntityId requirement and same fallback as charMove above; here the
+    // fallback is unambiguous, because a direct teleport is exactly what the
+    // command would have executed, only unordered.
+    bool teleport(flecs::entity e, float x, float y, float z) {
+        if (m_commands) {
+            const EntityId* id = e.try_get<EntityId>();
+            if (id && id->value)
+                return m_commands->submit(simcmd::tele::to(
+                    id->value, simcmd::Source::Gameplay, x, y, z));
+        }
+        auto* p = physicsOrWarn();
+        const bool moved = p && p->teleport(*m_world, e.id(), x, y, z, nullptr);
+        // No body, or no service: the Transform is still the caller's to set,
+        // and for an entity physics does not own it is the whole operation.
+        if (Transform* t = e.try_get_mut<Transform>()) t->position = {x, y, z};
+        return moved;
+    }
     void charJump(flecs::entity e, float speed)        { if (auto* p = physicsOrWarn()) p->charJump(*m_world,e.id(),speed); }
     bool charGrounded(flecs::entity e)                 { auto* p = physicsOrWarn(); return p ? p->charIsGrounded(*m_world,e.id()) : false; }
 

@@ -227,6 +227,12 @@ public:
         m_accumulator += dt;
         int steps = 0;
         while (m_accumulator >= kFixedDt && steps < 4) {
+            // ECS -> physics, once per SUBSTEP and not once per call. A
+            // kinematic target is reached by velocity over the substep's dt, so
+            // pushing it once and then stepping four times would overshoot by
+            // three: the body would keep the velocity that got it there. Re-
+            // targeting each substep drives it to zero on arrival instead.
+            pushEcsToPhysics(ecs);
             m_physics->Update(kFixedDt, 1,
                 m_tempAllocator.get(), m_jobSystem.get());
             updateCharacters(kFixedDt);
@@ -332,6 +338,63 @@ public:
         auto it = m_bodyToEntity.find(res.mBodyID);
         out.entity = (it != m_bodyToEntity.end()) ? (uint64_t)it->second : 0;
         return out;
+    }
+
+    // Diagnostic: the rotation the CharacterVirtual is ACTUALLY holding, which
+    // is the only way to see BUG-0059 from outside. The controller's shape is a
+    // centred capsule, radially symmetric about the axis anything upright turns
+    // around, so a rotation that never arrives changes no collision result a
+    // test could observe — which is exactly why the bug survived. Returns false
+    // when the entity has no character.
+    bool characterRotation(flecs::entity_t e, float qXYZW[4]) const {
+        auto it = m_characters.find(e);
+        if (it == m_characters.end()) return false;
+        const JPH::Quat q = it->second->GetRotation();
+        qXYZW[0] = q.GetX(); qXYZW[1] = q.GetY();
+        qXYZW[2] = q.GetZ(); qXYZW[3] = q.GetW();
+        return true;
+    }
+
+    // ── Teleport (BUG-0057's answer) ────────────────────────────────────
+    // Moves the BACKEND's pose only; the caller updates Transform and the
+    // interpolation history, because those are ECS state this plugin should not
+    // be the second writer of. Velocity is cleared in both branches — for a
+    // dynamic body because momentum carried across a teleport is a bug, and for
+    // a character because a fall in progress must not resume at the
+    // destination.
+    bool teleport(flecs::world& w, flecs::entity_t e,
+                  float x, float y, float z, const float* q) override {
+        if (!m_physics) return false;
+        if (auto ch = m_characters.find(e); ch != m_characters.end()) {
+            // The character's reference point is the FEET, footOffset below the
+            // render origin — the same conversion spawnCharacter makes, and
+            // writeBackCharacters undoes. Teleporting to the raw position would
+            // sink or float the character by that offset every time.
+            float foot = 0.0f;
+            if (const CharacterController* cc =
+                    w.entity(e).try_get<CharacterController>())
+                foot = cc->footOffset;
+            ch->second->SetPosition(JPH::RVec3(x, y - foot, z));
+            ch->second->SetLinearVelocity(JPH::Vec3::sZero());
+            if (auto st = m_charState.find(e); st != m_charState.end()) {
+                st->second.vertVel      = 0.0f;
+                st->second.desiredHoriz = JPH::Vec3::sZero();
+            }
+            return true;
+        }
+        auto it = m_entityToBody.find(e);
+        if (it == m_entityToBody.end()) return false;
+        auto& bi = m_physics->GetBodyInterface();
+        const JPH::Quat rot = q ? JPH::Quat(q[0], q[1], q[2], q[3])
+                                : bi.GetRotation(it->second);
+        // SetPositionAndRotation, NOT MoveKinematic: a teleport is a
+        // discontinuity, and the whole point is that no velocity is implied by
+        // it. Activated, so a sleeping body notices it has been moved.
+        bi.SetPositionAndRotation(it->second, JPH::RVec3(x, y, z), rot,
+                                  JPH::EActivation::Activate);
+        bi.SetLinearVelocity(it->second, JPH::Vec3::sZero());
+        bi.SetAngularVelocity(it->second, JPH::Vec3::sZero());
+        return true;
     }
 
     // ── Character controller service (scripts -> ScriptHost -> here) ────
@@ -667,11 +730,68 @@ public:
             });
     }
 
+    // ── ECS -> physics, for the two things physics does NOT own ─────────────
+    //
+    // BUG-0058 — A KINEMATIC BODY COULD NOT BE MOVED AT ALL. Its Jolt pose is
+    // authoritative and nothing ever drove it: no MoveKinematic, no
+    // SetPositionAndRotation, nowhere in the tree. Meanwhile
+    // writeBackTransforms copies that unmoving pose back onto Transform every
+    // step, so a gameplay write was not merely ignored — it was erased.
+    // Moving platforms, lifts, doors and swinging hazards were all unbuildable,
+    // silently. Kinematic is now DRIVEN BY THE ECS TRANSFORM, which is the
+    // natural reading: gameplay says where the platform should be, physics
+    // carries it there with a real velocity so dynamic bodies riding it are
+    // pushed correctly. Setting the pose directly would teleport it and drop
+    // that velocity, which is why this is MoveKinematic and not SetPosition.
+    //
+    // BUG-0059 — A CHARACTER'S COLLISION SHAPE NEVER ROTATED. CharacterVirtual
+    // holds its own mRotation (CharacterVirtual.h:621) feeding GetWorldTransform,
+    // GetTransformedShape and the shape offset; spawnCharacter passed
+    // Quat::sIdentity() and nothing in the engine has ever called SetRotation.
+    // The visual turned and the capsule did not. Harmless ONLY because the
+    // shape is a centred capsule — radially symmetric about the axis anything
+    // upright rotates around — and wrong the moment a shape is offset, or not a
+    // capsule, or a character pitches. Rotation stays GAMEPLAY-owned; it is
+    // pushed in, never read back, so no kit changes.
+    void pushEcsToPhysics(flecs::world& ecs) {
+        auto& bi = m_physics->GetBodyInterface();
+        m_bodySyncQ.each([&](flecs::entity e, const Transform&,
+                             const RigidBody& rb) {
+            if (rb.bodyType != PhysicsBodyType::Kinematic) return;
+            auto it = m_entityToBody.find(e.id());
+            if (it == m_entityToBody.end()) return;
+            // The WORLD pose: Transform is local, and the body lives at world
+            // root — the same conversion spawnBody does when it creates it.
+            float wm[16]; getWorldMatrix(e, wm);
+            const bx::Quaternion wr = quatFromMatrix(wm);
+            bi.MoveKinematic(it->second,
+                             JPH::RVec3(wm[12], wm[13], wm[14]),
+                             JPH::Quat(wr.x, wr.y, wr.z, wr.w), kFixedDt);
+        });
+
+        m_charSyncQ.each([&](flecs::entity e, const Transform&,
+                             const CharacterController&) {
+            auto it = m_characters.find(e.id());
+            if (it == m_characters.end()) return;
+            float wm[16]; getWorldMatrix(e, wm);
+            const bx::Quaternion wr = quatFromMatrix(wm);
+            it->second->SetRotation(JPH::Quat(wr.x, wr.y, wr.z, wr.w));
+        });
+    }
+
     void writeBackTransforms(flecs::world& ecs) {
         auto& bi = m_physics->GetBodyInterface();
         ecs.query_builder<Transform, const RigidBody>().build()
             .each([&](flecs::entity e, Transform& t, const RigidBody& rb) {
-                if (rb.bodyType == PhysicsBodyType::Static) return;
+                // ── ONLY DYNAMIC BODIES ARE WRITTEN BACK ───────────────────
+                // Static never moves. KINEMATIC is now GAMEPLAY-OWNED — it is
+                // driven from the ECS in pushEcsToPhysics — and writing the
+                // resulting pose back would be a round trip through a velocity
+                // integration that does not land exactly on its target, so the
+                // Transform gameplay just set would drift by a few ULPs every
+                // step. Physics owns a body's pose exactly when physics decides
+                // it, which for a kinematic body it does not.
+                if (rb.bodyType != PhysicsBodyType::Dynamic) return;
                 auto it = m_entityToBody.find(e.id());
                 if (it == m_entityToBody.end()) return;
                 JPH::Vec3 p = bi.GetPosition(it->second);

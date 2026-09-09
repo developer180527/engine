@@ -72,6 +72,7 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     m_stableIdCache.clear();          // a new world reuses flecs ids
     m_movesDispatched = 0;
     m_movesUnresolved = 0;
+    m_teleportsDispatched = 0;
     m_scriptHost->beginSession();   // invalidate entity refs from prior runs
     // Lazily dlopen the project's kits and attach them — they join the registry
     // BEFORE the broadcast so their onSimulationStart fires with everyone else.
@@ -338,6 +339,46 @@ void EngineRuntime::dispatchMoves(flecs::world& w) {
         // not be true.
         ++m_movesDispatched;
         pr->svc->charMove(w, e.id(), r.horizX, r.horizZ);
+    }
+
+    // ── Teleports ───────────────────────────────────────────────────────────
+    // In the buffer's canonical order, so two teleports of one entity in one
+    // tick resolve the same way every run. Executed AFTER the movement fold on
+    // purpose: a teleport is a discontinuity, and the tick's steering should
+    // not be applied on top of a destination it was never computed for.
+    for (const simcmd::SimCommand& c : m_commands.commands()) {
+        if (c.kind != simcmd::Cmd::Teleport) continue;
+        flecs::entity e = resolveStableId(w, c.entity);
+        if (!e) { ++m_movesUnresolved; continue; }
+
+        const float x = c.a[simcmd::tele::kSlotX];
+        const float y = c.a[simcmd::tele::kSlotY];
+        const float z = c.a[simcmd::tele::kSlotZ];
+        const bool  haveRot = simcmd::tele::hasRotation(c);
+        const float q[4] = { c.a[simcmd::tele::kSlotQX], c.a[simcmd::tele::kSlotQY],
+                             c.a[simcmd::tele::kSlotQZ], c.a[simcmd::tele::kSlotQW] };
+
+        // The backend moves its own body; the ECS state below is this layer's
+        // to write, because a plugin writing Transform is the second authority
+        // this architecture exists to remove. A teleport of an entity with no
+        // body is still a legal teleport — it just moves the Transform.
+        pr->svc->teleport(w, e.id(), x, y, z, haveRot ? q : nullptr);
+
+        if (Transform* t = e.try_get_mut<Transform>()) {
+            t->position = { x, y, z };
+            if (haveRot) t->rotation = { q[0], q[1], q[2], q[3] };
+            // ── AND THE INTERPOLATION HISTORY, which is the whole reason this
+            // is atomic. PrevTransform is snapshotted at the TOP of the fixed
+            // step, so without this the renderer would blend from where the
+            // entity was to where it now is and draw it sliding across the gap
+            // — the streak that makes a teleport look like a bug even when the
+            // simulation is correct.
+            if (PrevTransform* p = e.try_get_mut<PrevTransform>()) {
+                p->position = t->position;
+                p->rotation = t->rotation;
+            }
+        }
+        ++m_teleportsDispatched;
     }
 }
 

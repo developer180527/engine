@@ -123,6 +123,14 @@ inline int e_setVelocity(lua_State* L) {
     h->setVelocity(e, (float)luaL_checknumber(L,2), (float)luaL_checknumber(L,3), (float)luaL_checknumber(L,4));
     return 0;
 }
+// Moving a physics-owned entity by writing its transform does nothing — the
+// physics write-back overwrites it. This is the call that works.
+inline int e_teleport(lua_State* L) {
+    ScriptHost* h = host(L); flecs::entity e = checkEntity(L,1,h);
+    h->teleport(e, (float)luaL_checknumber(L,2), (float)luaL_checknumber(L,3),
+                   (float)luaL_checknumber(L,4));
+    return 0;
+}
 // ── Input / Log / Time / World / Audio ──────────────────────────────────
 inline int e_move(lua_State* L) {
     ScriptHost* h = host(L); flecs::entity e = checkEntity(L,1,h);
@@ -279,6 +287,7 @@ inline void install(lua_State* L, ScriptHost* h) {
         {"isAlive", e_isAlive}, {"name", e_name}, {"destroy", e_destroy},
         {"setParent", e_setParent}, {"clearParent", e_clearParent},
         {"applyImpulse", e_applyImpulse}, {"setVelocity", e_setVelocity},
+        {"teleport", e_teleport},
         {"move", e_move}, {"jump", e_jump}, {"isGrounded", e_isGrounded},
         {nullptr, nullptr}
     };

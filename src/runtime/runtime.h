@@ -235,6 +235,7 @@ public:
     // buffer rather than the subsystem.
     uint64_t movesDispatched() const { return m_movesDispatched; }
     uint64_t movesUnresolved() const { return m_movesUnresolved; }
+    uint64_t teleportsDispatched() const { return m_teleportsDispatched; }
     // One recorded tick: what it was told to do, and WHICH tick it was.
     struct RecordedTick {
         uint64_t                       tick = 0;   // m_simFrame at execution
@@ -409,6 +410,7 @@ private:
     std::unordered_map<uint64_t, flecs::entity_t> m_stableIdCache;
     uint64_t                      m_movesDispatched = 0;
     uint64_t                      m_movesUnresolved = 0;
+    uint64_t                      m_teleportsDispatched = 0;
     std::vector<RecordedTick>     m_cmdRing;
     size_t                        m_cmdRingHead  = 0;
     bool                          m_cmdRecording = false;

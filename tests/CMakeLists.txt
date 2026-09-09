@@ -324,6 +324,10 @@ engine_test(material_name_test)   # by-name addressing + the slot-reuse alias
 # property that stops an inspector slider editing something the renderer ignores.
 engine_test(material_form_test LIB engine_core)
 engine_test(sim_world_test)
+# Stage 3a: the three defects a Transform-permission model could not reach —
+# a kinematic body that could not be moved, a character whose collision shape
+# never rotated, and the gameplay pose write that is silently discarded.
+engine_test(physics_authority_test)
 engine_test(keymap_test)
 engine_test(nav_test)
 # The PRIMITIVE tier of the engine API table (jobs / memory / drawSubmit) — the
