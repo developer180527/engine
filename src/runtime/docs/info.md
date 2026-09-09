@@ -9,6 +9,7 @@ tests:
   - tests/sim_world_test.cpp
   - tests/determinism_gate_test.cpp
   - tests/sim_command_test.cpp
+  - tests/move_composition_test.cpp
   - tests/asset_ready_test.cpp
   - tests/async_loader_test.cpp
   - tests/script_host_test.cpp
@@ -388,6 +389,63 @@ it without the frame loop — which is also why its FNV comes from
 `EngineRuntime::setCommandRecording()` turns on a bounded ring of recent ticks.
 Off by default: recording every tick of a long session is wanted by a test, a
 replay tool or a netcode client, not by a game.
+
+## Composing movement (`move_compose.h`)
+
+Stage 2, and the first thing that *executes* the record. `JoltPlugin::charMove`
+stored its argument (`st.desiredHoriz = ...`), so the last caller in a tick
+silently erased every earlier one: input plus knockback, or AI plus a scripted
+nudge, produced whichever result plugin registration order happened to select.
+
+Checked rather than assumed, and it is narrower than it looks: **impulses on
+rigid bodies already compose** — Jolt sums them. Character locomotion was the
+only place with a real last-writer-wins.
+
+`composeMoves` is a **pure function** — no world, no physics, no runtime — so
+the part with a rule worth arguing about is testable without standing up a
+simulation. Per entity:
+
+1. Any `Exclusive` contribution is the **only** survivor — stronger than
+   `Override`, because a root-motion clip authoring movement must not have a
+   stray input contribution summed on top.
+2. Otherwise the highest-priority `Override` sets the value, and `Additive`
+   contributions from sources **strictly above** it are summed on top. That
+   asymmetry is the rule: knockback overrides player input, but a cutscene
+   still steers through a knockback.
+3. With no `Override`, every `Additive` is summed.
+
+Ties between **equal-priority** contributions go to the lower `seq` — first
+claim, not last write — and are **counted**, so a genuine content conflict is
+reported rather than silently decided. Order independence is structural: the
+fold reads `source` and `seq` off the commands and never off their position, so
+it neither requires a sorted buffer nor can be broken by an unsorted one.
+`tests/move_composition_test.cpp` checks it with 200 randomised arrival orders;
+mutating the fold back to last-writer-wins reddens it at 160/200.
+
+The `moves` tier in `determinism_gate_test.cpp` covers the *path* rather than
+the rule — the per-tick fold, `EntityId`→entity resolution, and the dispatch
+order into Jolt — and asserts it is not a no-op: 17 280 contributions accepted,
+5 760 composed movements delivered, 0 refused, 0 unresolved.
+
+**Three limits worth knowing.**
+
+* **Vertical is composed and not delivered.** `charMove` carries only the
+  horizontal pair; vertical velocity is owned by `charJump` and gravity inside
+  the character update. Root motion needs it and it arrives with the physics
+  service group in stage 3 — composing it now keeps the rule whole, but nothing
+  consumes it yet.
+* **An entity with no `EntityId` keeps the old direct path**, loudly and once.
+  A command names its target by stable id, and one cannot simply be minted
+  inside the simulation: `generateEntityId()` is seeded from
+  `std::random_device`, so it would put a random value into a hashed component
+  and redden the determinism gate on the next run. Such an entity still moves;
+  it just does not compose.
+* **`charMove`'s timing changed**, and it is kit-visible: movement used to be
+  stored the instant the script called and now applies when the tick's
+  contributions are composed, just before the physics step. A script that
+  called `charMove` and read velocity back in the same tick would see the old
+  value. Nothing in the tree does — but `Kits/` and `fps_shooter/` are
+  gitignored, so no test here can see them.
 
 **What this substrate gives, and what it does not.** Replay — *same initial
 state + the same recorded commands ⇒ same result* — is served by recording

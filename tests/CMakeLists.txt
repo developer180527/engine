@@ -203,6 +203,7 @@ engine_test(mesh_ownership_test)
 # exists for is that EXECUTION ORDER IS A FUNCTION OF THE COMMANDS, not of
 # submission order — which is what last-writer-wins lacked.
 engine_test(sim_command_test LIB engine_core)
+engine_test(move_composition_test LIB engine_core)
 
 engine_test(determinism_gate_test LABEL determinism TIMEOUT 300)
 

@@ -19,6 +19,8 @@
 #include "project/project_context.h"
 #include "runtime/services/scene_service.h"
 #include "runtime/services/nav_service.h"
+#include "runtime/sim_command.h"
+#include "components/entity_id.h"
 
 // ── keyFromName ────────────────────────────────────────────────────────────
 // Map a script-facing key name ("W", "Space", "Left") to a Key. Key mirrors
@@ -182,8 +184,50 @@ public:
     }
     void setPhysicsService(IPhysicsService* s) { m_physics = s; if (s) m_warnedPhysics = false; }
 
-    // Character controller (same warn-once contract)
-    void charMove(flecs::entity e, float vx, float vz) { if (auto* p = physicsOrWarn()) p->charMove(*m_world,e.id(),vx,vz); }
+    // ── Character controller (same warn-once contract) ──────────────────
+    // charMove SUBMITS rather than acts. JoltPlugin::charMove stored its
+    // argument, so the last caller in a tick erased every earlier one: input
+    // plus knockback, or AI plus a scripted nudge, produced whichever result
+    // plugin registration order happened to select. As a contribution it
+    // composes instead — see runtime/move_compose.h for the rule.
+    //
+    // TIMING CHANGES with it, and this is kit-visible: the movement used to be
+    // stored the moment the script called, and now applies when the tick's
+    // contributions are composed, just before the physics step. Within one tick
+    // the outcome is the same for a single caller; a script that called
+    // charMove and then read velocity back in the same tick would see the old
+    // value. Nothing in the tree does, but `Kits/` and `fps_shooter/` are
+    // gitignored and no test here can see them.
+    //
+    // ── THE FALLBACK, AND WHY IT IS NOT A CHOICE ────────────────────────
+    // A command names its target by EntityId, because a command stream outlives
+    // the process. Entities built in code rather than loaded from a scene may
+    // have none, and one cannot simply be assigned here: generateEntityId() is
+    // seeded from std::random_device, so minting ids inside the simulation puts
+    // a random value into a hashed component and the determinism gate goes red
+    // on the next run. So an entity with no stable id keeps the OLD direct
+    // path, loudly and once. It moves; it just does not compose.
+    void charMove(flecs::entity e, float vx, float vz) {
+        if (m_commands) {
+            const EntityId* id = e.try_get<EntityId>();
+            if (id && id->value) {
+                m_commands->submit(simcmd::move::contribution(
+                    id->value, simcmd::Source::Gameplay, vx, vz, 0.0f,
+                    simcmd::move::Mode::Additive));
+                return;
+            }
+            if (!m_warnedCharNoId) {
+                m_warnedCharNoId = true;
+                LOG_WARN("Script", "charMove on an entity with no EntityId — "
+                         "moving it directly, WITHOUT composition, so a second "
+                         "system steering it this tick will still be lost");
+            }
+        }
+        if (auto* p = physicsOrWarn()) p->charMove(*m_world,e.id(),vx,vz);
+    }
+    // Bound by the runtime for the length of a session; null in the editor and
+    // in any host with no fixed step, where the direct path above is correct.
+    void setCommandBuffer(simcmd::Buffer* b) { m_commands = b; }
     void charJump(flecs::entity e, float speed)        { if (auto* p = physicsOrWarn()) p->charJump(*m_world,e.id(),speed); }
     bool charGrounded(flecs::entity e)                 { auto* p = physicsOrWarn(); return p ? p->charIsGrounded(*m_world,e.id()) : false; }
 
@@ -355,8 +399,10 @@ private:
         return m_audio;
     }
 
-    bool m_warnedPhysics = false;
-    bool m_warnedAudio   = false;
+    bool m_warnedPhysics  = false;
+    bool m_warnedAudio    = false;
+    bool m_warnedCharNoId = false;
+    simcmd::Buffer* m_commands = nullptr;   // null => the direct physics path
     WorldQueryCache<const Name> m_nameQuery;
     std::unordered_map<std::string, flecs::entity_t> m_nameIndex; // O(1) find
     flecs::entity m_nameObsSet{};     // observer entities, owned: destructed

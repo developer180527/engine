@@ -25,6 +25,10 @@
 #include "runtime/kit_host.h"
 #include "runtime/event_sweeper.h"
 #include "runtime/sim_command.h"
+#include "runtime/move_compose.h"
+#include <unordered_map>
+#include <vector>
+#include <cstdint>
 #include "core/transform.h"
 #include "components/spinner.h"
 #include "systems/animator_system.h"
@@ -224,6 +228,13 @@ public:
     // is only wanted by a test, a replay tool or a netcode client.
     void  setCommandRecording(bool on, size_t ticks = 4096);
     bool  commandRecording() const { return m_cmdRecording; }
+    // Composed movements actually driven into physics since the session began,
+    // and commands that named an entity nothing could resolve. Diagnostics, and
+    // the difference between "the tick submitted commands" and "the simulation
+    // acted on them" — a test that can only see the first is measuring the
+    // buffer rather than the subsystem.
+    uint64_t movesDispatched() const { return m_movesDispatched; }
+    uint64_t movesUnresolved() const { return m_movesUnresolved; }
     // One recorded tick: what it was told to do, and WHICH tick it was.
     struct RecordedTick {
         uint64_t                       tick = 0;   // m_simFrame at execution
@@ -385,6 +396,19 @@ private:
     // without assuming a regularity that a hitch destroys. m_simFrame is
     // already maintained; storing it is 8 bytes and makes this a record.
     simcmd::Buffer                m_commands;
+    // Reused across ticks so composing a tick's movement allocates nothing in
+    // the steady state — the same reason the PrevTransform queries are cached.
+    std::vector<simcmd::ResolvedMove> m_resolvedMoves;
+    // EntityId::value -> flecs entity, filled ON DEMAND. findById is O(n) and
+    // its own header says never to call it in a loop, so a tick driving k
+    // characters would otherwise cost O(k*n). Memoised: O(n) the first time an
+    // entity is commanded, O(1) after, and re-resolved if the entry goes stale.
+    // Hashed rather than ordered on purpose — it is only ever looked up, never
+    // iterated, so its order cannot reach the simulation (the same argument
+    // JoltPlugin's m_charState is kept hashed under).
+    std::unordered_map<uint64_t, flecs::entity_t> m_stableIdCache;
+    uint64_t                      m_movesDispatched = 0;
+    uint64_t                      m_movesUnresolved = 0;
     std::vector<RecordedTick>     m_cmdRing;
     size_t                        m_cmdRingHead  = 0;
     bool                          m_cmdRecording = false;
@@ -398,4 +422,9 @@ private:
     // Copy this tick's commands into the replay ring. Called at the end of
     // every fixed step, before the buffer is cleared.
     void recordTickCommands();
+    // Composes the tick's MoveContributions and drives the physics character
+    // service once per entity, in ascending EntityId order.
+    void dispatchMoves(flecs::world& w);
+    // EntityId::value -> live entity, or an empty entity. See m_stableIdCache.
+    flecs::entity resolveStableId(flecs::world& w, uint64_t id);
 };

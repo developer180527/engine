@@ -112,6 +112,7 @@ add_library(engine_core STATIC
     # it has no runtime dependency and a server, a replay tool or a netcode
     # client needs it without the frame loop (runtime/sim_command.h).
     runtime/sim_command.cpp
+    runtime/move_compose.cpp
 
     # Single-header library implementation TUs (CPU decode only)
     assets/importers/stb_impl.cpp

@@ -66,6 +66,12 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     // Bind the script surface to the sim world BEFORE plugins start — Lua
     // instantiates script instances during broadcastSimStart.
     m_scriptHost->setWorld(&simWorld());
+    // Locomotion composes only while there is a fixed step to compose it in.
+    // Unbound at stop, below, so the editor's preview keeps the direct path.
+    m_scriptHost->setCommandBuffer(&m_commands);
+    m_stableIdCache.clear();          // a new world reuses flecs ids
+    m_movesDispatched = 0;
+    m_movesUnresolved = 0;
     m_scriptHost->beginSession();   // invalidate entity refs from prior runs
     // Lazily dlopen the project's kits and attach them — they join the registry
     // BEFORE the broadcast so their onSimulationStart fires with everyone else.
@@ -108,6 +114,8 @@ void EngineRuntime::stopSimulation() {
     m_prevSnapAddQuery.reset();
     m_scriptHost->setPhysicsService(nullptr);
     m_scriptHost->setAudioService(nullptr);
+    m_scriptHost->setCommandBuffer(nullptr);   // no fixed step, no composition
+    m_stableIdCache.clear();                   // entries point into a dead world
     m_gameWorld.reset();
     m_simSnapshot.clear();
     m_simulating = false;
@@ -195,6 +203,14 @@ void EngineRuntime::tickSimulation(float dt) {
         // the record and the execution must not be able to disagree.
         m_commands.sortForExecution();
 
+        // ── Stage 2: locomotion is COMPOSED, then dispatched ───────────────
+        // Every MoveContribution aimed at a character folds into one movement
+        // for that character, by the rule in runtime/move_compose.h, and the
+        // physics service is called once per entity in ascending EntityId
+        // order. Before this, JoltPlugin::charMove stored its argument and the
+        // last caller in the tick erased the rest.
+        { ENGINE_PROFILE_SCOPE("Sim.moves"); dispatchMoves(w); }
+
         { ENGINE_PROFILE_SCOPE("Sim.physics"); m_plugins.broadcastPhysicsStep(w, kSimDt); }
         { ENGINE_PROFILE_SCOPE("Sim.post");    m_plugins.broadcastPostPhysics(w); }
 
@@ -266,6 +282,63 @@ void EngineRuntime::setCommandRecording(bool on, size_t ticks) {
     m_cmdRecording = on;
     m_cmdRing.assign(on ? (ticks ? ticks : 1) : 0, {});
     m_cmdRingHead = 0;
+}
+
+// ── Resolving a command's target ────────────────────────────────────────────
+// Commands name entities by EntityId because a command stream outlives the
+// process; the simulation needs the flecs entity. findById is O(n) and says in
+// its own header never to call it in a loop, so this memoises.
+//
+// A cached entry can go stale two ways — the entity is destroyed, or its
+// EntityId changes — and both are checked on every hit rather than trusted,
+// because a stale hit would silently move the WRONG entity. That is a worse
+// failure than the miss it saves.
+flecs::entity EngineRuntime::resolveStableId(flecs::world& w, uint64_t id) {
+    if (id == 0) return flecs::entity{};
+    auto it = m_stableIdCache.find(id);
+    if (it != m_stableIdCache.end()) {
+        flecs::entity e = w.entity(it->second);
+        if (e.is_alive()) {
+            const EntityId* got = e.try_get<EntityId>();
+            if (got && got->value == id) return e;
+        }
+        m_stableIdCache.erase(it);
+    }
+    flecs::entity found = findById(w, id);
+    if (found) m_stableIdCache[id] = found.id();
+    return found;
+}
+
+void EngineRuntime::dispatchMoves(flecs::world& w) {
+    if (m_commands.size() == 0) return;
+    const PhysicsServiceRef* pr = w.try_get<PhysicsServiceRef>();
+    if (!pr || !pr->svc) return;      // no physics attached; nothing to drive
+
+    simcmd::composeMoves(m_commands.commands(), m_resolvedMoves);
+    for (const simcmd::ResolvedMove& r : m_resolvedMoves) {
+        flecs::entity e = resolveStableId(w, r.entity);
+        if (!e) { ++m_movesUnresolved; continue; }   // named a dead entity
+        if (r.exclusiveConflicts || r.overrideConflicts) {
+            // Two systems at the SAME priority fighting over one character.
+            // The fold resolved it the same way it always will, so this is not
+            // a determinism problem — it is a content bug, and the only place
+            // it can be seen is here.
+            LOG_WARN("SimCmd", "entity %llu received %u conflicting exclusive "
+                     "and %u conflicting override movement contributions at "
+                     "equal priority — lower seq won",
+                     (unsigned long long)r.entity,
+                     (unsigned)r.exclusiveConflicts,
+                     (unsigned)r.overrideConflicts);
+        }
+        // NOTE: r.vertical is composed and NOT delivered. charMove carries only
+        // the horizontal pair, and vertical velocity is owned by charJump and
+        // gravity inside the character update. Root motion needs it, and it
+        // arrives with the physics service group stage 3 adds — composing it
+        // now costs nothing and keeps the rule whole; claiming it works would
+        // not be true.
+        ++m_movesDispatched;
+        pr->svc->charMove(w, e.id(), r.horizX, r.horizZ);
+    }
 }
 
 void EngineRuntime::recordTickCommands() {

@@ -85,6 +85,7 @@
 #include "components/animator.h"
 #include "components/skinned_mesh.h"
 #include "components/character_controller.h"
+#include "components/entity_id.h"
 #include "components/name.h"
 #include "components/rigid_body.h"
 #include "components/spinner.h"
@@ -240,25 +241,97 @@ static void testHashSensitivity() {
 // ════════════════════════════════════════════════════════════════════════════
 // Tiers and run shapes
 // ════════════════════════════════════════════════════════════════════════════
-struct Tier { const char* name; bool spinner, animator, scripting, physics; };
+// ── The contribution driver (the `moves` tier) ──────────────────────────────
+// Submits MoveContributions for every character, from THREE sources with three
+// modes, so the composition rule in runtime/move_compose.h is actually
+// exercised rather than merely linked — the BUG-0049 shape this file already
+// warns about one tier down.
+//
+// What this adds over move_composition_test.cpp is not the rule (200 shuffles
+// prove that, and prove it better — the gate compares two runs of the SAME
+// content, so it cannot vary arrival order between them). It is the PATH: the
+// per-tick fold, EntityId -> entity resolution through a hashed cache, and the
+// dispatch order into JoltPlugin, all of which are new in stage 2 and all of
+// which sit between gameplay and a hashed component.
+// Namespace-scope counters, because the plugin is constructed inside runOnce and
+// the assertion that this tier is NOT A NO-OP has to be made from main. A test
+// tier that silently submitted nothing would report "reproducible" for the same
+// reason an empty physics world once did, one tier down in this file.
+static long g_contribAccepted  = 0;
+static long g_contribRefused   = 0;
+static long g_movesDispatched  = 0;
+static long g_movesUnresolved  = 0;
+
+class ContributionPlugin final : public IEnginePlugin {
+public:
+    const char* name()    const override { return "GateContributions"; }
+    const char* version() const override { return "1.0.0"; }
+    void onAttach(RuntimeContext&) override {}
+    void onDetach() override {}
+    void onSimulationStart(flecs::world&) override {}
+    void onSimulationStop() override {}
+
+    void onUpdate(flecs::world& w, float) override {
+        ++m_tick;
+        simcmd::Buffer* buf = m_commands;
+        if (!buf) return;
+        // Sources deliberately do NOT ascend with the loop: Ability is
+        // submitted before Gameplay for every character, so a fold that
+        // resolved by arrival order rather than by `source` would produce a
+        // different answer than the rule specifies.
+        w.query_builder<const EntityId, const CharacterController>().build()
+            .each([&](const EntityId& id, const CharacterController&) {
+                const float p = (float)(id.value % 7) * 0.11f;
+                const float t = (float)m_tick * 0.017f;
+                auto put = [&](simcmd::Source src, float hx, float hz,
+                               simcmd::move::Mode m) {
+                    if (buf->submit(simcmd::move::contribution(
+                            id.value, src, hx, hz, 0.0f, m)))
+                        ++g_contribAccepted;
+                    else
+                        ++g_contribRefused;
+                };
+                put(simcmd::Source::Ability,  std::sin(t + p) * 0.5f, 0.0f,
+                    simcmd::move::Mode::Override);
+                put(simcmd::Source::Gameplay, 0.0f, std::cos(t + p) * 0.5f,
+                    simcmd::move::Mode::Additive);
+                // Above the Override, so it survives the floor and is summed.
+                put(simcmd::Source::Cutscene, 0.0f, p * 0.25f,
+                    simcmd::move::Mode::Additive);
+            });
+    }
+
+    void bind(simcmd::Buffer* b) { m_commands = b; }
+
+private:
+    simcmd::Buffer* m_commands = nullptr;
+    uint64_t        m_tick     = 0;
+};
+
+struct Tier { const char* name; bool spinner, animator, scripting, physics, moves; };
 static const Tier kTiers[] = {
     // A genuinely STATIC world. Nothing moves, so A/B must match — this is the
     // instrument's baseline, and if it ever fails the hash itself is wrong and
     // nothing below it is worth reading.
-    { "static",    false, false, false, false },
+    { "static",    false, false, false, false, false },
     // Spinner is the engine's one demo gameplay system, and it turns out to be
     // frame-rate driven — see the kKnown entry. Separating it from `static` is
     // what makes the baseline mean anything.
-    { "spinner",   true,  false, false, false },
+    { "spinner",   true,  false, false, false, false },
     // The animator tier the plan specified and the first build of this file
     // never created. Its absence mattered: three comments in the frame-rate fix
     // claimed "the gate caught it" about Animator::time when no entity in any
     // tier had ever carried an Animator. Skeleton and clip are built through
     // ozz's offline builders, so this needs no Assimp and no asset files — the
     // same fixture animator_system_test.cpp uses.
-    { "animator",  false, true,  false, false },
-    { "scripting", true,  true,  true,  false },
-    { "physics",   true,  true,  true,  true  },
+    { "animator",  false, true,  false, false, false },
+    { "scripting", true,  true,  true,  false, false },
+    { "physics",   true,  true,  true,  true,  false },
+    // Stage 2's dispatch path: contributions composed per tick, resolved from
+    // EntityId, and driven into the character controller. A superset of
+    // `physics`, so a divergence here that `physics` does not show is
+    // attributable to composition or resolution rather than to Jolt.
+    { "moves",     true,  true,  true,  true,  true  },
 };
 
 // A divergence this tree already knows about, with its cause named. The point
@@ -298,7 +371,7 @@ static const std::vector<Known> kKnown = {
 // kTiers x 2 minus kKnown's size, and it is written down rather than computed
 // so that SHRINKING the gating lane is a deliberate act. Without it, adding a
 // kKnown row would quietly demote a pair and every lane would still be green.
-static constexpr int kExpectGating = 10;   // 5 tiers x 2 comparisons, 0 known
+static constexpr int kExpectGating = 12;   // 6 tiers x 2 comparisons, 0 known
 
 static const Known* findKnown(const char* tier, const char* cmp) {
     for (const auto& k : kKnown)
@@ -415,9 +488,21 @@ static void buildWorld(flecs::world& w, const Tier& t, EngineRuntime& engine) {
     for (int i = 0; i < 6; ++i) {
         CharacterController cc{};
         const float x = (float)i * 0.55f - 1.4f;
-        w.entity().set<Transform>({ {x, 2.0f, 0.0f}, {0,0,0,1}, {1,1,1} })
-                  .set<Name>({ "char_" + std::to_string(i) })
-                  .set<CharacterController>(cc);
+        flecs::entity e =
+            w.entity().set<Transform>({ {x, 2.0f, 0.0f}, {0,0,0,1}, {1,1,1} })
+                      .set<Name>({ "char_" + std::to_string(i) })
+                      .set<CharacterController>(cc);
+        // FIXED ids, and only on the tier that needs them. generateEntityId()
+        // is seeded from std::random_device, so minting ids here would put a
+        // different value into a HASHED component on every run and redden this
+        // gate — which is also exactly why ScriptHost::charMove refuses to
+        // assign one inside the simulation and falls back instead.
+        //
+        // Only on the `moves` tier, so the five tiers that were already green
+        // keep hashing precisely the content they were green on: a divergence
+        // appearing in `moves` is then attributable to stage 2 and not to a
+        // component this file started adding everywhere.
+        if (t.moves) e.set<EntityId>({ 0x9E3779B97F4A7C15ull + (uint64_t)i });
     }
 }
 
@@ -475,6 +560,14 @@ static void runOnce(const Tier& t, int framesPerTick, int nTicks,
 
     if (t.physics)   engine.plugins().add(std::make_shared<JoltPlugin>());
     if (t.scripting) engine.plugins().add(std::make_shared<LuaScriptPlugin>());
+    std::shared_ptr<ContributionPlugin> contrib;
+    if (t.moves) {
+        contrib = std::make_shared<ContributionPlugin>();
+        // Bound to the runtime's buffer, not given one: submissions must land
+        // in the tick that is open, and the phase guard refuses anything else.
+        contrib->bind(&engine.commands());
+        engine.plugins().add(contrib);
+    }
     engine.attachPlugins();
 
     flecs::world& w = engine.simWorld();
@@ -541,6 +634,13 @@ static void runOnce(const Tier& t, int framesPerTick, int nTicks,
     // spawning something) is absent at the start and present here.
     simhash::auditCoverage(w, out.unclassifiedEnd);
 
+    if (t.moves) {
+        // Accepted-by-the-buffer is not delivered-to-physics: resolving an
+        // EntityId back to a live entity is new in stage 2 and can fail
+        // silently. Read before stopSimulation(), which resets the counters.
+        g_movesDispatched += (long)engine.movesDispatched();
+        g_movesUnresolved += (long)engine.movesUnresolved();
+    }
     engine.stopSimulation();
     engine.shutdown();
     out.ok = true;
@@ -726,6 +826,30 @@ int main(int argc, char** argv) {
               "same change and say why",
               covered, (int)(sizeof(kTiers) / sizeof(kTiers[0])) * 2,
               kExpectGating);
+    }
+
+    // ── The `moves` tier must not be a no-op ────────────────────────────────
+    // A tier that submitted nothing would report "reproducible" for exactly the
+    // reason an earlier physics tier did — nothing ran. So the contributions
+    // are counted as they are ACCEPTED by the buffer, not as they are offered.
+    {
+        CHECK(g_contribAccepted > 0,
+              "the moves tier actually submitted contributions (%ld accepted) "
+              "— without this, a green tier would only mean nothing ran",
+              g_contribAccepted);
+        // Every submission happens inside a plugin's onUpdate, which is exactly
+        // the window Buffer opens. A refusal here would mean the phase guard
+        // added in stage 1.5 is shut during the one phase it must be open in.
+        CHECK(g_movesDispatched > 0 && g_movesUnresolved == 0,
+              "and every one reached the character controller (%ld dispatched, "
+              "%ld unresolved) — EntityId -> entity resolution is new in stage "
+              "2, and a command that resolves to nothing moves nothing while "
+              "still hashing as reproducible",
+              g_movesDispatched, g_movesUnresolved);
+        CHECK(g_contribRefused == 0,
+              "and none were refused out of phase (%ld) — the submission "
+              "window is open across broadcastUpdate, end to end",
+              g_contribRefused);
     }
 
     std::printf("\n-- findings this gate does not fix --\n");

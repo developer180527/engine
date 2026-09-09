@@ -134,6 +134,55 @@ static_assert(alignof(SimCommand) == 8, "SimCommand alignment is part of the lay
 static_assert(offsetof(SimCommand, entity) == 8, "layout is the replay format");
 static_assert(offsetof(SimCommand, a) == 16, "layout is the replay format");
 
+// ── MoveContribution's payload ──────────────────────────────────────────────
+// Per-kind accessors, deferred from stage 1.5 until a payload had a consumer so
+// the layout would not be invented ahead of use. This is that consumer.
+//
+// Callers use the factory and the readers; the slot indices are named once,
+// here, so a payload layout is never spelled out at a call site. Slots are as
+// APPEND-ONLY as the enums — a recorded stream is read back by index.
+namespace move {
+
+// How a contribution combines with the others aimed at the same entity.
+enum class Mode : uint32_t {
+    Additive  = 0,   // summed — player input, AI steering, wind
+    Override  = 1,   // replaces every contribution of LOWER source priority
+    Exclusive = 2,   // the only contribution that survives — root motion
+    Count
+};
+
+inline constexpr int kSlotHorizX   = 0;
+inline constexpr int kSlotHorizZ   = 1;
+inline constexpr int kSlotVertical = 2;
+inline constexpr int kSlotMode     = 3;   // read through `u`, not `a`
+
+inline SimCommand contribution(uint64_t entity, Source source,
+                               float horizX, float horizZ, float vertical,
+                               Mode mode = Mode::Additive) {
+    SimCommand c{};
+    c.kind   = Cmd::MoveContribution;
+    c.source = source;
+    c.entity = entity;
+    c.a[kSlotHorizX]   = horizX;
+    c.a[kSlotHorizZ]   = horizZ;
+    c.a[kSlotVertical] = vertical;
+    c.u[kSlotMode]     = static_cast<uint32_t>(mode);
+    return c;
+}
+
+inline float horizX  (const SimCommand& c) { return c.a[kSlotHorizX]; }
+inline float horizZ  (const SimCommand& c) { return c.a[kSlotHorizZ]; }
+inline float vertical(const SimCommand& c) { return c.a[kSlotVertical]; }
+// A stream recorded by a newer build can carry a mode this one has no rule for.
+// Reported rather than guessed at: composeMoves() counts it and treats it as
+// Additive, which is the mode that cannot silently erase another contribution.
+inline bool  modeKnown(const SimCommand& c) { return c.u[kSlotMode] < (uint32_t)Mode::Count; }
+inline Mode  mode(const SimCommand& c) {
+    return modeKnown(c) ? static_cast<Mode>(c.u[kSlotMode]) : Mode::Additive;
+}
+
+}  // namespace move
+
 // ── The tick's commands ─────────────────────────────────────────────────────
 // Submitted during broadcastUpdate ONLY, then ordered canonically and executed
 // within the same fixed step.
