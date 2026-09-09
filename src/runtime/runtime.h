@@ -224,9 +224,15 @@ public:
     // is only wanted by a test, a replay tool or a netcode client.
     void  setCommandRecording(bool on, size_t ticks = 4096);
     bool  commandRecording() const { return m_cmdRecording; }
-    // Commands recorded `ticksAgo` ticks back (0 = the tick just completed).
-    // Empty if that tick is outside the ring or recording was off.
-    const std::vector<simcmd::SimCommand>& recordedTick(size_t ticksAgo) const;
+    // One recorded tick: what it was told to do, and WHICH tick it was.
+    struct RecordedTick {
+        uint64_t                       tick = 0;   // m_simFrame at execution
+        std::vector<simcmd::SimCommand> cmds;
+    };
+    // The tick recorded `ticksAgo` steps back (0 = the tick just completed).
+    // `tick == 0` means the slot is empty: recording was off, or that depth is
+    // older than the ring — tick numbering starts at 1 so the two are distinct.
+    const RecordedTick& recordedTick(size_t ticksAgo) const;
     KitHost&         kits()         { return m_kits; }   // manifest kits + load status
     // Mid-play single-kit control (Plug-in Manager Load/Unload buttons).
     // No-ops while not simulating — kits only exist during Play.
@@ -370,10 +376,18 @@ private:
     // invariant, and tests/determinism_gate_test.cpp already measures the
     // right-hand side. Bounded, because an unbounded record of a long session
     // is a leak with a respectable name.
-    simcmd::Buffer                               m_commands;
-    std::vector<std::vector<simcmd::SimCommand>> m_cmdRing;
-    size_t                                       m_cmdRingHead  = 0;
-    bool                                         m_cmdRecording = false;
+    //
+    // Each slot carries ITS TICK NUMBER. Indexing the ring by depth answers
+    // "what did we do N ticks ago", which is what rollback wants — but a replay
+    // file and a server resimulation both need (tick -> commands), and a tick
+    // stream has GAPS: the accumulator runs zero fixed steps on some frames and
+    // four on others, so depth cannot be converted to a tick after the fact
+    // without assuming a regularity that a hitch destroys. m_simFrame is
+    // already maintained; storing it is 8 bytes and makes this a record.
+    simcmd::Buffer                m_commands;
+    std::vector<RecordedTick>     m_cmdRing;
+    size_t                        m_cmdRingHead  = 0;
+    bool                          m_cmdRecording = false;
 
     bool initRenderer(const EngineConfig& cfg);
     bool initSystems(const EngineConfig& cfg);

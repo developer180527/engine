@@ -348,8 +348,9 @@ per-tick commands -> one simulation -> authoritative state -> presentation
 
 `simcmd::Buffer` records what the simulation was **told to do** each tick,
 separately from the state that produced. Gameplay submits during `onUpdate`;
-the buffer is sorted into a canonical order **before physics consumes it**, then
-recorded and cleared.
+the buffer is then sorted into a canonical order, recorded and cleared.
+**Nothing executes the commands yet** — the record is built and ordered, and the
+executor arrives in stage 2 when `charMove` becomes a contribution.
 
 **The property it exists for:** execution order is a function of the commands —
 `(entity, source, kind, seq)` — **not of submission order**. That is precisely
@@ -358,14 +359,27 @@ longer depend on plugin registration order for their outcome. Pinned by 200
 randomised shuffles in `tests/sim_command_test.cpp`; removing the sort reddens
 three assertions.
 
-Two deliberate choices worth knowing:
+Choices worth knowing:
 
 * **`entity` is `EntityId::value`, not a raw `flecs::entity_t`.** Raw ids are
   fine inside one process — `simhash::hashWorld` already sorts by them — but a
   command stream outlives a process: a replay file, a rollback buffer, a packet.
 * **`source` is the axis a Transform-permission model could not express.** A
-  network correction, a cutscene, AI, player input and an ability are all
-  "gameplay" with different priority; stage 2's composition rules key off it.
+  cutscene, AI, player input and an ability are all "gameplay" with different
+  priority; stage 2's composition rules key off it.
+* **Submission has a phase, and it is enforced.** The buffer is reachable from
+  `onFrame`, an editor panel and render-rate kit callbacks. A command submitted
+  at render rate would land in whichever tick's buffer was open when the caller
+  ran, making the tick's command set frame-rate-dependent — BUG-0053's defect
+  class inside the subsystem built to remove it. The window is open only across
+  `broadcastUpdate`; outside it `submit()` refuses, warns once and counts.
+* **The payload is 32 bytes viewed as either `float a[8]` or `uint32_t u[8]`.**
+  Float-only would have pushed `SetBodyType`'s enum, and any future entity id or
+  tick number, through a float — silently lossy above 2²⁴.
+* **Each ring slot carries its tick number.** Indexing by depth answers *"what
+  did we do N ticks ago"*, which is what rollback wants, but a replay file and a
+  server resimulation need `tick -> commands`, and a tick stream has gaps: the
+  accumulator runs zero fixed steps on some frames and four on others.
 
 It lives in `engine_core`, not `engine_runtime`, so a server or replay tool gets
 it without the frame loop — which is also why its FNV comes from
@@ -374,6 +388,18 @@ it without the frame loop — which is also why its FNV comes from
 `EngineRuntime::setCommandRecording()` turns on a bounded ring of recent ticks.
 Off by default: recording every tick of a long session is wanted by a test, a
 replay tool or a netcode client, not by a game.
+
+**What this substrate gives, and what it does not.** Replay — *same initial
+state + the same recorded commands ⇒ same result* — is served by recording
+derived commands, because nothing is recomputed. **Rollback is not**: it restores
+a *corrected* state and runs the logic forward again, so a `MoveContribution` the
+AI derived from world state the correction just changed has to be **re-derived**,
+not replayed. That needs an input layer (player/AI intent) above this one, which
+is named in the header so `MoveContribution` is not mistaken for it. For the same
+reason `Source::Correction` is reserved and unusable: a server correction
+replaces state at tick N and re-simulates from saved inputs — it does not compose
+inside one tick's stream, and modelling it as a high-priority command would
+produce something that looks like it reconciles and does not.
 
 ### What the gate has closed, and what it still cannot see
 

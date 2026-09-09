@@ -15,9 +15,25 @@
 //
 //     per-tick commands -> one simulation -> authoritative state -> presentation
 //
-// This header is the first arrow. It turns replay, rollback, prediction,
-// server resimulation and headless reproduction from four separate problems
-// into one: capture the commands, and the state follows.
+// This header is the first arrow.
+//
+// ── WHAT IT GIVES, AND WHAT IT DOES NOT ─────────────────────────────────────
+// An earlier version of this comment said the record turns replay, rollback,
+// prediction and server resimulation into ONE problem. That is true of replay
+// and false of rollback, and the difference decides what has to be recorded.
+//
+//   REPLAY   = same initial state + the same recorded commands => same result.
+//              Recording a DERIVED command (MoveContribution{(0.7,0,0.7)}) is
+//              sufficient, because nothing needs to be recomputed.
+//   ROLLBACK = restore a CORRECTED state, then run the logic forward again.
+//              If AI computed that (0.7,0,0.7) from world state the correction
+//              just changed, replaying the recorded contribution reproduces
+//              movement that is now wrong. It has to be RE-DERIVED.
+//
+// Which is why AAA systems record intent, not the output of logic. What this
+// file records is the command layer — what systems DECIDED this tick. Rollback
+// additionally needs an input layer (player/AI intent, re-derivable), which is
+// named here so MoveContribution is not mistaken for it, and is not built.
 //
 // ── THE INVARIANT, AND WHY IT IS ALREADY MEASURABLE ─────────────────────────
 //     same initial state + same commands  =>  same resulting state
@@ -65,7 +81,14 @@ enum class Source : uint16_t {
     Animation  = 2,   // root motion
     Ability    = 3,   // dashes, knockback
     Cutscene   = 4,
-    Correction = 5,   // network reconciliation — outranks everything
+    // RESERVED, AND NOT THE RECONCILIATION MECHANISM. A server correction does
+    // not compose with local input inside one tick's stream: it REPLACES
+    // authoritative state at tick N and re-simulates N+1..now from the client's
+    // saved inputs. Modelling it as a high-priority command in this buffer
+    // would produce something that looks like it reconciles and does not. The
+    // value is held so the numbering stays stable; nothing may submit with it
+    // until the input layer above exists.
+    Correction = 5,
     Count
 };
 
@@ -89,22 +112,59 @@ struct SimCommand {
     // refuses to make.
     uint64_t entity = 0;
 
-    // Payload, interpreted by `kind`. A fixed array rather than a union so the
-    // bytes are always initialised and the struct stays memcmp-able.
-    float    a[8]   = {};
+    // ── Payload, interpreted by `kind` ─────────────────────────────────────
+    // Fixed size on purpose: the whole point of the POD is that a stream of
+    // these is a flat array that can be memcmp'd, hashed and written to a file
+    // with no per-kind serialiser. `Jump` paying for 32 unused bytes is the
+    // price of that, and it is the right trade at this size.
+    //
+    // TWO VIEWS OF THE SAME 32 BYTES. The first version was float-only, which
+    // would have forced every non-float payload through a float: SetBodyType's
+    // enum, and any future entity id, tick number or bitmask — the last of
+    // which loses exactness above 2^24 SILENTLY. Same storage, no padding,
+    // still trivially copyable; `u` is simply the honest view when the value
+    // being carried is not a real number.
+    union {
+        float    a[8] = {};      // NSDMI on the first member zero-fills BOTH
+        uint32_t u[8];
+    };
 };
 static_assert(sizeof(SimCommand) == 48, "SimCommand is a wire/replay POD");
 static_assert(alignof(SimCommand) == 8, "SimCommand alignment is part of the layout");
+static_assert(offsetof(SimCommand, entity) == 8, "layout is the replay format");
+static_assert(offsetof(SimCommand, a) == 16, "layout is the replay format");
 
 // ── The tick's commands ─────────────────────────────────────────────────────
-// Submitted during broadcastUpdate (and from outside the sim), drained and
-// EXECUTED in a canonical order at the top of the fixed step.
+// Submitted during broadcastUpdate ONLY, then ordered canonically and executed
+// within the same fixed step.
+//
+// ── WHY SUBMISSION HAS A PHASE, AND WHY IT IS ENFORCED ──────────────────────
+// The buffer is reachable from anywhere holding the runtime — including
+// onFrame, an editor panel and a render-rate kit callback. A command submitted
+// at RENDER rate lands in whichever tick's buffer happens to be open, so the
+// set of commands a tick receives becomes frame-rate-dependent: two frames per
+// tick and one frame per tick produce different simulations from identical
+// content. That is BUG-0053's defect class exactly (gameplay clocks advancing
+// at render rate), one layer up, inside the subsystem built to remove it.
+//
+// So it is refused rather than documented. A guard costs a branch now and is
+// unremovable once kits are written against the loose behaviour.
 class Buffer {
 public:
     // Returns false when the entity id is 0 (unassigned) — a command that
     // cannot name its target is not recordable and would replay as a no-op
-    // against a different entity.
+    // against a different entity — or when submission is CLOSED (see above).
     bool submit(const SimCommand& c);
+
+    // The window. The runtime opens it around broadcastUpdate and closes it for
+    // the rest of the frame. Default-OPEN so a standalone Buffer — a test, a
+    // replay tool, a server with no frame loop — needs no ceremony; a runtime
+    // closes it explicitly when a session starts.
+    void setSubmissionOpen(bool open) { m_open = open; }
+    bool submissionOpen() const { return m_open; }
+    // Commands refused for arriving outside the window, since the last clear().
+    // A count rather than a hard failure: the first job is to NAME the caller.
+    uint32_t refusedOutOfPhase() const { return m_refused; }
 
     // Canonical order: (entity, source, kind, seq). Deterministic and
     // INDEPENDENT of submission order, which is precisely the property
@@ -113,17 +173,22 @@ public:
     void sortForExecution();
 
     const std::vector<SimCommand>& commands() const { return m_cmds; }
-    void clear() { m_cmds.clear(); m_seq = 0; }
+    // Ends the tick. Leaves submission CLOSED: the next tick's window is opened
+    // by the runtime, so the gap between ticks refuses rather than accumulates.
+    void clear() { m_cmds.clear(); m_seq = 0; m_refused = 0; m_open = false; }
     size_t size() const { return m_cmds.size(); }
 
-    // FNV-1a over the whole buffer, for divergence reporting and replay
-    // verification. Reuses engine_abi's constants like simhash does rather
-    // than adding another copy of the algorithm.
+    // An order-sensitive fold of per-command FNV-1a values, length-prefixed —
+    // not one FNV pass over the buffer's bytes, which is what this said before.
+    // Order-sensitive is the property wanted: it is used to check that a replay
+    // was told the same things in the same sequence.
     uint64_t digest() const;
 
 private:
     std::vector<SimCommand> m_cmds;
-    uint32_t                m_seq = 0;
+    uint32_t                m_seq     = 0;
+    uint32_t                m_refused = 0;
+    bool                    m_open    = true;
 };
 
 }  // namespace simcmd

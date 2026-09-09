@@ -54,6 +54,10 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     m_simulating = true;
     m_simElapsed = 0.0;
     m_simFrame   = 0;
+    // A fresh session starts with the window shut: between sessions, and
+    // between ticks, a submission has no tick to belong to.
+    m_commands.clear();
+    m_commands.setSubmissionOpen(false);
     // Fresh session, fresh accumulator: a stop mid-step left a stale
     // fraction that fired the new session's first fixed step early and
     // handed the renderer a non-zero interpolation alpha on frame one
@@ -169,18 +173,26 @@ void EngineRuntime::tickSimulation(float dt) {
         m_scriptHost->setFrame(kSimDt, m_simElapsed, m_simFrame);
         // Explicit phase order so script intent lands in the SAME physics
         // step: scripts set intent -> physics applies it -> contacts dispatch.
+        // ── The command window ─────────────────────────────────────────────
+        // Open ONLY across broadcastUpdate. A submission from onFrame or an
+        // editor panel would otherwise land in whichever tick's buffer was
+        // open when the caller ran, making the tick's command set depend on
+        // the frame rate — BUG-0053's defect class inside the subsystem meant
+        // to remove it. Outside this window submit() refuses and counts.
+        m_commands.setSubmissionOpen(true);
         { ENGINE_PROFILE_SCOPE("Sim.update");  m_plugins.broadcastUpdate(w, kSimDt); }
+        m_commands.setSubmissionOpen(false);
 
         // ── The tick's commands become canonical HERE ───────────────────────
-        // Everything gameplay asked for during onUpdate is now in the buffer.
-        // Sorting before physics consumes it is what makes the result
-        // independent of submission order — the property last-writer-wins
-        // lacked, and the reason two systems acting on one entity no longer
-        // depend on plugin registration order for their outcome.
+        // Everything gameplay asked for during onUpdate is now in the buffer,
+        // and this puts it in an order that is a function of the commands —
+        // (entity, source, kind, seq) — rather than of who submitted first.
+        // That independence is the property last-writer-wins lacked.
         //
-        // The record is kept for the whole tick rather than cleared here: the
-        // replay ring copies it after the step, and a divergence report wants
-        // to say what the tick was TOLD to do, not only what it produced.
+        // NOTHING EXECUTES THESE YET. The record is built and ordered; the
+        // executor arrives in stage 2, when charMove becomes a contribution.
+        // Ordering here rather than at the point of execution is deliberate —
+        // the record and the execution must not be able to disagree.
         m_commands.sortForExecution();
 
         { ENGINE_PROFILE_SCOPE("Sim.physics"); m_plugins.broadcastPhysicsStep(w, kSimDt); }
@@ -258,15 +270,18 @@ void EngineRuntime::setCommandRecording(bool on, size_t ticks) {
 
 void EngineRuntime::recordTickCommands() {
     if (!m_cmdRecording || m_cmdRing.empty()) return;
-    // Already sorted into canonical order before physics consumed it, so what
-    // is stored is what was EXECUTED, not what happened to be submitted first.
-    m_cmdRing[m_cmdRingHead] = m_commands.commands();
+    // Already sorted into canonical order, so what is stored is the order the
+    // tick will EXECUTE in, not the order things happened to be submitted.
+    // The tick number goes in with it: a stream whose slots cannot say which
+    // tick they are can only be checked against per-tick state hashes by
+    // assuming no gaps, and gaps are exactly what a hitch produces.
+    m_cmdRing[m_cmdRingHead] = { m_simFrame, m_commands.commands() };
     m_cmdRingHead = (m_cmdRingHead + 1) % m_cmdRing.size();
 }
 
-const std::vector<simcmd::SimCommand>&
+const EngineRuntime::RecordedTick&
 EngineRuntime::recordedTick(size_t ticksAgo) const {
-    static const std::vector<simcmd::SimCommand> kEmpty;
+    static const RecordedTick kEmpty;
     if (!m_cmdRecording || m_cmdRing.empty() || ticksAgo >= m_cmdRing.size())
         return kEmpty;
     // head points at the NEXT slot to write, so the tick just completed is

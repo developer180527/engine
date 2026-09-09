@@ -27,6 +27,19 @@ bool Buffer::submit(const SimCommand& c) {
                  (unsigned)c.kind);
         return false;
     }
+    if (!m_open) {
+        // Outside broadcastUpdate. Accepting this would put the command in
+        // whichever tick's buffer is open when the caller happened to run,
+        // making the tick's command set frame-rate-dependent — see the header.
+        // Warned once per tick, counted always: a render-rate caller would
+        // otherwise produce one line per frame and drown the log it needs.
+        if (m_refused == 0)
+            LOG_WARN("SimCmd", "command (kind %u) submitted outside the update "
+                     "phase and refused — submit from onUpdate, not onFrame",
+                     (unsigned)c.kind);
+        ++m_refused;
+        return false;
+    }
     SimCommand copy = c;
     copy.seq = m_seq++;
     m_cmds.push_back(copy);

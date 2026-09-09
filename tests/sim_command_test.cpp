@@ -185,6 +185,53 @@ int main() {
         CHECK(a.digest() != e.digest(), "and an empty buffer is distinct");
     }
 
+    // ── 6. Submission has a PHASE, and it is enforced ──────────────────────
+    // The buffer is reachable from anywhere holding the runtime. A command
+    // submitted at render rate would land in whichever tick's buffer was open
+    // when the caller ran, making the tick's command set frame-rate-dependent
+    // — BUG-0053's defect class inside the subsystem built to remove it. So
+    // the window is closed outside broadcastUpdate and submissions are refused.
+    {
+        std::printf("\n-- 6. the submission window --\n");
+        simcmd::Buffer b;
+        CHECK(b.submissionOpen(),
+              "a standalone buffer is open — a replay tool or a server with no "
+              "frame loop has no phase to be inside of");
+
+        b.setSubmissionOpen(false);
+        CHECK(!b.submit(mk(7, Cmd::Jump, Source::Gameplay, 0.0f)),
+              "a submission outside the window is REFUSED");
+        CHECK(b.size() == 0, "and does not reach the tick's record");
+        CHECK(b.refusedOutOfPhase() == 1, "it is counted, so the caller can be named");
+
+        b.setSubmissionOpen(true);
+        CHECK(b.submit(mk(7, Cmd::Jump, Source::Gameplay, 0.0f)),
+              "and accepted once the window is open");
+
+        // clear() ends the tick. It must leave the window SHUT, or the gap
+        // between one tick and the next silently accepts submissions again.
+        b.clear();
+        CHECK(!b.submissionOpen(), "clear() leaves the window shut");
+        CHECK(b.refusedOutOfPhase() == 0, "and resets the refusal count");
+    }
+
+    // ── 7. The payload carries integers EXACTLY ────────────────────────────
+    // The float-only payload would have forced SetBodyType's enum, and any
+    // future entity id or tick number, through a float — which loses exactness
+    // above 2^24 with no diagnostic. The union is the same 32 bytes.
+    {
+        std::printf("\n-- 7. integer payloads --\n");
+        const uint32_t big = 16777217u;          // 2^24 + 1: not a float
+        CHECK((uint32_t)(float)big != big,
+              "the value chosen is genuinely unrepresentable as a float");
+
+        simcmd::SimCommand c{};
+        c.entity = 9;
+        c.u[0] = big;
+        CHECK(c.u[0] == big, "and survives the payload unchanged");
+        CHECK(sizeof(c.a) == sizeof(c.u), "both views are the same 32 bytes");
+    }
+
     if (g_failures) {
         std::printf("\nsim_command_test: %d FAILURE(S)\n", g_failures);
         return 1;
