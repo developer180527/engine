@@ -57,10 +57,18 @@ struct ResolvedMove {
     float    horizZ   = 0.0f;
     float    vertical = 0.0f;
 
-    // Genuine conflicts: contributions that lost to an equal-priority rival and
+    // Genuine conflicts: contributions that lost to an EQUAL-priority rival and
     // were therefore decided by submission index. Non-zero means two systems
     // are fighting over one character at the same priority, which is a content
     // bug the caller should surface — not something to resolve silently.
+    //
+    // A contribution that lost to a HIGHER priority is not counted: that is the
+    // rule working, and reporting it would fire this diagnostic on correct
+    // content. Counted against the SETTLED winner rather than while the winner
+    // is still being chosen, so the value is a function of the contribution SET
+    // and not of the order it arrived in — section 5 of move_composition_test
+    // asserts that alongside the movement itself, because the shorter way to
+    // write this fix does not have that property.
     uint16_t exclusiveConflicts = 0;
     uint16_t overrideConflicts  = 0;
     // Contributions whose mode this build has no rule for — a stream recorded

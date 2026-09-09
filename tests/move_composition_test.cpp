@@ -147,6 +147,30 @@ int main() {
         composeMoves(ok, out);
         CHECK(near(out[0].horizX, 4.0f),
               "unequal source: priority decides, seq is never consulted");
+        // THE ASSERTION THIS SECTION WAS MISSING. The comment above already
+        // said higher priority is not a conflict; nothing checked it, and the
+        // code counted every rival after the first, so this case reported a
+        // conflict — and dispatchMoves logged a warning about an "equal
+        // priority" that was not equal. Correct content tripping the
+        // diagnostic is how a diagnostic gets muted.
+        CHECK(out[0].overrideConflicts == 0,
+              "...and it is NOT counted as a conflict (%u)",
+              (unsigned)out[0].overrideConflicts);
+
+        // The same for Exclusive, and for a loser that is not merely the
+        // second arrival: three contributions, one equal-priority tie.
+        std::vector<SimCommand> mix = {
+            ct(13, Source::Gameplay,  1.0f, 0.0f, 0.0f, Mode::Exclusive, 0),
+            ct(13, Source::Animation, 4.0f, 0.0f, 0.0f, Mode::Exclusive, 1),
+            ct(13, Source::Animation, 9.0f, 0.0f, 0.0f, Mode::Exclusive, 2),
+        };
+        composeMoves(mix, out);
+        CHECK(near(out[0].horizX, 4.0f),
+              "highest priority wins, and among equals the lowest seq");
+        CHECK(out[0].exclusiveConflicts == 1,
+              "exactly ONE conflict — the equal-priority rival, not the "
+              "lower-priority one that never tied with anything (%u)",
+              (unsigned)out[0].exclusiveConflicts);
     }
 
     // ── 5. THE PROPERTY: the result is independent of arrival order ────────
@@ -171,15 +195,35 @@ int main() {
             ct(11, Source::Gameplay,  9.0f, 9.0f, 9.0f, Mode::Additive,  5),
             ct(12, Source::AI,        0.5f, 0.5f, 0.0f, Mode::Additive,  6),
             ct(12, Source::Gameplay, -0.25f,1.0f, 0.0f, Mode::Additive,  8),
+            // ── Two entities that exist to move the CONFLICT COUNTERS ──────
+            // Without these the counter comparison in sameAs() is 0 == 0 for
+            // every entity and proves nothing. 13 is the case the shorter fix
+            // gets wrong: a rival at the winner's priority is absent, so the
+            // count must be 0 from every arrival order. 14 is a real tie, so
+            // the count must be 1 from every arrival order.
+            ct(13, Source::Gameplay,  1.0f, 0.0f, 0.0f, Mode::Override,  9),
+            ct(13, Source::Gameplay,  8.0f, 0.0f, 0.0f, Mode::Override,  11),
+            ct(13, Source::Animation, 2.0f, 0.0f, 0.0f, Mode::Override,  10),
+            ct(14, Source::Animation, 5.0f, 0.0f, 0.0f, Mode::Exclusive, 12),
+            ct(14, Source::Animation, 6.0f, 0.0f, 0.0f, Mode::Exclusive, 13),
         };
 
         std::vector<ResolvedMove> expected;
         composeMoves(base, expected);
-        CHECK(expected.size() == 3, "three entities resolved");
+        CHECK(expected.size() == 5, "five entities resolved (%zu)",
+              expected.size());
         CHECK(expected[0].entity == 10 && expected[1].entity == 11
-              && expected[2].entity == 12,
+              && expected[2].entity == 12 && expected[3].entity == 13
+              && expected[4].entity == 14,
               "output is ordered by entity — a canonical sequence of physics "
               "calls, whatever order the commands arrived in");
+        CHECK(expected[3].overrideConflicts == 0 && near(expected[3].horizX, 2.0f),
+              "13: a higher-priority Override wins with NO conflict reported "
+              "(%u), though two equal-priority rivals are present below it",
+              (unsigned)expected[3].overrideConflicts);
+        CHECK(expected[4].exclusiveConflicts == 1 && near(expected[4].horizX, 5.0f),
+              "14: a real equal-priority tie IS reported (%u)",
+              (unsigned)expected[4].exclusiveConflicts);
 
         auto sameAs = [&](const std::vector<ResolvedMove>& got) {
             if (got.size() != expected.size()) return false;
@@ -188,6 +232,19 @@ int main() {
                 if (!near(got[i].horizX,   expected[i].horizX))   return false;
                 if (!near(got[i].horizZ,   expected[i].horizZ))   return false;
                 if (!near(got[i].vertical, expected[i].vertical)) return false;
+                // THE DIAGNOSTICS TOO, and not as an afterthought. The obvious
+                // way to stop these counting lower-priority losers — testing
+                // `c.source == winner->source` inside the pass that is still
+                // choosing the winner — is order-DEPENDENT: Gameplay, Gameplay,
+                // Animation counts one and Gameplay, Animation, Gameplay counts
+                // none, for identical movement. A warning that appears with
+                // arrival order is the defect this subsystem removes, surviving
+                // in the instrument that reports it. Comparing the counters
+                // here is what stops that fix from being written.
+                if (got[i].exclusiveConflicts != expected[i].exclusiveConflicts)
+                    return false;
+                if (got[i].overrideConflicts  != expected[i].overrideConflicts)
+                    return false;
             }
             return true;
         };
@@ -202,7 +259,7 @@ int main() {
             if (!sameAs(out)) ++mismatches;
         }
         CHECK(mismatches == 0,
-              "200 shuffled arrival orders of 9 contributions all compose to "
+              "200 shuffled arrival orders of 14 contributions all compose to "
               "ONE result (%d mismatches)", mismatches);
     }
 

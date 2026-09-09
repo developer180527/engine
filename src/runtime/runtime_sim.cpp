@@ -206,10 +206,10 @@ void EngineRuntime::tickSimulation(float dt) {
         // (entity, source, kind, seq) — rather than of who submitted first.
         // That independence is the property last-writer-wins lacked.
         //
-        // NOTHING EXECUTES THESE YET. The record is built and ordered; the
-        // executor arrives in stage 2, when charMove becomes a contribution.
-        // Ordering here rather than at the point of execution is deliberate —
-        // the record and the execution must not be able to disagree.
+        // Ordered HERE rather than at the point of execution, deliberately: the
+        // record and the execution must not be able to disagree, so what the
+        // replay ring stores below is the sequence that actually ran. The
+        // executor is dispatchMoves(), immediately after.
         m_commands.sortForExecution();
 
         // ── Stage 2: locomotion is COMPOSED, then dispatched ───────────────

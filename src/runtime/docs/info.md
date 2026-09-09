@@ -417,11 +417,27 @@ simulation. Per entity:
 
 Ties between **equal-priority** contributions go to the lower `seq` — first
 claim, not last write — and are **counted**, so a genuine content conflict is
-reported rather than silently decided. Order independence is structural: the
-fold reads `source` and `seq` off the commands and never off their position, so
-it neither requires a sorted buffer nor can be broken by an unsorted one.
-`tests/move_composition_test.cpp` checks it with 200 randomised arrival orders;
-mutating the fold back to last-writer-wins reddens it at 160/200.
+reported rather than silently decided. A contribution beaten by a *higher*
+priority is **not** counted: that is the rule working, and a diagnostic that
+fires on correct content gets muted. The count is taken against the settled
+winner rather than while the winner is still being chosen, because the shorter
+form of that fix is order-dependent (measured: the same three contributions
+count 1 or 0 depending on arrival order).
+
+Order independence is structural: the fold reads `source` and `seq` off the
+commands and never off their position, so it neither requires a sorted buffer
+nor can be broken by an unsorted one. `tests/move_composition_test.cpp` checks
+it with 200 randomised arrival orders over 14 contributions, comparing the
+conflict counters as well as the movement.
+
+**What the shuffle check can and cannot catch** (corrected 2026-09-09 — an
+earlier note here claimed a last-writer-wins mutation reddens it at 160/200,
+and it does not; re-measured, that line stays at 0 mismatches). The shuffle
+compares every arrival order against a baseline computed by the *same* fold, so
+it detects order-DEPENDENCE and is blind to a rule that is wrong but
+deterministic — the same distinction the `moves` gate tier makes below. The
+tie-break is pinned by the explicit assertions in §4 and §5 instead: inverting
+it to last-writer-wins reddens four of them.
 
 The `moves` tier in `determinism_gate_test.cpp` covers the *path* rather than
 the rule — the per-tick fold, `EntityId`→entity resolution, and the dispatch

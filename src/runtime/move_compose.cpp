@@ -62,8 +62,7 @@ void composeMoves(const std::vector<SimCommand>& cmds,
         ResolvedMove r;
         r.entity = entity;
 
-        // Pass 1 — find the winning Exclusive and the winning Override, and
-        // count how many lost a tie they should not have been in.
+        // Pass 1 — find the winning Exclusive and the winning Override.
         const SimCommand* excl = nullptr;
         const SimCommand* ovr  = nullptr;
         for (size_t k = i; k < j; ++k) {
@@ -71,14 +70,59 @@ void composeMoves(const std::vector<SimCommand>& cmds,
             if (!move::modeKnown(c)) ++r.unknownModes;
             switch (move::mode(c)) {
                 case move::Mode::Exclusive:
-                    if (excl) ++r.exclusiveConflicts;
                     if (!excl || beats(c, *excl)) excl = &c;
                     break;
                 case move::Mode::Override:
-                    if (ovr) ++r.overrideConflicts;
                     if (!ovr || beats(c, *ovr)) ovr = &c;
                     break;
                 default: break;
+            }
+        }
+
+        // ── Pass 1b — count only the ties that `seq` ACTUALLY DECIDED ───────
+        // Counted against the WINNER's source rather than incremented as rivals
+        // are seen, and both halves of that matter.
+        //
+        // WHAT IT MEANS. A conflict is what ResolvedMove says it is: a
+        // contribution that lost to an EQUAL-priority rival and was therefore
+        // decided by submission index. Two contributions at different
+        // priorities are the rule working — a Cutscene Override outranking a
+        // Gameplay one is the designed behaviour, not a content bug. The
+        // previous form incremented on every rival after the first, so it
+        // reported a conflict for exactly that case, and dispatchMoves turned
+        // it into a LOG_WARN claiming an equal priority that was not equal.
+        // A warning that fires on correct content gets muted, and a muted
+        // warning is worse than none because it still looks like coverage —
+        // the same argument transform_authority.h makes for its per-field mask.
+        //
+        // WHY A SECOND PASS, AND NOT `c.source == ovr->source` IN THE FIRST.
+        // That one-line version is the obvious fix and it is ORDER-DEPENDENT,
+        // because `ovr` is still moving while it is being compared against.
+        // Measured, for Gameplay(seq 0), Gameplay(seq 2), Animation(seq 1):
+        //
+        //     arrival G,G,A -> 1        arrival G,A,G -> 0
+        //
+        // Same contributions, same resulting movement, a warning in one and
+        // silence in the other — the defect this subsystem exists to remove,
+        // reappearing in the instrument that reports it. (The form this
+        // replaces was not order-dependent; it was order-independent and
+        // wrong, counting every rival including the ones priority settled.)
+        // Comparing against the SETTLED winner is a function of the set.
+        if (excl || ovr) {
+            for (size_t k = i; k < j; ++k) {
+                const SimCommand& c = cmds[idx[k]];
+                if (&c == excl || &c == ovr) continue;      // the winner itself
+                switch (move::mode(c)) {
+                    case move::Mode::Exclusive:
+                        if (excl && c.source == excl->source)
+                            ++r.exclusiveConflicts;
+                        break;
+                    case move::Mode::Override:
+                        if (ovr && c.source == ovr->source)
+                            ++r.overrideConflicts;
+                        break;
+                    default: break;
+                }
             }
         }
 
