@@ -24,6 +24,7 @@
 
 #include "components/animator.h"
 #include "components/camera.h"
+#include "components/camera_look.h"
 #include "components/character_controller.h"
 #include "components/collision_events.h"
 #include "components/entity_id.h"
@@ -144,6 +145,15 @@ void registerClassification(flecs::world& w) {
         "on job workers (animation/skin_palette.h), so it is nondeterministic "
         "BY CONSTRUCTION and is a render resource, not simulation state");
     exempt<Camera>(w,       "presentation — projection and framing, read by the renderer");
+    // Written at RENDER RATE by a look controller and composed by
+    // PrimaryCameraFinder. Exempt because it is presentation: it decides what
+    // is drawn and nothing in the simulation reads it. This exemption is the
+    // whole point of the component — before it, the same aim was written into
+    // Transform.rotation, which IS hashed, making a render-rate write reach
+    // simulation state (BUG-0053's class). See components/camera_look.h for
+    // what this does NOT fix.
+    exempt<CameraLook>(w,   "presentation — where the camera is aimed, latched "
+                            "at render rate so look does not lag the frame");
     exempt<Light>(w,        "presentation — shading parameters");
     exempt<LodMesh>(w,      "presentation — which detail level to draw");
     exempt<MeshRenderer>(w, "presentation — which mesh and material to draw");

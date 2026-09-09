@@ -4,6 +4,7 @@
 #include <bx/math.h>
 
 #include "components/camera.h"
+#include "components/camera_look.h"
 #include "core/transform.h"
 #include "core/transform_utils.h"
 #include "runtime/world_query_cache.h"
@@ -40,6 +41,22 @@ public:
                 bx::Vec3 pos = {wm[12], wm[13], wm[14]};
                 bx::Vec3 fwd = bx::normalize({-wm[8], -wm[9], -wm[10]});
                 bx::Vec3 up  = bx::normalize({ wm[4],  wm[5],  wm[6]});
+
+                // ── CameraLook wins over the Transform's rotation ──────────
+                // A camera aimed by a look controller carries CameraLook, and
+                // its aim is composed HERE, at render rate, instead of being
+                // written into Transform.rotation — which is hashed simulation
+                // state, so writing it per frame is BUG-0053's defect class.
+                // See components/camera_look.h.
+                //
+                // POSITION still comes from the world matrix, so a camera
+                // parented to a character (or to a mount, a vehicle, a spring
+                // arm) is carried by its parent exactly as before. Only the
+                // orientation is taken over.
+                if (const CameraLook* look = e.try_get<CameraLook>()) {
+                    bx::Vec3 right = bx::InitZero;
+                    cameraLookBasis(*look, fwd, right, up);
+                }
                 bx::mtxLookAt(view, pos, bx::add(pos, fwd), up);
                 const bool rhNdc = homogeneousDepth;
                 if (c.projection == ProjectionType::Perspective)

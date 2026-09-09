@@ -6,6 +6,7 @@
 #include "components/name.h"
 #include "components/mesh_renderer.h"
 #include "components/camera.h"
+#include "components/camera_look.h"
 #include "components/spinner.h"
 #include "components/rigid_body.h"
 #include "components/collision_events.h"
@@ -70,6 +71,14 @@ inline void registerAll(flecs::world& ecs) {
         .member<float>("orthoSize")
         .member<float>("nearPlane")
         .member<float>("farPlane");
+
+    // CameraLook: runtime presentation state, latched at render rate. Members
+    // registered so the inspector can SHOW where a camera is aimed — the value
+    // most worth seeing while debugging a controller, and previously buried
+    // inside a quaternion.
+    ecs.component<CameraLook>()
+        .member<float>("yaw")
+        .member<float>("pitch");
 
     // Spinner: editor-only, excluded from game world snapshots
     ecs.component<Spinner>()

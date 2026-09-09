@@ -331,6 +331,9 @@ engine_test(physics_authority_test)
 # Stage 3b: the authority backstop. BOTH halves — a staged violation is
 # reported with its field and phase, and correct code is silent.
 engine_test(transform_authority_test)
+# Stage 4: the presentation split. A camera's aim is latched at render rate and
+# must NOT reach the world hash — BUG-0053's class, one component over.
+engine_test(camera_look_test)
 engine_test(keymap_test)
 engine_test(nav_test)
 # The PRIMITIVE tier of the engine API table (jobs / memory / drawSubmit) — the

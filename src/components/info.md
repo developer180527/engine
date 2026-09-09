@@ -1,11 +1,12 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-08
+verified: 2026-09-09
 covers:
   - src/components/
 tests:
   - tests/component_abi_test.cpp
+  - tests/camera_look_test.cpp
   - tests/determinism_gate_test.cpp
   - tests/event_test.cpp
   - tests/sim_purity_check.cpp
@@ -96,6 +97,19 @@ state after every tick and compares runs; the governing rule for what to hash is
 field, and not the fields that happen to be serialized. `Animator::fade` is in
 (it is a crossfade duration and changes the pose sampled on later ticks);
 `Camera` is out entirely.
+
+`CameraLook` (2026-09-09) is out for a sharper reason than the rest, and it is
+the reason the component exists. A first-person controller must latch the mouse
+at RENDER rate or look lags the frame rate — but it then wrote the resulting
+orientation into `Transform.rotation`, which IS hashed. That is a render-rate
+write to simulation state: BUG-0053's defect class, alive in the tree only
+because no gate tier drives input, so nothing measures it. Moving the aim into
+its own `SimExempt` component is what makes the latch legal instead of merely
+unmeasured. `camera_look_test.cpp` pins both directions — twelve render-rate aim
+changes leave the world hash untouched, and writing the same aim the old way
+still changes it. **It does not make look deterministic**: yaw and pitch still
+accumulate per frame and still feed movement and raycasts, which are simulation.
+Closing that needs the input layer named in `runtime/sim_command.h`.
 
 **Adding a component means classifying it.** `simhash::auditCoverage()` fails on
 any data component present in a world carrying neither tag, so the default is
