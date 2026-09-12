@@ -22,7 +22,7 @@ what order it should be built.
 | `guides/` | How to *use* the engine — APIs, scripting, performance tuning. |
 | `reference/` | File formats and schemas, field by field. Lookup material, not narrative. |
 | `process/` | How we work: the doc contract, the maturity ladder, the roadmap. Also the defect record — [`bug-ledger.md`](process/bug-ledger.md) is the schema and [`bugs/`](process/bugs/) is one file per defect; [`open-questions.md`](process/open-questions.md) is what is known and *not* fixed; [`port-log-windows.md`](process/port-log-windows.md) is what the cross-platform port cost. |
-| `plans/` | Work not yet done. Audits, phased plans, backlog. `plans/future/` is speculative. |
+| `plans/` | Work not yet done. Audits, phased plans, backlog. `plans/future-plans/` is speculative. |
 | `rhi/` | The graphics-abstraction programme, one purpose per file — the decision, its evidence, the design, the migration. [`rhi/workflow.md`](rhi/workflow.md) is how a question becomes a study becomes a decision; [`rhi/studies/`](rhi/studies/) is where the research lands. |
 | `generated/` | Doxygen output. Not written by hand, not reviewed. |
 
@@ -64,7 +64,10 @@ claim about freshness as much as about tests. See
   for the target design, [`plans/renderer-audit-and-plan.md`](plans/renderer-audit-and-plan.md)
   for the ranked findings and which are fixed, and **[`rhi/`](rhi/)** for the
   GPU-driven RHI itself — a directory now, not a file, starting at
-  [`rhi/README.md`](rhi/README.md).
+  [`rhi/README.md`](rhi/README.md). Colour is separate:
+  [`plans/colour-pipeline.md`](plans/colour-pipeline.md) measures what the
+  renderer does to colour today (it shades in an undefined colour space) and
+  stages the fix, the HDR chain and HDR display output.
 - **Does a swappable renderer cost performance?** —
   [`rhi/swappability.md`](rhi/swappability.md): no, and the measurement is in it.
   "Swappable" means four different things; three are free and the fourth (a frozen
@@ -112,7 +115,9 @@ claim about freshness as much as about tests. See
   [`architecture/dependencies.md`](architecture/dependencies.md).
 - **Plans not yet started** — [`plans/`](plans/): animation, soak/fuzz testing,
   scripting integration, the infrastructure backlog, and `plans/future-plans/`
-  for notes that are deliberately speculative (crash reporting, IDE ideas).
+  for notes that are deliberately speculative (crash reporting, IDE ideas, and
+  [`film-tool.md`](plans/future-plans/film-tool.md) — a filmmaking application
+  on the same SDK, and why the determinism work makes it a take system).
 
 This list is hand-maintained and therefore the one thing here that CAN go stale.
 `engine_doctor` checks front-matter, not prose — see the note in

@@ -110,6 +110,7 @@
 #include "runtime/sim_classification.h"
 #include "runtime/sim_hash.h"
 #include "runtime/sim_intent.h"
+#include "runtime/input/hid_keymap.h"      // usageFromName — the Move axis's keys
 #include "runtime/input/input_manager.h"
 #include "runtime/input/input_sources.h"
 
@@ -367,7 +368,21 @@ private:
 // must simulate identically" — which, before the intent layer, it did not,
 // because a controller latched the device in onFrame and fed the result into
 // movement.
-static long g_intentTicks = 0;
+static long   g_intentTicks = 0;
+// ── AND WHAT THE INTENTS CARRIED, which is a separate question ──────────────
+// g_intentTicks counts that an intent EXISTED, not that it held anything. That
+// is not enough here, and BUG-0060 is why: a headless host dropped every device
+// event because the focus gate reads "not focused" with no window, so the look
+// channel was identically zero — and zero is equal to zero at both cadences, so
+// this tier reported green with its non-vacuity assertion satisfied by 960
+// empty intents. Measured: advancing the look cursor per frame instead of per
+// tick zeroes the channel and leaves every assertion below passing without this.
+//
+// sim_intent_test already learned this lesson the same day and asserts the
+// motion is non-zero alongside asserting it is equal. The instrument built to
+// close the gate's largest blind spot must not have the blind spot itself.
+static double g_intentLookMag = 0.0;   // sum of |lookDx| + |lookDy| over the run
+static double g_intentMoveMag = 0.0;   // ...and of the Move axis, same reason
 
 class IntentPlugin final : public IEnginePlugin {
 public:
@@ -383,6 +398,8 @@ public:
         const simintent::Intent* in = m_intents->find(m_player);
         if (!in) return;
         ++g_intentTicks;
+        g_intentLookMag += std::fabs(in->lookDx) + std::fabs(in->lookDy);
+        g_intentMoveMag += std::fabs(in->moveX)  + std::fabs(in->moveY);
         // A miniature controller: turn the look delta into a heading and steer
         // along it. Deliberately the shape the FPS kit has — yaw accumulated
         // from mouse counts, feeding the MOVEMENT direction — because that is
@@ -781,6 +798,7 @@ static void runOnce(const Tier& t, int framesPerTick, int nTicks,
     const float dt = (1.0f / 60.0f) / (float)framesPerTick;
     out.perTick.reserve((size_t)nTicks);
     uint64_t evStamp = 1;
+    bool heldW = false, heldD = false;   // key edges, driven per tick below
     for (int tick = 0; tick < nTicks; ++tick) {
         // A deterministic "hand": a slow sweep with a reversal, so the heading
         // the driver integrates is not monotonic and a sign error would show.
@@ -789,7 +807,34 @@ static void runOnce(const Tier& t, int framesPerTick, int nTicks,
         const int dx = ((tick / 20) % 2) ? -8 : 10;
         const int dy = ((tick / 13) % 2) ?  4 : -2;
 
+        // ── KEYS, because the Move axis reaches the sampler another way ─────
+        // The look channel comes from InputManager::lookTotal; moveX/moveY and
+        // the action bits come from the ACTION MAP, a different path through
+        // the same manager. This fixture drove only the mouse, so `axis2("Move")`
+        // and the actionDown/Pressed/Released loop in sampleLocalIntent were
+        // linked and never executed — and BUG-0060's focus gate killed presses
+        // and motion alike, so covering one path and not the other leaves half
+        // the bug's blast radius unwatched.
+        //
+        // Emitted on the tick's FIRST frame only, and unlike the motion above
+        // that is correct rather than a shortcut: a key is level-triggered, so
+        // there is no per-tick quantity to split. Both cadences fold the same
+        // edge into the same tick's snapshot, which is the property under test.
+        const bool wantW = ((tick / 17) % 2) == 0;
+        const bool wantD = ((tick / 29) % 2) == 0;
+        struct KeyDrive { const char* name; bool want; bool* held; };
+        const KeyDrive keys[] = { { "W", wantW, &heldW }, { "D", wantD, &heldD } };
+
         for (int f = 0; f < framesPerTick; ++f) {
+            if (device && f == 0) {
+                for (const KeyDrive& k : keys) {
+                    if (k.want == *k.held) continue;
+                    device->addEvent({ evStamp++, 2, hid::EventType::Key, 0,
+                                       input::usageFromName(k.name),
+                                       k.want ? 1 : 0, 0 });
+                    *k.held = k.want;
+                }
+            }
             // ── THE MOTION IS SPLIT ACROSS THE TICK'S FRAMES ────────────────
             // The same total per tick, delivered in framesPerTick pieces, so
             // the two runs differ ONLY in cadence. This matters more than it
@@ -1071,6 +1116,23 @@ int main(int argc, char** argv) {
               "and the input tier's driver saw an intent on %ld ticks — a tier "
               "whose controller never ran would report 'reproducible' for the "
               "reason an empty physics world once did", g_intentTicks);
+        // ── ...AND THAT THE INTENTS WERE NOT EMPTY ─────────────────────────
+        // The line above passes on 960 intents carrying nothing, which is
+        // exactly the state BUG-0060 put a headless host in: the focus gate
+        // reads "not focused" with no window, every device event is dropped,
+        // and the look channel is identically zero — equal at both cadences, so
+        // both comparisons above stay green. The device drives ~12 counts per
+        // tick across 240 ticks in four runs of this tier, so a live channel is
+        // three orders of magnitude above this floor and a dead one is at zero.
+        CHECK(g_intentLookMag > 1.0,
+              "and those intents CARRIED look motion (%.1f counts total) — "
+              "zero equals zero at both cadences, so a dead input path would "
+              "satisfy every assertion above it", g_intentLookMag);
+        CHECK(g_intentMoveMag > 1.0,
+              "and the Move axis too (%.1f) — the look and action channels "
+              "reach the sampler by different paths (lookTotal vs the action "
+              "map), and BUG-0060 killed both without either being asserted",
+              g_intentMoveMag);
         CHECK(g_contribRefused == 0,
               "and none were refused out of phase (%ld) — the submission "
               "window is open across broadcastUpdate, end to end",

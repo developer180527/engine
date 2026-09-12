@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-09
+verified: 2026-09-12
 parses-external-input: true
 covers:
   - src/runtime/
@@ -565,9 +565,16 @@ button bits would bake the current bindings into every stream — edit
 unusable by AI, which has no device. So intent carries `moveX/moveY` from the
 action map, a look delta in raw counts (sensitivity stays a gameplay tuning
 value), and action bitsets indexed by an **ordered declaration** the game makes
-once. `ActionSet::declarationHash` travels with a stream, so replaying against a
-different list is a detected mismatch rather than a controller acting on the
-wrong bits and being debugged as a logic bug.
+once. `ActionSet::declarationHash` is stored in every `RecordedTick`, so
+replaying against a different list is a detected mismatch rather than a
+controller acting on the wrong bits and being debugged as a logic bug.
+
+That last sentence was true of the design and not of the code until
+2026-09-10: the hash was computed and unit-tested for sensitivity to the list,
+and then attached to nothing — `RecordedTick` held `{tick, intents, cmds}`, so
+the bit indices in `held`/`pressed`/`released` were recorded with no record of
+what they indexed. §5 of `sim_intent_test` now asserts the wiring rather than
+the hash; dropping the field from the record reddens it.
 
 **Sampled once per tick, inside the fixed step**, and that is the half that
 closes stage 4's stated gap. `CameraLook` stopped the render-rate write reaching
@@ -600,6 +607,24 @@ fixture emitted one event per **tick**, so the tick's whole motion arrived on th
 first frame and the first sample took all of it either way. Both are now
 `moves = false` and motion split across the tick's frames, and the per-frame
 mutation diverges at tick 0.
+
+**A third, found 2026-09-10, and it is BUG-0060's own failure mode.** The tier's
+non-vacuity check was `g_intentTicks > 0` — that an intent *existed*, not that it
+carried anything. Measured: a mutation that zeroes the look channel leaves 960
+empty intents, and zero equals zero at both cadences, so every assertion passed.
+That is exactly the state BUG-0060 put a headless host in, and `sim_intent_test`
+had already learned it the same day ("the property is trivially satisfied when
+both are zero"). The gate tier now sums `|lookDx|+|lookDy|` and the Move axis and
+asserts both non-zero; restoring BUG-0060's focus gate reddens both lines.
+
+Driving the Move axis at all is new with it. The fixture fed only the mouse, so
+`axis2("Move")` and the `actionDown/Pressed/Released` loop in `sampleLocalIntent`
+were linked and never executed — the look channel reaches the sampler through
+`lookTotal` and the action channel through the action map, two paths, and
+BUG-0060 killed both. Keys are driven on the tick's **first frame** only, which
+is correct rather than a shortcut: a key is level-triggered, so unlike motion
+there is no per-tick quantity to split, and both cadences fold the same edge into
+the same tick's snapshot.
 
 **What this substrate gives, and what it does not.** Replay — *same initial
 state + the same recorded commands ⇒ same result* — is served by recording

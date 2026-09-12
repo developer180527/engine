@@ -473,8 +473,13 @@ void EngineRuntime::recordTickCommands() {
     // The tick number goes in with it: a stream whose slots cannot say which
     // tick they are can only be checked against per-tick state hashes by
     // assuming no gaps, and gaps are exactly what a hitch produces.
+    // The action list goes in alongside them: the intent bits are indices into
+    // its declaration order and are uninterpretable without it. Read here
+    // rather than once at session start because a game may declare actions
+    // lazily, and a stream that spans a change should record the change.
     m_cmdRing[m_cmdRingHead] =
-        { m_simFrame, m_intents.intents(), m_commands.commands() };
+        { m_simFrame, m_actionSet.declarationHash(),
+          m_intents.intents(), m_commands.commands() };
     m_cmdRingHead = (m_cmdRingHead + 1) % m_cmdRing.size();
 }
 

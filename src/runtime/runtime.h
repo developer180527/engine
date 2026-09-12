@@ -264,6 +264,19 @@ public:
     // replay needs the commands, rollback needs the intents (sim_intent.h).
     struct RecordedTick {
         uint64_t                        tick = 0;   // m_simFrame at execution
+        // ── The action list those intent bits were declared against ─────────
+        // Intent::held/pressed/released are BIT INDICES into ActionSet's
+        // declaration order, so they mean nothing without the list that
+        // assigned them. sim_intent.h says the hash "travels with a recorded
+        // stream" so a replay against a different list is a DETECTED mismatch
+        // rather than a controller acting on the wrong bits — which would
+        // present as a logic or physics bug and be debugged as one. It was
+        // computed and unit-tested for sensitivity, and then not attached to
+        // anything: this is what makes the claim true.
+        //
+        // 0 when the game declared no actions, which is distinct from any real
+        // hash for the same reason tick numbering starts at 1.
+        uint64_t                        actionHash = 0;
         std::vector<simintent::Intent>  intents;
         std::vector<simcmd::SimCommand> cmds;
     };

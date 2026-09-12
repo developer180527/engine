@@ -247,6 +247,86 @@ int main() {
               "in the field under test");
     }
 
+    // ── 5. The action list TRAVELS WITH THE RECORD ─────────────────────────
+    // Intent::held/pressed/released are bit indices into ActionSet's
+    // declaration order, so a recorded stream is uninterpretable without the
+    // list that assigned them — and worse than uninterpretable if replayed
+    // against a DIFFERENT list, because the bits are silently re-read as other
+    // actions and the result presents as a logic bug.
+    //
+    // sim_intent.h states in three places that declarationHash travels with the
+    // stream so that mismatch is DETECTED. Section 3 above proves the hash is
+    // sensitive to the list; it did not prove the hash reaches a record,
+    // because nothing stored it. A mechanism built, tested in isolation and not
+    // wired is the shape this tree keeps finding — so this asserts the wiring
+    // rather than the hash.
+    {
+        std::printf("\n-- 5. the action list travels with the record --\n");
+        EngineConfig cfg;
+        cfg.openAssetDatabase = false;
+        cfg.autoDetectProject = false;
+        cfg.defaultScene      = false;
+        cfg.projectRoot       = hermeticRoot();
+
+        EngineRuntime engine;
+        if (!engine.init(cfg, std::make_unique<HeadlessPlatform>())) {
+            CHECK(false, "engine init");
+        } else {
+            auto  src = std::make_unique<ReplaySource>();
+            auto* raw = src.get();
+            raw->addDevice({1, hid::DeviceClass::Mouse, 0x1234, 0x5678, 42, "mouse"});
+            engine.inputManager().initWithSource(std::move(src));
+            engine.inputManager().loadConfigText(kConfig);
+            engine.attachPlugins();
+            engine.simWorld().entity()
+                .set<Transform>({{0,0,0},{0,0,0,1},{1,1,1}})
+                .set<Name>({"player"}).set<EntityId>({kPlayer});
+            engine.actionSet().declare("Fire");
+            engine.actionSet().declare("Jump");
+            engine.setLocalController(kPlayer);
+            engine.setCommandRecording(true, 64);
+            engine.startSimulation(EngineRuntime::SimMode::InPlace);
+
+            const uint64_t live = engine.actionSet().declarationHash();
+            uint64_t stamp = 1;
+            for (int t = 0; t < 8; ++t) {
+                raw->addEvent({ stamp++, 1, hid::EventType::MouseMotion,
+                                0, 0, 5, -3 });
+                engine.tick(kSimDt);
+            }
+
+            CHECK(live != 0, "the declared list hashes to something (%llu)",
+                  (unsigned long long)live);
+            int carried = 0, ticksSeen = 0;
+            for (int t = 0; t < 8; ++t) {
+                const auto& rec = engine.recordedTick((size_t)t);
+                if (rec.tick == 0) continue;      // empty slot
+                ++ticksSeen;
+                if (rec.actionHash == live) ++carried;
+            }
+            CHECK(ticksSeen > 0, "the ring holds recorded ticks (%d)", ticksSeen);
+            CHECK(carried == ticksSeen,
+                  "and every one carries the action list's hash (%d of %d) — "
+                  "without this the bits in held/pressed/released name nothing",
+                  carried, ticksSeen);
+
+            // ...and a different list would be DETECTED, which is the point of
+            // carrying it. Compared against a set built the same way, so this
+            // fails if declarationHash ever stops depending on the list.
+            simintent::ActionSet other;
+            other.declare("Fire");
+            other.declare("Crouch");          // Jump -> Crouch: bit 1 changes meaning
+            CHECK(other.declarationHash() != live,
+                  "a stream recorded against a different list would not match "
+                  "(%llu vs %llu)",
+                  (unsigned long long)other.declarationHash(),
+                  (unsigned long long)live);
+
+            engine.stopSimulation();
+            engine.shutdown();
+        }
+    }
+
     if (g_failures) {
         std::printf("\nsim_intent_test: %d FAILURE(S)\n", g_failures);
         return 1;
