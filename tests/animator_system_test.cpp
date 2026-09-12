@@ -314,6 +314,235 @@ int main() {
               "negative wrap still produces a pose (ratio stayed in range)");
     }
 
+    testwd::phase("11. A clip change starts a crossfade");
+
+    // ── 11. A clip change starts a crossfade ────────────────────────────────
+    // The crossfade path had NO coverage anywhere — not in this file, and not
+    // in the determinism gate, whose animator tier never changes a clip. These
+    // four sections are the first time it runs under test at all.
+    {
+        Skeleton s = makeSkeleton(4);
+        AnimClip cA = makeClip(s, 2.0f), cB = makeClip(s, 3.0f);
+        Fixture f;
+        Animator a{}; a.playing = true; a.looping = true; a.fade = 0.5f;
+        f.build(s, &cA, a);
+        const AnimClipHandle hB = f.clips.add(AnimClip(cB));
+        f.tick(0.1f);                          // establishes the last-seen clip
+        AnimatorSystem::FadeState fs;
+        CHECK(f.sys.fadeState(f.e.id(), fs) && !fs.active,
+              "no crossfade while the clip is unchanged");
+        f.e.get_mut<Animator>().clip = hB;
+        f.tick(0.1f);
+        CHECK(f.sys.fadeState(f.e.id(), fs) && fs.active,
+              "changing the clip starts a crossfade");
+        CHECK(std::fabs(fs.duration - 0.5f) < 1e-6f,
+              "lasting Animator::fade seconds (%.3f)", fs.duration);
+        CHECK(std::fabs(fs.elapsed - 0.1f) < 1e-6f,
+              "and one tick of it has elapsed (%.3f)", fs.elapsed);
+    }
+
+    testwd::phase("12. Sampling never moves the crossfade clocks");
+
+    // ── 12. Sampling never moves the crossfade clocks ───────────────────────
+    // Advance runs once per fixed step; sample runs once per RENDERED frame.
+    // The clocks must be a function of ticks alone, or the blend a player sees
+    // depends on their frame rate — BUG-0053's class, in the pose. Same switch,
+    // same twelve ticks, sampled once per tick in one run and three times in
+    // the other: the clocks must come out bit-identical.
+    {
+        auto run = [&](int samplesPerTick) {
+            Skeleton s = makeSkeleton(4);
+            AnimClip cA = makeClip(s, 2.0f), cB = makeClip(s, 3.0f);
+            Fixture f;
+            Animator a{}; a.playing = true; a.looping = true;
+            a.fade = 0.5f; a.speed = 1.3f;
+            f.build(s, &cA, a);
+            const AnimClipHandle hB = f.clips.add(AnimClip(cB));
+            f.sys.advance(1.0f / 60.0f); f.sys.sample();
+            f.e.get_mut<Animator>().clip = hB;
+            for (int t = 0; t < 12; ++t) {
+                f.sys.advance(1.0f / 60.0f);
+                for (int k = 0; k < samplesPerTick; ++k) f.sys.sample();
+            }
+            AnimatorSystem::FadeState fs;
+            f.sys.fadeState(f.e.id(), fs);
+            return fs;
+        };
+        const AnimatorSystem::FadeState one = run(1), three = run(3);
+        CHECK(one.active && three.active,
+              "both runs are mid-crossfade after 12 ticks (0.2 s of 0.5 s)");
+        CHECK(one.elapsed == three.elapsed && one.prevTime == three.prevTime,
+              "and the clocks are bit-identical at 1 and 3 samples per tick "
+              "(elapsed %.6f vs %.6f, prevTime %.6f vs %.6f)",
+              one.elapsed, three.elapsed, one.prevTime, three.prevTime);
+        CHECK(one.prevTime > 0.0f,
+              "and the outgoing clip kept advancing (%.4f) — a frozen clock "
+              "would satisfy the line above", one.prevTime);
+    }
+
+    testwd::phase("13. A crossfade completes; fade 0 is a hard cut");
+
+    // ── 13. A crossfade completes; fade 0 is a hard cut ─────────────────────
+    {
+        Skeleton s = makeSkeleton(4);
+        AnimClip cA = makeClip(s, 2.0f), cB = makeClip(s, 3.0f);
+        Fixture f;
+        Animator a{}; a.playing = true; a.looping = true; a.fade = 0.2f;
+        f.build(s, &cA, a);
+        const AnimClipHandle hA = f.anim().clip;
+        const AnimClipHandle hB = f.clips.add(AnimClip(cB));
+        f.tick(0.05f);
+        f.e.get_mut<Animator>().clip = hB;
+        f.tick(0.1f);
+        AnimatorSystem::FadeState fs;
+        CHECK(f.sys.fadeState(f.e.id(), fs) && fs.active,
+              "mid-crossfade after 0.1 s of 0.2 s");
+        f.tick(0.15f);
+        CHECK(f.sys.fadeState(f.e.id(), fs) && !fs.active,
+              "and finished once 0.25 s have elapsed — the outgoing clip is "
+              "released");
+        f.e.get_mut<Animator>().fade = 0.0f;
+        f.e.get_mut<Animator>().clip = hA;
+        f.tick(0.05f);
+        CHECK(f.sys.fadeState(f.e.id(), fs) && !fs.active,
+              "with fade 0, a clip change is a HARD CUT — no crossfade starts");
+    }
+
+    testwd::phase("14. A destroyed entity's context is released");
+
+    // ── 14. A destroyed entity's context is released ────────────────────────
+    // m_contexts is keyed by entity id and was cleared only when the whole
+    // world died (resetWorldCache). The SkinnedMesh release hook frees the
+    // palette slot and nothing else, so every animated entity a session ever
+    // spawned kept its ozz buffers — two sampling contexts and five vectors
+    // sized to the skeleton — until Play stopped. A spawner is exactly the
+    // content that does that thousands of times.
+    {
+        Skeleton s = makeSkeleton(4);
+        AnimClip c = makeClip(s, 1.0f);
+        Fixture f;
+        Animator a{}; a.playing = true;
+        f.build(s, &c, a);
+        f.tick(1.0f / 60.0f);
+        const size_t base = f.sys.contextCount();
+
+        std::vector<flecs::entity> spawned;
+        for (int i = 0; i < 16; ++i) {
+            SkinnedMesh sm{}; sm.skeleton = f.skeletons.add(Skeleton(s));
+            Animator ai{}; ai.playing = true; ai.clip = f.anim().clip;
+            spawned.push_back(f.ecs.entity().set<Animator>(ai).set<SkinnedMesh>(sm));
+        }
+        f.tick(1.0f / 60.0f);
+        CHECK(f.sys.contextCount() == base + 16,
+              "one context per live animated entity (%zu, want %zu)",
+              f.sys.contextCount(), base + 16);
+
+        for (flecs::entity e : spawned) e.destruct();
+        f.tick(1.0f / 60.0f);
+        CHECK(f.sys.contextCount() == base,
+              "and destroying them releases their contexts (%zu, want %zu) — "
+              "before this, they lived until Play stopped",
+              f.sys.contextCount(), base);
+
+        // Non-discriminating today, and labelled as such: a recycled id carries
+        // a new generation, so it could not reach a dead entity's context even
+        // before the fix. It guards against re-keying the map by bare index.
+        SkinnedMesh sm{}; sm.skeleton = f.skeletons.add(Skeleton(s));
+        Animator ai{}; ai.playing = true; ai.clip = f.anim().clip;
+        flecs::entity reborn = f.ecs.entity().set<Animator>(ai).set<SkinnedMesh>(sm);
+        f.tick(1.0f / 60.0f);
+        AnimatorSystem::FadeState fs;
+        CHECK(f.sys.fadeState(reborn.id(), fs) && !fs.active,
+              "a newly spawned entity inherits no crossfade");
+    }
+
+    testwd::phase("15. Two worlds never share an animation context");
+
+    // ── 15. Two worlds never share an animation context ─────────────────────
+    // One AnimatorSystem animates the edit world through advance()/sample()
+    // and a play-snapshot world through advance(world)/sample(world), and the
+    // contexts used to live in ONE map keyed by entity id — so two worlds'
+    // entities with equal ids shared a context, crossfade bookkeeping included.
+    // The runtime happens to drive only one world per frame (runtime_sim.cpp's
+    // `if (!m_gameWorld)` guard), which kept that latent. But the sweep
+    // BUG-0061 needed would, over a shared map, erase every other world's
+    // contexts on each pass — so the moment any host interleaved two worlds,
+    // every crossfade would restart every pass. Interleaving here on purpose.
+    {
+        Skeleton s = makeSkeleton(4);
+        AnimClip cA = makeClip(s, 2.0f), cB = makeClip(s, 3.0f);
+        Fixture f;                              // the "edit" world
+        Animator a{}; a.playing = true; a.looping = true; a.fade = 0.5f;
+        f.build(s, &cA, a);
+        const AnimClipHandle hA = f.anim().clip;
+        const AnimClipHandle hB = f.clips.add(AnimClip(cB));
+
+        flecs::world w2;                        // the "play" world
+        w2.component<Animator>();
+        w2.component<SkinnedMesh>();
+        // BEFORE any entity carries SkinnedMesh. The first version of this
+        // section skipped it, let the animator first see w2 after its entity
+        // existed, and died in flecs (ALREADY_IN_USE) — which is how BUG-0062,
+        // the same order in Snapshot Play, was found.
+        f.sys.prepareWorld(w2);
+        SkinnedMesh sm2{}; sm2.skeleton = f.skeletons.add(Skeleton(s));
+        Animator a2 = a; a2.clip = hA;
+        flecs::entity e2 = w2.entity().set<Animator>(a2).set<SkinnedMesh>(sm2);
+        const bool sameId = e2.id() == f.e.id();
+        std::printf("  info  edit-world entity %llu, play-world entity %llu — "
+                    "ids %s\n", (unsigned long long)f.e.id(),
+                    (unsigned long long)e2.id(),
+                    sameId ? "EQUAL: this is the collision case" : "differ");
+
+        const float dt = 1.0f / 60.0f;
+        f.sys.advance(w2, dt); f.sys.advance(dt);     // both see clip A first
+        e2.get_mut<Animator>().clip = hB;             // a fade in the PLAY world only
+        for (int t = 0; t < 6; ++t) {
+            f.sys.advance(w2, dt); f.sys.sample(w2);
+            f.sys.advance(dt);     f.sys.sample();    // interleaved with the edit world
+        }
+        AnimatorSystem::FadeState play{}, edit{};
+        CHECK(f.sys.fadeState(w2.c_ptr(), e2.id(), play) && play.active,
+              "the play world's clip change started a crossfade");
+        CHECK(std::fabs(play.elapsed - 6.0f * dt) < 1e-5f,
+              "and it ACCUMULATED across interleaved passes over both worlds "
+              "(%.4f, want %.4f) — a sweep over a shared map restarts it "
+              "every pass", play.elapsed, 6.0f * dt);
+        CHECK(f.sys.fadeState(f.e.id(), edit) && !edit.active,
+              "while the edit world's entity%s has no crossfade — it never "
+              "changed clip", sameId ? ", which has the SAME id," : "");
+        f.sys.resetWorldCache();                     // the play world ends
+        CHECK(f.sys.fadeState(f.e.id(), edit),
+              "and ending the play world keeps the edit world's contexts");
+    }
+
+    testwd::phase("16. A world already in use is animated, not aborted");
+
+    // ── 16. run()'s fallback must not abort (BUG-0062) ──────────────────────
+    // prepareWorld() is the correct entry, and startSimulation uses it. A host
+    // that never calls it reaches run()'s lazy install instead, on a world
+    // whose SkinnedMesh may already be in use — where flecs cannot set a hook
+    // and aborts. The fallback checks first and warns instead. This world is
+    // built in exactly the order Snapshot Play used to die in.
+    {
+        Skeleton s = makeSkeleton(4);
+        AnimClip c = makeClip(s, 1.0f);
+        Fixture f;
+        Animator a{}; a.playing = true;
+        f.build(s, &c, a);
+        flecs::world w3;
+        SkinnedMesh sm3{}; sm3.skeleton = f.skeletons.add(Skeleton(s));
+        Animator a3 = a; a3.clip = f.anim().clip;
+        flecs::entity e3 = w3.entity().set<Animator>(a3).set<SkinnedMesh>(sm3);
+        f.sys.advance(w3, 1.0f / 60.0f);       // aborted in flecs before the guard
+        f.sys.sample(w3);
+        CHECK(e3.get<Animator>().time > 0.0f,
+              "a world whose SkinnedMesh was in use before the animator saw it "
+              "is animated (t=%.4f) instead of aborting in flecs",
+              e3.get<Animator>().time);
+        f.sys.resetWorldCache();
+    }
+
     jobs::shutdown();
     testwd::end();
     if (g_failures) {

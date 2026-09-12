@@ -48,6 +48,12 @@ bool EngineRuntime::startSimulation(SimMode mode) {
         // it, or engine reflected components would all land in Pending.
         MetaRegistry::registerAll(*m_gameWorld);
         simhash::registerClassification(*m_gameWorld);
+        // BEFORE the snapshot is loaded (BUG-0062). The animator's palette
+        // release hook is world state, flecs cannot set a hook on a component
+        // already in use, and loadIntoWorld puts SkinnedMesh on every skinned
+        // entity — so installing it lazily at the first tick aborted Snapshot
+        // Play of any scene with an animated character.
+        m_animatorSystem.prepareWorld(*m_gameWorld);
         SceneSerializer::loadIntoWorld(m_simSnapshot, *m_gameWorld, storage);
     }
 
@@ -73,6 +79,7 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     m_movesDispatched = 0;
     m_movesUnresolved = 0;
     m_teleportsDispatched = 0;
+    m_physicsCmdsDispatched = 0;
     m_intents.clear();
     m_intents.setSubmissionOpen(false);
     // A fresh session re-bases the look cursor: the totals are cumulative and
@@ -424,6 +431,42 @@ void EngineRuntime::dispatchMoves(flecs::world& w) {
         ++m_movesDispatched;
         pr->svc->charMove(w, e.id(), r.horizX, r.horizZ);
     }
+
+    // ── The physics verbs, in a fixed PHASE order ───────────────────────────
+    // The canonical sort orders a tick's commands by (entity, source, kind,
+    // seq), and that decides DETERMINISM. It does not decide MEANING. Impulse is
+    // kind 2 and SetVelocity kind 3, so executing in sort order would let a
+    // SetVelocity erase an impulse submitted in the same tick — a knockback
+    // landing on the same tick as a script setting speed would simply vanish.
+    // So the verbs run in phases whose order is chosen, and canonical order
+    // applies WITHIN each phase:
+    //   SetVelocity  establishes the base,
+    //   Impulse      adds on top of it (Jolt sums impulses),
+    //   Jump         sets a grounded character's vertical speed,
+    //   Teleport     last, below — a discontinuity that clears velocity.
+    auto runPhase = [&](simcmd::Cmd kind, auto&& exec) {
+        for (const simcmd::SimCommand& c : m_commands.commands()) {
+            if (c.kind != kind) continue;
+            flecs::entity e = resolveStableId(w, c.entity);
+            if (!e) { ++m_movesUnresolved; continue; }
+            exec(e, c);
+            ++m_physicsCmdsDispatched;
+        }
+    };
+    using simcmd::phys::kSlotX; using simcmd::phys::kSlotY;
+    using simcmd::phys::kSlotZ; using simcmd::phys::kSlotSpeed;
+    runPhase(simcmd::Cmd::SetVelocity,
+        [&](flecs::entity e, const simcmd::SimCommand& c) {
+            pr->svc->setVelocity(w, e.id(), c.a[kSlotX], c.a[kSlotY], c.a[kSlotZ]);
+        });
+    runPhase(simcmd::Cmd::Impulse,
+        [&](flecs::entity e, const simcmd::SimCommand& c) {
+            pr->svc->applyImpulse(w, e.id(), c.a[kSlotX], c.a[kSlotY], c.a[kSlotZ]);
+        });
+    runPhase(simcmd::Cmd::Jump,
+        [&](flecs::entity e, const simcmd::SimCommand& c) {
+            pr->svc->charJump(w, e.id(), c.a[kSlotSpeed]);
+        });
 
     // ── Teleports ───────────────────────────────────────────────────────────
     // In the buffer's canonical order, so two teleports of one entity in one

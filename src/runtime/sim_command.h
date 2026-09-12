@@ -65,10 +65,28 @@ enum class Cmd : uint16_t {
     Impulse          = 2,   // already composes additively in Jolt
     SetVelocity      = 3,
     Teleport         = 4,   // atomic pose change: body + ECS + PrevTransform
-    SetKinematicTarget = 5, // the pose to REACH by the end of the next step
-    SetBodyType      = 6,   // Dynamic <-> Kinematic, at runtime
+    // ── RESERVED: held so the numbering never shifts, and REFUSED by submit() ──
+    // A kind nothing executes is a claim, and once a take or a replay file has
+    // been recorded, a claim in the wire format is permanent. So these two are
+    // not merely unused — Buffer::submit() refuses them, which is what makes
+    // "every command in a recorded stream is one the engine executed" true.
+    //   SetKinematicTarget  superseded. Since stage 3a a kinematic body is
+    //                       driven from its Transform (pushEcsToPhysics), so
+    //                       the target already has a home and a second path
+    //                       would be a second writer.
+    //   SetBodyType         not implemented. Recreating a body at runtime while
+    //                       preserving velocity is real work with no consumer.
+    SetKinematicTarget = 5,
+    SetBodyType      = 6,
     Count
 };
+
+// True for every kind the runtime has an executor for — the one question
+// Buffer::submit() asks before recording anything.
+inline constexpr bool executable(Cmd k) {
+    return k == Cmd::MoveContribution || k == Cmd::Jump || k == Cmd::Impulse
+        || k == Cmd::SetVelocity      || k == Cmd::Teleport;
+}
 
 // ── Who asked ───────────────────────────────────────────────────────────────
 // The axis a Transform-permission model could not express: a network
@@ -221,6 +239,40 @@ inline bool hasRotation(const SimCommand& c) { return c.u[kSlotHasRot] != 0; }
 
 }  // namespace tele
 
+// ── Jump, Impulse, SetVelocity — the physics verbs ──────────────────────────
+// Executed in a FIXED PHASE ORDER that is deliberately not the canonical sort
+// order: SetVelocity, then Impulse, then Jump, then Teleport. Sort order
+// decides determinism; phase order decides meaning — see
+// EngineRuntime::dispatchMoves for why the two had to be separated.
+namespace phys {
+
+inline constexpr int kSlotX     = 0;   // Impulse / SetVelocity
+inline constexpr int kSlotY     = 1;
+inline constexpr int kSlotZ     = 2;
+inline constexpr int kSlotSpeed = 0;   // Jump: vertical speed, applied if grounded
+
+inline SimCommand vec3(Cmd kind, uint64_t entity, Source source,
+                       float x, float y, float z) {
+    SimCommand c{};
+    c.kind = kind; c.source = source; c.entity = entity;
+    c.a[kSlotX] = x; c.a[kSlotY] = y; c.a[kSlotZ] = z;
+    return c;
+}
+inline SimCommand impulse (uint64_t e, Source s, float x, float y, float z) {
+    return vec3(Cmd::Impulse, e, s, x, y, z);
+}
+inline SimCommand velocity(uint64_t e, Source s, float x, float y, float z) {
+    return vec3(Cmd::SetVelocity, e, s, x, y, z);
+}
+inline SimCommand jump(uint64_t entity, Source source, float speed) {
+    SimCommand c{};
+    c.kind = Cmd::Jump; c.source = source; c.entity = entity;
+    c.a[kSlotSpeed] = speed;
+    return c;
+}
+
+}  // namespace phys
+
 // ── The tick's commands ─────────────────────────────────────────────────────
 // Submitted during broadcastUpdate ONLY, then ordered canonically and executed
 // within the same fixed step.
@@ -275,6 +327,7 @@ private:
     std::vector<SimCommand> m_cmds;
     uint32_t                m_seq     = 0;
     uint32_t                m_refused = 0;
+    uint32_t                m_warnedReserved = 0;   // one bit per kind, warn once
     bool                    m_open    = true;
 };
 

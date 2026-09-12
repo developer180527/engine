@@ -61,15 +61,25 @@ public:
         m_clips     = &clips;
 
         m_query = ecs.query_builder<Animator, SkinnedMesh>().build();
+        m_initWorld = ecs.c_ptr();
         installReleaseHook(ecs);
     }
 
     // ── ADVANCE and SAMPLE are separate, and that separation is the point ───
-    // `Animator::time` and the crossfade clocks are SIMULATION STATE: they are
-    // hashed components (components/sim_state.h), so they must advance exactly
-    // once per fixed step at kSimDt. Sampling — ozz, blending, the bone palette
-    // — is PRESENTATION: it reads the already-advanced time and belongs on the
-    // frame.
+    // `Animator::time` is SIMULATION STATE: a hashed component
+    // (components/sim_state.h), so it must advance exactly once per fixed step
+    // at kSimDt. Sampling — ozz, blending, the bone palette — is PRESENTATION:
+    // it reads the already-advanced time and belongs on the frame.
+    //
+    // The crossfade clocks (AnimContext::fadeElapsed, prevTime) also advance
+    // here at kSimDt, but they are NOT simulation state — and this comment used
+    // to say they were hashed components. They are not components at all, and
+    // nothing in the simulation reads them; only sampleOne does, to weight the
+    // blend. They advance per tick so the pose a player SEES does not depend on
+    // their frame rate, which is a presentation property. By the gate's own
+    // rule — hash what can influence future simulation — they stay unhashed. A
+    // 2026-09-12 audit took this comment at its word and briefly called them a
+    // blind spot in the gate; animator_system_test §11–13 now pin them instead.
     //
     // Before this split both happened in one tick() called at FRAME rate, so
     // `Animator::time` advanced at render rate. tests/determinism_gate_test.cpp
@@ -93,12 +103,12 @@ public:
     void tick(float dt) { advance(dt); sample(); }
     void advance(float dt) {
         if (!m_skeletons || !m_clips) return;
-        collect(m_query);
+        collect(m_query, m_initWorld);
         stepAll(dt, Phase::Advance);
     }
     void sample() {
         if (!m_skeletons || !m_clips) return;
-        collect(m_query);
+        collect(m_query, m_initWorld);
         stepAll(0.0f, Phase::Sample);
     }
 
@@ -123,21 +133,91 @@ private:
         // process. The old comment called that "bounded"; it is bounded per
         // session and unbounded across them.
         if (m_hookedWorld != world.c_ptr()) {
-            installReleaseHook(world);
+            // The FALLBACK for a host that never called prepareWorld(). It may
+            // not simply set the hook: on a world whose SkinnedMesh is already
+            // in use, flecs asserts and aborts (BUG-0062). So it checks first,
+            // and on a world it is too late for it warns instead — a loud leak
+            // (palette slots of that world's entities are not returned on
+            // removal) rather than a crash.
+            if (!ecs_id_in_use(world.c_ptr(), world.component<SkinnedMesh>().id())) {
+                installReleaseHook(world);
+            } else if (!m_warnedLateHook) {
+                m_warnedLateHook = true;
+                std::fprintf(stderr,
+                    "[Animator] WARNING: this world already had SkinnedMesh "
+                    "entities when the animator first saw it, so the palette "
+                    "release hook cannot be installed and their palette slots "
+                    "will not be returned on removal. Call "
+                    "AnimatorSystem::prepareWorld() before filling the world.\n");
+            }
             m_hookedWorld = world.c_ptr();
         }
-        collect(m_worldQuery.get(world));
+        collect(m_worldQuery.get(world), world.c_ptr());
         stepAll(dt, phase);
     }
 
 public:
+    // ── Install this system's per-world hook on a world BEFORE it is filled ──
+    // Component hooks are world state, and flecs refuses to set a hook on a
+    // component that is already in use — it ASSERTS and the process aborts. So
+    // a host creating a world for this system to animate must call this after
+    // registering schemas and BEFORE any entity carries SkinnedMesh.
+    // startSimulation does, for the Snapshot play world (BUG-0062: it used to
+    // be left to run()'s lazy install, which reached a world the snapshot had
+    // already filled, and Snapshot Play of any scene with a skinned entity
+    // aborted on its first tick).
+    void prepareWorld(flecs::world& world) {
+        if (m_hookedWorld == world.c_ptr()) return;
+        installReleaseHook(world);
+        m_hookedWorld = world.c_ptr();
+    }
+
     void resetWorldCache() {
         m_worldQuery.reset();
-        m_contexts.clear();   // sim-world entity ids die with the world
+        // The sim world's contexts die with it — ONLY that world's, since they
+        // are kept per world (m_worlds) and the edit world's entities are still
+        // alive. Erased before m_hookedWorld is forgotten below and before the
+        // world is freed: a new snapshot world can land at the SAME ADDRESS,
+        // and a surviving entry keyed by that address would hand its entities a
+        // dead world's crossfade state.
+        if (m_hookedWorld) m_worlds.erase(m_hookedWorld);
         // Forget which world carries the hook. A new snapshot world can land on
         // the SAME ADDRESS as the dead one (the note at the call site says so),
         // and a stale match here would skip registration and resume leaking.
         m_hookedWorld = nullptr;
+    }
+
+    // ── Diagnostics ─────────────────────────────────────────────────────────
+    // The crossfade state lives in m_contexts, outside every component, so a
+    // test cannot observe it any other way — the same reason JoltPlugin has
+    // characterRotation(). Read-only; the system itself never calls these.
+    // Across every world this system has animated.
+    size_t contextCount() const {
+        size_t n = 0;
+        for (const auto& [world, wc] : m_worlds) n += wc.map.size();
+        return n;
+    }
+    struct FadeState {
+        bool  active   = false;
+        float elapsed  = 0.0f;
+        float duration = 0.0f;
+        float prevTime = 0.0f;
+    };
+    // In the world init() was given, or in a named one.
+    bool fadeState(flecs::entity_t e, FadeState& out) const {
+        return fadeState(m_initWorld, e, out);
+    }
+    bool fadeState(const ecs_world_t* world, flecs::entity_t e,
+                   FadeState& out) const {
+        auto w = m_worlds.find(world);
+        if (w == m_worlds.end()) return false;
+        auto it = w->second.map.find(e);
+        if (it == w->second.map.end()) return false;
+        out.active   = it->second.prevClip.valid();
+        out.elapsed  = it->second.fadeElapsed;
+        out.duration = it->second.fadeDuration;
+        out.prevTime = it->second.prevTime;
+        return true;
     }
 
 private:
@@ -155,8 +235,14 @@ private:
     static constexpr int kMaxBones2 = kMaxBones;   // palette budget (skeleton.h)
 
     // Per-entity ozz runtime buffers. Sized to the skeleton on first use;
-    // resized if the entity's skeleton changes. Crossfade state lives here
-    // (not on the component — components get snapshot-copied at Play):
+    // resized if the entity's skeleton changes. Crossfade state lives here,
+    // not on the component, for two reasons: components are snapshot-copied at
+    // Play, and — the one that is not negotiable — Animator is part of the kit
+    // ABI. It is hashed into engine_abi::componentLayoutHash
+    // (include/engine/game_module.h) and its field order is pinned by
+    // component_abi_test, so a field added to it makes the module loader
+    // refuse every kit and the game module until they are rebuilt.
+    // How it works:
     // when the Animator's clip handle CHANGES, the old clip keeps playing and
     // fades out over Animator::fade seconds via ozz BlendingJob.
     struct AnimContext {
@@ -177,6 +263,7 @@ private:
         float          prevTime = 0.0f;
         float          fadeElapsed = 0.0f;
         float          fadeDuration = 0.0f;
+        uint64_t       seenEpoch    = 0;   // last collect() that saw it (BUG-0061)
 
         // Fails loudly with the buffer's name and address. A misaligned buffer
         // here is always a bug, never a tolerable condition, so this reports
@@ -240,14 +327,46 @@ private:
         AnimContext* ctx;
     };
 
-    // SERIAL: query iteration + m_contexts inserts (rehash) live here, so the
+    // SERIAL: query iteration + context inserts (rehash) live here, so the
     // parallel phase touches the map read-only through stable pointers.
+    //
+    // ── Released when their entity is gone (BUG-0061) ───────────────────────
+    // Contexts used to be cleared only when a whole world died, so every
+    // animated entity a session ever spawned kept its ozz buffers until Play
+    // stopped. Each pass now stamps the contexts it collects; when the world's
+    // map holds MORE contexts than the pass collected — the only case in which
+    // anything can be stale — the unstamped ones are erased. The steady state
+    // pays one integer store per entity and never sweeps.
+    //
+    // Why a sweep and not an on_remove hook: SkinnedMesh already carries the
+    // one on_remove hook flecs allows per component type (the palette release
+    // below), and a hook on Animator — a component kits share — would collide
+    // with any kit that sets its own.
+    //
+    // Why PER WORLD: the sweep is only correct over entities this pass could
+    // have seen. With one map for every world, a pass over one world would
+    // erase every other world's contexts, and interleaved passes would restart
+    // every crossfade on every pass. The runtime drives one world per frame
+    // today; this class accepts both, so it must not depend on that.
+    //
+    // Erasing from an unordered_map invalidates only the erased nodes, so the
+    // pointers m_work holds into live contexts stay valid for stepAll.
     template <typename Query>
-    void collect(Query&& q) {
+    void collect(Query&& q, const ecs_world_t* world) {
         m_work.clear();
+        WorldContexts& wc = m_worlds[world];
+        ++wc.epoch;
         q.each([&](flecs::entity e, Animator& anim, SkinnedMesh& skin) {
-            m_work.push_back({&anim, &skin, &m_contexts[e.id()]});
+            AnimContext& ctx = wc.map[e.id()];
+            ctx.seenEpoch = wc.epoch;
+            m_work.push_back({&anim, &skin, &ctx});
         });
+        if (wc.map.size() > m_work.size()) {
+            for (auto it = wc.map.begin(); it != wc.map.end();) {
+                if (it->second.seenEpoch != wc.epoch) it = wc.map.erase(it);
+                else ++it;
+            }
+        }
     }
 
     // PARALLEL: entities are independent (own context, own components, own
@@ -456,10 +575,20 @@ private:
     AnimClipRegistry* m_clips     = nullptr;
     flecs::query<Animator, SkinnedMesh> m_query;       // init() world
     WorldQueryCache<Animator, SkinnedMesh> m_worldQuery; // sim/snapshot world
-    std::unordered_map<uint64_t, AnimContext> m_contexts; // per-entity ozz state
+    // Per WORLD, then per entity. One map keyed by entity id alone put two
+    // worlds' entities in the same slot whenever their ids matched — and a
+    // Snapshot-play game world is filled from the editor's scene, which is
+    // exactly where matching ids are likely.
+    struct WorldContexts {
+        std::unordered_map<uint64_t, AnimContext> map;   // per-entity ozz state
+        uint64_t epoch = 0;          // bumped per collect(); see there
+    };
+    std::unordered_map<const ecs_world_t*, WorldContexts> m_worlds;
+    const ecs_world_t* m_initWorld = nullptr;   // the world init() was given
     std::vector<WorkItem> m_work;   // this frame's entities (collect -> stepAll)
     // Which world currently carries the palette-release hook. Only ever the most
     // recent snapshot world: the editor world's registration happens in init()
     // and, being world state, never needs renewing.
     const ecs_world_t* m_hookedWorld = nullptr;
+    bool               m_warnedLateHook = false;   // run()'s fallback, once
 };

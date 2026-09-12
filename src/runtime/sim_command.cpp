@@ -27,6 +27,21 @@ bool Buffer::submit(const SimCommand& c) {
                  (unsigned)c.kind);
         return false;
     }
+    if (!executable(c.kind)) {
+        // RESERVED (or garbage past Count). Refused rather than recorded: a
+        // recorded stream must contain only commands the engine executed, or a
+        // replay silently does nothing where the original did something — and
+        // a reserved value in a shipped take would be unremovable. Warned once
+        // per kind, since a caller doing this does it every tick.
+        const uint32_t k   = (uint32_t)c.kind;
+        const uint32_t bit = k < 31u ? (1u << k) : (1u << 31);
+        if (!(m_warnedReserved & bit)) {
+            m_warnedReserved |= bit;
+            LOG_WARN("SimCmd", "command kind %u is RESERVED and has no executor "
+                     "— refused rather than recorded (see simcmd::Cmd)", k);
+        }
+        return false;
+    }
     if (!m_open) {
         // Outside broadcastUpdate. Accepting this would put the command in
         // whichever tick's buffer is open when the caller happened to run,

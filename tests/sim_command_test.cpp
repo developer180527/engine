@@ -232,6 +232,39 @@ int main() {
         CHECK(sizeof(c.a) == sizeof(c.u), "both views are the same 32 bytes");
     }
 
+    // ── 8. Only kinds the engine EXECUTES can be recorded ──────────────────
+    // Five of the seven kinds once had no executor. Three now do; the other
+    // two are RESERVED — kept for numbering, refused at the door — so that a
+    // recorded stream can never contain a command that replays as nothing.
+    {
+        std::printf("\n-- 8. reserved kinds --\n");
+        simcmd::Buffer b;
+        CHECK(!b.submit(mk(9, Cmd::SetKinematicTarget, Source::Gameplay)),
+              "SetKinematicTarget is REFUSED — a kinematic body is driven from "
+              "its Transform, and a second path would be a second writer");
+        CHECK(!b.submit(mk(9, Cmd::SetBodyType, Source::Gameplay)),
+              "SetBodyType is REFUSED — it has no implementation");
+        CHECK(b.size() == 0, "and neither reaches the record");
+        CHECK(b.refusedOutOfPhase() == 0,
+              "a reserved refusal is not miscounted as an out-of-phase one");
+        CHECK(b.submit(mk(9, Cmd::MoveContribution, Source::Gameplay)) &&
+              b.submit(mk(9, Cmd::Jump,             Source::Gameplay)) &&
+              b.submit(mk(9, Cmd::Impulse,          Source::Gameplay)) &&
+              b.submit(mk(9, Cmd::SetVelocity,      Source::Gameplay)) &&
+              b.submit(mk(9, Cmd::Teleport,         Source::Gameplay)),
+              "every executable kind is accepted");
+        CHECK(!simcmd::executable(Cmd::Count),
+              "and nothing at or past Count is executable");
+
+        const SimCommand j = simcmd::phys::jump(9, Source::Gameplay, 5.5f);
+        CHECK(j.kind == Cmd::Jump && j.a[simcmd::phys::kSlotSpeed] == 5.5f,
+              "phys::jump carries its speed");
+        const SimCommand i = simcmd::phys::impulse(9, Source::AI, 1.0f, 2.0f, 3.0f);
+        CHECK(i.kind == Cmd::Impulse && i.source == Source::AI &&
+              i.a[0] == 1.0f && i.a[1] == 2.0f && i.a[2] == 3.0f,
+              "phys::impulse carries its vector and its source");
+    }
+
     if (g_failures) {
         std::printf("\nsim_command_test: %d FAILURE(S)\n", g_failures);
         return 1;

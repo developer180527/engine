@@ -175,8 +175,34 @@ public:
     // line away from "is JoltPlugin attached / is the simulation running?".
     // Split the incoming entity into the (world, id) pair the services take —
     // sourced from the host's bound world, not the entity's bundled one.
-    void applyImpulse(flecs::entity e, float x, float y, float z) { if (auto* p = physicsOrWarn()) p->applyImpulse(*m_world,e.id(),x,y,z); }
-    void setVelocity (flecs::entity e, float x, float y, float z) { if (auto* p = physicsOrWarn()) p->setVelocity(*m_world,e.id(),x,y,z); }
+    // ── Impulse, SetVelocity and charJump SUBMIT ────────────────────────
+    // Like charMove and teleport, so everything the simulation is told reaches
+    // the tick's command record: a replay's per-tick command digest could not
+    // see an impulse or a jump that went straight to the backend, and neither
+    // could a take. Same EntityId requirement and the same fallback — an entity
+    // with no stable id, or a host with no fixed step, keeps the direct path.
+    //
+    // TIMING MOVES WITH IT, kit-visibly: the change lands when the tick's
+    // commands are dispatched (after onUpdate, before the physics step) instead
+    // of at the call, so getVelocity() later in the same onUpdate reads the
+    // value from before. Nothing in the tree does that; `Kits/` is gitignored
+    // and not visible here.
+    void applyImpulse(flecs::entity e, float x, float y, float z) {
+        if (const uint64_t id = commandTarget(e)) {
+            m_commands->submit(simcmd::phys::impulse(
+                id, simcmd::Source::Gameplay, x, y, z));
+            return;
+        }
+        if (auto* p = physicsOrWarn()) p->applyImpulse(*m_world,e.id(),x,y,z);
+    }
+    void setVelocity(flecs::entity e, float x, float y, float z) {
+        if (const uint64_t id = commandTarget(e)) {
+            m_commands->submit(simcmd::phys::velocity(
+                id, simcmd::Source::Gameplay, x, y, z));
+            return;
+        }
+        if (auto* p = physicsOrWarn()) p->setVelocity(*m_world,e.id(),x,y,z);
+    }
     bool getVelocity (flecs::entity e, float& x, float& y, float& z) { auto* p = physicsOrWarn(); return p ? p->getVelocity(*m_world,e.id(),x,y,z) : false; }
     RaycastHit raycast(float ox,float oy,float oz, float dx,float dy,float dz, float maxDist) {
         auto* p = physicsOrWarn();
@@ -255,7 +281,14 @@ public:
         if (Transform* t = e.try_get_mut<Transform>()) t->position = {x, y, z};
         return moved;
     }
-    void charJump(flecs::entity e, float speed)        { if (auto* p = physicsOrWarn()) p->charJump(*m_world,e.id(),speed); }
+    void charJump(flecs::entity e, float speed) {
+        if (const uint64_t id = commandTarget(e)) {
+            m_commands->submit(simcmd::phys::jump(
+                id, simcmd::Source::Gameplay, speed));
+            return;
+        }
+        if (auto* p = physicsOrWarn()) p->charJump(*m_world,e.id(),speed);
+    }
     bool charGrounded(flecs::entity e)                 { auto* p = physicsOrWarn(); return p ? p->charIsGrounded(*m_world,e.id()) : false; }
 
     // ── Audio (no-op + ONE warning until a service is registered) ───────
@@ -426,9 +459,27 @@ private:
         return m_audio;
     }
 
+    // The command target for a physics verb: the entity's stable id when a
+    // fixed step is bound and the entity has one, else 0 — meaning "use the
+    // direct path". Warned once, for the reason charMove warns: a verb that
+    // silently bypasses the record is invisible to replay.
+    uint64_t commandTarget(flecs::entity e) {
+        if (!m_commands) return 0;
+        const EntityId* id = e.try_get<EntityId>();
+        if (id && id->value) return id->value;
+        if (!m_warnedCmdNoId) {
+            m_warnedCmdNoId = true;
+            LOG_WARN("Script", "physics call on an entity with no EntityId — "
+                     "applied directly, so it will not appear in the tick's "
+                     "command record and a replay will not reproduce it");
+        }
+        return 0;
+    }
+
     bool m_warnedPhysics  = false;
     bool m_warnedAudio    = false;
     bool m_warnedCharNoId = false;
+    bool m_warnedCmdNoId  = false;
     simcmd::Buffer* m_commands = nullptr;   // null => the direct physics path
     WorldQueryCache<const Name> m_nameQuery;
     std::unordered_map<std::string, flecs::entity_t> m_nameIndex; // O(1) find

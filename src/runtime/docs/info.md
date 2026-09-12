@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-12
+verified: 2026-09-13
 parses-external-input: true
 covers:
   - src/runtime/
@@ -12,6 +12,7 @@ tests:
   - tests/move_composition_test.cpp
   - tests/transform_authority_test.cpp
   - tests/sim_intent_test.cpp
+  - tests/sim_command_exec_test.cpp
   - tests/asset_ready_test.cpp
   - tests/async_loader_test.cpp
   - tests/script_host_test.cpp
@@ -625,6 +626,31 @@ BUG-0060 killed both. Keys are driven on the tick's **first frame** only, which
 is correct rather than a shortcut: a key is level-triggered, so unlike motion
 there is no per-tick quantity to split, and both cadences fold the same edge into
 the same tick's snapshot.
+
+## The physics verbs (2026-09-13)
+
+`Impulse`, `SetVelocity` and `Jump` were command kinds with no executor, and the
+script surface called the backend directly — so a jump or an impulse never
+reached the tick's command record, and a replay's command digest could not see
+one. They now submit (the same `EntityId` requirement and fallback as `charMove`)
+and execute in `dispatchMoves` in a **fixed phase order**: `SetVelocity`, then
+`Impulse`, then `Jump`, then `Teleport`. The canonical sort decides
+*determinism*; it does not decide *meaning*. `Impulse` is kind 2 and
+`SetVelocity` kind 3, so sort order alone would let a velocity set erase an
+impulse from the same tick — a knockback landing on the same tick a script sets
+speed would simply vanish. `sim_command_exec_test` submits the impulse first on
+purpose and asserts vx = 3 + 2.
+
+`SetKinematicTarget` and `SetBodyType` are **RESERVED**: kept for the numbering,
+refused by `Buffer::submit`. A kind nothing executes is a claim, and once a take
+has been recorded the claim is in the wire format permanently; refusing them is
+what makes *every command in a recorded stream was executed* true. Kinematic
+bodies are already driven from `Transform` (stage 3a), and runtime body-type
+switching is unimplemented.
+
+Timing moved with it, and it is kit-visible: the verbs now land when the tick's
+commands are dispatched rather than at the call, so `getVelocity()` later in the
+same `onUpdate` reads the previous value.
 
 **What this substrate gives, and what it does not.** Replay — *same initial
 state + the same recorded commands ⇒ same result* — is served by recording

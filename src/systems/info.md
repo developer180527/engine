@@ -1,11 +1,12 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-08
+verified: 2026-09-13
 covers:
   - src/systems/
 tests:
   - tests/animator_system_test.cpp
+  - tests/snapshot_skinned_test.cpp
   - tests/determinism_gate_test.cpp
 # Raised prototype -> working 2026-07-31: animator_system_test now asserts
 # AnimatorSystem's OWN behavior (time advance + speed, looping wrap incl. the
@@ -72,6 +73,30 @@ Two things the split is careful about, both of which a naive version gets wrong:
 * **The advance phase does not touch presentation.** An entity with a missing or
   oversized skeleton keeps exactly its old behaviour, including not advancing
   its clock — `hasSkinMatrices` is only written in `Phase::Sample`.
+* **The crossfade clocks are presentation, not simulation.** They advance in
+  `Phase::Advance` so the blend a player sees does not depend on frame rate, but
+  nothing in the simulation reads them and they are not hashed — which is the
+  gate's own rule, *hash what can influence future simulation*. The header
+  comment used to call them hashed components, and a 2026-09-12 audit believed
+  it. They cannot move onto `Animator` either: it is in
+  `engine_abi::componentLayoutHash`, so a new field would make the loader refuse
+  every kit. Until 2026-09-13 the crossfade path had no test anywhere — the
+  gate's animator tier never changes a clip — and `animator_system_test`
+  §11–13 now pin it: a clip change starts a fade, the clocks are bit-identical
+  at 1 and 3 samples per tick, a fade completes, and `fade = 0` is a hard cut.
+* **A dead entity's context is released, and contexts are kept per world**
+  (BUG-0061). They used to live in one map keyed by entity id, cleared only at
+  world teardown, so every animated entity a session spawned kept its ozz
+  buffers until Play stopped. `collect()` now sweeps contexts no pass saw — but
+  only within a world: the edit world's first skinned entity and a play world's
+  had the same id (496), so one shared map would have let a sweep over one world
+  restart every crossfade in the other.
+* **The play world is hooked before it is filled** (BUG-0062).
+  `startSimulation` calls `AnimatorSystem::prepareWorld` on the Snapshot game
+  world before loading the snapshot. flecs cannot set a hook on a component
+  already in use, and the old lazy install in `run()` aborted Snapshot Play of
+  any scene containing a skinned entity. `run()` keeps the lazy path as a
+  fallback that checks first and warns instead of aborting.
 
 The split also stops a hitch multiplying the expensive half: the accumulator can
 run four fixed steps in one frame, and the old shape sampled four poses to show

@@ -255,6 +255,8 @@ public:
     uint64_t movesDispatched() const { return m_movesDispatched; }
     uint64_t movesUnresolved() const { return m_movesUnresolved; }
     uint64_t teleportsDispatched() const { return m_teleportsDispatched; }
+    // SetVelocity / Impulse / Jump commands executed this session.
+    uint64_t physicsCommandsDispatched() const { return m_physicsCmdsDispatched; }
     // The authority backstop: who wrote a pose field physics owns. Compiled out
     // in retail (ENGINE_TRANSFORM_AUTHORITY 0); a backstop, not the mechanism —
     // stages 1-3a removed the reasons to write these fields at all.
@@ -458,6 +460,7 @@ private:
     uint64_t                      m_movesDispatched = 0;
     uint64_t                      m_movesUnresolved = 0;
     uint64_t                      m_teleportsDispatched = 0;
+    uint64_t                      m_physicsCmdsDispatched = 0;
     authority::Watcher            m_authority;
     std::vector<RecordedTick>     m_cmdRing;
     size_t                        m_cmdRingHead  = 0;

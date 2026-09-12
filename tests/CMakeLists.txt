@@ -337,6 +337,12 @@ engine_test(camera_look_test)
 # Stage 5: the intent layer. Its headline property needs a real engine driven
 # at two frame cadences, so this is not a pure-unit test.
 engine_test(sim_intent_test)
+# The physics verbs executed from the command record, in a fixed phase order,
+# and the script surface submitting them rather than calling the backend.
+engine_test(sim_command_exec_test)
+# Snapshot Play with a skinned entity: the animator's release hook must be on
+# the play world BEFORE the snapshot loads into it, or flecs aborts.
+engine_test(snapshot_skinned_test)
 engine_test(keymap_test)
 engine_test(nav_test)
 # The PRIMITIVE tier of the engine API table (jobs / memory / drawSubmit) — the
