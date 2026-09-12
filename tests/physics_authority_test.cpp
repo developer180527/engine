@@ -155,6 +155,55 @@ int main() {
         const Transform& t = hero.get<Transform>();
         CHECK(std::fabs(t.rotation.y - s) < 1e-4f,
               "and the ECS rotation is still gameplay's — not written back");
+
+        // ── ...BUT ONLY THE TURN ABOUT `up` REACHES THE CAPSULE ─────────────
+        // The first fix pushed the whole rotation, and the FPS kit writes full
+        // yaw+pitch into its player's Transform — so looking up tilted the
+        // player's collision capsule, whose top then swung sideways by
+        // sin(pitch) * height/2 and clipped through walls. The section above
+        // could not see it: a pure yaw has no pitch to leak.
+        //
+        // Yaw 30 degrees applied after pitch 60 about local X, which is how a
+        // look camera composes: q = Ry(a) * Rx(b), written out so the test
+        // does not share a helper with the code under test.
+        const float ha = 0.2617993878f, hb = 0.5235987756f;   // half-angles
+        const float sa = std::sin(ha), ca = std::cos(ha);
+        const float sb = std::sin(hb), cb = std::cos(hb);
+        hero.get_mut<Transform>().rotation = { ca * sb, sa * cb, -sa * sb, ca * cb };
+        jolt.onPhysicsStep(w, kDt);
+
+        CHECK(jolt.characterRotation(hero.id(), q), "still a character");
+        // Compared by |dot| against the pure yaw (0, sa, 0, ca), because q and
+        // -q are the same rotation and either may come back.
+        const float dotYaw = std::fabs(q[1] * sa + q[3] * ca);
+        CHECK(dotYaw > 0.9999f && std::fabs(q[0]) < 1e-3f && std::fabs(q[2]) < 1e-3f,
+              "a pitched-and-yawed rotation reaches the capsule as PURE YAW "
+              "(%.4f, %.4f, %.4f, %.4f) — the full push gave x=%.4f here",
+              (double)q[0], (double)q[1], (double)q[2], (double)q[3],
+              (double)(ca * sb));
+
+        // The property that actually matters to a player: the capsule's up
+        // vector is still world up. v' = v + 2w(u x v) + 2u x (u x v).
+        const float ux = q[0], uy = q[1], uz = q[2], qw = q[3];
+        const float cx = -uz,  cy = 0.0f, cz = ux;              // u x (0,1,0)
+        const float upY = 1.0f + 2.0f * qw * cy
+                        + 2.0f * (uz * cx - ux * cz);           // y of u x (u x v)
+        CHECK(std::fabs(upY - 1.0f) < 1e-4f,
+              "and the capsule stays UPRIGHT (up.y = %.5f) — pitch and roll "
+              "belong to the camera, not the body", (double)upY);
+
+        // Upside down: 180 degrees about X has NO defined turn about up. The
+        // capsule must keep the heading it had rather than snap to identity.
+        const float before[4] = { q[0], q[1], q[2], q[3] };
+        hero.get_mut<Transform>().rotation = { 1.0f, 0.0f, 0.0f, 0.0f };
+        jolt.onPhysicsStep(w, kDt);
+        jolt.characterRotation(hero.id(), q);
+        const float keep = std::fabs(q[0]*before[0] + q[1]*before[1]
+                                   + q[2]*before[2] + q[3]*before[3]);
+        CHECK(keep > 0.9999f,
+              "an upside-down rotation leaves the previous heading in place "
+              "(|dot| %.5f) instead of snapping the character to identity",
+              (double)keep);
     }
 
     // ── 3. Teleport moves a dynamic body, and clears its momentum ──────────

@@ -809,11 +809,39 @@ public:
     // holds its own mRotation (CharacterVirtual.h:621) feeding GetWorldTransform,
     // GetTransformedShape and the shape offset; spawnCharacter passed
     // Quat::sIdentity() and nothing in the engine has ever called SetRotation.
-    // The visual turned and the capsule did not. Harmless ONLY because the
-    // shape is a centred capsule — radially symmetric about the axis anything
-    // upright rotates around — and wrong the moment a shape is offset, or not a
-    // capsule, or a character pitches. Rotation stays GAMEPLAY-owned; it is
-    // pushed in, never read back, so no kit changes.
+    // The visual turned and the capsule did not. Rotation stays GAMEPLAY-owned;
+    // it is pushed in, never read back, so no kit changes.
+    //
+    // ── ONLY THE TURN ABOUT `up` IS PUSHED, and the first fix got this wrong ──
+    // The first version of this fix pushed the FULL rotation, and a character
+    // body is not supposed to follow all of it. A CharacterVirtual is upright by
+    // design — it has its own up axis (CharacterBase::mUp) that slope limits and
+    // ground detection are measured against — and pitch and roll belong to the
+    // CAMERA, not the body. The FPS kit writes full yaw+pitch into its player's
+    // Transform.rotation, so the full push tilted the player's capsule whenever
+    // the player looked up: the capsule is offset (0, height/2, 0) from the
+    // feet, so its top swung sideways by sin(pitch) * height/2 — on the order of
+    // 0.8 m at the pitch limit, which is the head clipping through walls and
+    // ceilings. That shipped on the branch that fixed BUG-0059, as a regression
+    // in the one real game using a character.
+    //
+    // So the rotation is split into the part AROUND the controller's up axis
+    // (kept) and everything else (discarded) — the standard swing-twist split,
+    // taken against GetUp() rather than a hard-coded world Y, so a game that
+    // re-orients a character's up (wall-walking, a ship's interior) still gets
+    // the right answer.
+    static bool twistAbout(JPH::QuatArg q, JPH::Vec3Arg axis, JPH::Quat& out) {
+        const JPH::Vec3 p = axis * q.GetXYZ().Dot(axis);
+        const JPH::Vec4 t(p.GetX(), p.GetY(), p.GetZ(), q.GetW());
+        const float len = t.Length();
+        // No twist is defined for a rotation of exactly 180 degrees about an
+        // axis perpendicular to `up` — upside down. The caller keeps the
+        // previous heading rather than snapping the character to identity.
+        if (len < 1e-6f) return false;
+        out = JPH::Quat(t / len);
+        return true;
+    }
+
     void pushEcsToPhysics(flecs::world& ecs) {
         auto& bi = m_physics->GetBodyInterface();
         m_bodySyncQ.each([&](flecs::entity e, const Transform&,
@@ -836,7 +864,10 @@ public:
             if (it == m_characters.end()) return;
             float wm[16]; getWorldMatrix(e, wm);
             const bx::Quaternion wr = quatFromMatrix(wm);
-            it->second->SetRotation(JPH::Quat(wr.x, wr.y, wr.z, wr.w));
+            JPH::Quat heading;
+            if (twistAbout(JPH::Quat(wr.x, wr.y, wr.z, wr.w),
+                           it->second->GetUp(), heading))
+                it->second->SetRotation(heading);
         });
     }
 

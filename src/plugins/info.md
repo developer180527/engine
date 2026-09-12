@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-09
+verified: 2026-09-12
 covers:
   - src/plugins/
 tests:
@@ -143,6 +143,11 @@ and carries the two things physics does not own into the backend:
   `GetWorldTransform`, `GetTransformedShape` and the shape offset, and nothing
   had ever set it: the visual turned and the capsule did not. Pushed **in** and
   never read back, so rotation stays gameplay-owned and kits are unaffected.
+  **Only the turn about the controller's up axis is pushed** (the swing-twist
+  twist about `GetUp()`), and the first version got this wrong: it pushed the
+  full rotation, so a player looking up tilted its own collision capsule and
+  clipped its head through walls. A character body is upright by design; pitch
+  and roll belong to the camera. See BUG-0059's follow-up.
 
 **`writeBackTransforms` now returns for anything that is not `Dynamic`.**
 Kinematic is gameplay-owned in *both* directions — writing the physics pose back
