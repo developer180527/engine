@@ -13,6 +13,7 @@ tests:
   - tests/transform_authority_test.cpp
   - tests/sim_intent_test.cpp
   - tests/sim_command_exec_test.cpp
+  - tests/sim_replay_test.cpp
   - tests/asset_ready_test.cpp
   - tests/async_loader_test.cpp
   - tests/script_host_test.cpp
@@ -651,6 +652,79 @@ switching is unimplemented.
 Timing moved with it, and it is kit-visible: the verbs now land when the tick's
 commands are dispatched rather than at the call, so `getVelocity()` later in the
 same `onUpdate` reads the previous value.
+
+**With no physics backend** (a headless tool, a film host that loads no
+physics), `dispatchMoves` used to `return` before the teleport loop: every
+accepted command was recorded and none executed, and a plain entity could not be
+teleported although the code said it could. Every test of the path loaded
+JoltPlugin, which is why it stood. Teleports now always move the `Transform`
+(and `PrevTransform`), calling the backend only when one exists; movement and
+the physics verbs are counted in `physicsCommandsUndeliverable()`. The old
+`movesUnresolved()` is now `commandsUnresolved()` — it had counted the verbs and
+teleports too since they gained executors. `sim_command_exec_test` §5.
+
+## Takes: record a session, replay it, get the same world (`take.h`, R1)
+
+The test the command architecture has named since its first stage — *record,
+restore the initial world, replay, every per-tick hash matches* — was blocked
+for five stages on a world restore that does not exist. **Replay turned out not
+to need one.** It needs a *reproducible start*, and Snapshot Play already has
+one: the scene snapshot it loads into a fresh world. A take keeps that string,
+and replay loads the same bytes, so the two runs start from byte-identical input
+— even an `EntityId` minted at random when the snapshot was taken cannot make
+them differ. Rollback, which restores a *mid-session* state, still needs the
+restore (R3).
+
+A take records, per fixed step, the intents the **device sampler** produced —
+the only input that is not derived — plus the tick's command digest and world
+hash. `startReplay` starts a Snapshot session from the take's start with the
+sampler off and the recorded intents fed in at the same point in the step, and
+compares each tick. The two digests **localise**: commands differing first means
+the logic decided differently; only the world hash differing means the same
+decisions produced different state. `tests/sim_replay_test.cpp` drives a
+character with a live device for 150 ticks through contacts and Jolt, replays
+with no device to identical digests on every tick, and shows one mouse count
+changed in one recorded intent diverging at exactly that tick, as a command
+divergence. One count rather than one ULP, deliberately: the controller
+multiplies the look delta into a yaw, and a one-ULP change can be absorbed by
+that arithmetic.
+
+**The rules a replayable session depends on**, stated rather than discovered:
+- **Plugins and kits reset session state in `onSimulationStart`.** A member
+  that survives from the recording session starts the replay where the
+  recording ended.
+- **Simulation code reads intents, not the device.** The sampler is off during a
+  replay; a kit reading `engineActionDown` from `onUpdate` reads the live device
+  and diverges. Not yet enforced. A kit *can* follow the rule: the appended C
+  ABI group `EngineApiIntentV1` (`engineIntentDeclareAction`, `engineIntentGet`,
+  `engineIntentSetLocalController`) and Lua's `e:intent()`, `e:intentDown(name)`,
+  `e:intentPressed(name)`. Before it, the only input a kit could reach was the
+  device, so the real game could not record a replayable take at all.
+  `EngineIntent` is an out-parameter with a caller-set `structSize`; the host
+  writes only what fits.
+- **Kits declare actions in `onSimulationStart`**, so `startReplay` checks the
+  take's action-list hash *after* the session has started (and stops it on a
+  mismatch). Checked before, a kit's take was refused every time.
+- **The same binary.** The world hash is positional in the classification order
+  (`sim_hash.h`), so a take verifies only against the build that recorded it.
+- **Recording starts in a Snapshot session, before tick one** — both refused
+  otherwise, because either would make the take's start a lie.
+
+The format is binary with a length-and-digest trailer, so a truncated or
+corrupted take is refused rather than replayed partially, and versioned with
+`==` — a reader that does not know a version cannot know where its body ends.
+Every padding field must be zero, so an accepted file re-encodes to exactly its
+own bytes (two files never decode as one take). A take is untrusted input — it
+is shared and attached to bug reports — so `fuzz_take_decode` generates takes,
+truncates, flips bits, and mutates-then-re-signs bodies to reach the field
+parser. A take whose ticks are not numbered 1..N is refused by `startReplay` as
+malformed (`Divergence::Malformed` is the backstop), and the runtime's local
+controller is restored when a replay ends.
+
+**Proven across processes**, not only within one: `sim_replay_test` §3b writes
+the take to a file and re-invokes itself as a child with an empty edit world,
+no device, no declared actions, and a controller reading intents only through
+`engineIntentGet` — and the child reproduces all 150 ticks.
 
 **What this substrate gives, and what it does not.** Replay — *same initial
 state + the same recorded commands ⇒ same result* — is served by recording

@@ -32,7 +32,7 @@ static const EngineApiTableV1* g_eapi = nullptr;
 enum { EAPI_CORE, EAPI_INPUT, EAPI_PHYSICS, EAPI_AUDIO,
        EAPI_ASSETS, EAPI_ANIM, EAPI_UI, EAPI_NAV, EAPI_DRAW,
        EAPI_JOBS, EAPI_MEMORY, EAPI_DRAWSUB, EAPI_LOG, EAPI_PHYSICS2,
-       EAPI_COUNT };
+       EAPI_INTENT, EAPI_COUNT };
 
 /* Sized from the enum, never a literal. It was `bool g_eapiOk[9]` beside a
  * hand-counted comment, which is the shape of bug that appears the day someone
@@ -113,6 +113,7 @@ void engineModuleBindApiV1(const EngineApiTableV1* t) {
         { EAPI_MEMORY,  t->memory.version,     ENGINE_API_MEMORY_V,  "memory"  },
         { EAPI_LOG,     t->log.version,        ENGINE_API_LOG_V,     "log"     },
         { EAPI_PHYSICS2, t->physics2.version, ENGINE_API_PHYSICS2_V, "physics2" },
+        { EAPI_INTENT,   t->intent.version,   ENGINE_API_INTENT_V,   "intent"   },
         { EAPI_DRAWSUB, t->drawSubmit.version, ENGINE_API_DRAWSUB_V, "drawSubmit" },
     };
     for (auto& c : checks) {
@@ -208,6 +209,9 @@ void engineCharMove(EngineEntity e, float vx, float vz) { if (eapiGuard(EAPI_PHY
 void engineCharJump(EngineEntity e, float s) { if (eapiGuard(EAPI_PHYSICS,"charJump")) g_eapi->physics.charJump(e, s); }
 bool engineCharGrounded(EngineEntity e) { return eapiGuard(EAPI_PHYSICS,"charGrounded") && g_eapi->physics.charGrounded(e); }
 bool engineTeleport(EngineEntity e, float x, float y, float z) { return eapiGuard(EAPI_PHYSICS2,"teleport") && g_eapi->physics2.teleport(e, x, y, z); }
+int32_t engineIntentDeclareAction(const char* a) { return eapiGuard(EAPI_INTENT,"declareAction") ? g_eapi->intent.declareAction(a) : -1; }
+bool engineIntentGet(EngineEntity e, EngineIntent* o) { return eapiGuard(EAPI_INTENT,"get") && g_eapi->intent.get(e, o); }
+bool engineIntentSetLocalController(EngineEntity e) { return eapiGuard(EAPI_INTENT,"setLocalController") && g_eapi->intent.setLocalController(e); }
 
 /* audio */
 uint32_t enginePlaySound(const char* p) { return eapiGuard(EAPI_AUDIO,"playSound") ? g_eapi->audio.playSound(p) : 0; }

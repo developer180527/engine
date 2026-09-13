@@ -114,6 +114,7 @@ add_library(engine_core STATIC
     runtime/sim_command.cpp
     runtime/move_compose.cpp
     runtime/sim_intent.cpp
+    runtime/take.cpp
 
     # Single-header library implementation TUs (CPU decode only)
     assets/importers/stb_impl.cpp

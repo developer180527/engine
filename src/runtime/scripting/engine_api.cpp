@@ -13,6 +13,7 @@
 #include "core/memory/mem.h"
 #include "core/frame_arena.h"
 #include <cstdarg>
+#include <cstring>
 #include <cstdio>
 
 static ScriptHost* g_host = nullptr;
@@ -148,6 +149,40 @@ bool engineCharGrounded(EngineEntity e) {
 bool engineTeleport(EngineEntity e, float x, float y, float z) {
     ScriptHost* h = hostWithWorld();
     return h ? h->teleport(resolve(h, e), x, y, z) : false;
+}
+
+// ── Intents ──────────────────────────────────────────────────────────────────
+// What simulation code reads INSTEAD of the device. Before these existed a kit
+// had only engineActionDown — the live device — so the real game could not
+// record a replayable take through any supported extension point.
+int32_t engineIntentDeclareAction(const char* action) {
+    ScriptHost* h = hostWithWorld();
+    return h ? h->intentDeclareAction(action) : -1;
+}
+bool engineIntentGet(EngineEntity e, EngineIntent* out) {
+    // An out-parameter: the CALLER's structSize says how much it can take, and
+    // only that much is written — so a kit built against a larger future
+    // EngineIntent, or a smaller past one, is never overrun.
+    if (!out || out->structSize < sizeof(uint32_t)) return false;
+    ScriptHost* h = hostWithWorld();
+    const simintent::Intent* in = h ? h->intentFor(resolve(h, e)) : nullptr;
+    EngineIntent full{};
+    full.structSize = sizeof(EngineIntent);
+    if (in) {
+        full.moveX  = in->moveX;  full.moveY  = in->moveY;
+        full.lookDx = in->lookDx; full.lookDy = in->lookDy;
+        full.held   = in->held;   full.pressed = in->pressed;
+        full.released = in->released;
+    }
+    const uint32_t callerSize = out->structSize;
+    std::memcpy(out, &full, callerSize < sizeof(EngineIntent)
+                                ? callerSize : sizeof(EngineIntent));
+    out->structSize = callerSize;
+    return in != nullptr;
+}
+bool engineIntentSetLocalController(EngineEntity e) {
+    ScriptHost* h = hostWithWorld();
+    return h ? h->intentSetLocalController(resolve(h, e)) : false;
 }
 
 // ── Audio ────────────────────────────────────────────────────────────────────

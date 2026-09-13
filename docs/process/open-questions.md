@@ -165,4 +165,6 @@ These are known, unpinned, and deliberately visible rather than tidied away.
 - **The C ABI carries teleport and not the rest.** `EngineApiPhysics2V1` has
   `teleport` only. A native kit still cannot submit a `MoveContribution`, set a
   kinematic target, or switch a body type — those have no C entry point, and
-  `SetBodyType` has no implementation at all.
+  `SetBodyType` has no implementation at all. (Intents DO now reach the C ABI —
+  `EngineApiIntentV1`, 2026-09-13 — so a kit can read what the player asked for
+  replayably; it still cannot submit the contribution it derives from it.)

@@ -40,6 +40,18 @@ typedef struct EngineRaycastHit {
     float        distance;
 } EngineRaycastHit;
 
+/* One controller's intent for the current tick — what the device sampler (or a
+ * replay) put in the tick's intent buffer. An OUT-PARAMETER, so the CALLER sets
+ * structSize and the host writes only what fits (docs/architecture/
+ * extension-model.md §4, rule 9): a kit built against a later, larger
+ * EngineIntent still works on this host, and this one on a later host. */
+typedef struct EngineIntent {
+    uint32_t structSize;              /* = sizeof(EngineIntent), set by caller */
+    float    moveX, moveY;            /* the "Move" axis2, -1..1               */
+    float    lookDx, lookDy;          /* this tick's look delta, raw counts    */
+    uint32_t held, pressed, released; /* bit N = the Nth declared action       */
+} EngineIntent;
+
 /* ── Log ─────────────────────────────────────────────────────────────────── */
 void engineLogInfo (const char* msg);
 void engineLogWarn (const char* msg);
@@ -106,6 +118,22 @@ bool engineCharGrounded(EngineEntity e);
 /* Move a physics-owned entity. engineSetTransform does NOT: the physics
  * write-back overwrites it at the end of the step. Returns false if no body. */
 bool engineTeleport(EngineEntity e, float x, float y, float z);
+
+/* ── Intents: what SIMULATION code reads instead of the device ───────────────
+ * engineActionDown and friends read the LIVE device, so code built on them
+ * cannot be replayed — during a replay the device is not the recording. These
+ * read the tick's INTENT, sampled from the device once per fixed step or fed
+ * from a take, so code built on them replays (runtime/take.h).
+ *
+ * Declare actions in onSimulationStart, before the first tick: the declared
+ * list assigns the bits in EngineIntent::held/pressed/released, and a take
+ * records its hash. Returns the action's bit, or -1 outside a session. */
+int32_t engineIntentDeclareAction(const char* action);
+/* The tick's intent for `e`. False when there is none — outside onUpdate, or
+ * when nothing sampled or submitted one for that entity this tick. */
+bool    engineIntentGet(EngineEntity e, EngineIntent* out);
+/* Whose intent the device is sampled into each tick. `e` needs a stable id. */
+bool    engineIntentSetLocalController(EngineEntity e);
 
 /* ── Navigation (no-op until a navmesh is baked) ──────────────────────────────
  * Path queries over the engine's navmesh (Recast/Detour) — kits get world-space

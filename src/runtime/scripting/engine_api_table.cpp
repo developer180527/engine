@@ -82,6 +82,11 @@ const EngineApiTableV1* engineApiHostTable(void) {
         // module compiled against the old layout would read one group where
         // another now lives. Appended at the end, this shifts nothing.
         { ENGINE_API_PHYSICS2_V, engineTeleport },
+        // Intents: what simulation code reads instead of the device, so a kit
+        // built on them replays. Appended for the same reason as physics2.
+        { ENGINE_API_INTENT_V,
+          engineIntentDeclareAction, engineIntentGet,
+          engineIntentSetLocalController },
     };
     // Re-published on every call: absent (0) until a UI backend registers.
     t.ui.version = engineUiHasBackend() ? ENGINE_API_UI_V : 0;

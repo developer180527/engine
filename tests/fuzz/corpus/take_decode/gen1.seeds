@@ -1,0 +1,13 @@
+# take_decode, generator version 1. Seeds, not blobs: each regenerates a take
+# and its mutations. No regressions yet — these pin a spread of shapes (empty
+# start, zero ticks, zero intents) so the gating lane is not one case.
+1
+2
+3
+7
+42
+1000
+65535
+123456789
+987654321
+18446744073709551615

@@ -69,7 +69,10 @@ enum class Cmd : uint16_t {
     // A kind nothing executes is a claim, and once a take or a replay file has
     // been recorded, a claim in the wire format is permanent. So these two are
     // not merely unused — Buffer::submit() refuses them, which is what makes
-    // "every command in a recorded stream is one the engine executed" true.
+    // "every command in a recorded stream is one the engine executed" true —
+    // for a host WITH a physics backend. Without one, movement and the physics
+    // verbs cannot run; they are counted instead
+    // (EngineRuntime::physicsCommandsUndeliverable), and teleports still run.
     //   SetKinematicTarget  superseded. Since stage 3a a kinematic body is
     //                       driven from its Transform (pushEcsToPhysics), so
     //                       the target already has a home and a second path

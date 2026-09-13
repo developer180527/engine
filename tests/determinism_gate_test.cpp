@@ -905,7 +905,7 @@ static void runOnce(const Tier& t, int framesPerTick, int nTicks,
         // EntityId back to a live entity is new in stage 2 and can fail
         // silently. Read before stopSimulation(), which resets the counters.
         g_movesDispatched += (long)engine.movesDispatched();
-        g_movesUnresolved += (long)engine.movesUnresolved();
+        g_movesUnresolved += (long)engine.commandsUnresolved();
     }
     engine.stopSimulation();
     engine.shutdown();

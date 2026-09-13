@@ -78,6 +78,7 @@ extern "C" {
 #define ENGINE_API_DRAWSUB_V 1  /* submit geometry with no entity/component    */
 #define ENGINE_API_LOG_V     1  /* the engine's own log ring, by category      */
 #define ENGINE_API_PHYSICS2_V 1 /* teleport — the pose change that WORKS       */
+#define ENGINE_API_INTENT_V   1 /* intents — what simulation reads, replayably */
 
 typedef struct EngineApiCoreV1 {
     uint32_t version;
@@ -146,6 +147,19 @@ typedef struct EngineApiPhysics2V1 {
     uint32_t version;
     bool (*teleport)(EngineEntity, float, float, float);
 } EngineApiPhysics2V1;
+
+/* ── Intents ─────────────────────────────────────────────────────────────────
+ * What simulation code reads INSTEAD of the device, so a kit built on it can be
+ * replayed (runtime/take.h). Before this group the only input a kit could reach
+ * was the input group's actionDown/axis — the live device — so no kit could
+ * record a replayable take. A new group, appended, for the reason physics2 is:
+ * nothing before it moves. */
+typedef struct EngineApiIntentV1 {
+    uint32_t version;
+    int32_t (*declareAction)(const char*);
+    bool    (*get)(EngineEntity, EngineIntent*);
+    bool    (*setLocalController)(EngineEntity);
+} EngineApiIntentV1;
 
 typedef struct EngineApiAudioV1 {
     uint32_t version;
@@ -317,6 +331,7 @@ typedef struct EngineApiTableV1 {
     /* Appended for the same reason as everything above it: a new GROUP moves
      * only structSize, which an older module is allowed to ignore. */
     EngineApiPhysics2V1   physics2;
+    EngineApiIntentV1     intent;     /* appended; moves only structSize */
 } EngineApiTableV1;
 
 /* ── Frozen layout ───────────────────────────────────────────────────────────
@@ -392,6 +407,7 @@ ENGINE_API_FROZEN(EngineApiMemoryV1,      48);
 ENGINE_API_FROZEN(EngineApiDrawSubmitV1,  24);
 ENGINE_API_FROZEN(EngineApiLogV1,         40);
 ENGINE_API_FROZEN(EngineApiPhysics2V1,    16);
+ENGINE_API_FROZEN(EngineApiIntentV1,      32);
 
 /* Group offsets. Derived from the sizes above (8-byte aligned, cumulative from
  * structSize's 4 bytes plus 4 of padding), and asserted rather than trusted. */
@@ -409,6 +425,7 @@ ENGINE_API_GROUP_AT(memory,     688);
 ENGINE_API_GROUP_AT(drawSubmit, 736);
 ENGINE_API_GROUP_AT(log,        760);
 ENGINE_API_GROUP_AT(physics2,   800);
+ENGINE_API_GROUP_AT(intent,     816);
 
 /* First and last pointer of each group — the boundaries a reorder shifts. */
 ENGINE_API_FIELD_AT(EngineApiJobsV1,       workerCount,     8);
@@ -420,6 +437,8 @@ ENGINE_API_FIELD_AT(EngineApiDrawSubmitV1, submittedCount, 16);
 ENGINE_API_FIELD_AT(EngineApiLogV1,        category,        8);
 ENGINE_API_FIELD_AT(EngineApiLogV1,        setAudience,    32);
 ENGINE_API_FIELD_AT(EngineApiPhysics2V1,   teleport,        8);
+ENGINE_API_FIELD_AT(EngineApiIntentV1,     declareAction,   8);
+ENGINE_API_FIELD_AT(EngineApiIntentV1,     setLocalController, 24);
 
 /* Host-side: the filled table (engine_api_table.cpp). */
 const EngineApiTableV1* engineApiHostTable(void);

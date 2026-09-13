@@ -343,6 +343,10 @@ engine_test(sim_command_exec_test)
 # Snapshot Play with a skinned entity: the animator's release hook must be on
 # the play world BEFORE the snapshot loads into it, or flecs aborts.
 engine_test(snapshot_skinned_test)
+# Replay R1: record a take, replay it with no device, identical per-tick
+# command digests and world hashes — the test the command architecture has
+# named since its first stage.
+engine_test(sim_replay_test)
 engine_test(keymap_test)
 engine_test(nav_test)
 # The PRIMITIVE tier of the engine API table (jobs / memory / drawSubmit) — the
@@ -481,6 +485,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     endfunction()
 
     engine_fuzz_target(fuzz_ddc_manifest_test ddc_manifest)
+    engine_fuzz_target(fuzz_take_decode       take_decode)
     engine_fuzz_target(fuzz_mesh_loader_test  mesh_loader)
     engine_fuzz_target(fuzz_scene_loader_test scene_loader)
     engine_fuzz_target(fuzz_entity_serde_test entity_serde LIB engine_runtime)

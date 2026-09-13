@@ -6,6 +6,8 @@
 #include "runtime/runtime.h"
 #include "runtime/sim_classification.h"
 #include "runtime/sim_command.h"
+#include "runtime/sim_hash.h"
+#include "runtime/take.h"
 #include "core/logger.h"
 #include "runtime/scripting/script_host.h"
 #include "runtime/scripting/script_services.h"
@@ -42,7 +44,11 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     if (mode == SimMode::Snapshot) {
         AssetStorage storage{m_assets, m_textures, m_materials,
                              &m_skeletons, &m_clips};
-        m_simSnapshot = SceneSerializer::saveToString(m_ecs, storage);
+        // A replay starts from the TAKE's snapshot, not from the edit world as
+        // it is now — which may have changed since the take was recorded.
+        m_simSnapshot = m_useSnapshotOverride
+                      ? m_snapshotOverride
+                      : SceneSerializer::saveToString(m_ecs, storage);
         m_gameWorld   = std::make_unique<flecs::world>();
         // Fresh world: engine schemas must exist before the snapshot populates
         // it, or engine reflected components would all land in Pending.
@@ -75,11 +81,15 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     // Locomotion composes only while there is a fixed step to compose it in.
     // Unbound at stop, below, so the editor's preview keeps the direct path.
     m_scriptHost->setCommandBuffer(&m_commands);
+    // Intents readable from kits (C ABI) and scripts (Lua) for the session —
+    // what makes "simulation code reads intents" a rule code can follow.
+    m_scriptHost->setIntentSource(&m_intents, &m_actionSet, &m_localController);
     m_stableIdCache.clear();          // a new world reuses flecs ids
     m_movesDispatched = 0;
-    m_movesUnresolved = 0;
+    m_commandsUnresolved = 0;
     m_teleportsDispatched = 0;
     m_physicsCmdsDispatched = 0;
+    m_physicsCmdsUndeliverable = 0;
     m_intents.clear();
     m_intents.setSubmissionOpen(false);
     // A fresh session re-bases the look cursor: the totals are cumulative and
@@ -130,11 +140,18 @@ void EngineRuntime::stopSimulation() {
     m_scriptHost->setPhysicsService(nullptr);
     m_scriptHost->setAudioService(nullptr);
     m_scriptHost->setCommandBuffer(nullptr);   // no fixed step, no composition
+    m_scriptHost->setIntentSource(nullptr, nullptr, nullptr);
     m_stableIdCache.clear();                   // entries point into a dead world
     m_authority.reset();                       // its query outlives the world otherwise
     m_gameWorld.reset();
     m_simSnapshot.clear();
     m_simulating = false;
+    // A take outlives its session (stopTakeRecording returns it after this);
+    // recording and replay do not.
+    m_takeRecording = false;
+    if (m_replaying) m_localController = m_controllerBeforeReplay;
+    m_replaying     = false;
+    m_replayStatus.active = false;
     LOG_SUCCESS("Sim", "Simulation stopped");
 }
 
@@ -210,7 +227,13 @@ void EngineRuntime::tickSimulation(float dt) {
         // reaching hashed state, and the SIMULATION still read a frame-rate
         // accumulation. See runtime/sim_intent.h.
         m_intents.setSubmissionOpen(true);
-        { ENGINE_PROFILE_SCOPE("Sim.intent"); sampleLocalIntent(); }
+        m_sampledThisTick.clear();
+        // During a replay the recorded sampler output takes the sampler's place
+        // — same point in the step, same buffer, same submission order — and
+        // the device is not read at all.
+        { ENGINE_PROFILE_SCOPE("Sim.intent");
+          if (m_replaying) injectReplayIntents();
+          else             sampleLocalIntent(); }
         m_intents.sortForExecution();
 
         m_commands.setSubmissionOpen(true);
@@ -280,6 +303,9 @@ void EngineRuntime::tickSimulation(float dt) {
 
         // Record what this tick was told to do, then start the next tick's
         // buffer empty. The ring is bounded; see EngineRuntime::m_cmdRing.
+        // Before the buffers clear: the command digest is of this tick's
+        // canonical record, and the world hash of the state it produced.
+        { ENGINE_PROFILE_SCOPE("Sim.take"); takeTick(w); }
         recordTickCommands();
         m_commands.clear();
         // Intents stay open across onUpdate — a kit or an AI system submits its
@@ -399,17 +425,179 @@ void EngineRuntime::sampleLocalIntent() {
     }
 
     m_intents.submit(in);
+    if (m_takeRecording) m_sampledThisTick.push_back(in);
+}
+
+// ── Takes (R1) ──────────────────────────────────────────────────────────────
+bool EngineRuntime::startTakeRecording() {
+    if (!m_simulating || !m_gameWorld) {
+        LOG_ERROR("Take", "startTakeRecording() needs a SNAPSHOT session — a "
+                  "take's start is the snapshot Play loads, and InPlace Play "
+                  "has none");
+        return false;
+    }
+    if (m_simFrame != 0) {
+        LOG_ERROR("Take", "startTakeRecording() after tick %llu — a take must "
+                  "begin before the first tick, or its start is not the state "
+                  "its first recorded tick came from",
+                  (unsigned long long)m_simFrame);
+        return false;
+    }
+    if (m_replaying) {
+        LOG_ERROR("Take", "cannot record a take during a replay");
+        return false;
+    }
+    m_take = {};
+    m_take.actionHash      = m_actionSet.declarationHash();
+    m_take.localController = m_localController;
+    m_take.simDt           = kSimDt;
+    m_take.start           = m_simSnapshot;
+    m_takeRecording        = true;
+    return true;
+}
+
+take::Take EngineRuntime::stopTakeRecording() {
+    m_takeRecording = false;
+    return std::move(m_take);
+}
+
+bool EngineRuntime::startReplay(const take::Take& t) {
+    if (m_simulating) {
+        LOG_ERROR("Take", "startReplay() during a session — stop it first");
+        return false;
+    }
+    if (t.simDt != kSimDt) {
+        LOG_ERROR("Take", "take recorded at a fixed step of %.6f s, this "
+                  "runtime steps at %.6f s — refused", (double)t.simDt,
+                  (double)kSimDt);
+        return false;
+    }
+    if (t.start.empty()) {
+        LOG_ERROR("Take", "take has no start snapshot — refused");
+        return false;
+    }
+    // A MALFORMED take is refused up front: its ticks must be numbered 1..N,
+    // or "diverged at tick K" would name a tick the take does not describe.
+    for (size_t i = 0; i < t.ticks.size(); ++i) {
+        if (t.ticks[i].tick != i + 1) {
+            LOG_ERROR("Take", "malformed take — slot %zu is tick %llu, not %zu; "
+                      "refused", i, (unsigned long long)t.ticks[i].tick, i + 1);
+            return false;
+        }
+    }
+    // Restored when the replay ends (stopSimulation), or here if it fails to
+    // start — a replay must not leave the runtime driving a different entity.
+    m_controllerBeforeReplay = m_localController;
+    m_replayTake    = t;
+    m_replayStatus  = {};
+    m_replayStatus.active = true;
+    m_replaying     = true;
+    m_localController = t.localController;
+
+    m_snapshotOverride    = t.start;
+    m_useSnapshotOverride = true;
+    const bool ok = startSimulation(SimMode::Snapshot);
+    m_useSnapshotOverride = false;
+    m_snapshotOverride.clear();
+    if (!ok) {
+        m_replaying = false;
+        m_replayStatus.active = false;
+        m_localController = m_controllerBeforeReplay;
+        return false;
+    }
+
+    // ── The action list is checked AFTER the session starts, deliberately ──
+    // Kits declare their actions in onSimulationStart, which runs inside the
+    // startSimulation call above. Checked before it, a take recorded by a kit
+    // would be compared against an empty list and refused every time — the
+    // first version of this function did exactly that, and only a kit-shaped
+    // consumer (not the test driver holding EngineRuntime&) could expose it.
+    if (t.actionHash != m_actionSet.declarationHash()) {
+        LOG_ERROR("Take", "take recorded against a different action list "
+                  "(hash %llu, this session %llu) — its intent bits would be "
+                  "read as other actions; refused",
+                  (unsigned long long)t.actionHash,
+                  (unsigned long long)m_actionSet.declarationHash());
+        stopSimulation();
+        m_replayStatus = {};
+        return false;
+    }
+    return true;
+}
+
+void EngineRuntime::injectReplayIntents() {
+    const uint64_t idx = m_simFrame - 1;          // ticks count from 1
+    if (idx >= m_replayTake.ticks.size()) return; // past the end: no input
+    for (const simintent::Intent& in : m_replayTake.ticks[idx].intents)
+        m_intents.submit(in);
+}
+
+void EngineRuntime::takeTick(flecs::world& w) {
+    if (!m_takeRecording && !m_replaying) return;
+    // Both digests, computed identically in both runs — which is the whole
+    // point: the recording and the replay are the same code at the same point
+    // of the same step.
+    const uint64_t cmd   = m_commands.digest();
+    const uint64_t world = simhash::hashWorld(w);
+
+    if (m_takeRecording)
+        m_take.ticks.push_back({ m_simFrame, m_sampledThisTick, cmd, world });
+
+    if (m_replaying && !m_replayStatus.complete) {
+        const uint64_t idx = m_simFrame - 1;
+        if (idx >= m_replayTake.ticks.size()) { m_replayStatus.complete = true; return; }
+        const take::Tick& rec = m_replayTake.ticks[idx];
+        ++m_replayStatus.ticksCompared;
+        if (m_replayStatus.firstDivergentTick == 0) {
+            // COMMANDS FIRST. If the logic decided something different, the
+            // world will differ too, and reporting the world would point at
+            // physics for what is a gameplay divergence.
+            using D = ReplayStatus::Divergence;
+            D kind = D::None;
+            // A tick-number mismatch is a MALFORMED take, not a gameplay
+            // decision, and startReplay refuses one — this is the backstop.
+            if (rec.tick != m_simFrame)         kind = D::Malformed;
+            else if (cmd != rec.commandDigest)  kind = D::Commands;
+            else if (world != rec.worldHash)    kind = D::World;
+            if (kind != D::None) {
+                m_replayStatus.firstDivergentTick = m_simFrame;
+                m_replayStatus.kind = kind;
+                const char* what =
+                    kind == D::Malformed ? "recorded tick numbers (malformed take)"
+                  : kind == D::Commands  ? "commands the tick was told"
+                                         : "world states it produced";
+                LOG_WARN("Take", "replay diverged at tick %llu — the %s differ "
+                         "from the recording",
+                         (unsigned long long)m_simFrame, what);
+            }
+        }
+        if (idx + 1 == m_replayTake.ticks.size()) m_replayStatus.complete = true;
+    }
 }
 
 void EngineRuntime::dispatchMoves(flecs::world& w) {
     if (m_commands.size() == 0) return;
     const PhysicsServiceRef* pr = w.try_get<PhysicsServiceRef>();
-    if (!pr || !pr->svc) return;      // no physics attached; nothing to drive
+    IPhysicsService* phys = (pr && pr->svc) ? pr->svc : nullptr;
 
-    simcmd::composeMoves(m_commands.commands(), m_resolvedMoves);
+    // ── NO PHYSICS BACKEND: count what cannot run, and still teleport ──────
+    // This used to `return` here, before the teleport loop below — so with no
+    // physics plugin every accepted command was recorded and never executed,
+    // contradicting submit()'s own promise, and a plain entity could not be
+    // teleported at all even though the teleport comment below says it can.
+    // Replay stayed consistent (both runs skipped the same commands), so it was
+    // a false statement rather than a determinism bug — found by review, since
+    // every test of this path loaded JoltPlugin. Movement and the physics verbs
+    // genuinely need a backend; they are now COUNTED as undeliverable.
+    if (!phys)
+        for (const simcmd::SimCommand& c : m_commands.commands())
+            if (c.kind != simcmd::Cmd::Teleport) ++m_physicsCmdsUndeliverable;
+
+    if (phys) simcmd::composeMoves(m_commands.commands(), m_resolvedMoves);
+    else      m_resolvedMoves.clear();
     for (const simcmd::ResolvedMove& r : m_resolvedMoves) {
         flecs::entity e = resolveStableId(w, r.entity);
-        if (!e) { ++m_movesUnresolved; continue; }   // named a dead entity
+        if (!e) { ++m_commandsUnresolved; continue; }   // named a dead entity
         if (r.exclusiveConflicts || r.overrideConflicts) {
             // Two systems at the SAME priority fighting over one character.
             // The fold resolved it the same way it always will, so this is not
@@ -429,7 +617,7 @@ void EngineRuntime::dispatchMoves(flecs::world& w) {
         // now costs nothing and keeps the rule whole; claiming it works would
         // not be true.
         ++m_movesDispatched;
-        pr->svc->charMove(w, e.id(), r.horizX, r.horizZ);
+        phys->charMove(w, e.id(), r.horizX, r.horizZ);
     }
 
     // ── The physics verbs, in a fixed PHASE order ───────────────────────────
@@ -445,10 +633,11 @@ void EngineRuntime::dispatchMoves(flecs::world& w) {
     //   Jump         sets a grounded character's vertical speed,
     //   Teleport     last, below — a discontinuity that clears velocity.
     auto runPhase = [&](simcmd::Cmd kind, auto&& exec) {
+        if (!phys) return;                    // counted above
         for (const simcmd::SimCommand& c : m_commands.commands()) {
             if (c.kind != kind) continue;
             flecs::entity e = resolveStableId(w, c.entity);
-            if (!e) { ++m_movesUnresolved; continue; }
+            if (!e) { ++m_commandsUnresolved; continue; }
             exec(e, c);
             ++m_physicsCmdsDispatched;
         }
@@ -457,15 +646,15 @@ void EngineRuntime::dispatchMoves(flecs::world& w) {
     using simcmd::phys::kSlotZ; using simcmd::phys::kSlotSpeed;
     runPhase(simcmd::Cmd::SetVelocity,
         [&](flecs::entity e, const simcmd::SimCommand& c) {
-            pr->svc->setVelocity(w, e.id(), c.a[kSlotX], c.a[kSlotY], c.a[kSlotZ]);
+            phys->setVelocity(w, e.id(), c.a[kSlotX], c.a[kSlotY], c.a[kSlotZ]);
         });
     runPhase(simcmd::Cmd::Impulse,
         [&](flecs::entity e, const simcmd::SimCommand& c) {
-            pr->svc->applyImpulse(w, e.id(), c.a[kSlotX], c.a[kSlotY], c.a[kSlotZ]);
+            phys->applyImpulse(w, e.id(), c.a[kSlotX], c.a[kSlotY], c.a[kSlotZ]);
         });
     runPhase(simcmd::Cmd::Jump,
         [&](flecs::entity e, const simcmd::SimCommand& c) {
-            pr->svc->charJump(w, e.id(), c.a[kSlotSpeed]);
+            phys->charJump(w, e.id(), c.a[kSlotSpeed]);
         });
 
     // ── Teleports ───────────────────────────────────────────────────────────
@@ -476,7 +665,7 @@ void EngineRuntime::dispatchMoves(flecs::world& w) {
     for (const simcmd::SimCommand& c : m_commands.commands()) {
         if (c.kind != simcmd::Cmd::Teleport) continue;
         flecs::entity e = resolveStableId(w, c.entity);
-        if (!e) { ++m_movesUnresolved; continue; }
+        if (!e) { ++m_commandsUnresolved; continue; }
 
         const float x = c.a[simcmd::tele::kSlotX];
         const float y = c.a[simcmd::tele::kSlotY];
@@ -489,7 +678,7 @@ void EngineRuntime::dispatchMoves(flecs::world& w) {
         // to write, because a plugin writing Transform is the second authority
         // this architecture exists to remove. A teleport of an entity with no
         // body is still a legal teleport — it just moves the Transform.
-        pr->svc->teleport(w, e.id(), x, y, z, haveRot ? q : nullptr);
+        if (phys) phys->teleport(w, e.id(), x, y, z, haveRot ? q : nullptr);
 
         if (Transform* t = e.try_get_mut<Transform>()) {
             t->position = { x, y, z };

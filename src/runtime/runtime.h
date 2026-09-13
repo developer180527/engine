@@ -27,6 +27,7 @@
 #include "runtime/sim_command.h"
 #include "runtime/move_compose.h"
 #include "runtime/sim_intent.h"
+#include "runtime/take.h"
 #include "runtime/transform_authority.h"
 #include <unordered_map>
 #include <vector>
@@ -246,6 +247,35 @@ public:
     // Replay capture. Off by default: recording every tick of a long session
     // is only wanted by a test, a replay tool or a netcode client.
     void  setCommandRecording(bool on, size_t ticks = 4096);
+
+    // ── Takes: record a session, replay it, get the same world (R1) ─────────
+    // See runtime/take.h for what a take is and the rules a replayable session
+    // depends on.
+    //
+    // startTakeRecording: a SNAPSHOT session, before its first tick. Snapshot
+    // because the take's start IS the snapshot Play loads; before the first
+    // tick because a take that began mid-session would claim a start its first
+    // recorded tick did not come from.
+    bool       startTakeRecording();
+    take::Take stopTakeRecording();          // valid after stopSimulation too
+    bool       takeRecording() const { return m_takeRecording; }
+
+    // Starts a Snapshot session from take.start with the device sampler OFF and
+    // the recorded intents fed in at the same point in the step, comparing each
+    // tick's command digest and world hash with the recording. Refused while a
+    // session runs, and refused if the take's action list or fixed step differ
+    // from this runtime's — replaying intent bits against a different action
+    // list would act on the wrong actions and look like a logic bug.
+    bool startReplay(const take::Take& take);
+    struct ReplayStatus {
+        enum class Divergence { None, Commands, World, Malformed };
+        bool       active   = false;   // a replay session is running
+        bool       complete = false;   // every recorded tick was compared
+        uint64_t   ticksCompared      = 0;
+        uint64_t   firstDivergentTick = 0;   // 0 = none (ticks count from 1)
+        Divergence kind = Divergence::None;
+    };
+    const ReplayStatus& replayStatus() const { return m_replayStatus; }
     bool  commandRecording() const { return m_cmdRecording; }
     // Composed movements actually driven into physics since the session began,
     // and commands that named an entity nothing could resolve. Diagnostics, and
@@ -253,7 +283,12 @@ public:
     // acted on them" — a test that can only see the first is measuring the
     // buffer rather than the subsystem.
     uint64_t movesDispatched() const { return m_movesDispatched; }
-    uint64_t movesUnresolved() const { return m_movesUnresolved; }
+    // Commands of ANY kind that named an entity nothing could resolve (it was
+    // `movesUnresolved`, which undersold it once the physics verbs counted too).
+    uint64_t commandsUnresolved() const { return m_commandsUnresolved; }
+    // Movement and physics-verb commands accepted with NO physics backend
+    // attached — recorded, and impossible to execute. Teleports still run.
+    uint64_t physicsCommandsUndeliverable() const { return m_physicsCmdsUndeliverable; }
     uint64_t teleportsDispatched() const { return m_teleportsDispatched; }
     // SetVelocity / Impulse / Jump commands executed this session.
     uint64_t physicsCommandsDispatched() const { return m_physicsCmdsDispatched; }
@@ -415,6 +450,17 @@ private:
     bool                          m_simulating = false;
     std::unique_ptr<flecs::world> m_gameWorld;
     std::string                   m_simSnapshot;
+    // Takes (R1). The override lets startReplay hand startSimulation the take's
+    // start instead of snapshotting the edit world — one load path for both.
+    bool                           m_takeRecording = false;
+    take::Take                     m_take;
+    bool                           m_replaying = false;
+    take::Take                     m_replayTake;
+    ReplayStatus                   m_replayStatus;
+    std::vector<simintent::Intent> m_sampledThisTick;
+    std::string                    m_snapshotOverride;
+    bool                           m_useSnapshotOverride = false;
+    uint64_t                       m_controllerBeforeReplay = 0;
     double                        m_simElapsed = 0.0;  // script-facing sim clock
     uint64_t                      m_simFrame   = 0;
     EventSweeper                  m_eventSweeper;      // ages event components / tick
@@ -458,7 +504,8 @@ private:
     // JoltPlugin's m_charState is kept hashed under).
     std::unordered_map<uint64_t, flecs::entity_t> m_stableIdCache;
     uint64_t                      m_movesDispatched = 0;
-    uint64_t                      m_movesUnresolved = 0;
+    uint64_t                      m_commandsUnresolved = 0;
+    uint64_t                      m_physicsCmdsUndeliverable = 0;
     uint64_t                      m_teleportsDispatched = 0;
     uint64_t                      m_physicsCmdsDispatched = 0;
     authority::Watcher            m_authority;
@@ -480,6 +527,10 @@ private:
     void dispatchMoves(flecs::world& w);
     // Device -> Intent, once per fixed step. See sim_intent.h.
     void sampleLocalIntent();
+    // Replay: the recorded sampler output for this tick, in the sampler's place.
+    void injectReplayIntents();
+    // After the step: record, or compare against, this tick's two digests.
+    void takeTick(flecs::world& w);
     // EntityId::value -> live entity, or an empty entity. See m_stableIdCache.
     flecs::entity resolveStableId(flecs::world& w, uint64_t id);
 };

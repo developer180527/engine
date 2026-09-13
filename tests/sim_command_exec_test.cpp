@@ -227,6 +227,55 @@ int main() {
         engine.shutdown();
     }
 
+    // ── 5. No physics backend: teleports still run, verbs are COUNTED ──────
+    // dispatchMoves used to return before the teleport loop whenever no physics
+    // plugin was attached, so every accepted command was recorded and never
+    // executed and a plain entity could not be teleported. Every other section
+    // of this file loads JoltPlugin, which is exactly why nothing caught it.
+    {
+        std::printf("\n-- 5. no physics backend --\n");
+        constexpr uint64_t kPlain = 0xB0C5000003ull;
+        EngineConfig cfg;
+        cfg.openAssetDatabase = false;
+        cfg.autoDetectProject = false;
+        cfg.defaultScene      = false;
+        cfg.projectRoot       = hermeticRoot();
+        EngineRuntime engine;
+        if (!engine.init(cfg, std::make_unique<HeadlessPlatform>())) {
+            CHECK(false, "engine init");
+            return 1;
+        }
+        auto driver = std::make_shared<VerbDriver>();
+        driver->bind(&engine.commands());
+        engine.plugins().add(driver);          // and NO JoltPlugin
+        engine.attachPlugins();
+
+        flecs::world& w = engine.simWorld();
+        flecs::entity plain =
+            w.entity().set<Transform>({{0.f,0.f,0.f},{0,0,0,1},{1,1,1}})
+                      .set<Name>({"plain"}).set<EntityId>({kPlain});
+        driver->at(3, simcmd::tele::to    (kPlain, Source::Gameplay, 4.0f, 5.0f, 6.0f));
+        driver->at(3, simcmd::phys::impulse(kPlain, Source::Gameplay, 1.0f, 0.0f, 0.0f));
+
+        engine.startSimulation(EngineRuntime::SimMode::InPlace);
+        for (int t = 0; t < 5; ++t) engine.tick(kDt);
+
+        const Transform& tr = plain.get<Transform>();
+        CHECK(tr.position.x == 4.0f && tr.position.y == 5.0f && tr.position.z == 6.0f,
+              "a plain entity is teleported with no physics backend attached "
+              "(%.1f, %.1f, %.1f)", (double)tr.position.x, (double)tr.position.y,
+              (double)tr.position.z);
+        CHECK(engine.teleportsDispatched() == 1,
+              "the teleport counts as dispatched (%llu)",
+              (unsigned long long)engine.teleportsDispatched());
+        CHECK(engine.physicsCommandsUndeliverable() == 1,
+              "and the impulse, which nothing can execute, is COUNTED as "
+              "undeliverable (%llu) instead of silently recorded and dropped",
+              (unsigned long long)engine.physicsCommandsUndeliverable());
+        engine.stopSimulation();
+        engine.shutdown();
+    }
+
     if (g_failures) {
         std::printf("\nsim_command_exec_test: %d FAILURE(S)\n", g_failures);
         return 1;

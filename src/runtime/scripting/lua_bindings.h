@@ -131,6 +131,34 @@ inline int e_teleport(lua_State* L) {
                    (float)luaL_checknumber(L,4));
     return 0;
 }
+// ── Intents: what a script should read instead of the device ────────────
+// e:intent() -> { moveX, moveY, lookDx, lookDy, held, pressed, released } or
+// nil. e:intentDown(name) / e:intentPressed(name) test one declared action.
+// Code reading these replays; code reading input.* reads the live device.
+inline int e_intent(lua_State* L) {
+    ScriptHost* h = host(L); flecs::entity e = checkEntity(L,1,h);
+    const simintent::Intent* in = h->intentFor(e);
+    if (!in) { lua_pushnil(L); return 1; }
+    lua_createtable(L, 0, 7);
+    lua_pushnumber(L, in->moveX);  lua_setfield(L, -2, "moveX");
+    lua_pushnumber(L, in->moveY);  lua_setfield(L, -2, "moveY");
+    lua_pushnumber(L, in->lookDx); lua_setfield(L, -2, "lookDx");
+    lua_pushnumber(L, in->lookDy); lua_setfield(L, -2, "lookDy");
+    lua_pushinteger(L, (lua_Integer)in->held);     lua_setfield(L, -2, "held");
+    lua_pushinteger(L, (lua_Integer)in->pressed);  lua_setfield(L, -2, "pressed");
+    lua_pushinteger(L, (lua_Integer)in->released); lua_setfield(L, -2, "released");
+    return 1;
+}
+inline int intentBitTest(lua_State* L, bool pressed) {
+    ScriptHost* h = host(L); flecs::entity e = checkEntity(L,1,h);
+    const int32_t bit = h->intentActionBit(luaL_checkstring(L,2));
+    const simintent::Intent* in = h->intentFor(e);
+    const uint32_t bits = in ? (pressed ? in->pressed : in->held) : 0u;
+    lua_pushboolean(L, bit >= 0 && ((bits >> bit) & 1u));
+    return 1;
+}
+inline int e_intentDown(lua_State* L)    { return intentBitTest(L, false); }
+inline int e_intentPressed(lua_State* L) { return intentBitTest(L, true); }
 // ── Input / Log / Time / World / Audio ──────────────────────────────────
 inline int e_move(lua_State* L) {
     ScriptHost* h = host(L); flecs::entity e = checkEntity(L,1,h);
@@ -288,6 +316,8 @@ inline void install(lua_State* L, ScriptHost* h) {
         {"setParent", e_setParent}, {"clearParent", e_clearParent},
         {"applyImpulse", e_applyImpulse}, {"setVelocity", e_setVelocity},
         {"teleport", e_teleport},
+        {"intent", e_intent}, {"intentDown", e_intentDown},
+        {"intentPressed", e_intentPressed},
         {"move", e_move}, {"jump", e_jump}, {"isGrounded", e_isGrounded},
         {nullptr, nullptr}
     };

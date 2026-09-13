@@ -20,6 +20,7 @@
 #include "runtime/services/scene_service.h"
 #include "runtime/services/nav_service.h"
 #include "runtime/sim_command.h"
+#include "runtime/sim_intent.h"
 #include "components/entity_id.h"
 
 // ── keyFromName ────────────────────────────────────────────────────────────
@@ -255,6 +256,35 @@ public:
     // in any host with no fixed step, where the direct path above is correct.
     void setCommandBuffer(simcmd::Buffer* b) { m_commands = b; }
 
+    // ── Intents: what simulation code reads INSTEAD of the device ───────
+    // Bound by the runtime for a session, like the command buffer. Code that
+    // reads these replays; code that reads the device (actionDown, axis) reads
+    // the live input even during a replay, and diverges.
+    void setIntentSource(const simintent::Buffer* intents,
+                         simintent::ActionSet* actions,
+                         uint64_t* localController) {
+        m_intentBuf = intents; m_actionSet = actions;
+        m_localControllerSlot = localController;
+    }
+    const simintent::Intent* intentFor(flecs::entity e) const {
+        if (!m_intentBuf) return nullptr;
+        const EntityId* id = e.try_get<EntityId>();
+        return (id && id->value) ? m_intentBuf->find(id->value) : nullptr;
+    }
+    int32_t intentDeclareAction(const char* name) {
+        return (m_actionSet && name) ? m_actionSet->declare(name) : -1;
+    }
+    int32_t intentActionBit(const char* name) const {
+        return (m_actionSet && name) ? m_actionSet->indexOf(name) : -1;
+    }
+    bool intentSetLocalController(flecs::entity e) {
+        if (!m_localControllerSlot) return false;
+        const EntityId* id = e.try_get<EntityId>();
+        if (!id || !id->value) return false;
+        *m_localControllerSlot = id->value;
+        return true;
+    }
+
     // ── teleport — the pose change gameplay IS allowed to make ──────────
     // Writing `t.position` on an entity with a dynamic body does nothing: the
     // physics write-back overwrites it from the body at the end of the step,
@@ -481,6 +511,9 @@ private:
     bool m_warnedCharNoId = false;
     bool m_warnedCmdNoId  = false;
     simcmd::Buffer* m_commands = nullptr;   // null => the direct physics path
+    const simintent::Buffer* m_intentBuf = nullptr;   // null outside a session
+    simintent::ActionSet*    m_actionSet = nullptr;
+    uint64_t*                m_localControllerSlot = nullptr;
     WorldQueryCache<const Name> m_nameQuery;
     std::unordered_map<std::string, flecs::entity_t> m_nameIndex; // O(1) find
     flecs::entity m_nameObsSet{};     // observer entities, owned: destructed

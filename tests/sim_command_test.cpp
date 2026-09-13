@@ -19,7 +19,8 @@
 //   3. A command that cannot name its target is refused rather than recorded.
 //
 // The replay-equivalence test (record -> restore -> replay -> identical per-tick
-// world hashes) lives in tests/sim_replay_test.cpp and needs a world snapshot;
+// world hashes) lives in tests/sim_replay_test.cpp — it needed a reproducible
+// START, not the world snapshot/restore this line once said, and has one;
 // this file covers the record itself.
 #include <cstdio>
 #include <algorithm>
