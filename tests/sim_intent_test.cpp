@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -37,6 +38,7 @@
 #include "runtime/input/input_manager.h"
 #include "runtime/input/input_sources.h"
 #include "runtime/platform/headless_platform.h"
+#include "plugins/lua_script_plugin.h"
 #include "runtime/runtime.h"
 #include "runtime/sim_intent.h"
 
@@ -392,6 +394,53 @@ int main() {
             engine.stopSimulation();
             engine.shutdown();
         }
+    }
+
+    // ── 7. A Lua-only game can give its actions bits ───────────────────────
+    // e:intentDown(name) tests a DECLARED action's bit, and until
+    // Input.declareAction a script had no way to declare one — a Lua-only game
+    // got false from every intentDown. The script declares "Ok" only if
+    // "Jump" came back as bit 0, so the RETURN value is checked from C++ too.
+    {
+        std::printf("\n-- 7. Input.declareAction from Lua --\n");
+        namespace fs = std::filesystem;
+        const fs::path dir = hermeticRoot() / "scripts" / "autorun";
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        {
+            std::ofstream o(dir / "declare_actions.lua");
+            o << "local M = {}\n"
+                 "function M:onStart()\n"
+                 "  if Input.declareAction('Jump') == 0 then\n"
+                 "    Input.declareAction('Ok')\n"
+                 "  end\n"
+                 "end\n"
+                 "return M\n";
+        }
+        EngineConfig cfg;
+        cfg.openAssetDatabase = false;
+        cfg.autoDetectProject = false;
+        cfg.defaultScene      = false;
+        cfg.projectRoot       = hermeticRoot();
+        EngineRuntime engine;
+        if (!engine.init(cfg, std::make_unique<HeadlessPlatform>())) {
+            CHECK(false, "engine init");
+        } else {
+            engine.plugins().add(std::make_shared<LuaScriptPlugin>());
+            engine.attachPlugins();
+            engine.startSimulation(EngineRuntime::SimMode::InPlace);
+            CHECK(engine.actionSet().indexOf("Jump") == 0
+                  && engine.actionSet().indexOf("Ok") == 1,
+                  "a script's onStart declares an action through "
+                  "Input.declareAction and gets its bit back (Jump %d, Ok %d)",
+                  engine.actionSet().indexOf("Jump"),
+                  engine.actionSet().indexOf("Ok"));
+            engine.stopSimulation();
+            CHECK(engine.actionSet().indexOf("Jump") == -1,
+                  "and, declared inside the session, it ends with the session");
+            engine.shutdown();
+        }
+        fs::remove_all(hermeticRoot() / "scripts", ec);
     }
 
     if (g_failures) {

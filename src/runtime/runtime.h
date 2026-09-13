@@ -259,6 +259,12 @@ public:
     bool       startTakeRecording();
     take::Take stopTakeRecording();          // valid after stopSimulation too
     bool       takeRecording() const { return m_takeRecording; }
+    // True when the action list changed after the take captured its hash — a
+    // name declared after onSimulationStart (lazily, in onUpdate). Existing
+    // bits stay valid (declare appends), but the late names are covered by no
+    // check: a replay declaring different late names is not refused. Warned
+    // once; reset when recording or a replay starts, kept after it stops.
+    bool       takeActionListChanged() const { return m_takeActionListChanged; }
 
     // Starts a Snapshot session from take.start with the device sampler OFF and
     // the recorded intents fed in at the same point in the step, comparing each
@@ -461,6 +467,7 @@ private:
     std::string                    m_snapshotOverride;
     bool                           m_useSnapshotOverride = false;
     uint64_t                       m_controllerBeforeReplay = 0;
+    bool                           m_takeActionListChanged = false;
     double                        m_simElapsed = 0.0;  // script-facing sim clock
     uint64_t                      m_simFrame   = 0;
     EventSweeper                  m_eventSweeper;      // ages event components / tick
@@ -499,8 +506,9 @@ private:
     // declaration hash no fresh process could reproduce. Measured: that hash
     // differs from a fresh process's, and startReplay refuses a take whose hash
     // differs — so a take recorded that way could not be replayed in a new
-    // process, which is the take's whole use case. Clearing outright would have fixed that and broken
-    // every host that declares before a session; scoping keeps both.
+    // process, which is the take's whole use case. Clearing outright would
+    // have fixed that and broken every host that declares before a session;
+    // scoping keeps both.
     size_t                        m_hostActionCount = 0;
     uint64_t                      m_localController = 0;
     // The intent sampler's OWN look cursor. consumeLook() drains a single

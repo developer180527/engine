@@ -716,6 +716,17 @@ that arithmetic.
   outright would have broken every host that declares before a session.
   `sim_intent_test` §6; removing the truncate reddens five assertions, and
   clearing instead of truncating reddens the baseline one.
+- **Every action is declared by `onSimulationStart`.** A take carries one action
+  hash, captured when recording starts and checked when a replay starts, so a
+  name declared later (lazily, in `onUpdate`) is covered by no check — a replay
+  declaring something else in its place would not be refused. `takeTick`
+  compares the live hash with the take's every tick and warns once
+  (`takeActionListChanged()`); comparing the hash rather than hooking a call
+  sees every path — C ABI, Lua, a C++ host. A warning, not a refusal: declare
+  only appends, so the recorded bits stay valid. `sim_replay_test` §5.
+- **Lua declares with `Input.declareAction(name)`**, which returns the bit.
+  Before it a Lua-only game could not give an action a bit at all, and
+  `e:intentDown` returned false for every name. `sim_intent_test` §7.
 - **The same binary.** The world hash is positional in the classification order
   (`sim_hash.h`), so a take verifies only against the build that recorded it.
 - **Recording starts in a Snapshot session, before tick one** — both refused

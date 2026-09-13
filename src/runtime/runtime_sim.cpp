@@ -470,6 +470,7 @@ bool EngineRuntime::startTakeRecording() {
     m_take.start           = m_simSnapshot;
     m_take.ticks.reserve(kReserveTicks);
     m_take.intents.reserve(kReserveTicks);
+    m_takeActionListChanged = false;
     m_takeRecording        = true;
     return true;
 }
@@ -543,6 +544,7 @@ bool EngineRuntime::startReplay(const take::Take& t) {
         m_replayStatus = {};
         return false;
     }
+    m_takeActionListChanged = false;
     return true;
 }
 
@@ -561,6 +563,26 @@ void EngineRuntime::takeTick(flecs::world& w) {
     // of the same step.
     const uint64_t cmd   = m_commands.digest();
     const uint64_t world = simhash::hashWorld(w);
+
+    // ── Actions must be declared by onSimulationStart ───────────────────────
+    // A take carries ONE action hash, captured when recording starts (and
+    // checked when a replay starts). A name declared after that — lazily, in
+    // onUpdate — is covered by no check: its bit is recorded, and a replay
+    // declaring something else in its place is not refused. Compared as a
+    // hash, not hooked at a call, so every path (C ABI, Lua, a C++ host) is
+    // seen. A warning, not a refusal: existing bits stay valid, since declare
+    // only appends.
+    if (!m_takeActionListChanged) {
+        const uint64_t expected = m_takeRecording ? m_take.actionHash
+                                                  : m_replayTake.actionHash;
+        if (m_actionSet.declarationHash() != expected) {
+            m_takeActionListChanged = true;
+            LOG_WARN("Take", "an action was declared at tick %llu, after the "
+                     "take's action list was captured — declare every action "
+                     "in onSimulationStart, or a replay cannot check it",
+                     (unsigned long long)m_simFrame);
+        }
+    }
 
     if (m_takeRecording) {
         // Scoped to the appends ONLY: hashWorld above allocates scratch every

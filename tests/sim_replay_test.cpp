@@ -91,6 +91,7 @@ public:
     // plugin and kit that keeps session state in members owes the same reset.
     void onSimulationStart(flecs::world&) override {
         m_yaw = 0.0f;
+        m_lateDone = false;
         if (m_viaCAbi) {
             // A kit declares its actions HERE — so a replay's action-list check
             // has to run after this, which is what the child exercises.
@@ -102,6 +103,10 @@ public:
     void onSimulationStop() override {}
 
     void onUpdate(flecs::world&, float) override {
+        if (m_lateDeclare && !m_lateDone) {     // the mistake §5 catches
+            engineIntentDeclareAction("Late");
+            m_lateDone = true;
+        }
         if (!m_commands) return;
         float moveX = 0, moveY = 0, lookDx = 0;
         if (m_viaCAbi) {
@@ -130,6 +135,7 @@ public:
     }
     void bind(simintent::Buffer* i, simcmd::Buffer* c) { m_intents = i; m_commands = c; }
     uint64_t cAbiReads() const { return m_cAbiReads; }
+    void     setLateDeclare(bool on) { m_lateDeclare = on; }
     bool     overran()   const { return m_overran; }
 
 private:
@@ -137,6 +143,8 @@ private:
     EngineEntity       m_player   = 0;
     uint64_t           m_cAbiReads = 0;
     bool               m_overran  = false;
+    bool               m_lateDeclare = false;
+    bool               m_lateDone    = false;
     simintent::Buffer* m_intents  = nullptr;
     simcmd::Buffer*    m_commands = nullptr;
     float              m_yaw      = 0.0f;
@@ -345,6 +353,9 @@ int main(int argc, char** argv) {
           (unsigned long long)simEnd.currentBytes);
 #endif
 
+    CHECK(!engine.takeActionListChanged(),
+          "a take whose actions were all declared up front raises no "
+          "late-declaration warning");
     CHECK(rec.ticks.size() == (size_t)kTicks,
           "the take holds every tick (%zu of %d)", rec.ticks.size(), kTicks);
     double look = 0.0;
@@ -493,6 +504,21 @@ int main(int argc, char** argv) {
         CHECK(!engine.startTakeRecording(),
               "nor in an InPlace session, which has no start snapshot");
         engine.stopSimulation();
+
+        // An action declared AFTER the take captured its list — in onUpdate,
+        // not onSimulationStart — is outside every check a replay makes.
+        ctl->setLateDeclare(true);
+        engine.startSimulation(EngineRuntime::SimMode::Snapshot);
+        engine.startTakeRecording();
+        for (int t = 0; t < 3; ++t) engine.tick(kDt);
+        engine.stopSimulation();
+        (void)engine.stopTakeRecording();
+        ctl->setLateDeclare(false);
+        CHECK(engine.takeActionListChanged(),
+              "an action declared in onUpdate during a recording is WARNED "
+              "about — the take's hash cannot cover it");
+        CHECK(engine.actionSet().indexOf("Late") == -1,
+              "and, declared inside the session, it ends with the session");
     }
 
     engine.shutdown();
