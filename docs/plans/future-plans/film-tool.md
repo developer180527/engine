@@ -55,7 +55,7 @@ the `determinism-gate` branch established in September 2026:
 
 | Filmmaking need | What already exists |
 |---|---|
-| Record a take | `EngineRuntime::RecordedTick {tick, actionHash, intents, cmds}` — a take at tick granularity (`src/runtime/runtime.h`) |
+| Record a take | `take::Take` (`src/runtime/take.h`) — the start snapshot plus, per tick, the sampled intents, the command digest and the world hash; replays to identical digests in-process and in a child process (`tests/sim_replay_test.cpp`) |
 | Re-shoot a take against a changed scene | The **intent** layer (`src/runtime/sim_intent.h`) records what was *asked*, not what was *derived*, so logic can be re-run rather than replayed — the replay/rollback distinction the header states |
 | Render offline at any speed and match the live take | The A/B comparison (1 vs 2 frames per tick) in `tests/determinism_gate_test.cpp` — green on all 14 tier/comparison pairs, physics included |
 | Authored cameras separate from the simulated world | The presentation split: `CameraLook` is `SimExempt` (`src/components/camera_look.h`) |
@@ -174,7 +174,13 @@ What *can* be done meanwhile is to keep choosing work that serves both products:
    essential for film.
 3. **A sequencer as a Plugin in the existing editor** — prove the timeline on the
    current codebase before committing to a separate application.
-4. **Takes on top of the `RecordedTick` ring** — mostly UX over what exists.
+4. **Takes on top of the R1 take format** (`src/runtime/take.h`). The substrate
+   exists — record, encode, replay across processes. What does not: the one real
+   game reading *intents* rather than the device (the FPS kit still calls
+   `engineActionDown`, so its sessions cannot replay), a take manager, and render
+   determinism for re-rendering a take, which nothing measures. This line once
+   said "mostly UX over what exists"; before 2026-09-13 no kit could read an
+   intent at all, so it was not true then, and is still not only UX now.
 5. **USD import/export as an Add-on.**
 6. **An offline renderer as an `IRenderer` Provider.**
 

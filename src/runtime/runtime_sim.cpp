@@ -84,6 +84,10 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     // Intents readable from kits (C ABI) and scripts (Lua) for the session —
     // what makes "simulation code reads intents" a rule code can follow.
     m_scriptHost->setIntentSource(&m_intents, &m_actionSet, &m_localController);
+    // Everything declared so far is the host's baseline; what plugins and kits
+    // declare from here (broadcastSimStart, below) is this session's, and
+    // stopSimulation drops it. See EngineRuntime::m_hostActionCount.
+    m_hostActionCount = m_actionSet.size();
     m_stableIdCache.clear();          // a new world reuses flecs ids
     m_movesDispatched = 0;
     m_commandsUnresolved = 0;
@@ -116,6 +120,10 @@ bool EngineRuntime::startSimulation(SimMode mode) {
 void EngineRuntime::stopSimulation() {
     if (!m_simulating) return;
     m_plugins.broadcastSimStop();
+    // The session's own action names end with it, so the next session's list —
+    // and its declaration hash — depends on what THAT session declares, not on
+    // every session this process has run. The host's baseline stays.
+    m_actionSet.truncate(m_hostActionCount);
     // ── Deferred callbacks run BEFORE the code they live in is unmapped ──────
     // engineJobsOnMain lets a kit defer work to the main thread, and the queue
     // holds a function pointer INTO the kit's dylib. pumpMain() only runs in

@@ -327,6 +327,73 @@ int main() {
         }
     }
 
+    // ── 6. The action list is SESSION-scoped, not process-scoped ───────────
+    // ActionSet::declare appends and nothing cleared it, so the list grew with
+    // the process's history. An earlier session declaring "Jump" left it behind;
+    // the next session's kit declaring "Fire" and "Move" produced [Jump, Fire,
+    // Move] — Fire on bit 1, not 0, and a hash no fresh process reproduces. So a
+    // take recorded after any earlier session with different actions was refused
+    // by a replay in a new process: record in the editor, replay elsewhere, which
+    // is the take's reason to exist. The child-process replay test could not see
+    // it — its recording process declared the same names every time.
+    //
+    // A HOST'S declarations outside a session are a fixed baseline and must
+    // survive; only what a session declares is dropped.
+    {
+        std::printf("\n-- 6. the action list does not outlive its session --\n");
+        EngineConfig cfg;
+        cfg.openAssetDatabase = false;
+        cfg.autoDetectProject = false;
+        cfg.defaultScene      = false;
+        cfg.projectRoot       = hermeticRoot();
+
+        EngineRuntime engine;
+        if (!engine.init(cfg, std::make_unique<HeadlessPlatform>())) {
+            CHECK(false, "engine init");
+        } else {
+            engine.attachPlugins();
+
+            // Session 1 — an earlier game or scene, declaring its own action.
+            engine.startSimulation(EngineRuntime::SimMode::InPlace);
+            engine.actionSet().declare("Jump");
+            engine.stopSimulation();
+            CHECK(engine.actionSet().size() == 0,
+                  "a session's action is dropped when the session stops (%zu left)",
+                  engine.actionSet().size());
+
+            // Session 2 — this session's kit.
+            engine.startSimulation(EngineRuntime::SimMode::InPlace);
+            engine.actionSet().declare("Fire");
+            engine.actionSet().declare("Move");
+            simintent::ActionSet fresh;
+            fresh.declare("Fire");
+            fresh.declare("Move");
+            CHECK(engine.actionSet().indexOf("Fire") == 0,
+                  "Fire takes bit 0, as it would in a fresh process (bit %d)",
+                  engine.actionSet().indexOf("Fire"));
+            CHECK(engine.actionSet().declarationHash() == fresh.declarationHash(),
+                  "and the session's hash is the one a fresh process declaring the "
+                  "same names produces — so a take recorded here replays there");
+            engine.stopSimulation();
+
+            // A host baseline declared OUTSIDE any session survives sessions,
+            // and a session's additions on top of it still do not.
+            engine.actionSet().declare("Pause");
+            engine.startSimulation(EngineRuntime::SimMode::InPlace);
+            engine.actionSet().declare("Crouch");
+            CHECK(engine.actionSet().indexOf("Pause") == 0
+                  && engine.actionSet().indexOf("Crouch") == 1,
+                  "a host's baseline keeps its bits under a session's additions");
+            engine.stopSimulation();
+            engine.startSimulation(EngineRuntime::SimMode::InPlace);
+            CHECK(engine.actionSet().indexOf("Pause") == 0
+                  && engine.actionSet().indexOf("Crouch") == -1,
+                  "and the baseline outlives the session while the addition does not");
+            engine.stopSimulation();
+            engine.shutdown();
+        }
+    }
+
     if (g_failures) {
         std::printf("\nsim_intent_test: %d FAILURE(S)\n", g_failures);
         return 1;

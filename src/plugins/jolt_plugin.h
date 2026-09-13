@@ -599,10 +599,16 @@ public:
     //
     // So it is not a rule, it is a refusal: the body is not created, the entity
     // stays gameplay-owned and moves with its parent like any other child. That
-    // IS checkable, it is what AAA engines do — bodies live at world root and
-    // attachment is a CONSTRAINT — and it removes the desync class entirely
-    // rather than documenting it. Physics constraints are future work; until
-    // they exist this is a loud limitation instead of a quiet corruption.
+    // IS checkable, and it removes the desync class entirely rather than
+    // documenting it. Attachment belongs to a CONSTRAINT, which is future work;
+    // until constraints exist this is a loud limitation instead of a quiet
+    // corruption.
+    //
+    // A CHOICE, NOT PRIOR ART. An earlier version of this comment called it
+    // "what AAA engines do". That was an unverified appeal, and a 2026-09-12
+    // audit notes Godot allows a rigid body under a parent — so engines do not
+    // agree, and the justification is only the one above: refusal is checkable
+    // and the alternative is a silent, continuous disagreement.
     bool refuseSpawn(flecs::entity e, const char* what) {
         flecs::entity par = e.target(flecs::ChildOf);
         if (par && par.is_alive() && par.has<Transform>()) {

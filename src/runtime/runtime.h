@@ -486,6 +486,22 @@ private:
     simcmd::Buffer                m_commands;
     simintent::Buffer             m_intents;
     simintent::ActionSet          m_actionSet;
+    // ── How many of m_actionSet's names belong to the HOST, not a session ────
+    // Captured at startSimulation, restored at stopSimulation. Names declared
+    // outside any session (a C++ host calling actionSet().declare) are a fixed
+    // baseline; names declared inside one (a kit's onSimulationStart, through
+    // engineIntentDeclareAction) are that session's and are dropped when it
+    // stops.
+    //
+    // Without this the set was never cleared, so it grew with process HISTORY:
+    // a session that declared "Jump", stopped, then a kit declaring "Fire" and
+    // "Move" produced [Jump, Fire, Move] — Fire on bit 1 instead of 0, and a
+    // declaration hash no fresh process could reproduce. Measured: that hash
+    // differs from a fresh process's, and startReplay refuses a take whose hash
+    // differs — so a take recorded that way could not be replayed in a new
+    // process, which is the take's whole use case. Clearing outright would have fixed that and broken
+    // every host that declares before a session; scoping keeps both.
+    size_t                        m_hostActionCount = 0;
     uint64_t                      m_localController = 0;
     // The intent sampler's OWN look cursor. consumeLook() drains a single
     // shared cursor, so using it here would starve a kit that also calls it —

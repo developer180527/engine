@@ -532,8 +532,10 @@ lives at world root, and while parented its world pose would be decided by the
 parent and by physics at once, silently and continuously — the one rule the
 previous draft admitted it could not enforce, because the watcher sees local
 writes and not the world-pose change a parent induces. Refusal *is* checkable,
-it is what AAA engines do (attachment is a constraint), and it removes the
-desync class rather than documenting it. And an entity carrying **both** a
+and it removes the desync class rather than documenting it; attachment belongs
+to a constraint, which does not exist yet. That is a **choice, not prior art** —
+this paragraph once said it is "what AAA engines do", an unverified appeal, and
+the 2026-09-12 audit notes Godot allows parented rigid bodies. And an entity carrying **both** a
 `RigidBody` and a `CharacterController` gets the controller; nothing prevented
 this before and both write-backs fought over one `Transform` in query order.
 
@@ -705,6 +707,15 @@ that arithmetic.
 - **Kits declare actions in `onSimulationStart`**, so `startReplay` checks the
   take's action-list hash *after* the session has started (and stops it on a
   mismatch). Checked before, a kit's take was refused every time.
+- **The action list is session-scoped** (2026-09-13). Names a host declares
+  outside any session are a fixed baseline; names declared inside one are
+  dropped at `stopSimulation`. Before this nothing cleared the list, so it grew
+  with process history — a session declaring `Jump` followed by a kit declaring
+  `Fire` and `Move` gave `[Jump, Fire, Move]`, Fire on bit 1 and a hash no fresh
+  process reproduces, so the take could not replay in a new process. Clearing
+  outright would have broken every host that declares before a session.
+  `sim_intent_test` §6; removing the truncate reddens five assertions, and
+  clearing instead of truncating reddens the baseline one.
 - **The same binary.** The world hash is positional in the classification order
   (`sim_hash.h`), so a take verifies only against the build that recorded it.
 - **Recording starts in a Snapshot session, before tick one** — both refused

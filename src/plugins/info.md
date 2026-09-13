@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-12
+verified: 2026-09-13
 covers:
   - src/plugins/
 tests:

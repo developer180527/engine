@@ -147,6 +147,10 @@ public:
     const std::vector<std::string>& names() const { return m_names; }
     uint64_t declarationHash() const;
     void clear() { m_names.clear(); }
+    // Drop every name declared after the first `n`. The runtime uses it to end a
+    // session: names declared DURING a session are that session's, and must not
+    // survive into the next one. See EngineRuntime::m_hostActionCount.
+    void truncate(size_t n) { if (n < m_names.size()) m_names.resize(n); }
 
 private:
     std::vector<std::string> m_names;

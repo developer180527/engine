@@ -153,9 +153,12 @@ These are known, unpinned, and deliberately visible rather than tidied away.
   attach a body to something — a turret on a tank, a held object. Physics
   constraints are the real answer and do not exist. Until they do this is a loud
   limitation rather than a quiet corruption, which is the trade that was chosen.
-- **Authority is derived at runtime; AAA declares it at author time.** UE's
-  `Mobility` is set in the editor and validated when the actor is placed. Here
-  it is derived from `RigidBody::bodyType` and enforced by a debug watcher, so
+- **Authority is derived at runtime; Unreal declares it at author time.** UE's
+  `Mobility` (Static / Stationary / Movable) is a property authored on the
+  component rather than derived from it. (This entry used to add that it is
+  "validated when the actor is placed"; Unreal does not document that, and it was
+  removed.) Here it is derived from `RigidBody::bodyType` and enforced by a debug
+  watcher, so
   the first time a designer learns their write is dropped is when the watcher
   fires. Surfacing the derived authority in the inspector and validating on
   scene load is cheap and not done.
