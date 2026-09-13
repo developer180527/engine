@@ -13,6 +13,7 @@
 #include <engine/addon_protocol.h>
 #include <string_view>
 #include "core/logger.h"
+#include "core/memory/mem.h"
 
 namespace simcmd {
 
@@ -57,7 +58,15 @@ bool Buffer::submit(const SimCommand& c) {
     }
     SimCommand copy = c;
     copy.seq = m_seq++;
-    m_cmds.push_back(copy);
+    // Only GROWTH allocates — clear() keeps capacity, so after warm-up this is
+    // allocation-free — and growth is attributed to Tag::Sim. Scoped on that
+    // path alone so the steady state pays nothing for the tag.
+    if (m_cmds.size() == m_cmds.capacity()) {
+        MEM_SCOPE(mem::Tag::Sim);
+        m_cmds.push_back(copy);
+    } else {
+        m_cmds.push_back(copy);
+    }
     return true;
 }
 

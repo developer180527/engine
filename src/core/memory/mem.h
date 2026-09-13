@@ -68,6 +68,8 @@ enum class Tag : uint8_t {
     Jobs,         // enkiTS + job control blocks
     Editor,       // ImGui + editor-only state
     Nav,          // Recast bake scratch + the Detour navmesh and query
+    Sim,          // the tick's command/intent buffers and the command ring
+    Replay,       // takes: recording, a loaded take, encode/decode
     Count
 };
 const char* tagName(Tag t);

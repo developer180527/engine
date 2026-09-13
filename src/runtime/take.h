@@ -46,8 +46,17 @@
 // `>=`: a reader that does not know a version cannot know where its body ends,
 // and guessing produces a partial take that parses — the reasoning the Add-on
 // protocol uses for its frames (docs/architecture/extension-model.md §6).
+//
+// ── MEMORY ──────────────────────────────────────────────────────────────────
+// All of a take's intents live in ONE array; a Tick names its run by offset.
+// A vector per tick was one heap allocation per fixed step, inside the step,
+// for the whole recording — the per-frame growth mem.h exists to prevent. The
+// runtime reserves a minute up front and grows geometrically past it, and every
+// take allocation is attributed to mem::Tag::Replay. The FILE is unchanged: it
+// already wrote each tick's intents as one contiguous run.
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -56,10 +65,11 @@
 namespace take {
 
 struct Tick {
-    uint64_t                        tick = 0;       // m_simFrame, from 1
-    std::vector<simintent::Intent>  intents;        // the sampler's output
-    uint64_t                        commandDigest = 0;
-    uint64_t                        worldHash = 0;
+    uint64_t tick = 0;              // m_simFrame, from 1
+    uint64_t commandDigest = 0;
+    uint64_t worldHash = 0;
+    uint32_t firstIntent = 0;       // into Take::intents — the sampler's output
+    uint32_t intentCount = 0;
 };
 
 struct Take {
@@ -68,8 +78,24 @@ struct Take {
     uint64_t          localController = 0;  // EntityId whose device was sampled
     float             simDt = 0.0f;         // the fixed step it was recorded at
     std::string       start;                // the scene snapshot it began from
+    std::vector<simintent::Intent> intents; // every tick's, back to back
     std::vector<Tick> ticks;
 };
+
+// A tick's intents. Empty if the tick's range does not lie inside `intents`, so
+// a hand-built take can never be read out of bounds — wellFormed() says why.
+inline std::span<const simintent::Intent> intentsOf(const Take& t, const Tick& k) {
+    if ((uint64_t)k.firstIntent + k.intentCount > t.intents.size()) return {};
+    return { t.intents.data() + k.firstIntent, k.intentCount };
+}
+inline std::span<simintent::Intent> intentsOf(Take& t, const Tick& k) {
+    if ((uint64_t)k.firstIntent + k.intentCount > t.intents.size()) return {};
+    return { t.intents.data() + k.firstIntent, k.intentCount };
+}
+
+// Ticks numbered 1..N, intent runs contiguous and covering `intents` exactly.
+// decode() only ever produces well-formed takes; this guards hand-built ones.
+bool wellFormed(const Take& take, std::string* why = nullptr);
 
 std::vector<uint8_t> encode(const Take& take);
 // False — with a reason in `error` — for anything not wholly and exactly a take

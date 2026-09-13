@@ -721,6 +721,18 @@ parser. A take whose ticks are not numbered 1..N is refused by `startReplay` as
 malformed (`Divergence::Malformed` is the backstop), and the runtime's local
 controller is restored when a replay ends.
 
+**Memory.** A take's intents live in one array, each `Tick` naming its run by
+offset — the first cut gave every tick its own vector, one allocation per fixed
+step for the whole recording, all filed under `Tag::Core`. Recording reserves a
+minute up front and grows geometrically past it; every take allocation is
+`mem::Tag::Replay`, scoped to the appends only (never around `hashWorld`, whose
+scratch would read as take growth). The tick's command and intent buffers and
+the command ring are `mem::Tag::Sim`, tagged on the growth path only. The ring
+also used to rebuild each slot from a brace-initialised temporary — two fresh
+vectors per tick — and now `assign()`s into the slot's capacity.
+`sim_replay_test` §2b asserts zero `Replay` and zero `Sim` allocations across
+100 warm recorded ticks, and that both tags hold live bytes.
+
 **Proven across processes**, not only within one: `sim_replay_test` §3b writes
 the take to a file and re-invokes itself as a child with an empty edit world,
 no device, no declared actions, and a controller reading intents only through

@@ -150,6 +150,7 @@ void EngineRuntime::stopSimulation() {
     // recording and replay do not.
     m_takeRecording = false;
     if (m_replaying) m_localController = m_controllerBeforeReplay;
+    m_replayTake    = {};           // a loaded take is not kept past its replay
     m_replaying     = false;
     m_replayStatus.active = false;
     LOG_SUCCESS("Sim", "Simulation stopped");
@@ -350,6 +351,7 @@ void EngineRuntime::tickSimulation(float dt) {
 // that keeps the profiler and the memory counters opt-in.
 void EngineRuntime::setCommandRecording(bool on, size_t ticks) {
     m_cmdRecording = on;
+    MEM_SCOPE(mem::Tag::Sim);
     m_cmdRing.assign(on ? (ticks ? ticks : 1) : 0, {});
     m_cmdRingHead = 0;
 }
@@ -447,11 +449,19 @@ bool EngineRuntime::startTakeRecording() {
         LOG_ERROR("Take", "cannot record a take during a replay");
         return false;
     }
+    // ── Take memory is Tag::Replay, and it is reserved HERE, not per tick ──
+    // A minute of ticks up front, so a recording of that length makes no
+    // allocation inside the fixed step at all; past it the arrays double.
+    // sim_replay_test asserts zero Replay allocations across recorded ticks.
+    MEM_SCOPE(mem::Tag::Replay);
+    constexpr size_t kReserveTicks = 60 * 60;
     m_take = {};
     m_take.actionHash      = m_actionSet.declarationHash();
     m_take.localController = m_localController;
     m_take.simDt           = kSimDt;
     m_take.start           = m_simSnapshot;
+    m_take.ticks.reserve(kReserveTicks);
+    m_take.intents.reserve(kReserveTicks);
     m_takeRecording        = true;
     return true;
 }
@@ -477,18 +487,21 @@ bool EngineRuntime::startReplay(const take::Take& t) {
         return false;
     }
     // A MALFORMED take is refused up front: its ticks must be numbered 1..N,
-    // or "diverged at tick K" would name a tick the take does not describe.
-    for (size_t i = 0; i < t.ticks.size(); ++i) {
-        if (t.ticks[i].tick != i + 1) {
-            LOG_ERROR("Take", "malformed take — slot %zu is tick %llu, not %zu; "
-                      "refused", i, (unsigned long long)t.ticks[i].tick, i + 1);
-            return false;
-        }
+    // or "diverged at tick K" would name a tick the take does not describe, and
+    // its intent runs must tile the intent array, or a tick would be fed
+    // another tick's input.
+    std::string why;
+    if (!take::wellFormed(t, &why)) {
+        LOG_ERROR("Take", "malformed take — %s; refused", why.c_str());
+        return false;
     }
     // Restored when the replay ends (stopSimulation), or here if it fails to
     // start — a replay must not leave the runtime driving a different entity.
     m_controllerBeforeReplay = m_localController;
-    m_replayTake    = t;
+    {
+        MEM_SCOPE(mem::Tag::Replay);
+        m_replayTake = t;
+    }
     m_replayStatus  = {};
     m_replayStatus.active = true;
     m_replaying     = true;
@@ -528,7 +541,8 @@ bool EngineRuntime::startReplay(const take::Take& t) {
 void EngineRuntime::injectReplayIntents() {
     const uint64_t idx = m_simFrame - 1;          // ticks count from 1
     if (idx >= m_replayTake.ticks.size()) return; // past the end: no input
-    for (const simintent::Intent& in : m_replayTake.ticks[idx].intents)
+    for (const simintent::Intent& in :
+         take::intentsOf(m_replayTake, m_replayTake.ticks[idx]))
         m_intents.submit(in);
 }
 
@@ -540,8 +554,17 @@ void EngineRuntime::takeTick(flecs::world& w) {
     const uint64_t cmd   = m_commands.digest();
     const uint64_t world = simhash::hashWorld(w);
 
-    if (m_takeRecording)
-        m_take.ticks.push_back({ m_simFrame, m_sampledThisTick, cmd, world });
+    if (m_takeRecording) {
+        // Scoped to the appends ONLY: hashWorld above allocates scratch every
+        // tick, and scoping it too would report hashing as take growth.
+        MEM_SCOPE(mem::Tag::Replay);
+        const size_t first = m_take.intents.size();
+        m_take.intents.insert(m_take.intents.end(),
+                              m_sampledThisTick.begin(), m_sampledThisTick.end());
+        m_take.ticks.push_back({ m_simFrame, cmd, world,
+                                 static_cast<uint32_t>(first),
+                                 static_cast<uint32_t>(m_sampledThisTick.size()) });
+    }
 
     if (m_replaying && !m_replayStatus.complete) {
         const uint64_t idx = m_simFrame - 1;
@@ -709,9 +732,20 @@ void EngineRuntime::recordTickCommands() {
     // its declaration order and are uninterpretable without it. Read here
     // rather than once at session start because a game may declare actions
     // lazily, and a stream that spans a change should record the change.
-    m_cmdRing[m_cmdRingHead] =
-        { m_simFrame, m_actionSet.declarationHash(),
-          m_intents.intents(), m_commands.commands() };
+    // Assigned INTO the slot's existing vectors, not replaced by a brace-built
+    // temporary: the temporary allocated two fresh vectors every tick and freed
+    // the old pair, so an enabled ring churned the heap per tick forever.
+    // assign() reuses the slot's capacity; once each slot has seen a tick's
+    // worth, recording allocates nothing. The scope covers the WHOLE slot
+    // update, so if per-tick allocation ever comes back here it is charged to
+    // Tag::Sim — where sim_replay_test §2b's zero-growth check can see it —
+    // rather than disappearing into Core.
+    MEM_SCOPE(mem::Tag::Sim);
+    RecordedTick& slot = m_cmdRing[m_cmdRingHead];
+    slot.tick       = m_simFrame;
+    slot.actionHash = m_actionSet.declarationHash();
+    slot.intents.assign(m_intents.intents().begin(), m_intents.intents().end());
+    slot.cmds.assign(m_commands.commands().begin(), m_commands.commands().end());
     m_cmdRingHead = (m_cmdRingHead + 1) % m_cmdRing.size();
 }
 

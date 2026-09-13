@@ -42,6 +42,8 @@ take::Take generate(fuzz::Rng& rng) {
         tk.commandDigest = rng.next();
         tk.worldHash     = rng.next();
         const uint32_t n = rng.chance(30) ? 0u : (uint32_t)rng.range(1, 4);
+        tk.firstIntent   = (uint32_t)t.intents.size();
+        tk.intentCount   = n;
         for (uint32_t i = 0; i < n; ++i) {
             simintent::Intent in{};
             in.entity   = rng.next();
@@ -52,7 +54,7 @@ take::Take generate(fuzz::Rng& rng) {
             in.held     = rng.interestingU32();
             in.pressed  = rng.interestingU32();
             in.released = rng.interestingU32();
-            tk.intents.push_back(in);
+            t.intents.push_back(in);
         }
         t.ticks.push_back(std::move(tk));
     }

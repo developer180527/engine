@@ -71,7 +71,7 @@ static_assert(sizeof(BlockHeader) <= kHeaderSize, "header must fit the line");
 
 constexpr const char* kTagNames[(size_t)Tag::Count] = {
     "Core", "Frame", "Assets", "Rendering", "Animation", "Physics",
-    "Scripting", "ECS", "Audio", "Jobs", "Editor", "Nav",
+    "Scripting", "ECS", "Audio", "Jobs", "Editor", "Nav", "Sim", "Replay",
 };
 // The array is sized by the enum, so a NEW TAG WITHOUT A NAME is a
 // zero-initialised entry — tagName() would return an empty string and the

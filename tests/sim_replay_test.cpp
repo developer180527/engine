@@ -39,6 +39,7 @@
 #include <engine/engine_api.h>
 #include <flecs.h>
 
+#include "core/memory/mem.h"
 #include "components/character_controller.h"
 #include "components/entity_id.h"
 #include "components/name.h"
@@ -218,9 +219,10 @@ int main(int argc, char** argv) {
         take::Take t;
         t.actionHash = 7; t.localController = 9; t.simDt = kDt;
         t.start = R"({"entities":[]})";
-        t.ticks.push_back({ 1, {}, 11, 22 });
+        t.ticks.push_back({ 1, 11, 22, 0, 0 });
         simintent::Intent in{}; in.entity = 9; in.lookDx = 3.5f; in.held = 0x5;
-        t.ticks.push_back({ 2, { in }, 33, 44 });
+        t.intents.push_back(in);
+        t.ticks.push_back({ 2, 33, 44, 0, 1 });
 
         const std::vector<uint8_t> bytes = take::encode(t);
         take::Take back; std::string err;
@@ -228,9 +230,10 @@ int main(int argc, char** argv) {
               back.actionHash == 7 && back.localController == 9 &&
               back.simDt == kDt && back.start == t.start &&
               back.ticks.size() == 2 && back.ticks[1].worldHash == 44 &&
-              back.ticks[1].intents.size() == 1 &&
-              back.ticks[1].intents[0].lookDx == 3.5f &&
-              back.ticks[1].intents[0].held == 0x5,
+              back.intents.size() == 1 && back.ticks[1].intentCount == 1 &&
+              take::intentsOf(back, back.ticks[1])[0].lookDx == 3.5f &&
+              take::intentsOf(back, back.ticks[1])[0].held == 0x5 &&
+              take::intentsOf(back, back.ticks[0]).empty(),
               "a take round-trips through bytes intact (%s)", err.c_str());
 
         take::Take untouched; untouched.actionHash = 123;
@@ -297,23 +300,55 @@ int main(int argc, char** argv) {
 
     // ── 2. Record a take with a live device ────────────────────────────────
     std::printf("\n-- 2. record --\n");
+    // The command ring on too, so its steady state is measured below.
+    engine.setCommandRecording(true, 8);
     CHECK(engine.startSimulation(EngineRuntime::SimMode::Snapshot),
           "a Snapshot session starts");
     CHECK(engine.startTakeRecording(), "a take starts recording before tick one");
+    constexpr int kWarm = 50;
+    mem::TagStats simAt{}, replayAt{};
     uint64_t stamp = 1;
     for (int t = 0; t < kTicks; ++t) {
+        if (t == kWarm) {
+            simAt    = mem::stats(mem::Tag::Sim);
+            replayAt = mem::stats(mem::Tag::Replay);
+        }
         const int dx = ((t / 25) % 2) ? -9 : 11;   // a sweep with reversals
         device->addEvent({ stamp++, 1, hid::EventType::MouseMotion, 0, 0, dx, 2 });
         engine.tick(kDt);
     }
+    const mem::TagStats simEnd    = mem::stats(mem::Tag::Sim);
+    const mem::TagStats replayEnd = mem::stats(mem::Tag::Replay);
     engine.stopSimulation();
+    engine.setCommandRecording(false, 0);
     const take::Take rec = engine.stopTakeRecording();
+
+    // ── 2b. Memory: attributed, and flat across the recorded ticks ─────────
+    // A vector per recorded tick was one allocation per fixed step for the
+    // whole session, filed under Core; the brace-assigned command ring was two
+    // more. These pin both halves: the right TAG, and NO growth once warm.
+    std::printf("\n-- 2b. memory --\n");
+#if defined(ENGINE_MEM_ROUTE) && ENGINE_MEM_ROUTE == 0
+    std::printf("  skip  ENGINE_MEM_ROUTE=0: the sanitizer owns allocations\n");
+#else
+    CHECK(replayEnd.allocCount == replayAt.allocCount,
+          "recording made NO Replay allocations across ticks %d..%d (%llu) — the "
+          "take was reserved at start, not grown per tick", kWarm, kTicks,
+          (unsigned long long)(replayEnd.allocCount - replayAt.allocCount));
+    CHECK(simEnd.allocCount == simAt.allocCount,
+          "and the tick's command/intent buffers and the command ring made none "
+          "either once warm (%llu)",
+          (unsigned long long)(simEnd.allocCount - simAt.allocCount));
+    CHECK(replayEnd.currentBytes > 0 && simEnd.currentBytes > 0,
+          "and both are ATTRIBUTED — Replay %llu bytes, Sim %llu bytes live — "
+          "not filed under Core", (unsigned long long)replayEnd.currentBytes,
+          (unsigned long long)simEnd.currentBytes);
+#endif
 
     CHECK(rec.ticks.size() == (size_t)kTicks,
           "the take holds every tick (%zu of %d)", rec.ticks.size(), kTicks);
     double look = 0.0;
-    for (const take::Tick& k : rec.ticks)
-        for (const simintent::Intent& in : k.intents) look += std::fabs(in.lookDx);
+    for (const simintent::Intent& in : rec.intents) look += std::fabs(in.lookDx);
     CHECK(look > 100.0,
           "and the recorded intents CARRY the device's motion (%.0f counts) — a "
           "dead input path would replay an empty take perfectly", look);
@@ -401,10 +436,10 @@ int main(int argc, char** argv) {
     std::printf("\n-- 4. localisation --\n");
     {
         take::Take bad = rec;
-        CHECK(!bad.ticks[kPerturbAt - 1].intents.empty(),
-              "tick %d has a recorded intent to change", kPerturbAt);
-        if (!bad.ticks[kPerturbAt - 1].intents.empty())
-            bad.ticks[kPerturbAt - 1].intents[0].lookDx += 1.0f;
+        const std::span<simintent::Intent> at =
+            take::intentsOf(bad, bad.ticks[kPerturbAt - 1]);
+        CHECK(!at.empty(), "tick %d has a recorded intent to change", kPerturbAt);
+        if (!at.empty()) at[0].lookDx += 1.0f;
         const EngineRuntime::ReplayStatus d = replay(engine, bad);
         CHECK(d.firstDivergentTick == (uint64_t)kPerturbAt,
               "one mouse count changed at tick %d diverges at EXACTLY tick %llu — "
@@ -431,6 +466,11 @@ int main(int argc, char** argv) {
         CHECK(!engine.startReplay(gappy) && !engine.simulating(),
               "a MALFORMED take (tick numbers not 1..N) is refused up front, not "
               "reported later as a gameplay divergence");
+
+        take::Take holey = rec; holey.ticks[5].firstIntent += 1;
+        CHECK(!engine.startReplay(holey) && !engine.simulating(),
+              "and so is one whose intent runs do not tile the intent array — a "
+              "tick would otherwise be fed another tick's input");
 
         // A replay drives the take's controller, then hands the runtime back.
         engine.setLocalController(0x55);

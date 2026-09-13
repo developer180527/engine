@@ -10,6 +10,7 @@
 // with no ECS at all.
 #include <engine/addon_protocol.h>
 #include "core/logger.h"
+#include "core/memory/mem.h"
 
 namespace simintent {
 
@@ -32,7 +33,13 @@ bool Buffer::submit(const Intent& in) {
     }
     Intent copy = in;
     copy.seq = m_seq++;
-    m_intents.push_back(copy);
+    // Growth only, attributed to Tag::Sim — as simcmd::Buffer::submit.
+    if (m_intents.size() == m_intents.capacity()) {
+        MEM_SCOPE(mem::Tag::Sim);
+        m_intents.push_back(copy);
+    } else {
+        m_intents.push_back(copy);
+    }
     return true;
 }
 

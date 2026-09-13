@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-29
+verified: 2026-09-13
 covers:
   - src/core/memory/
 tests:
@@ -46,6 +46,8 @@ std::free/std::realloc.
 | ImGui                      | SetAllocatorFunctions (imgui_bgfx.cpp)   | Editor |
 | Recast/Detour              | rc/dtAllocSetCustom (nav_service.cpp)     | Nav |
 | AsyncLoader thread         | MEM_SCOPE(Assets) around the worker loop | Assets |
+| Tick command/intent buffers, command ring | MEM_SCOPE(Sim) on the growth path (sim_command.cpp, sim_intent.cpp, runtime_sim.cpp) | Sim |
+| Takes (record, loaded take, encode/decode) | MEM_SCOPE(Replay) around the appends only (take.cpp, runtime_sim.cpp) | Replay |
 
 **Not routed, and known:** GLFW (3.5 vendored, `glfwInitAllocator` exists and is
 unused) and SDL3 (`SDL_SetMemoryFunctions`). Both are the WINDOW backend, both
@@ -54,9 +56,11 @@ is compiled into any given build. Deferred as one item rather than half-done:
 fixing GLFW alone leaves the same hole for whichever backend ships. See
 `open-questions.md`.
 
-**Only Nav has a test.** `nav_test` asserts the bake lands on `Tag::Nav`
-(231 allocations, ~82 KB) and fails if the hooks are removed. Every other row in
-this table is a claim with nothing behind it — a dependency bump that changes a
+**Nav, Sim and Replay have tests.** `nav_test` asserts the bake lands on
+`Tag::Nav` (231 allocations, ~82 KB) and fails if the hooks are removed.
+`sim_replay_test` §2b asserts `Sim` and `Replay` hold live bytes AND make zero
+allocations across 100 warm recorded ticks — the steady-state property, not only
+the attribution. Every other row in this table is a claim with nothing behind it — a dependency bump that changes a
 hook's shape would pass CI silently. The check is cheap for any library with a
 trivial construct-one-object path.
 

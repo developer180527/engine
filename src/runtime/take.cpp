@@ -8,6 +8,7 @@
 // FNV from addon_protocol.h, as sim_command and sim_intent take it: header-only
 // and stdlib-only, so a take can be read by a tool with no engine linked.
 #include <engine/addon_protocol.h>
+#include "core/memory/mem.h"
 
 namespace take {
 namespace {
@@ -51,8 +52,30 @@ uint64_t digestOf(const uint8_t* p, size_t n) {
 
 }  // namespace
 
+bool wellFormed(const Take& t, std::string* why) {
+    auto fail = [&](std::string s) { if (why) *why = std::move(s); return false; };
+    uint64_t next = 0;
+    for (size_t i = 0; i < t.ticks.size(); ++i) {
+        const Tick& k = t.ticks[i];
+        if (k.tick != i + 1)
+            return fail("slot " + std::to_string(i) + " is tick " +
+                        std::to_string(k.tick) + ", not " + std::to_string(i + 1));
+        if (k.firstIntent != next)
+            return fail("tick " + std::to_string(k.tick) + "'s intents do not "
+                        "follow the previous tick's");
+        next += k.intentCount;
+    }
+    if (next != t.intents.size())
+        return fail("the ticks name " + std::to_string(next) + " intents, the "
+                    "take holds " + std::to_string(t.intents.size()));
+    return true;
+}
+
 std::vector<uint8_t> encode(const Take& t) {
+    MEM_SCOPE(mem::Tag::Replay);
     std::vector<uint8_t> out;
+    out.reserve(64 + t.start.size() + t.ticks.size() * kTickHeaderBytes +
+                t.intents.size() * sizeof(simintent::Intent) + kTrailerBytes);
     Writer w{out};
     w.u32(kMagic);
     w.u32(Take::kVersion);
@@ -69,9 +92,10 @@ std::vector<uint8_t> encode(const Take& t) {
         w.u64(k.tick);
         w.u64(k.commandDigest);
         w.u64(k.worldHash);
-        w.u32(static_cast<uint32_t>(k.intents.size()));
+        const std::span<const simintent::Intent> run = intentsOf(t, k);
+        w.u32(static_cast<uint32_t>(run.size()));
         w.u32(0);
-        w.raw(k.intents.data(), k.intents.size() * sizeof(simintent::Intent));
+        w.raw(run.data(), run.size() * sizeof(simintent::Intent));
     }
     const uint64_t body = out.size();
     const uint64_t dig  = digestOf(out.data(), out.size());
@@ -86,6 +110,7 @@ bool decode(const uint8_t* p, size_t n, Take& out, std::string* err) {
         return false;
     };
     if (!p || n < kTrailerBytes + 8) return fail("too short to be a take");
+    MEM_SCOPE(mem::Tag::Replay);
 
     // The trailer FIRST: a take is valid only if it is entirely present, and
     // checking the whole before reading any part is what makes a truncated file
@@ -132,10 +157,15 @@ bool decode(const uint8_t* p, size_t n, Take& out, std::string* err) {
             return fail("truncated tick");
         if (pad2 != 0) return fail("non-zero tick padding");
         if (count > kMaxIntentsPerTick) return fail("implausible intent count");
-        k.intents.resize(count);
-        if (!r.raw(k.intents.data(), count * sizeof(simintent::Intent)))
+        // Bounded by the bytes BEFORE growing, so a hostile count cannot make
+        // the shared array allocate what the file cannot hold.
+        if ((size_t)count * sizeof(simintent::Intent) > r.n - r.at)
             return fail("truncated intents");
-        for (const simintent::Intent& in : k.intents)
+        k.firstIntent = static_cast<uint32_t>(t.intents.size());
+        k.intentCount = count;
+        t.intents.resize(t.intents.size() + count);
+        r.raw(t.intents.data() + k.firstIntent, count * sizeof(simintent::Intent));
+        for (const simintent::Intent& in : intentsOf(t, k))
             if (in._pad != 0 || in._pad2 != 0)
                 return fail("non-zero intent padding");
     }
