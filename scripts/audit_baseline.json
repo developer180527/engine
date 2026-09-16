@@ -1,12 +1,8 @@
 {
-  "generated": "2026-09-16T00:22:42+00:00",
-  "commit": "7b9da22fd58a81b182271cf98f391a051fa91554",
+  "generated": "2026-09-16T00:47:56+00:00",
+  "commit": "9f7d831fd616e88125a93182a8b30c30736fd577",
   "note": "Accepted architectural debt. The gate fails on findings NOT listed here; shrinking this file is the cleanup, and nothing may be added to it without a reason in the commit.",
   "findings": {
-    "LAYER-01": [
-      "LAYER-01|src/core/entity_id_util.h:<flecs.h>",
-      "LAYER-01|src/core/transform_utils.h:<flecs.h>"
-    ],
     "LAYER-03": [
       "LAYER-03|src/animation -> src/core",
       "LAYER-03|src/assets -> src/animation",

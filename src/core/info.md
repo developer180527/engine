@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-13
+verified: 2026-09-16
 covers:
   - src/core/
 tests:
@@ -15,6 +15,13 @@ tests:
 ## Purpose
 Dependency-light fundamentals used by every other subsystem. Nothing here may
 include renderer, ECS, or editor headers.
+
+**Checked, not merely stated** (2026-09-16): `scripts/engine_audit.py`'s
+`LAYER-01` rule fails the build on a renderer, ECS or editor include in this
+directory. It was written against a tree where this paragraph was already false
+— `entity_id_util.h` and `transform_utils.h` both included `<flecs.h>` — and
+both moved out rather than the rule being softened. `<bx/math.h>` is not counted:
+it is the math library, the same exclusion `check_gpu_seam.py` makes.
 
 ## Contents
 - **`handle.h`** — `Handle<Tag>`: type-safe uint32_t wrapper for registry
@@ -51,10 +58,13 @@ include renderer, ECS, or editor headers.
   `getMatrix`'s standing contract is unchanged and load-bearing: `m[12..14]`
   equals `position` exactly, whatever the scale or rotation, which is how the
   gizmo reads position back out.
-  `localMatrixLerp` / `getWorldMatrixLerpFrom` take components the caller
-  already holds; the entity-only `getWorldMatrixLerp` remains for callers that
-  only have an entity. Passing them in rather than looking them up is worth
-  several ms per frame at scene scale — see `src/render/issues.md` R14.
+  `localMatrixLerp` takes the components the caller already holds. The walkers
+  that consume it — `getWorldMatrixLerp`, `getWorldMatrixLerpFrom`,
+  `getWorldMatrix`, `safeReparent`, `isAncestorOf`, `hierarchyDepth` — moved to
+  `components/transform_hierarchy.h` on 2026-09-16: they take a `flecs::entity`,
+  and this layer may not include the ECS. The matrix math they call stayed here.
+  Passing components in rather than looking them up is worth several ms per
+  frame at scene scale — see `src/render/issues.md` R14.
 - **`thread_qos.{h,cpp}`** — tell the OS scheduler what a thread is FOR.
   Three classes (`Interactive` / `Initiated` / `Utility`) plus a read-only
   `Unclassified`, applied to the CALLING thread — every platform primitive
@@ -70,15 +80,13 @@ include renderer, ECS, or editor headers.
   Callers today: the enkiTS pool (`Initiated`) and `CookService::cookLoop`
   (`Utility`). Pinned by `tests/thread_qos_test.cpp`.
 - **`math_types.h`** — small shared math types.
-- **`entity_id_util.h`** — stable entity id helpers for serialization.
-  `findById` is O(n) and is for ONE-OFF lookups only (undo, an editor click). Loaders
-  must use **`EntityIdIndex`**: built once with a single query, then O(1) collision
-  checks. Calling `findById` per entity is what made scene load quadratic — sampling a
-  50 000-object load put 97.6% of its 22 seconds inside it, reached from
-  `EntitySerde::createEntity` (runtime issues.md H.0b, fixed 2026-08-05: 22.0 s ->
-  4.78 s, and per-entity cost stopped growing with N). The index is seeded from the
-  world AND inserted into as entities are created, so ids colliding within one load are
-  still caught.
+- **`entity_id_util.h`** — **moved to `components/entity_id_util.h`**
+  (2026-09-16). Every function in it takes a `flecs::world` or `flecs::entity`,
+  so it could not stay in a layer that may not include the ECS. The rule that
+  matters travelled with it and is documented in `src/components/info.md`:
+  loaders build an `EntityIdIndex` once per load, because the O(n) `findById` is
+  for one-off lookups and calling it per entity is what made scene load
+  quadratic (runtime `issues.md` H.0b).
 - **`logger.h`** — LOG_INFO/WARN/ERROR/SUCCESS → stdout + editor console.
 - **`profiler.h`** — extensible instrumenting profiler (hub + channel
   registry; timer is the first channel). `ENGINE_PROFILE_SCOPE("name")`.

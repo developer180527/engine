@@ -345,7 +345,7 @@ the next step, not more speculation.
 ```
 main -> SceneSerializer::loadAsync
   -> EntitySerde::createEntity            9075 / 9294 samples
-    -> findById(flecs::world&, uint64_t)  9045   <- entity_id_util.h:47
+    -> findById(flecs::world&, uint64_t)  9045   <- components/entity_id_util.h:47
       -> flecs::iterable<EntityId>::each  9033
 ```
 
@@ -356,7 +356,7 @@ load (one pass)", and that assumption was the bug. The same pattern was in
 `scene_service.cpp`'s cooked-scene loader, which ironically already built an
 `id -> entity` map as it went and just didn't use it for the check.
 
-Fixed with `EntityIdIndex` (core/entity_id_util.h): built once per load with a single
+Fixed with `EntityIdIndex` (components/entity_id_util.h): built once per load with a single
 query, seeded from the world so pre-existing entities still collide, and inserted into
 as entities are created so ids assigned *within* one load collide with each other too
 — both properties the per-entity scan gave for free and a naive map would lose.

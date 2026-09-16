@@ -7,7 +7,7 @@
 #include "editor/engine_context.h"
 #include "components/name.h"
 #include "core/transform.h"
-#include "core/entity_id_util.h"
+#include "components/entity_id_util.h"
 #include "editor/panels/inspector_panel/utils.h"
 
 namespace inspector_detail {

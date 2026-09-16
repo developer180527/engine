@@ -10,7 +10,7 @@
 #include "editor/engine_context.h"
 #include "editor/gizmo_state.h"
 #include "core/transform.h"
-#include "core/transform_utils.h"   // getWorldMatrix / safeInvert (parent chain)
+#include "components/transform_hierarchy.h"   // getWorldMatrix / safeInvert (parent chain)
 #include <cstring>
 
 namespace gizmo_detail {

@@ -13,7 +13,7 @@
 #include <flecs.h>
 
 #include "core/transform.h"
-#include "core/transform_utils.h"
+#include "components/transform_hierarchy.h"
 
 static int g_failures = 0;
 #define CHECK(cond, ...) do {                                        \

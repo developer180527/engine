@@ -26,6 +26,7 @@
 #include "runtime/input/input_sources.h"
 #include "core/transform.h"
 #include "core/transform_utils.h"
+#include "components/transform_hierarchy.h"
 #include "core/memory/mem.h"
 #include "core/logger.h"
 #include "components/event_component.h"

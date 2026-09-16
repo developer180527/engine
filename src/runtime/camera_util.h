@@ -6,7 +6,7 @@
 #include "components/camera.h"
 #include "components/camera_look.h"
 #include "core/transform.h"
-#include "core/transform_utils.h"
+#include "components/transform_hierarchy.h"
 #include "runtime/world_query_cache.h"
 
 // ── PrimaryCameraFinder ─────────────────────────────────────────────────────

@@ -32,7 +32,7 @@
 #include "scene/scene_serializer.h"
 #include "components/entity_id.h"
 #include "components/name.h"
-#include "core/entity_id_util.h"
+#include "components/entity_id_util.h"
 
 using json = nlohmann::json;
 

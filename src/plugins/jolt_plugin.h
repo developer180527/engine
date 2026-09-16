@@ -15,7 +15,7 @@
 #include "components/rigid_body.h"
 #include "components/character_controller.h"
 #include "core/transform.h"
-#include "core/transform_utils.h"
+#include "components/transform_hierarchy.h"
 
 // Jolt headers — Jolt.h must be first
 #include <Jolt/Jolt.h>

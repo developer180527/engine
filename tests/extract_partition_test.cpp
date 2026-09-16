@@ -37,7 +37,7 @@
 #include <bx/math.h>
 
 #include "core/transform.h"
-#include "core/transform_utils.h"
+#include "components/transform_hierarchy.h"
 #include "components/prev_transform.h"
 #include <algorithm>
 

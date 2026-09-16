@@ -1,5 +1,5 @@
 #pragma once
-#include "core/transform_utils.h"
+#include "components/transform_hierarchy.h"
 #include "scene/entity_serializer.h"
 #include <filesystem>
 #include <fstream>
@@ -26,7 +26,7 @@
 #include "runtime/services/asset_service.h"
 #include "animation/clip_library.h"
 #include "render/primitive_library.h"
-#include "core/entity_id_util.h"
+#include "components/entity_id_util.h"
 #include "core/logger.h"
 #include <assetlib/asset_registry.h>
 #include <assetlib/scene_asset.h>

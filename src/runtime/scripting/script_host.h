@@ -5,7 +5,7 @@
 #include <cctype>
 #include <cstdint>
 #include "core/transform.h"
-#include "core/transform_utils.h"   // safeReparent (depth/cycle-guarded parenting)
+#include "components/transform_hierarchy.h"   // safeReparent (depth/cycle-guarded parenting)
 #include "core/debug_draw.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"

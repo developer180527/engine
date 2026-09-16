@@ -12,8 +12,8 @@
 #include "render/primitive_library.h"
 #include "core/transform.h"
 #include "editor/panels/asset_browser/spawn.h"
-#include "core/transform_utils.h"
-#include "core/entity_id_util.h"
+#include "components/transform_hierarchy.h"
+#include "components/entity_id_util.h"
 
 // ── ReparentOp ─────────────────────────────────────────────────────────────
 // Structural ECS changes (add/remove ChildOf) cannot happen inside a flecs

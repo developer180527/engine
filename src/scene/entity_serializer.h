@@ -20,7 +20,7 @@
 
 #include "core/transform.h"
 #include "core/handle.h"
-#include "core/entity_id_util.h"
+#include "components/entity_id_util.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
 #include "components/camera.h"

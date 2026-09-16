@@ -4,10 +4,10 @@
 #include <nlohmann/json.hpp>
 #include <flecs.h>
 #include "core/transform.h"
-#include "core/transform_utils.h"
+#include "components/transform_hierarchy.h"
 #include "components/name.h"
 #include "components/entity_id.h"
-#include "core/entity_id_util.h"
+#include "components/entity_id_util.h"
 #include "scene/entity_serializer.h"
 #include "core/logger.h"
 

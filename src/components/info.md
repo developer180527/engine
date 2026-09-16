@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-09
+verified: 2026-09-16
 covers:
   - src/components/
 tests:
@@ -51,7 +51,14 @@ for a reason that is not a defect — cross-toolchain mixing is already refused 
 
 ## Purpose
 Plain-data ECS component definitions shared by runtime, plugins, and editor.
-No logic beyond trivial helpers — systems and plugins own behavior.
+Behaviour belongs to systems and plugins, not here.
+
+The exceptions are the few headers that are **ECS glue for these components** —
+`meta_registry.h`, `event_component.h`, and since 2026-09-16 `entity_id_util.h`
+and `transform_hierarchy.h`. They operate on the structs next door and need
+`<flecs.h>`, which `src/core` may not include, so this is where they live. None
+of them is part of the frozen kit ABI and none is in `componentLayoutHash()`:
+the ABI is the plain-data structs listed below, not the helpers beside them.
 
 ## Contents
 - `name.h` — display/lookup name.
@@ -74,6 +81,21 @@ No logic beyond trivial helpers — systems and plugins own behavior.
 - `script_component.h` — Lua script path (consumed by LuaScriptPlugin).
 - `spinner.h` — demo component (default scene cubes).
 - `entity_id.h` — stable serialization identity.
+- `entity_id_util.h` — the helpers over `EntityId`: `generateEntityId`,
+  `ensureEntityId`, `assignMissingIds`, and `EntityIdIndex`. Loaders build the
+  index once per load and ask it; `findById` is O(n) and is for ONE-OFF lookups
+  (undo, an editor click) — calling it per entity is what made scene load
+  quadratic (97.6% of a 50 000-object load's 22 s, runtime `issues.md` H.0b).
+  Moved here from `src/core` on 2026-09-16: it is entirely flecs, and core may
+  not include the ECS.
+- `transform_hierarchy.h` — world poses through the `ChildOf` chain:
+  `getWorldMatrix`, `getWorldMatrixLerp` / `...From`, `safeReparent` (refuses
+  cycles, and chains deeper than the limit flecs *aborts* the process on),
+  `hierarchyDepth`, `isAncestorOf`. Split from `core/transform_utils.h` on
+  2026-09-16 for the same reason; the matrix math it calls stayed in core. It
+  lives here rather than in `scene/` because every caller — renderer extraction,
+  the Jolt plugin, `script_host`, the editor, the serializer — already depends on
+  `components/`, so this home adds no new module edge.
 - `serde_transient.h` — `SerdeTransient` type tag: runtime state, never saved.
 - `event_component.h` — the EVENT model. `events::declare<T>(world)` marks a
   component type a one-shot message (implies SerdeTransient) that the runtime's

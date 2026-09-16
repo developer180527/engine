@@ -8,8 +8,8 @@
 #include "core/logger.h"
 
 #include "core/transform.h"
-#include "core/transform_utils.h"   // safeReparent (depth/cycle-guarded)
-#include "core/entity_id_util.h"
+#include "components/transform_hierarchy.h"   // safeReparent (depth/cycle-guarded)
+#include "components/entity_id_util.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
 #include "components/camera.h"
@@ -93,7 +93,7 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
     std::vector<EntityInfo> created;
     // Collision checks go through this index, not findById: it was called per
     // entity, and findById is a full query, so a cooked-scene load was quadratic
-    // (the same bug as the JSON path — see core/entity_id_util.h).
+    // (the same bug as the JSON path — see components/entity_id_util.h).
     EntityIdIndex ids;
     ids.build(m_world);
     std::unordered_map<uint64_t, flecs::entity> byId;

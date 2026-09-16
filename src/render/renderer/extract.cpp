@@ -106,7 +106,7 @@
 #include "core/logger.h"
 #include "core/profiler.h"
 #include "runtime/jobs/jobs.h"
-#include "core/transform_utils.h"        // getWorldMatrixLerp
+#include "components/transform_hierarchy.h"        // getWorldMatrixLerp
 #include "render/mesh.h"
 #include "render/material.h"
 #include "render/texture.h"

@@ -81,14 +81,18 @@ and a reason in the commit message; nothing else should ever write that file.
 
 ## 4. What it found, and what that means
 
-Current state (2026-09-16): **56 findings, all baselined**, of which 51 are the
-existing module→module edges recorded as the declared dependency graph. The five
-real ones:
+Current state (2026-09-16): **54 findings, all baselined**, of which 51 are the
+existing module→module edges recorded as the declared dependency graph. What is
+left, and what the first rule already caught and closed:
 
-- **`LAYER-01` ×2** — `src/core/entity_id_util.h` and `src/core/transform_utils.h`
-  include `<flecs.h>`, while `src/core/info.md` says core may include no ECS
-  header. One of the two has to move: either the files leave `core/`, or the doc
-  stops claiming a ceiling core does not have.
+- **`LAYER-01` — found 2, now FIXED.** `src/core/entity_id_util.h` and
+  `src/core/transform_utils.h` both included `<flecs.h>` while `src/core/info.md`
+  says core may include no ECS header. The code moved rather than the rule being
+  softened: `entity_id_util.h` went to `components/` whole, and
+  `transform_utils.h` was split — the matrix math stayed in core, the
+  `flecs::entity` walkers became `components/transform_hierarchy.h`. The
+  destination was chosen *by* `LAYER-03`: every caller already depends on
+  `components/`, so it adds no module edge, where `scene/` would have added two.
 - **`ABI-03` ×2** — `physics2` and `intent`, the two most recently appended API
   groups, are absent from `api_abi_compat_test`'s `frozen[]` list. The header's
   `static_assert`s still pin them, so this is a **gap in the runtime test**, not
