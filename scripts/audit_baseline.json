@@ -1,0 +1,71 @@
+{
+  "generated": "2026-09-16T00:22:42+00:00",
+  "commit": "7b9da22fd58a81b182271cf98f391a051fa91554",
+  "note": "Accepted architectural debt. The gate fails on findings NOT listed here; shrinking this file is the cleanup, and nothing may be added to it without a reason in the commit.",
+  "findings": {
+    "LAYER-01": [
+      "LAYER-01|src/core/entity_id_util.h:<flecs.h>",
+      "LAYER-01|src/core/transform_utils.h:<flecs.h>"
+    ],
+    "LAYER-03": [
+      "LAYER-03|src/animation -> src/core",
+      "LAYER-03|src/assets -> src/animation",
+      "LAYER-03|src/assets -> src/core",
+      "LAYER-03|src/assets -> src/render",
+      "LAYER-03|src/audio -> src/core",
+      "LAYER-03|src/audio -> src/runtime",
+      "LAYER-03|src/components -> src/core",
+      "LAYER-03|src/components -> src/render",
+      "LAYER-03|src/core -> src/components",
+      "LAYER-03|src/editor -> src/animation",
+      "LAYER-03|src/editor -> src/assets",
+      "LAYER-03|src/editor -> src/components",
+      "LAYER-03|src/editor -> src/core",
+      "LAYER-03|src/editor -> src/plugins",
+      "LAYER-03|src/editor -> src/project",
+      "LAYER-03|src/editor -> src/render",
+      "LAYER-03|src/editor -> src/runtime",
+      "LAYER-03|src/editor -> src/scene",
+      "LAYER-03|src/plugins -> src/audio",
+      "LAYER-03|src/plugins -> src/components",
+      "LAYER-03|src/plugins -> src/core",
+      "LAYER-03|src/plugins -> src/project",
+      "LAYER-03|src/plugins -> src/runtime",
+      "LAYER-03|src/render -> src/animation",
+      "LAYER-03|src/render -> src/components",
+      "LAYER-03|src/render -> src/core",
+      "LAYER-03|src/render -> src/runtime",
+      "LAYER-03|src/runtime -> src/animation",
+      "LAYER-03|src/runtime -> src/assets",
+      "LAYER-03|src/runtime -> src/components",
+      "LAYER-03|src/runtime -> src/core",
+      "LAYER-03|src/runtime -> src/project",
+      "LAYER-03|src/runtime -> src/render",
+      "LAYER-03|src/runtime -> src/scene",
+      "LAYER-03|src/runtime -> src/systems",
+      "LAYER-03|src/scene -> src/animation",
+      "LAYER-03|src/scene -> src/assets",
+      "LAYER-03|src/scene -> src/components",
+      "LAYER-03|src/scene -> src/core",
+      "LAYER-03|src/scene -> src/render",
+      "LAYER-03|src/scene -> src/runtime",
+      "LAYER-03|src/systems -> src/animation",
+      "LAYER-03|src/systems -> src/components",
+      "LAYER-03|src/systems -> src/runtime",
+      "LAYER-03|src/tools -> src/assets",
+      "LAYER-03|src/tools -> src/core",
+      "LAYER-03|src/tools -> src/plugins",
+      "LAYER-03|src/tools -> src/project",
+      "LAYER-03|src/tools -> src/render",
+      "LAYER-03|src/tools -> src/runtime",
+      "LAYER-03|src/tools -> src/scene"
+    ],
+    "ABI-03": [
+      "ABI-03|intent",
+      "ABI-03|physics2"
+    ],
+    "DET-01": [
+      "DET-01|src/runtime/runtime_sim.cpp:wall-clock (hid::nowNs)"
+    ]
+  }
+}

@@ -650,6 +650,28 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/scripts/check_gpu_seam.py)
     set_tests_properties(gpu_seam PROPERTIES LABELS unit TIMEOUT 120)
+
+    # ── The architectural invariants, as a ratchet ───────────────────────────
+    # gpu_seam above checks ONE boundary. engine_audit generalises it to the
+    # rest of the shape rules this engine states in prose — core's dependency
+    # ceiling, the editor being a leaf, API-group placement, component-hash
+    # membership, fuzz corpora, clock/RNG in the fixed step. Same reasoning as
+    # gpu_seam: these rules are violated by one #include added to fix one
+    # compile error, and only a grep can see that.
+    #
+    # `--check` fails on findings NOT in scripts/audit_baseline.json, so the
+    # existing debt (recorded there, with its reasons) stays visible without
+    # blocking. A checker that reports 40 old problems on day one is a red
+    # light everyone learns to walk past.
+    #
+    # Two labels: `unit` so it gates CI like the other seam checks, `audit` so
+    # the home-server farm can run this lane alone — it needs no build, so it
+    # is the one lane that is cheap enough to run on every commit.
+    add_test(NAME architecture_audit
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/scripts/engine_audit.py --check)
+    set_tests_properties(architecture_audit PROPERTIES
+                         LABELS "unit;audit" TIMEOUT 120)
 endif()
 
 # ── The seam-cost benchmark (perf lane, never a gate) ───────────────────────
