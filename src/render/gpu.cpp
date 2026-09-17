@@ -10,7 +10,7 @@
 
 #include <bgfx/bgfx.h>
 
-#include "render/cooked_texture.h"   // cookedTexBgfxFormat + the two refusals
+#include "render/cooked_texture.h"   // cookedTexBgfxFormat
 #include "render/skinned_vertex.h"
 #include "render/vertex.h"
 
@@ -129,7 +129,7 @@ bool reportOnce(uint32_t format) {
     return seen.insert(format).second;
 }
 
-bool textureFormatSupported(uint32_t format) {
+bool textureFormatSupported(uint32_t format, ColourSpace cs) {
     if (!g_device.load()) return false;
 
     const bgfx::TextureFormat::Enum fmt = cookedTexBgfxFormat(format);
@@ -146,19 +146,31 @@ bool textureFormatSupported(uint32_t format) {
     // isTextureValid reads caps fixed at device creation, so this is safe to ask
     // from a loader worker — which is the whole point: the answer decides
     // whether the 64 MB decode-and-memcpy is worth doing at all.
-    if (!bgfx::isTextureValid(0, false, 1, fmt, 0)) {
-        if (reportOnce(format))
-            std::printf("[gpu] %s is not supported by this GPU — this content "
-                        "was cooked for a different target. Re-cook with "
-                        "COOK_TEX_TARGET=bc|astc|etc2.\n",
-                        assetlib::texFormatName(format));
+    //
+    // The sRGB flag goes into the SAME query, because bgfx validates it against
+    // the per-format BGFX_CAPS_FORMAT_TEXTURE_2D_SRGB bit: a format can be
+    // sampleable and still have no sRGB variant (BC5 never does — it only ever
+    // carries normal maps, which is why the cooker never tags one sRGB).
+    const uint64_t flags = (cs == ColourSpace::Srgb) ? BGFX_TEXTURE_SRGB : 0;
+    if (!bgfx::isTextureValid(0, false, 1, fmt, flags)) {
+        // Keyed with the colour space folded in, so "no sRGB BC7" and "no BC7 at
+        // all" are reported separately rather than one hiding the other.
+        const uint32_t key = format | (cs == ColourSpace::Srgb ? 0x80000000u : 0u);
+        if (reportOnce(key))
+            std::printf("[gpu] %s%s is not supported by this GPU — %s\n",
+                        assetlib::texFormatName(format),
+                        cs == ColourSpace::Srgb ? " (sRGB)" : "",
+                        cs == ColourSpace::Srgb
+                            ? "no sRGB variant of this format on this backend."
+                            : "this content was cooked for a different target. "
+                              "Re-cook with COOK_TEX_TARGET=bc|astc|etc2.");
         return false;
     }
     return true;
 }
 
 TextureHandle createTexture2D(uint16_t width, uint16_t height, uint16_t mips,
-                              uint32_t format, Blob* data) {
+                              uint32_t format, ColourSpace cs, Blob* data) {
     if (!g_device.load() || !data) return {};
 
     // BACKSTOP, not the check. Callers pre-check with textureFormatSupported()
@@ -166,7 +178,7 @@ TextureHandle createTexture2D(uint16_t width, uint16_t height, uint16_t mips,
     // process — the backend has no way to release staging memory no command
     // consumed. Reaching this branch with a live blob is a caller bug, and it
     // says so rather than failing quietly.
-    if (!textureFormatSupported(format)) {
+    if (!textureFormatSupported(format, cs)) {
         std::printf("[gpu] BUG: createTexture2D refused format %u (%ux%u) with a "
                     "staged payload — %u bytes are now stranded for the life of "
                     "the process. Call textureFormatSupported() BEFORE staging "
@@ -175,7 +187,8 @@ TextureHandle createTexture2D(uint16_t width, uint16_t height, uint16_t mips,
     }
 
     const bgfx::TextureHandle h = bgfx::createTexture2D(
-        width, height, mips > 1, 1, cookedTexBgfxFormat(format), 0, mem(data));
+        width, height, mips > 1, 1, cookedTexBgfxFormat(format),
+        cs == ColourSpace::Srgb ? BGFX_TEXTURE_SRGB : 0, mem(data));
     return { bgfx::isValid(h) ? h.idx : kInvalidIdx };
 }
 

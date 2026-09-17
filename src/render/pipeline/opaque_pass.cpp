@@ -11,6 +11,7 @@
                      // transitively, libstdc++ does not, so the Linux legs
                      // are where a missing one surfaces
 #include "render/forward_pipeline.h"
+#include "render/clear_colour.h"
 
 #include "core/profiler.h"
 
@@ -26,15 +27,32 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
 
         const bgfx::ViewId id = v.baseViewId;
 
-        const uint32_t cc =
-              (uint32_t)(uint8_t)(v.target.clearColor.x * 255.0f) << 24
-            | (uint32_t)(uint8_t)(v.target.clearColor.y * 255.0f) << 16
-            | (uint32_t)(uint8_t)(v.target.clearColor.z * 255.0f) << 8
-            | (uint32_t)(uint8_t)(v.target.clearColor.w * 255.0f);
         bgfx::setViewFrameBuffer(id, gpu::toBgfx(v.target.fb));
         bgfx::setViewRect(id, 0, 0, v.target.w, v.target.h);
-        bgfx::setViewClear(id, gpu::toBgfxClear(v.target.clearFlags), cc,
-                           v.target.clearDepth, 0);
+
+        // ── The clear colour, into a LINEAR target ──────────────────────────
+        // Decoded, or the output encode would brighten it (0.102 grey would
+        // display as ~0.35). HOW it is set — float palette for views 0..15, a
+        // rounded packed colour above, because the palette is one per frame and
+        // a shared slot takes another view's colour — is render/clear_colour.h's
+        // decision, where colour_test pins it.
+        uint16_t clearFlags = gpu::toBgfxClear(v.target.clearFlags);
+        if (clearFlags & BGFX_CLEAR_COLOR) {
+            const ViewClearColour c = viewClearColour(
+                id, v.target.clearColor.x, v.target.clearColor.y,
+                v.target.clearColor.z, v.target.clearColor.w);
+            if (c.usePalette) {
+                bgfx::setPaletteColor(c.slot, c.linear);
+                // The palette overload switches the view to palette clearing
+                // itself whenever a slot index is given (bgfx_p.h, Clear::set).
+                bgfx::setViewClear(id, clearFlags, v.target.clearDepth, 0, c.slot);
+            } else {
+                bgfx::setViewClear(id, clearFlags, c.packedRgba,
+                                   v.target.clearDepth, 0);
+            }
+        } else {
+            bgfx::setViewClear(id, clearFlags, 0x000000ff, v.target.clearDepth, 0);
+        }
         bgfx::setViewTransform(id, v.view.ptr(), v.proj.ptr());
         bgfx::touch(id);
 

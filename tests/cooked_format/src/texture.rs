@@ -5,11 +5,12 @@
 //! ```text
 //! TextureHeader   32 bytes (static_assert'd)
 //!   u32 magic 'TEX '
-//!   u32 version (2)
+//!   u32 version (3)
 //!   u32 width, height, channels
 //!   u32 format      (TextureFormatId)
 //!   u32 mipCount    (0 from a v1 file reads as 1)
-//!   u8  _pad[4]
+//!   u8  colourSpace (v3: 0 legacy, 1 linear, 2 sRGB; below v3 always legacy)
+//!   u8  _pad[3]
 //! pixels          the whole mip chain, largest first
 //! ```
 //!
@@ -82,8 +83,16 @@ pub struct TextureAsset {
     pub channels: u32,
     pub format: TexFormat,
     pub mip_count: u32,
+    /// How the bytes relate to light (colour pipeline stage A). Read at byte 28,
+    /// and forced to [`COLOUR_LEGACY`] below v3 exactly as the C++ reader does —
+    /// a v2 writer never promised that byte meant anything.
+    pub colour_space: u8,
     pub payload_bytes: usize,
 }
+
+pub const COLOUR_LEGACY: u8 = 0;
+pub const COLOUR_LINEAR: u8 = 1;
+pub const COLOUR_SRGB: u8 = 2;
 
 /// Bytes one mip level occupies at the given size.
 pub fn mip_bytes(fmt: TexFormat, w: u32, h: u32) -> u64 {
@@ -121,8 +130,10 @@ pub fn read_texture(bytes: &[u8]) -> Result<TextureAsset, ReadError> {
     let format = TexFormat::from_u32(raw_fmt)
         .ok_or(ReadError::UnknownFormat(raw_fmt))?;
 
+    let version = u32_at(4);
+    let colour_space = if version < 3 { COLOUR_LEGACY } else { bytes[28] };
     Ok(TextureAsset {
-        version: u32_at(4),
+        version,
         width: u32_at(8),
         height: u32_at(12),
         channels: u32_at(16),
@@ -130,6 +141,7 @@ pub fn read_texture(bytes: &[u8]) -> Result<TextureAsset, ReadError> {
         // A v1 file wrote 0 into what is now mipCount; the C++ reader treats
         // that as 1 and so does this.
         mip_count: u32_at(24).max(1),
+        colour_space,
         payload_bytes: bytes.len() - CTEX_HEADER_BYTES,
     })
 }

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-16
+verified: 2026-09-17
 parses-external-input: true
 covers:
   - src/runtime/
@@ -124,6 +124,13 @@ required.
   to `"<path>\n#superseded:<n>"`: `unloadMesh` and `evictOverBudget` match by
   HANDLE and walk the whole map, so old holders still drain correctly, while
   path lookups reach only the new entry. Pinned by `mesh_ownership_test` §6–§7.
+- **Cooked textures upload in the colour space the cook recorded** (2026-09-17,
+  colour pipeline stage A). `cookedColourSpace` (`services/texture_colour.h`) is
+  the one rule for AssetService's sync load and async stage and the editor async
+  loader's two cooked paths: sRGB when the header says so; linear otherwise,
+  with a once-per-process warning for a legacy (pre-v3) cache and a fallback when
+  the GPU has no sRGB variant of the format. The async loader's source-image path
+  takes the material slot's colour space as a required argument.
 - **Texture unloading is REFERENCE-BASED** (2026-09-06). `AssetService::
   unloadTexture` releases one reference for a texture `m_texCache` owns and lets
   the cache's destroyer do the eventual registry removal; textures the cache does

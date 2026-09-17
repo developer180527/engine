@@ -122,6 +122,16 @@ fn ctex_mip_chain_length_matches_its_declared_format() {
     assert!(t.width > 0 && t.height > 0, "degenerate dimensions {}x{}", t.width, t.height);
     assert!(t.mip_count >= 1, "mipCount must read as at least 1");
 
+    // COLOUR SPACE, read from the bytes by a reader that shares no code with the
+    // writer. `tiny.png` is not named like a normal map, so the cooker must tag
+    // it sRGB colour; a cook that forgot would leave byte 28 zero (legacy) and
+    // the engine would sample it as linear — the defect ctex v3 exists to fix.
+    assert_eq!(t.version, 3, "cooked textures are ctex v3");
+    assert_eq!(
+        t.colour_space, fmt::texture::COLOUR_SRGB,
+        "a colour texture must record sRGB at byte 28, got {}", t.colour_space
+    );
+
     // THE CHECK. Recomputed from the declared format's block geometry and
     // compared against the bytes actually present. A mismatch means the cooker
     // and this reader disagree about how a mip is sized — which downstream is

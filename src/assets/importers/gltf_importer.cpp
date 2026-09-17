@@ -42,8 +42,11 @@ Texture uploadRGBA(const uint8_t* pixels, int w, int h) {
     gpu::Blob* blob = gpu::alloc((uint32_t)(w * h * 4));
     if (!blob) return {};                       // headless: no device, no upload
     std::memcpy(gpu::blobData(blob), pixels, (size_t)w * h * 4);
+    // sRGB: the only texture this importer loads is pbr.base_color_texture,
+    // which glTF defines as sRGB-encoded. A normal-map path would pass Linear.
     gpu::TextureHandle handle = gpu::createTexture2D(
-        (uint16_t)w, (uint16_t)h, 1, assetlib::kTexRGBA8, blob);
+        (uint16_t)w, (uint16_t)h, 1, assetlib::kTexRGBA8,
+        gpu::ColourSpace::Srgb, blob);
     return handle.valid()
         ? Texture(handle, (uint16_t)w, (uint16_t)h)
         : Texture{};

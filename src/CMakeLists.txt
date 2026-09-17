@@ -10,6 +10,8 @@ set(SHADER_OUTPUT_DIR "${CMAKE_BINARY_DIR}/shaders")
 set(BGFX_SHADER_INCLUDES
     "${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bgfx/src"
     "${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bgfx/examples/common"
+    # Engine shader includes (colour.sh — the sRGB transfer function).
+    "${CMAKE_SOURCE_DIR}/shaders"
 )
 
 set(ENGINE_VERTEX_SHADERS
@@ -20,11 +22,21 @@ set(ENGINE_VERTEX_SHADERS
     ${CMAKE_SOURCE_DIR}/shaders/vs_shadow_instanced.sc
     ${CMAKE_SOURCE_DIR}/shaders/vs_shadow_skinned.sc
     ${CMAKE_SOURCE_DIR}/shaders/vs_line.sc
+    ${CMAKE_SOURCE_DIR}/shaders/vs_output.sc
 )
 set(ENGINE_FRAGMENT_SHADERS
     ${CMAKE_SOURCE_DIR}/shaders/fs_triangle.sc
     ${CMAKE_SOURCE_DIR}/shaders/fs_shadow.sc
     ${CMAKE_SOURCE_DIR}/shaders/fs_line.sc
+    ${CMAKE_SOURCE_DIR}/shaders/fs_output.sc
+)
+# Shader INCLUDES the engine owns. bgfx_compile_shaders makes each shader depend
+# only on its own .sc and varying.def.sc — not on anything it #includes — so
+# without the APPEND below, editing colour.sh left every shader that includes it
+# silently stale: a changed sRGB curve would ship in core/colour.h and not in
+# the GPU. Appended to every fragment shader, which is cheap and cannot miss one.
+set(ENGINE_SHADER_INCLUDE_FILES
+    ${CMAKE_SOURCE_DIR}/shaders/colour.sh
 )
 
 foreach(SHADER ${ENGINE_VERTEX_SHADERS})
@@ -45,12 +57,17 @@ foreach(SHADER ${ENGINE_FRAGMENT_SHADERS})
         OUTPUT_DIR ${SHADER_OUTPUT_DIR}
         INCLUDE_DIRS ${BGFX_SHADER_INCLUDES}
         AS_HEADERS
+        OUT_FILES_VAR _fs_outputs
     )
+    list(GET _fs_outputs 0 _fs_first_output)
+    add_custom_command(OUTPUT ${_fs_first_output} APPEND
+                       DEPENDS ${ENGINE_SHADER_INCLUDE_FILES})
 endforeach()
 
 set(ENGINE_SHADER_SOURCES
     ${ENGINE_VERTEX_SHADERS}
     ${ENGINE_FRAGMENT_SHADERS}
+    ${ENGINE_SHADER_INCLUDE_FILES}
     ${CMAKE_SOURCE_DIR}/shaders/varying.def.sc
 )
 
@@ -325,6 +342,7 @@ add_library(engine_runtime STATIC
     render/renderer/device.cpp        # bgfx init/shutdown + Rendering-heap allocator
     render/renderer/targets.cpp       # framebuffers + the render* entry points
     render/renderer/extract.cpp       # ECS world -> RenderView (the hot path)
+    render/renderer/output.cpp        # linear HDR scene -> sRGB display (colour stage A)
     # ForwardPipeline, one concern per TU — it was 812 lines in a header.
     render/pipeline/programs.cpp      # programs, uniforms, shadow RT (onAttach)
     render/pipeline/opaque_pass.cpp   # render(): visible set -> submits
@@ -427,6 +445,7 @@ set(ENGINE_SERVER_EXCLUDED
     render/renderer/device.cpp
     render/renderer/targets.cpp
     render/renderer/extract.cpp
+    render/renderer/output.cpp
     render/pipeline/programs.cpp
     render/pipeline/opaque_pass.cpp
     render/pipeline/shadow_pass.cpp

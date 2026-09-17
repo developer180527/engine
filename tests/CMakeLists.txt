@@ -118,6 +118,12 @@ target_include_directories(sim_purity_check BEFORE PRIVATE
 engine_test(mem_test       LIB engine_core)
 engine_test(arena_test     LIB engine_core)
 engine_test(profiler_test  LIB engine_core)
+# The sRGB transfer function and its GPU twin (colour pipeline stage A). Reads
+# shaders/colour.sh from the source tree to check the shader's constants against
+# core/colour.h, so it needs to know where the tree is.
+engine_test(colour_test    LIB engine_core)
+target_compile_definitions(colour_test PRIVATE
+    ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # The log ring. Speed is a benchmark's job; this pins the three properties the
 # speed rests on, each of which fails silently: a filtered line must do NO work
 # (asserted through the sequence counter and through argument side effects, not

@@ -50,7 +50,7 @@ those four. The headroom is unused, not absent.
 | threading | single submission thread | N command-recording threads |
 | shadows | one 2048² map, one caster | cascades, cached static shadows, filtering |
 | transparency | **none** (sort key has the layout, nothing feeds it) | sorted, OIT, or depth-peeled |
-| post | **none** | HDR chain, TAA, bloom, tonemap |
+| post | linear `RGBA16F` scene target + sRGB output encode (colour stage A); **no** exposure, tonemap, TAA or bloom | HDR chain, TAA, bloom, tonemap |
 
 What this renderer has that many do not, and which is worth protecting:
 

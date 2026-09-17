@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-05
+verified: 2026-09-17
 parses-external-input: true
 covers:
   - src/assets/
@@ -92,6 +92,23 @@ format / scheduling).
       default an unknown format id to RGBA8, handing block bytes to the driver
       as raw pixels. It now rejects unknown ids and formats the GPU cannot
       sample, naming the format and pointing at `COOK_TEX_TARGET`.
+    - **Every encode records its colour space (2026-09-17).** `encodeTexture`
+      sets `colourSpace` from the same `isNormalMap` flag that already chose the
+      format and the mip filter (linear-light box filter for colour, vector
+      averaging for normals) — so the three can never disagree, and every cooker
+      sharing it is covered at once. Both cookers that write `.ctex` put
+      `ctex=<format version>` in their fingerprint, so a format bump re-cooks: a
+      real `fps_shooter` cache re-cooked on its own and its BC1 base colour then
+      uploaded `sRGB[x]`, its BC5 normal map `sRGB[ ]`. The encoder's private sRGB
+      curve is gone; it uses `core/colour.h`, because the mips it averages in
+      linear light are decoded by the GPU with the same curve.
+    - **The importers upload sRGB**, and say why at the call: Assimp and glTF
+      each load only the base-colour slot. The async loader decodes both slots
+      from source, so its `loadTextureGPU` takes the slot's colour space as a
+      required argument.
+    - **Known limit:** a standalone texture's role still comes from the filename
+      heuristic. A normal map it misses cooks as sRGB BC7 — but that texture's
+      *format* is already wrong in exactly that case, so no new failure mode.
     - **That refusal moved to `gpu::textureFormatSupported()` (2026-09-05), and
       it must be asked BEFORE staging.** Refusing inside `createTexture2D`
       strands the staged payload for the life of the process — the backend frees

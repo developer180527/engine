@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 #include <filesystem>
@@ -127,17 +128,47 @@ inline uint32_t bcBytesPerBlock(uint32_t fmt) {
     return texBlockDims(fmt).bytes;
 }
 
+// ── How a texture's bytes relate to light ───────────────────────────────────
+// Colour pipeline stage A (docs/plans/colour-pipeline.md). A base-colour texture
+// is authored sRGB-ENCODED and must be decoded before lighting uses it; a normal
+// map is DATA and must never be converted. Before v3 nothing recorded which, so
+// every texture reached the shader still encoded and was lit as if linear — at
+// mid-grey about 2.3x too much diffuse reflectance.
+//
+// Values are part of the file format: append only.
+enum TexColourSpace : uint8_t {
+    kTexColourLegacy = 0,   // written before v3: unknown. Uploaded linear, as it
+                            // always was, and reported once so it gets re-cooked.
+    kTexColourLinear = 1,   // data: normal maps, masks — sampled as stored
+    kTexColourSrgb   = 2,   // colour: decoded to linear by the GPU on sample
+    kTexColourCount
+};
+
+inline const char* texColourSpaceName(uint8_t cs) {
+    switch (cs) {
+        case kTexColourLegacy: return "legacy";
+        case kTexColourLinear: return "linear";
+        case kTexColourSrgb:   return "sRGB";
+        default:               return "?";
+    }
+}
+
 struct TextureHeader {
-    uint32_t magic    = 0x54455820; // 'TEX '
-    uint32_t version  = 2;          // v2: format + mipCount (v1 pads were 0)
-    uint32_t width    = 0;
-    uint32_t height   = 0;
-    uint32_t channels = 4;
-    uint32_t format   = kTexRGBA8;  // TextureFormatId
-    uint32_t mipCount = 1;          // 0 (v1 pad) reads as 1
-    uint8_t  _pad[4]  = {};
+    uint32_t magic       = 0x54455820; // 'TEX '
+    uint32_t version     = 3;          // v3: colourSpace; v2: format + mipCount
+    uint32_t width       = 0;
+    uint32_t height      = 0;
+    uint32_t channels    = 4;
+    uint32_t format      = kTexRGBA8;  // TextureFormatId
+    uint32_t mipCount    = 1;          // 0 (v1 pad) reads as 1
+    // First of what were four pad bytes, so a v2 file — whose writer
+    // zero-initialised them — reads as kTexColourLegacy with no special case.
+    uint8_t  colourSpace = kTexColourLegacy;
+    uint8_t  _pad[3]     = {};
 };
 static_assert(sizeof(TextureHeader) == 32, "TextureHeader size changed");
+static_assert(offsetof(TextureHeader, colourSpace) == 28,
+              "colourSpace sits at byte 28 — tests/cooked_format reads it there");
 
 struct TextureAsset {
     TextureHeader        header;

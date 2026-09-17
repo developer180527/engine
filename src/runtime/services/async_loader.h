@@ -51,6 +51,9 @@ struct TextureGPUData {
     uint16_t w = 0, h = 0;
     uint32_t format = 0;               // assetlib::TextureFormatId (0=RGBA8)
     uint32_t mips   = 1;               // >1 = pre-mipped BC payload
+    // How the GPU interprets the bytes. Linear by default so an unset field is
+    // the pre-stage-A behaviour, never a silent sRGB decode of a normal map.
+    gpu::ColourSpace cs = gpu::ColourSpace::Linear;
 };
 
 struct MaterialGPUData {

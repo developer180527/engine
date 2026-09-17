@@ -94,6 +94,7 @@
 //     runtime must drop when that world dies (resetWorldCaches) — a query that
 //     outlives its world is a crash, not a leak.
 #include "render/renderer.h"
+#include "core/colour.h"
 #include "animation/skin_palette.h"
 
 #include <cassert>
@@ -327,8 +328,19 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         LightItem li;
         li.type      = lc.type;
         {
-            const bx::Vec3 kc = lc.useTemperature
+            // kelvinToRGB returns sRGB-ENCODED values (its own comment says
+            // "approx sRGB [0,1]"), and this colour multiplies linear radiance in
+            // the shader — so it is decoded here. Before colour stage A it went in
+            // encoded: a 2700 K bulb's (G, B) of (0.654, 0.343) lit as that
+            // instead of (0.385, 0.096) — blue nearly 3.6x too strong — so warm
+            // lights rendered far less warm than the temperature asked for.
+            bx::Vec3 kc = lc.useTemperature
                 ? kelvinToRGB(lc.temperatureK) : bx::Vec3{ 1.0f, 1.0f, 1.0f };
+            if (lc.useTemperature) {
+                kc.x = colour::srgbToLinear(kc.x);
+                kc.y = colour::srgbToLinear(kc.y);
+                kc.z = colour::srgbToLinear(kc.z);
+            }
             li.color = bx::Vec3{ kc.x * lc.color.x, kc.y * lc.color.y, kc.z * lc.color.z };
         }
         li.intensity = lc.intensity;

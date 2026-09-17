@@ -55,7 +55,7 @@ int main() {
         // produced, because that is exactly what the loaders will hand them.
         gpu::VertexBufferHandle vb = gpu::createVertexBuffer(b, gpu::VertexFormat::Standard);
         gpu::IndexBufferHandle  ib = gpu::createIndexBuffer(b, gpu::IndexFormat::U32);
-        gpu::TextureHandle      tx = gpu::createTexture2D(1, 1, 1, assetlib::kTexRGBA8, b);
+        gpu::TextureHandle      tx = gpu::createTexture2D(1, 1, 1, assetlib::kTexRGBA8, gpu::ColourSpace::Linear, b);
         CHECK(!vb.valid() && !ib.valid() && !tx.valid(),
               "every create returns an invalid handle");
 
@@ -64,7 +64,7 @@ int main() {
         gpu::destroy(vb); gpu::destroy(ib); gpu::destroy(tx);
         CHECK(true, "destroying invalid handles is a no-op");
 
-        CHECK(!gpu::textureFormatSupported(assetlib::kTexRGBA8),
+        CHECK(!gpu::textureFormatSupported(assetlib::kTexRGBA8, gpu::ColourSpace::Linear),
               "and no format is supported without a device");
     }
 
@@ -73,29 +73,29 @@ int main() {
     // ── 2. The format predicate ────────────────────────────────────────────
     {
         std::printf("\n-- 2. textureFormatSupported --\n");
-        CHECK(gpu::textureFormatSupported(assetlib::kTexRGBA8),
+        CHECK(gpu::textureFormatSupported(assetlib::kTexRGBA8, gpu::ColourSpace::Linear),
               "RGBA8 is supported (every backend has it)");
 
         // An id no build knows. This is the "cooked by a newer engine" case,
         // and the one that used to silently fall back to RGBA8 — handing
         // block-compressed bytes to the driver as raw pixels.
         constexpr uint32_t kNotAFormat = 0xDEADBEEFu;
-        CHECK(!gpu::textureFormatSupported(kNotAFormat),
+        CHECK(!gpu::textureFormatSupported(kNotAFormat, gpu::ColourSpace::Linear),
               "an unknown format id is refused, not defaulted to RGBA8");
 
         // Reported once, not once per texture. Asked repeatedly here because
         // the scene that triggers this has thousands of textures and the
         // per-texture version buried the one line that explains the failure.
-        for (int i = 0; i < 100; ++i) (void)gpu::textureFormatSupported(kNotAFormat);
+        for (int i = 0; i < 100; ++i) (void)gpu::textureFormatSupported(kNotAFormat, gpu::ColourSpace::Linear);
         CHECK(true, "and asking 100 more times prints nothing further (see above)");
     }
 
     // ── 3. The pre-check is what keeps the blob from being stranded ────────
     // This is the regression proof. The loader's shape is:
     //
-    //     if (!textureFormatSupported(fmt)) return {};   // <- no staging
+    //     if (!textureFormatSupported(fmt, cs)) return {};   // <- no staging
     //     blob = gpu::copy(pixels);                      // the 64 MB memcpy
-    //     createTexture2D(..., fmt, blob);
+    //     createTexture2D(..., fmt, cs, blob);
     //
     // Asserting the ORDER is the whole point: staging first and asking later
     // is the leak, and it is invisible at runtime because a stranded blob
@@ -106,7 +106,7 @@ int main() {
         constexpr uint32_t kNotAFormat = 0xDEADBEEFu;
 
         gpu::Blob* staged = nullptr;
-        if (gpu::textureFormatSupported(kNotAFormat)) {
+        if (gpu::textureFormatSupported(kNotAFormat, gpu::ColourSpace::Linear)) {
             static const uint32_t px = 0xFFFFFFFFu;
             staged = gpu::copy(&px, sizeof px);       // must NOT be reached
         }
@@ -115,12 +115,12 @@ int main() {
 
         // And the supported path still works end to end, so the guard has not
         // simply disabled texture upload.
-        CHECK(gpu::textureFormatSupported(assetlib::kTexRGBA8), "RGBA8 still passes");
+        CHECK(gpu::textureFormatSupported(assetlib::kTexRGBA8, gpu::ColourSpace::Linear), "RGBA8 still passes");
         static const uint32_t white = 0xFFFFFFFFu;
         gpu::Blob* good = gpu::copy(&white, sizeof white);
         CHECK(good != nullptr, "and staging a supported format succeeds");
         gpu::TextureHandle th =
-            gpu::createTexture2D(1, 1, 1, assetlib::kTexRGBA8, good);
+            gpu::createTexture2D(1, 1, 1, assetlib::kTexRGBA8, gpu::ColourSpace::Linear, good);
         CHECK(th.valid(), "and the upload produces a live handle");
         gpu::destroy(th);
         CHECK(!th.valid(), "which destroy() nulls");
@@ -140,7 +140,7 @@ int main() {
         gpu::Blob* orphan = gpu::copy(&px, sizeof px);
         CHECK(orphan != nullptr, "a payload staged without asking first");
         gpu::TextureHandle th =
-            gpu::createTexture2D(1, 1, 1, 0xDEADBEEFu, orphan);
+            gpu::createTexture2D(1, 1, 1, 0xDEADBEEFu, gpu::ColourSpace::Linear, orphan);
         CHECK(!th.valid(),
               "createTexture2D refuses it (and prints BUG: above, naming the "
               "stranded byte count)");

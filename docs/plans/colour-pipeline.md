@@ -3,9 +3,10 @@ status: target
 ---
 # Colour pipeline
 
-Design and staged plan, written 2026-09-11. **Not built.** Nothing in this
-document describes current behaviour except §1, which is a measurement of the tree
-at `determinism-gate` / `df6bd4b` + working tree.
+Design and staged plan, written 2026-09-11. **Stage A is built (2026-09-17); B, C
+and D are not.** §1 is the measurement the stage was designed against and is kept
+as the record of what was wrong; §3a says what shipped and where it differs from
+§3.
 
 Evidence is graded on the ladder in `docs/rhi/workflow.md` §1. Each claim below is
 marked **[measured]** (read in this tree, with a path), **[vendor]** (the owner's
@@ -28,7 +29,7 @@ target platforms can do HDR output **without patching bgfx** (§5).
 
 ---
 
-## 1. What the engine does today [measured]
+## 1. What the engine did before stage A [measured 2026-09-11]
 
 | Stage | What happens | Where |
 |---|---|---|
@@ -148,6 +149,55 @@ through bgfx Noop. So:
   possible.
 
 ---
+
+## 3a. Stage A as built (2026-09-17)
+
+Everything in §3 shipped. Where the implementation departed from the design, this
+is why:
+
+| §3 said | Built | Why |
+|---|---|---|
+| A2: generalise `isNormalMap` into a usage enum | `encodeTexture` sets `colourSpace` from the existing flag | The encoder already knew: it chose the format and the mip filter from that flag. Recording it there keeps the three from ever disagreeing, and covers every cooker at once |
+| A3: upload with `BGFX_TEXTURE_SRGB` | `gpu::ColourSpace` made a **required** argument | The bug was a silent default. Requiring it surfaced two upload paths the design had not counted — the async streaming stage and the editor async loader — at compile time |
+| A5: prefer the hardware encode (sRGB backbuffer) | Shader encode into an `RGBA8` display target | The editor shows the scene through `ImGui::Image`; sampling an sRGB texture decodes it back to linear, so a hardware-encoded target would display dark |
+| A5: one output pass | Renderer-owned `OutputPass`, views 190–192 | Encoding for the display is the renderer's contract with the screen, not a pipeline's look; a swapped pipeline gets it free |
+| (not in §3) | Clear colours decoded, through bgfx's float palette | Packed 8-bit clears quantise dark greys: the editor's 0.102 displayed as 0.110 |
+| (not in §3) | Debug-line colours decoded in `fs_line.sc` | Authored sRGB; left encoded they washed out |
+| (not in §3) | The cooker's private sRGB curve replaced by `core/colour.h` | A third copy of the curve, feeding mips the GPU decodes with the reference one |
+| (not in §3) | `colour.sh` made a build dependency of every fragment shader | bgfx tracks only the `.sc` and `varying.def.sc`; an edited include left shaders stale |
+
+**Verification.** `colour_test` (the curve, its continuity, every 8-bit round trip,
+and the shader's constants read from `colour.sh`); `cooker_test` §2b (colour space
+recorded, legacy by version below v3, unknown refused, both fingerprints name the
+format version); the Rust `cooked_format` reader asserts byte 28 of a real cook.
+Each was mutation-checked. On Metal, `engine_host fps_shooter --frames 240` ran with
+no asserts; its stale cache loaded as legacy with the warning, re-cooked on its own
+through the fingerprint, and then uploaded base colour `sRGB[x]` and the normal map
+`sRGB[ ]`.
+
+**Not verified:** the rendered image. There is still no readback or golden-image
+test, so "the picture is now correct" rests on the maths being tested and the GPU
+flags being observed — not on comparing pixels. Look at a scene in the editor.
+
+**Limits carried forward:**
+- A standalone texture's role comes from the filename heuristic. A missed normal
+  map cooks as sRGB BC7 — its format is already wrong in that case, so no new
+  failure mode.
+- Material colour *factors* (`baseColorFactor`, `Light::color`) are passed through
+  as authored. glTF defines its factors as linear; whether the editor's colour
+  pickers are sRGB-perceived is undecided.
+- Highlights above 1.0 clip after lighting. That is stage B's job.
+- `allocView` must stay below 190. Asserted in `RenderContext::allocView` since
+  review, with the number shared as `RenderContext::kFirstOutputView` so the
+  renderer's output views and the assert cannot drift apart.
+- Clear colours use bgfx's float palette only for views 0–15. Review found the
+  first version keyed the slot `viewId % 16`: the palette is one per frame, so
+  view 17 would have taken view 1's colour. Higher views now clear with a rounded
+  packed colour (`render/clear_colour.h`, `colour_test` §5).
+- A dead `createCookedTexture` in `render/cooked_texture.h` had been given its
+  own sRGB rule, diverging from `cookedColourSpace` (no legacy warning, no
+  no-sRGB-variant fallback). It had no callers; review deleted it.
+- Cost: +8 B/px per view — a 1280x720 scene target set is 14.1 MB.
 
 ## 4. Stage B — exposure, tone mapping, grading (SDR output)
 

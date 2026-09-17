@@ -906,7 +906,11 @@ std::string MeshCooker::settingsFingerprint(const CookContext&) const {
     // tier changes this cooker's .ctex outputs (mirrors texture_encode.cpp).
     const char* hqEnv = std::getenv("COOK_TEX_HQ");
     const bool  hq    = hqEnv && *hqEnv && hqEnv[0] != '0';
-    return std::string("hq=") + (hq ? "1" : "0");
+    // `ctex=`: this cooker writes sibling .ctex files, so the cooked-texture
+    // format version keys it too — see TextureCooker::settingsFingerprint. Without
+    // it, a v3 bump left every embedded texture as a cached v2 (legacy) sibling.
+    return std::string("hq=") + (hq ? "1" : "0")
+         + ";ctex=" + std::to_string(assetlib::TextureHeader{}.version);
 }
 
 void MeshCooker::enumerateOutputs(const std::filesystem::path& primary,

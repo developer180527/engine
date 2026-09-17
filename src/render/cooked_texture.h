@@ -1,17 +1,23 @@
 #pragma once
-// ── cooked_texture — GPU upload of block-compressed cooked textures ─────────
-// The runtime half of the texture pipeline: the cooker packed blocks + a full
-// mip chain in exactly bgfx's expected layout, so upload is a header read and
-// one createTexture2D — zero CPU decode, zero conversion. v1 RGBA8 assets
-// (format 0, 1 mip) upload through the same path unchanged.
+// ── cooked_texture — the engine's texture format id -> bgfx's ───────────────
+// The cooker packs blocks + a full mip chain in exactly bgfx's expected layout,
+// so an upload is a header read and one create; this is the vocabulary map that
+// create needs. Renderer-internal: gpu.cpp is its only includer.
 //
-// THREE FAMILIES reach here now (BC on desktop, ASTC and ETC2 on mobile), which
-// makes the capability check below load-bearing rather than decorative: a build
-// cooked for the wrong target must be diagnosable HERE, not by staring at a
-// texture that came out as noise.
+// ── WHAT USED TO BE HERE ────────────────────────────────────────────────────
+// A `createCookedTexture(TextureAsset)` lived beside this map, with the unknown-
+// format and unsupported-format refusals. Those refusals moved to
+// gpu::textureFormatSupported (2026-09-05) and the function lost its last
+// caller, but it stayed — and colour pipeline stage A then taught it a colour-
+// space rule of its own, with a comment claiming it matched AssetService's. It
+// did not: no legacy-cache warning, and no fallback on a GPU without an sRGB
+// variant of the format, where it would have handed bgfx a flag the backend
+// refuses. A second copy of the one rule the stage exists to centralise, one
+// caller away from being live, so it was deleted rather than fixed. Uploads go
+// through gpu::createTexture2D; colour space through cookedColourSpace
+// (runtime/services/texture_colour.h).
 #include <assetlib/texture_asset.h>
 #include <bgfx/bgfx.h>
-#include <cstdio>
 
 inline bgfx::TextureFormat::Enum cookedTexBgfxFormat(uint32_t f) {
     switch (f) {
@@ -28,42 +34,4 @@ inline bgfx::TextureFormat::Enum cookedTexBgfxFormat(uint32_t f) {
         case assetlib::kTexRGBA8:   return bgfx::TextureFormat::RGBA8;
         default:                    return bgfx::TextureFormat::Count;
     }
-}
-
-inline bgfx::TextureHandle createCookedTexture(const assetlib::TextureAsset& t) {
-    if (t.pixels.empty()) return BGFX_INVALID_HANDLE;
-
-    const bgfx::TextureFormat::Enum fmt = cookedTexBgfxFormat(t.header.format);
-
-    // ── Two refusals that used to be one silent fallback ────────────────────
-    // This function previously defaulted UNKNOWN format ids to RGBA8, which
-    // handed block-compressed bytes to the driver as raw pixels: garbage on a
-    // good day, a read past the end of a too-small buffer on a bad one. With
-    // three families in play an id this build does not know is a real
-    // possibility — a project cooked by a newer engine, or a .cache carried
-    // across a version bump.
-    if (fmt == bgfx::TextureFormat::Count) {
-        std::printf("[CookedTexture] unknown format id %u (%ux%u) — refusing "
-                    "upload. Cooked by a newer engine?\n",
-                    t.header.format, t.header.width, t.header.height);
-        return BGFX_INVALID_HANDLE;
-    }
-
-    // And a format the GPU cannot sample. This is the one that catches a
-    // mis-targeted build: BC blobs on a phone, or ASTC on a desktop AMD part.
-    // Saying so once per texture with the format NAMED is the difference
-    // between a five-minute fix and an afternoon of blaming the shader.
-    if (!bgfx::isTextureValid(0, false, 1, fmt, 0)) {
-        std::printf("[CookedTexture] %s is not supported by this GPU (%ux%u) — "
-                    "this content was cooked for a different target. Re-cook "
-                    "with COOK_TEX_TARGET=bc|astc|etc2.\n",
-                    assetlib::texFormatName(t.header.format),
-                    t.header.width, t.header.height);
-        return BGFX_INVALID_HANDLE;
-    }
-
-    return bgfx::createTexture2D(
-        (uint16_t)t.header.width, (uint16_t)t.header.height,
-        t.header.mipCount > 1, 1, fmt, 0,
-        bgfx::copy(t.pixels.data(), (uint32_t)t.pixels.size()));
 }

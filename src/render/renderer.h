@@ -33,6 +33,8 @@ class ShaderLibrary;   // render/shader/shader_library.h
 //   renderer/device.cpp   bgfx up and down (+ the Rendering-heap allocator)
 //   renderer/targets.cpp  framebuffers and the three render* entry points
 //   renderer/extract.cpp  ECS world → RenderView — the per-item hot path
+struct OutputPass;   // render/renderer/output_pass.h — renderer-internal, names bgfx
+
 class Renderer final : public IRenderer {
 public:
     // Fixed-timestep render interpolation: extraction lerps
@@ -153,6 +155,10 @@ private:
     // until the backend's texture pool runs out.
     void destroyTargets();
     bool ensureGameFB();     // lazily create at scene FB size; false = skip view
+    // The standalone-game path's HDR target, at BACKBUFFER size. Lazily created,
+    // dropped on resize(): renderToBackbuffer renders into it and the output
+    // pass encodes it onto the backbuffer. False = skip the frame's scene.
+    bool ensureBackHdrFB();
 
     // Borrowed (owned by EngineRuntime)
     flecs::world*      m_editorWorld = nullptr;
@@ -284,12 +290,30 @@ private:
     gpu::TextureHandle m_flatNormalTex;
     gpu::TextureHandle m_whiteTex;
 
+    // ── Two targets per view since colour stage A ───────────────────────────
+    // The pipeline renders LINEAR light into an HDR target (RGBA16F where the
+    // backend allows); the output pass then encodes it to sRGB in a display
+    // target. The display target is what the public accessors return, so the
+    // editor's panels and anything else showing sceneColorTexture() receive a
+    // finished image and never see linear values.
+    //   scene  : m_sceneHdrFB [hdr + depth]  -> m_sceneFB [RGBA8 display]
+    //   game   : m_gameHdrFB  [hdr + depth]  -> m_gameFB  [RGBA8 display]
+    //   player : m_backHdrFB  [hdr + depth]  -> the backbuffer
+    gpu::FrameBufferHandle m_sceneHdrFB;
+    gpu::TextureHandle     m_sceneHdrTex;
     gpu::FrameBufferHandle m_sceneFB;
     gpu::TextureHandle     m_sceneColorTex;
     gpu::TextureHandle     m_sceneDepthTex;
+    gpu::FrameBufferHandle m_gameHdrFB;
+    gpu::TextureHandle     m_gameHdrTex;
     gpu::FrameBufferHandle m_gameFB;
     gpu::TextureHandle     m_gameColorTex;
     gpu::TextureHandle     m_gameDepthTex;
+    gpu::FrameBufferHandle m_backHdrFB;
+    gpu::TextureHandle     m_backHdrTex;
+    gpu::TextureHandle     m_backHdrDepthTex;
+    int m_backHdrW = 0, m_backHdrH = 0;
+    std::unique_ptr<OutputPass> m_output;
     int m_sceneW = 1280, m_sceneH = 720;
     int m_backW  = 1280, m_backH  = 720; // backbuffer (window) size
 
@@ -298,4 +322,10 @@ private:
     static constexpr gpu::ViewId kBgView      = 2; // clears backbuffer
     static constexpr gpu::ViewId kResolveView = 3; // MSAA blit resolve
     static constexpr gpu::ViewId kGameView    = 4; // game camera view
+    // Output encode views: after every engine view (0..4, then allocView from 5)
+    // and before the editor's ImGui (200). The first is RenderContext's
+    // ceiling, which allocView asserts, so the two numbers cannot drift apart.
+    static constexpr gpu::ViewId kSceneOutputView = RenderContext::kFirstOutputView;
+    static constexpr gpu::ViewId kGameOutputView  = kSceneOutputView + 1;
+    static constexpr gpu::ViewId kBackOutputView  = kSceneOutputView + 2;
 };

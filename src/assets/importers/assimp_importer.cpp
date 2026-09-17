@@ -168,8 +168,11 @@ static TextureHandle importTexture(const aiScene*   scene,
     gpu::Blob* mem = gpu::copy(pixels, (uint32_t)(w * h * 4));
     stbi_image_free(pixels);   // safe even for malloc'd — stbi_image_free wraps free()
 
+    // sRGB: this importer only ever loads the base-colour slot (DIFFUSE /
+    // BASE_COLOR) — it reads no normal map — so every texture here is colour.
     gpu::TextureHandle th = gpu::createTexture2D(
-        (uint16_t)w, (uint16_t)h, 1, assetlib::kTexRGBA8, mem);
+        (uint16_t)w, (uint16_t)h, 1, assetlib::kTexRGBA8,
+        gpu::ColourSpace::Srgb, mem);
 
     if (!th.valid()) return {};
 

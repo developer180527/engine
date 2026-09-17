@@ -58,7 +58,7 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
         // Format-aware creates: BC7/BC5 blocks + pre-built mips upload
         // exactly as cooked (mem already copied — instant).
         auto createTex = [](const TextureGPUData& t) {
-            return gpu::createTexture2D(t.w, t.h, (uint16_t)t.mips, t.format, t.mem);
+            return gpu::createTexture2D(t.w, t.h, (uint16_t)t.mips, t.format, t.cs, t.mem);
         };
         TextureHandle base, norm;
         if (mg.baseColorTexture.mem) {

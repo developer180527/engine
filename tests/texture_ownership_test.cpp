@@ -204,7 +204,8 @@ int main() {
         std::printf("\n-- 5. a non-cached texture --\n");
         static const uint32_t px = 0xFFFFFFFFu;
         gpu::TextureHandle raw = gpu::createTexture2D(
-            1, 1, 1, assetlib::kTexRGBA8, gpu::copy(&px, sizeof px));
+            1, 1, 1, assetlib::kTexRGBA8, gpu::ColourSpace::Linear,
+            gpu::copy(&px, sizeof px));
         CHECK(raw.valid(), "created a texture outside the cache");
 
         Texture t(raw, 1, 1);

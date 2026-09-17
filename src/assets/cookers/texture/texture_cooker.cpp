@@ -30,9 +30,14 @@ std::string TextureCooker::settingsFingerprint(const assetlib::CookContext& ctx)
     // hashes into the key — so the fingerprint covers both branches by naming
     // the target and letting the source hash separate them. Naming a format
     // here would require decoding the image before keying it.
+    // `ctex=3`: the cooked-texture FORMAT version. v3 records the colour space,
+    // and a v2 cook reuses as a cache hit would upload every texture as legacy
+    // (linear) — the very defect v3 fixes — until something else invalidated it.
+    // Naming the format version here makes the format bump re-cook everything.
     return std::string("hq=")  + (hq ? "1" : "0")
          + ";normal="          + (normal ? "1" : "0")
-         + ";target="          + cook::texTargetName(target);
+         + ";target="          + cook::texTargetName(target)
+         + ";ctex="            + std::to_string(assetlib::TextureHeader{}.version);
 }
 
 size_t TextureCooker::estimatePeakBytes(const assetlib::CookContext& ctx) const {

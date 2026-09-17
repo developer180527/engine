@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-16
+verified: 2026-09-17
 covers:
   - src/core/
 tests:
@@ -80,6 +80,14 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   Callers today: the enkiTS pool (`Initiated`) and `CookService::cookLoop`
   (`Utility`). Pinned by `tests/thread_qos_test.cpp`.
 - **`math_types.h`** — small shared math types.
+- **`colour.h`** (2026-09-17, colour pipeline stage A) — the sRGB transfer
+  function, `srgbToLinear` / `linearToSrgb`, IEC 61966-2-1 piecewise (not a 2.2
+  power). The ONE CPU definition: the renderer's clear colours and Kelvin lights
+  and the texture cooker's mip filter all use it, and `shaders/colour.sh` is its
+  GPU twin. `tests/colour_test.cpp` pins the standard's values (sRGB 0.5 ->
+  0.214041), continuity at both cutoffs, every 8-bit round trip, and reads
+  `colour.sh` to require exactly the same constants — a 2.2 typo in the shader, or
+  in this file, fails the unit lane.
 - **`entity_id_util.h`** — **moved to `components/entity_id_util.h`**
   (2026-09-16). Every function in it takes a `flecs::world` or `flecs::entity`,
   so it could not stay in a layer that may not include the ECS. The rule that

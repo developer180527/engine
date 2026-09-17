@@ -58,9 +58,9 @@ IndexBufferHandle  createIndexBuffer(Blob*, IndexFormat)   { return {}; }
 // FALSE for every format, including RGBA8. Not "unknown format" — there is no
 // GPU to sample anything, so no format is supported, and a loader asking this
 // before staging correctly decides to skip the work entirely.
-bool textureFormatSupported(uint32_t) { return false; }
+bool textureFormatSupported(uint32_t, ColourSpace) { return false; }
 
-TextureHandle createTexture2D(uint16_t, uint16_t, uint16_t, uint32_t, Blob*) {
+TextureHandle createTexture2D(uint16_t, uint16_t, uint16_t, uint32_t, ColourSpace, Blob*) {
     return {};
 }
 

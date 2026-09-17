@@ -25,6 +25,22 @@ bool loadTexture(TextureAsset& out, const std::filesystem::path& inPath) {
     out.header = h;
     if (out.header.mipCount == 0) out.header.mipCount = 1;   // v1 pad byte
 
+    // ── Colour space: forced legacy below v3, refused if unknown at v3+ ──────
+    // A v2 writer zero-initialised these bytes, but "the pad happened to be zero"
+    // is a property of one writer, not of the format — so anything older than v3
+    // is legacy by version, not by content. At v3+ a value this build does not
+    // know is refused like an unknown format id: guessing a colour space renders
+    // a texture wrong with nothing in the log to say why.
+    if (h.version < 3) {
+        out.header.colourSpace = kTexColourLegacy;
+    } else if (h.colourSpace >= kTexColourCount) {
+        std::printf("[TextureAsset] %s: unknown colour space %u — refusing. "
+                    "Cooked by a newer engine?\n",
+                    inPath.string().c_str(), (unsigned)h.colourSpace);
+        std::fclose(f);
+        return false;
+    }
+
     // v1 / raw RGBA8: exact pixel size. v2 BC blocks + mips: the payload is
     // everything after the header — sized by seek, zero CPU parsing.
     size_t payload;

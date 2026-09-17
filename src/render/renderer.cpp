@@ -13,6 +13,7 @@
 // that. Forgetting it does not fail loudly — it silently keeps the old programs,
 // which is how the cooked-shader path once no-oped entirely.
 #include "render/renderer.h"
+#include "render/renderer/output_pass.h"   // complete type for ~Renderer
 #include "render/gpu_bgfx.h"   // toBgfx — renderer-internal
 
 #include "render/forward_pipeline.h"

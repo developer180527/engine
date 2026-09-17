@@ -8,6 +8,7 @@
 // tagged to the Rendering heap. It is a file-static because it must outlive
 // bgfx::shutdown().
 #include "render/renderer.h"
+#include "render/renderer/output_pass.h"
 #include "render/gpu.h"
 #include "render/gpu_bgfx.h"   // fromBgfx — renderer-internal
 
@@ -126,6 +127,11 @@ bool Renderer::init(void* nwh, int width, int height,
     // parse assets without ever reaching a driver (render/gpu.h).
     gpu::setDeviceAvailable(true);
 
+    // The output pass BEFORE the targets: it decides the HDR target's format
+    // from the device caps, and createSceneFB needs that answer.
+    m_output = std::make_unique<OutputPass>();
+    m_output->create();
+
     createSceneFB(width, height);
 
     static const uint8_t kFlatNorm[4] = {128, 128, 255, 255};
@@ -170,6 +176,7 @@ void Renderer::shutdown() {
     // After the pipeline released its programs, before bgfx goes down.
     if (m_shaderLib) { m_shaderLib->shutdown(); m_shaderLib.reset(); }
     destroyTargets();
+    if (m_output) { m_output->destroy(); m_output.reset(); }
     gpu::destroy(m_flatNormalTex);
     gpu::destroy(m_whiteTex);
     // Close the seam BEFORE bgfx goes down, so a resource destroyed later —
@@ -183,6 +190,8 @@ void Renderer::shutdown() {
 void Renderer::resize(int w, int h) {
     m_backW = w; m_backH = h;
     bgfx::reset((uint32_t)w, (uint32_t)h, BGFX_RESET_VSYNC);
+    // The standalone game's HDR target follows the backbuffer; ensureBackHdrFB
+    // notices the size mismatch and recreates it on the next frame.
 }
 
 void Renderer::submitDraw(MeshHandle mesh, MaterialHandle material,

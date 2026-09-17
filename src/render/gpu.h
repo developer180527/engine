@@ -134,10 +134,25 @@ uint32_t blobSize(const Blob* b);
 VertexBufferHandle createVertexBuffer(Blob* data, VertexFormat fmt);
 IndexBufferHandle  createIndexBuffer(Blob* data, IndexFormat fmt);
 
-// Can this build upload `format` (an assetlib::kTex* id) at all? False for an
-// id this build does not know — content cooked by a newer engine — and for one
-// the GPU cannot sample, which is what catches a mis-targeted build: BC blobs
-// on a phone, or ASTC on a desktop AMD part.
+// ── How the GPU should interpret a texture's bytes ──────────────────────────
+// REQUIRED at every upload, deliberately not a defaulted flag. The defect this
+// fixes (colour pipeline stage A) WAS a silent default: every texture was
+// sampled as linear, sRGB colour included, and lit ~2.3x too bright at
+// mid-grey with nothing in the tree able to notice. A caller that has to name
+// the colour space cannot forget it.
+//   Linear  data — normal maps, masks, anything that is not a colour
+//   Srgb    authored colour — the GPU decodes it to linear on every sample
+enum class ColourSpace : uint8_t { Linear, Srgb };
+
+// Can this build upload `format` (an assetlib::kTex* id) at all, in colour space
+// `cs`? False for an id this build does not know — content cooked by a newer
+// engine — and for one the GPU cannot sample, which is what catches a
+// mis-targeted build: BC blobs on a phone, or ASTC on a desktop AMD part.
+//
+// `cs == Srgb` additionally asks whether the GPU has an sRGB variant of the
+// format. Every format the cookers emit for colour does on Metal, D3D and
+// Vulkan; asking lets a caller fall back loudly rather than upload a texture
+// the backend would reject.
 //
 // SAFE FROM ANY THREAD, and that is the point: it is a pure capability query
 // against caps that are fixed at device creation, so a loader worker can ask it
@@ -146,7 +161,7 @@ IndexBufferHandle  createIndexBuffer(Blob* data, IndexFormat fmt);
 // Reports each unsupported format ONCE per process, with the format named.
 // Per-texture reporting drowned the real message in a scene where every texture
 // fails for the same reason — which is exactly when this fires.
-bool textureFormatSupported(uint32_t format);
+bool textureFormatSupported(uint32_t format, ColourSpace cs);
 
 // `format` is an assetlib::kTex* id — the ENGINE's format vocabulary, not a
 // backend's. Keeping it that way is what lets this signature survive a backend
@@ -156,7 +171,7 @@ bool textureFormatSupported(uint32_t format);
 // re-checks as a backstop, but a refusal HERE strands the blob (see Blob above),
 // so reaching it is a caller bug rather than a supported path.
 TextureHandle createTexture2D(uint16_t width, uint16_t height, uint16_t mips,
-                              uint32_t format, Blob* data);
+                              uint32_t format, ColourSpace cs, Blob* data);
 
 // ── Destruction ─────────────────────────────────────────────────────────────
 // Each nulls the handle it is given, so a double destroy is a no-op rather than

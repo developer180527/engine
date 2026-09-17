@@ -22,6 +22,7 @@
 
 #include "assets/cookers/texture/texture_eac.h"
 #include "assets/cookers/texture/texture_target.h"
+#include "core/colour.h"
 
 #include <algorithm>
 #include <chrono>
@@ -37,14 +38,13 @@ namespace cook {
 
 namespace {
 
-inline float srgbToLinear(float c) {
-    return c <= 0.04045f ? c / 12.92f
-                         : std::pow((c + 0.055f) / 1.055f, 2.4f);
-}
-inline float linearToSrgb(float c) {
-    return c <= 0.0031308f ? c * 12.92f
-                           : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
-}
+// The curve comes from core/colour.h, not a local copy. This file used to define
+// its own pair with the same constants — a third copy of the sRGB curve beside
+// the reference and the shader. The mip filter averages in linear light and the
+// GPU decodes those mips on sample, so the two MUST be the same curve; one
+// definition is how that stays true when someone edits either.
+using colour::srgbToLinear;
+using colour::linearToSrgb;
 
 // sRGB transfer via lookup tables — the mip filter touches every texel of a
 // ~1.33x-of-source pixel chain, and three pow() calls per pixel were seconds
@@ -361,8 +361,18 @@ bool encodeTexture(const uint8_t* rgba, uint32_t w, uint32_t h,
     out.header.width    = w;
     out.header.height   = h;
     out.header.channels = 4;
-    out.header.version  = 2;
+    out.header.version  = 3;
     out.header.format   = fmt;
+    // ── The colour space is decided HERE, from the same flag as the format ──
+    // This encoder already treated the two cases differently — sRGB-correct box
+    // filtering for colour, renormalised averaging for normal maps — so it has
+    // always KNOWN a colour texture was sRGB. It just never wrote that down, and
+    // the runtime sampled every texture as linear. One decision, recorded where
+    // it is made, so the mip filter, the block format and the upload can never
+    // disagree about what these bytes are. Every cooker shares this function
+    // (standalone textures, FBX embedded, glTF material), so every one is right.
+    out.header.colourSpace = isNormalMap ? assetlib::kTexColourLinear
+                                         : assetlib::kTexColourSrgb;
     out.pixels.clear();
 
     std::vector<uint8_t> mip(rgba, rgba + (size_t)w * h * 4);

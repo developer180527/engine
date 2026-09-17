@@ -20,6 +20,7 @@
 #include <assetlib/asset_registry.h>
 
 #include "render/gpu.h"
+#include "runtime/services/texture_colour.h"
 #include <cstring>
 #include <algorithm>
 #include <thread>
@@ -42,26 +43,48 @@ struct TexGPU {
     uint16_t w = 0, h = 0;
     uint32_t format = 0;      // assetlib::TextureFormatId
     uint32_t mips   = 1;
+    gpu::ColourSpace cs = gpu::ColourSpace::Linear;
 };
+
+// The colour-space rule every cooked upload shares — see texture_colour.h.
+gpu::ColourSpace cookedColourSpace(const assetlib::TextureHeader& h,
+                                   const char* name) {
+    if (h.colourSpace == assetlib::kTexColourLegacy) {
+        static std::atomic_flag warned = ATOMIC_FLAG_INIT;
+        if (!warned.test_and_set())
+            LOG_WARN("AssetService", "%s was cooked before textures recorded "
+                     "their colour space (ctex v%u) — sampling it as linear, so "
+                     "colour textures render too bright. Re-cook the project. "
+                     "(Reported once.)", name, h.version);
+        return gpu::ColourSpace::Linear;
+    }
+    if (h.colourSpace != assetlib::kTexColourSrgb) return gpu::ColourSpace::Linear;
+    if (!gpu::textureFormatSupported(h.format, gpu::ColourSpace::Srgb) &&
+        gpu::textureFormatSupported(h.format, gpu::ColourSpace::Linear))
+        return gpu::ColourSpace::Linear;
+    return gpu::ColourSpace::Srgb;
+}
 
 // Worker side: stage a cooked texture's payload for main-thread creation.
 static TexGPU stageTexGPU(const assetlib::TextureAsset& t) {
     TexGPU out;
+    const gpu::ColourSpace cs = cookedColourSpace(t.header, "streamed texture");
     // Format check BEFORE the memcpy: createTexture2D's refusal would strand the
     // staged bytes for the process lifetime (render/gpu.h), and a mis-targeted
     // build takes that path for every texture in the scene.
-    if (!gpu::textureFormatSupported(t.header.format)) return out;
+    if (!gpu::textureFormatSupported(t.header.format, cs)) return out;
     out.mem    = gpu::copy(t.pixels.data(), (uint32_t)t.pixels.size());
     out.w      = (uint16_t)t.header.width;
     out.h      = (uint16_t)t.header.height;
     out.format = t.header.format;
     out.mips   = t.header.mipCount ? t.header.mipCount : 1;
+    out.cs     = cs;
     return out;
 }
 
 // Main thread: one create path for every cooked-texture drain site.
 static gpu::TextureHandle createTexFromGPU(const TexGPU& t) {
-    return gpu::createTexture2D(t.w, t.h, (uint16_t)t.mips, t.format, t.mem);
+    return gpu::createTexture2D(t.w, t.h, (uint16_t)t.mips, t.format, t.cs, t.mem);
 }
 
 // Pre-copied material data ready for main-thread finalization
@@ -887,7 +910,10 @@ TextureHandle AssetService::loadTextureFromCooked(
             // gpu::createTexture2D, which is the only door.
             // Pre-checked, so the staging copy below is never spent on a
             // payload createTexture2D would refuse (render/gpu.h).
-            if (!gpu::textureFormatSupported(texAsset.header.format)) {
+            const std::string texName = absPath.filename().string();
+            const gpu::ColourSpace cs = cookedColourSpace(texAsset.header,
+                                                          texName.c_str());
+            if (!gpu::textureFormatSupported(texAsset.header.format, cs)) {
                 LOG_ERROR("AssetService", "unsupported texture format: %s",
                           absPath.string().c_str());
                 return false;
@@ -896,7 +922,7 @@ TextureHandle AssetService::loadTextureFromCooked(
                 (uint16_t)texAsset.header.width,
                 (uint16_t)texAsset.header.height,
                 (uint16_t)(texAsset.header.mipCount ? texAsset.header.mipCount : 1),
-                texAsset.header.format,
+                texAsset.header.format, cs,
                 gpu::copy(texAsset.pixels.data(), (uint32_t)texAsset.pixels.size()));
             if (!th.valid()) {
                 LOG_ERROR("AssetService", "GPU texture creation failed: %s",

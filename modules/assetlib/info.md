@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-30
+verified: 2026-09-17
 parses-external-input: true
 covers:
   - modules/assetlib/
@@ -51,6 +51,16 @@ engine claims a mobile target. Two consequences worth knowing before touching it
 
 * **Format ids are append-only.** A cooked `.ctex` stores the id, so renumbering
   reinterprets every cached texture in every project on disk.
+* **v3 records the COLOUR SPACE** (2026-09-17, colour pipeline stage A). Byte 28,
+  formerly the first pad byte: `kTexColourSrgb` for colour, `kTexColourLinear`
+  for data. Before it, nothing said which, and the runtime sampled every texture
+  as linear — base colour lit ~2.3x too bright at mid-grey. Two reader rules,
+  both pinned by `cooker_test` §2b: below v3 the value is **legacy by version**,
+  whatever the byte holds (a v2 writer never promised it meant anything), and at
+  v3+ an unknown value is **refused** like an unknown format id. The values are
+  append-only for the same reason format ids are. The independent Rust reader
+  (`tests/cooked_format`) reads byte 28 too and asserts a cooked colour texture
+  records sRGB — mutation-checked by breaking the real cook worker it drives.
 * **Block geometry is no longer 4x4.** ASTC 6x6 and 8x8 exist, so the mip-size
   math moved into `texBlockDims` / `texMipBytes` / `texChainBytes` and every
   caller must go through them. `ceil(w/4)*ceil(h/4)` on a 6x6 texture does not

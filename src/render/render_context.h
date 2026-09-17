@@ -3,6 +3,7 @@
 #include "render/texture_registry.h"
 #include "render/material_registry.h"
 
+#include <cassert>
 #include <filesystem>
 
 namespace dbg { class DebugDraw; }   // core/debug_draw.h — line collector
@@ -32,7 +33,23 @@ struct RenderContext {
     // (docs/rhi/design-axioms.md axiom 4).
     gpu::ViewId* viewCursor = nullptr;
     gpu::ViewId shadowViewId = 0; // reserved depth-from-light pass
-    gpu::ViewId allocView() { return viewCursor ? (*viewCursor)++ : 0; }
+
+    // ── The ceiling allocView must stay below ───────────────────────────────
+    // bgfx runs views in id order. The renderer's output pass encodes each HDR
+    // scene target for the display on views 190..192 — after every pipeline
+    // view, before the editor's ImGui at 200. A pipeline view allocated at 190
+    // or above would run AFTER the encode that should have consumed it, and its
+    // draws would silently never reach the screen. This was stated in two
+    // comments and enforced nowhere; the constant is shared with the renderer
+    // (static_assert'd in renderer.h) and the limit is asserted below.
+    static constexpr gpu::ViewId kFirstOutputView = 190;
+
+    gpu::ViewId allocView() {
+        if (!viewCursor) return 0;
+        assert(*viewCursor < kFirstOutputView &&
+               "allocView: view ids from 190 belong to the output pass");
+        return (*viewCursor)++;
+    }
 
     // ── Cooked shaders ──────────────────────────────────────────────────────
     // The library that turns a .cshader into a GPU program, and the resolved

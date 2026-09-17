@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-06
+verified: 2026-09-17
 covers:
   - src/render/
 tests:
@@ -264,7 +264,51 @@ skinning.
 
 ## View IDs
 0 = shadow, 1 = scene (offscreen FB), 2 = backbuffer clear, 3 = MSAA resolve,
-4 = game view; 5+ allocated via `m_viewCursor`. ImGui uses high ids (editor).
+4 = game view; 5+ allocated via `m_viewCursor`. **190 / 191 / 192 = output encode**
+for scene / game / backbuffer (colour stage A). ImGui uses 200+ (editor).
+
+bgfx runs views in id order, so the output views sit after every engine view and
+before ImGui. That caps `allocView` below 190, and `allocView` **asserts** it; the
+number is `RenderContext::kFirstOutputView`, which the renderer's output view
+constants are defined from.
+
+## Colour: linear HDR scene, sRGB output (stage A, 2026-09-17)
+`docs/plans/colour-pipeline.md` measured the renderer as gamma-incorrect: sRGB
+textures sampled as linear, lit, written unencoded to `RGBA8`, shown as if sRGB.
+Stage A fixed that without adding a feature:
+
+* **Textures decode on sample.** `gpu::ColourSpace` is a **required** argument to
+  `createTexture2D` and `textureFormatSupported` — not a defaulted flag, because a
+  silent default *was* the bug. Four upload paths take it (AssetService sync and
+  async, the editor async loader's registry and sibling `.ctex`), and all four ask
+  one rule, `cookedColourSpace` (`runtime/services/texture_colour.h`). The compiler
+  found the last two when the argument became required.
+* **The pipeline renders into an HDR target** (`RGBA16F`, `RGBA8` fallback with a
+  warning) and **the renderer, not the pipeline, encodes** — `OutputPass`
+  (`renderer/output_pass.h`), so a swapped pipeline gets it for free. Encoded in
+  the shader into an `RGBA8` display target rather than with an sRGB target: the
+  editor shows that texture through `ImGui::Image`, and sampling an sRGB texture
+  would decode it back to linear. `sceneColorTexture()` / `gameColorTex()` return
+  the encoded image; the standalone path gets an HDR target at backbuffer size.
+  Cost: +8 B/px per view (HDR colour doubled, display target added) — 14.1 MB for
+  a 1280x720 scene target set.
+* **Clear colours are decoded** and set through bgfx's float palette, slot = view
+  id for views 0–15 (above that a rounded packed colour: the palette is one per
+  frame, and the first version's `id % 16` would have let view 17 clear with view
+  1's colour — `render/clear_colour.h`, pinned by `colour_test` §5): 8-bit packing would turn the editor's 0.102 grey into 3/255 linear, which
+  displays as 0.110. **Debug lines decode** their vertex colours in `fs_line.sc`.
+  **Kelvin lights decode** `kelvinToRGB`'s sRGB output — 2700 K blue was ~3.6x too
+  strong.
+* **Highlights still clip** above 1.0, after lighting instead of inside it. Mapping
+  them is stage B (exposure, tone map).
+* **Shader includes are dependencies now.** bgfx's rule tracked only the `.sc` and
+  `varying.def.sc`, so editing `colour.sh` would have left shaders silently stale;
+  `src/CMakeLists.txt` appends it to every fragment shader.
+
+Verified on Metal with `engine_host fps_shooter --frames 240`: no bgfx asserts, the
+HDR target allocated, and after a re-cook the base colour uploads sRGB and the
+normal map linear. **Not verified: the image itself.** No readback or golden-image
+test exists; a visual check in the editor is the remaining step.
 
 ## Shadow pass
 Depth-only, one 2048² map, first shadow-casting light. It binds **no material** — the

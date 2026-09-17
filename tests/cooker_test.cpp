@@ -18,6 +18,7 @@
 #include "assets/cookers/mesh/mesh_cooker.h"
 #include "assets/cookers/scene/scene_cooker.h"
 #include "assets/cookers/texture/texture_encode.h"
+#include "assets/cookers/texture/texture_cooker.h"
 // Assimp's matrix members are inline templates defined in .inl headers this
 // TU must instantiate ITSELF: with assimp built -O0 the archive happened to
 // carry weak out-of-line copies to link against, but an optimized assimp
@@ -266,6 +267,69 @@ int main() {
               && v1b.header.mipCount == 1
               && v1b.pixels.size() == 16,
               "v1 legacy texture still loads (format 0, 1 mip)");
+    }
+
+    // ── 2b. Every cooked texture records its COLOUR SPACE (ctex v3) ───────
+    // Colour pipeline stage A. Before v3 nothing said whether a texture's bytes
+    // were sRGB colour or linear data, and the runtime sampled everything as
+    // linear — base colour lit ~2.3x too bright at mid-grey. The encoder always
+    // KNEW (it already filtered colour mips in linear light and normal maps as
+    // vectors); these pin that it now writes that knowledge down, and that the
+    // reader treats old and unknown values the way texture_asset.cpp says.
+    {
+        std::printf("\n-- 2b. texture colour space --\n");
+        std::vector<uint8_t> px(8 * 8 * 4, 200);
+        assetlib::TextureAsset colourTex, normalTex;
+        CHECK(cook::encodeTexture(px.data(), 8, 8, /*isNormalMap*/ false, colourTex)
+              && colourTex.header.version == 3
+              && colourTex.header.colourSpace == assetlib::kTexColourSrgb,
+              "a colour texture cooks as v3 sRGB (v%u, %s)",
+              colourTex.header.version,
+              assetlib::texColourSpaceName(colourTex.header.colourSpace));
+        CHECK(cook::encodeTexture(px.data(), 8, 8, /*isNormalMap*/ true, normalTex)
+              && normalTex.header.colourSpace == assetlib::kTexColourLinear,
+              "a normal map cooks as LINEAR — a GPU sRGB decode would bend its "
+              "vectors (%s)",
+              assetlib::texColourSpaceName(normalTex.header.colourSpace));
+
+        const fs::path cs = dir / "colour.ctex";
+        assetlib::TextureAsset csBack;
+        CHECK(assetlib::saveTexture(colourTex, cs) && assetlib::loadTexture(csBack, cs)
+              && csBack.header.colourSpace == assetlib::kTexColourSrgb,
+              "the colour space survives save -> load");
+
+        // A v2 file: version 2, and junk in what are now the colour-space and
+        // pad bytes. The reader must call it LEGACY by version rather than
+        // believing a byte that no v2 writer promised to mean anything.
+        assetlib::TextureAsset v2 = colourTex;
+        v2.header.version = 2;
+        v2.header.colourSpace = 0xAB;
+        const fs::path v2p = dir / "v2_junkpad.ctex";
+        assetlib::TextureAsset v2b;
+        CHECK(assetlib::saveTexture(v2, v2p) && assetlib::loadTexture(v2b, v2p)
+              && v2b.header.colourSpace == assetlib::kTexColourLegacy,
+              "a v2 texture reads as legacy whatever its pad bytes held (%u)",
+              (unsigned)v2b.header.colourSpace);
+
+        // A v3 file naming a colour space this build does not know is REFUSED,
+        // like an unknown format id — guessing renders it wrong with no log line.
+        assetlib::TextureAsset future = colourTex;
+        future.header.colourSpace = assetlib::kTexColourCount;
+        const fs::path fp = dir / "future_colour.ctex";
+        assetlib::TextureAsset fb;
+        CHECK(assetlib::saveTexture(future, fp) && !assetlib::loadTexture(fb, fp),
+              "a v3 texture with an unknown colour space is refused");
+
+        // Both cookers that write .ctex must re-cook on the format bump, or a
+        // cache hit hands back a v2 blob and the runtime falls to legacy.
+        assetlib::CookContext ctx;
+        ctx.sourcePath = dir / "rock_diff.png";
+        CHECK(TextureCooker{}.settingsFingerprint(ctx).find(";ctex=3") != std::string::npos,
+              "the texture cooker's fingerprint names ctex v3 (%s)",
+              TextureCooker{}.settingsFingerprint(ctx).c_str());
+        CHECK(MeshCooker{}.settingsFingerprint(ctx).find(";ctex=3") != std::string::npos,
+              "and so does the mesh cooker's, which writes sibling .ctex files (%s)",
+              MeshCooker{}.settingsFingerprint(ctx).c_str());
     }
 
     // ── 3. Garbage in, failure out — never a crash ────────────────────────

@@ -6,6 +6,7 @@
 // the backend's pool allocator wraps malloc). No GPU HANDLES are created here;
 // that is upload.cpp's main-thread job.
 #include "runtime/services/async_loader.h"
+#include "runtime/services/texture_colour.h"
 #include "core/logger.h"
 #include "render/mesh.h"
 #include "render/vertex.h"
@@ -67,20 +68,30 @@ static TextureGPUData tryLoadCookedTexture(
     // On content cooked for the wrong target EVERY texture refuses, so checking
     // first is the difference between one skipped texture and leaking the whole
     // texture set — and it keeps the memcpy off a path whose answer is known.
-    if (!gpu::textureFormatSupported(asset.header.format)) return {};
+    // The colour space is the COOK's decision (texture_colour.h), not this
+    // loader's — the same rule every other cooked upload uses.
+    const std::string texName = absTexPath.filename().string();
+    const gpu::ColourSpace cs = cookedColourSpace(asset.header, texName.c_str());
+    if (!gpu::textureFormatSupported(asset.header.format, cs)) return {};
     TextureGPUData out;
     out.mem    = gpu::copy(asset.pixels.data(), (uint32_t)asset.pixels.size());
     out.w      = (uint16_t)asset.header.width;
     out.h      = (uint16_t)asset.header.height;
     out.format = asset.header.format;   // BC blocks upload as-is
     out.mips   = asset.header.mipCount ? asset.header.mipCount : 1;
+    out.cs     = cs;
     return out;
 }
 
+// `cs` is the MATERIAL SLOT's colour space, and it is required: this function
+// decodes source images for both the base-colour slot (sRGB) and the normal-map
+// slot (linear), and a raw PNG carries no record of which it is. A cooked file it
+// resolves to instead uses the cook's own recorded colour space.
 static TextureGPUData loadTextureGPU(const aiScene*   scene,
                                       const char*      rawPath,
                                       const std::filesystem::path& dir,
                                       const std::string& baseName,
+                                      gpu::ColourSpace cs,
                                       assetlib::AssetRegistry* registry = nullptr,
                                       const std::filesystem::path& projectRoot = {},
                                       const std::filesystem::path& cacheRoot = {}) {
@@ -193,6 +204,7 @@ static TextureGPUData loadTextureGPU(const aiScene*   scene,
     out.mem = gpu::copy(px, (uint32_t)(w * h * 4));
     out.w   = (uint16_t)w;
     out.h   = (uint16_t)h;
+    out.cs  = cs;
     stbi_image_free(px);
     return out;
 }
@@ -297,16 +309,22 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                         mg.metallic  = cm.metallic;
                         // .ctex = embedded texture the cooker extracted;
                         // lives NEXT TO the cooked mesh, loads with no decode.
-                        auto loadCtexOr = [&](const char* p) -> TextureGPUData {
+                        auto loadCtexOr = [&](const char* p,
+                                              gpu::ColourSpace slotCs) -> TextureGPUData {
                             const std::string sp = p;
                             if (sp.size() > 5 &&
                                 sp.compare(sp.size() - 5, 5, ".ctex") == 0) {
                                 assetlib::TextureAsset t;
-                                if (assetlib::loadTexture(
+                                const gpu::ColourSpace ccs =
+                                    assetlib::loadTexture(
                                         t, cookedAbs.parent_path() / sp)
+                                    ? cookedColourSpace(t.header, sp.c_str())
+                                    : gpu::ColourSpace::Linear;
+                                if (t.header.width != 0
                                     && gpu::textureFormatSupported(
-                                        t.header.format)) {   // before staging
+                                        t.header.format, ccs)) {  // before staging
                                     TextureGPUData g;
+                                    g.cs = ccs;
                                     g.mem = gpu::copy(t.pixels.data(),
                                         (uint32_t)t.pixels.size());
                                     g.w = (uint16_t)t.header.width;
@@ -318,14 +336,16 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                                 }
                                 return {};
                             }
-                            return loadTextureGPU(nullptr, p, srcDir, stem,
+                            return loadTextureGPU(nullptr, p, srcDir, stem, slotCs,
                                 m_registry, m_projectRoot,
                                 m_projectRoot / ".cache");
                         };
                         if (cm.flags & assetlib::kMatFlag_HasBaseColor)
-                            mg.baseColorTexture = loadCtexOr(cm.baseColorPath);
+                            mg.baseColorTexture = loadCtexOr(cm.baseColorPath,
+                                                             gpu::ColourSpace::Srgb);
                         if (cm.flags & assetlib::kMatFlag_HasNormalMap)
-                            mg.normalMapTexture = loadCtexOr(cm.normalMapPath);
+                            mg.normalMapTexture = loadCtexOr(cm.normalMapPath,
+                                                             gpu::ColourSpace::Linear);
                         mg.baseColorName = (cm.flags & assetlib::kMatFlag_HasBaseColor) ? cm.baseColorPath : "";
                         mg.normalMapName = (cm.flags & assetlib::kMatFlag_HasNormalMap) ? cm.normalMapPath : "";
                         LOG_INFO("BinaryLoader", "Mat[%u] base=%s nm=%s",
@@ -334,7 +354,7 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                             mg.normalMapTexture.mem ? "ok" : "none");
                         if (!mg.baseColorTexture.mem)  // fallback: auto-discover
                             mg.baseColorTexture = loadTextureGPU(
-                                nullptr, nullptr, srcDir, stem,
+                                nullptr, nullptr, srcDir, stem, gpu::ColourSpace::Srgb,
                                 m_registry, m_projectRoot, m_projectRoot / ".cache");
                         out.materials.push_back(std::move(mg));
                     }
@@ -342,7 +362,7 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                     // Legacy / geometry-only cook: auto-discover one texture
                     MaterialGPUData mg;
                     mg.baseColorTexture = loadTextureGPU(
-                        nullptr, nullptr, srcDir, stem,
+                        nullptr, nullptr, srcDir, stem, gpu::ColourSpace::Srgb,
                         m_registry, m_projectRoot, m_projectRoot / ".cache");
                     out.materials.push_back(std::move(mg));
                 }
@@ -402,17 +422,17 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
             AI_SUCCESS == ai->GetTexture(aiTextureType_BASE_COLOR, 0, &tp)) {
             LOG_INFO("Assimp", "Mat[%u] texPath=\"%s\" embeddedCount=%u",
                      i, tp.C_Str(), scene->mNumTextures);
-            mg.baseColorTexture = loadTextureGPU(scene, tp.C_Str(), dir, bn,
+            mg.baseColorTexture = loadTextureGPU(scene, tp.C_Str(), dir, bn, gpu::ColourSpace::Srgb,
                 m_registry, m_projectRoot, m_projectRoot / ".cache");
         }
         if (!mg.baseColorTexture.mem)
-            mg.baseColorTexture = loadTextureGPU(scene, nullptr, dir, bn,
+            mg.baseColorTexture = loadTextureGPU(scene, nullptr, dir, bn, gpu::ColourSpace::Srgb,
                 m_registry, m_projectRoot, m_projectRoot / ".cache");
         // Normal map
         aiString nmPath;
         if (AI_SUCCESS == ai->GetTexture(aiTextureType_NORMALS, 0, &nmPath) ||
             AI_SUCCESS == ai->GetTexture(aiTextureType_HEIGHT,  0, &nmPath)) {
-            mg.normalMapTexture = loadTextureGPU(scene, nmPath.C_Str(), dir, bn,
+            mg.normalMapTexture = loadTextureGPU(scene, nmPath.C_Str(), dir, bn, gpu::ColourSpace::Linear,
                 m_registry, m_projectRoot, m_projectRoot / ".cache");
             mg.normalMapName = std::filesystem::path(nmPath.C_Str()).filename().string();
             LOG_INFO("NormalMap", "Found: %s -> %s",
