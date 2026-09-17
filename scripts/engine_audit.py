@@ -509,6 +509,31 @@ def rule_c_abi_header_purity() -> Rule:
     return r
 
 
+def rule_bx_creep() -> Rule:
+    r = Rule("RHI-01", "bgfx's math library does not spread further",
+             "docs/rhi/evidence-coupling.md — \"the bx problem is a different "
+             "project\"; docs/rhi/phases.md G2 replaces bgfx, not bx.",
+             "check_gpu_seam.py deliberately ignores bx, because bx is MATH and "
+             "not graphics. That is right, and it leaves the second bgfx-family "
+             "dependency ungated — while bx::Vec3 and bx::Quaternion are already "
+             "inside Transform, PrevTransform and RigidBody, which are hashed "
+             "into engine_abi::componentLayoutHash. So bx is not merely a "
+             "library choice any more: it is part of the frozen kit ABI, and "
+             "every new use outside the renderer widens what a future swap has "
+             "to break. New uses should be a decision, not a default.")
+    for rel in tracked("src/*", "include/*"):
+        if not rel.endswith(SRC_EXT) or rel.startswith(("src/render/", "src/editor/imgui/")):
+            continue
+        _, angled = includes(rel)
+        for inc in angled:
+            if inc.startswith("bx/"):
+                r.findings.append(Finding(r.id, rel,
+                                          f"{rel} includes <{inc}> (bgfx's math library)",
+                                          "info"))
+                break
+    return r
+
+
 def rule_doc_coverage() -> Rule:
     r = Rule("DOC-01", "every directory of code is covered by some document",
              "docs/process/engineering-standards.md §1 — staleness is checked "
@@ -541,7 +566,7 @@ RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
          rule_render_world_purity, rule_abi_group_wiring, rule_abi_offsets_tile,
          rule_abi_compat_coverage, rule_component_hash_membership,
          rule_fuzz_corpus, rule_tests_registered, rule_sim_determinism,
-         rule_c_abi_header_purity, rule_doc_coverage)
+         rule_c_abi_header_purity, rule_bx_creep, rule_doc_coverage)
 
 # The checks that already exist as their own scripts. The farm wants ONE entry
 # point, and duplicating these here would mean two definitions of the same rule

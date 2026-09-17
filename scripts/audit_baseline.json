@@ -1,6 +1,6 @@
 {
-  "generated": "2026-09-16T00:47:56+00:00",
-  "commit": "9f7d831fd616e88125a93182a8b30c30736fd577",
+  "generated": "2026-09-17T18:07:54+00:00",
+  "commit": "0b9c69dff66f94245166179aef545e411210aa44",
   "note": "Accepted architectural debt. The gate fails on findings NOT listed here; shrinking this file is the cleanup, and nothing may be added to it without a reason in the commit.",
   "findings": {
     "LAYER-03": [
@@ -62,6 +62,28 @@
     ],
     "DET-01": [
       "DET-01|src/runtime/runtime_sim.cpp:wall-clock (hid::nowNs)"
+    ],
+    "RHI-01": [
+      "RHI-01|src/animation/pose.h",
+      "RHI-01|src/animation/skeleton.h",
+      "RHI-01|src/assets/cookers/texture/texture_encode.cpp",
+      "RHI-01|src/assets/importers/assimp_importer.cpp",
+      "RHI-01|src/components/camera_look.h",
+      "RHI-01|src/components/meta_registry.h",
+      "RHI-01|src/components/prev_transform.h",
+      "RHI-01|src/components/rigid_body.h",
+      "RHI-01|src/components/transform_hierarchy.h",
+      "RHI-01|src/core/debug_draw.h",
+      "RHI-01|src/core/math_types.h",
+      "RHI-01|src/core/transform.h",
+      "RHI-01|src/core/transform_utils.h",
+      "RHI-01|src/editor/editor_camera.h",
+      "RHI-01|src/editor/gizmo.h",
+      "RHI-01|src/editor/panels/game_view_panel.h",
+      "RHI-01|src/editor/panels/inspector_panel/utils.h",
+      "RHI-01|src/runtime/camera_util.h",
+      "RHI-01|src/runtime/runtime_sim.cpp",
+      "RHI-01|src/runtime/sim_classification.cpp"
     ]
   }
 }

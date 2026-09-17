@@ -62,6 +62,24 @@ survives bgfx's removal untouched if we want it to; it is a maths-library choice
 not a graphics dependency, and it should be decided on its own schedule rather
 than being swept into an RHI migration.
 
+> **Addendum 2026-09-18: "on its own schedule" is more expensive than it sounds,
+> and the count is now 20 files.** `bx::Vec3` and `bx::Quaternion` are the
+> members of `Transform`, `PrevTransform` and `RigidBody` — components hashed
+> into `engine_abi::componentLayoutHash()`. So bx is not only a maths-library
+> choice: it is **inside the frozen kit ABI**. Swapping it changes those layouts,
+> which makes every built kit refuse to load and rewrites the number
+> `component_abi_test` pins. That is still the right call to defer — it is
+> exactly the kind of change to make once, deliberately, rather than during a
+> backend migration — but it should be deferred knowing it is an ABI break and
+> not a find-and-replace.
+>
+> `check_gpu_seam.py` deliberately ignores bx (it is not graphics), so nothing
+> gated it. `scripts/engine_audit.py`'s **`RHI-01`** now records every file
+> outside the renderer that includes `<bx/…>`, baselined at 20: existing uses are
+> accepted debt, a new one is a finding. The point is not to stop using bx — it
+> is that widening the surface a future swap must break should be a decision
+> someone made on purpose.
+
 `src/runtime/docs/bgfx-includes-in-runtime.md` still names `camera_util.h` as the
 poster child. **That one is already fixed**: `homogeneousDepth` is a `bool`
 parameter now, with the header comment recording it as audit A.2. `runtime.h`
