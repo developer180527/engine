@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "core/display_output.h"
 #include "core/display_transform.h"
 
 struct CubeLut;   // core/cube_lut.h
@@ -28,4 +29,9 @@ struct DisplayTransform {
     // null = no grade. Sampled with sRGB-ENCODED, display-referred [0,1] input,
     // after tone mapping — core/output_transform.h is the order.
     std::shared_ptr<const CubeLut> lut;
+
+    // What the surface this view ends up on can show (colour stage C). The
+    // editor's panels are always SdrSrgb — they are composited by ImGui into an
+    // 8-bit swapchain — so only the backbuffer view ever carries anything else.
+    display::DisplayOutput output;
 };

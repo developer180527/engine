@@ -79,6 +79,8 @@ public:
 
     void renderScene(const float view[16], const float proj[16]) override;
     void setDisplayTransform(DisplayView view, const DisplayTransform& t) override;
+    void requestHdrBackbuffer(bool on) override { m_wantHdrBackbuffer = on; }
+    bool hdrBackbufferActive() const override { return m_hdrBackbuffer; }
     void renderGameView(const float view[16], const float proj[16],
                         const float clearColor[4], flecs::world* gameWorld) override;
     // Standalone-game path: render a world straight to the backbuffer (no
@@ -316,6 +318,11 @@ private:
     gpu::TextureHandle     m_backHdrDepthTex;
     int m_backHdrW = 0, m_backHdrH = 0;
     std::unique_ptr<OutputPass> m_output;
+    // Colour stage C: requested before init, resolved against the backend's
+    // caps during it. resize() must keep the format or the swapchain silently
+    // reverts to 8-bit on the first window resize.
+    bool m_wantHdrBackbuffer = false;
+    bool m_hdrBackbuffer     = false;
     // Stage B: what each display output applies — indexed by DisplayView.
     std::array<DisplayTransform, (size_t)DisplayView::Count> m_display;
     int m_sceneW = 1280, m_sceneH = 720;

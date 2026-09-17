@@ -1,3 +1,4 @@
+#include "runtime/platform/hdr_surface.h"
 #include "runtime/platform/sdl3_platform.h"
 #include "runtime/platform/title_bar.h"
 
@@ -138,4 +139,15 @@ void Sdl3Platform::setCursorMode(CursorMode mode) {
     // Relative mode hides the cursor, confines it, and switches SDL to raw
     // relative deltas — the same bundle GLFW's CURSOR_DISABLED gives.
     SDL_SetWindowRelativeMouseMode(m_window, mode == CursorMode::Captured);
+}
+
+// ── HDR output (colour stage C) ─────────────────────────────────────────────
+bool Sdl3Platform::enableHdrOutput() {
+    return platwin::enableExtendedDynamicRange(nativeWindowHandle());
+}
+float Sdl3Platform::hdrHeadroom() const {
+    return platwin::extendedDynamicRangeHeadroom(nativeWindowHandle());
+}
+std::string Sdl3Platform::hdrSurfaceDescription() const {
+    return platwin::describeHdrSurface(nativeWindowHandle());
 }

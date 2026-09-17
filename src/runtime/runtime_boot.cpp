@@ -162,13 +162,33 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
     m_renderer = std::make_unique<Renderer>();
 
     void* nwh = m_platform->nativeWindowHandle();
+
+    // ── Colour stage C: the SURFACE first, then the device ──────────────────
+    // The window's layer has to be extended-range before bgfx creates its
+    // swapchain against it, so this runs before init() and the renderer is only
+    // asked for an HDR backbuffer if the surface actually became one.
+    if (cfg.hdrOutput) {
+        if (m_platform->enableHdrOutput()) {
+            m_renderer->requestHdrBackbuffer(true);
+            LOG_INFO("Renderer", "HDR surface: %s",
+                     m_platform->hdrSurfaceDescription().c_str());
+        } else {
+            LOG_WARN("Renderer", "HDR output requested, but this platform cannot "
+                     "configure an extended-range surface — staying SDR");
+        }
+    }
     // Graphics quality from project data, applied BEFORE init so the shadow
     // map is created at the right size the first time (a later openProject
     // re-applies it). This is the engine's largest single GPU allocation.
     m_renderer->setShadowResolution(m_project.graphics.shadowResolution);
-    return m_renderer->init(nwh, cfg.width, cfg.height,
-                           m_ecs, m_assets, m_textures, m_materials,
-                           m_skeletons);
+    const bool ok = m_renderer->init(nwh, cfg.width, cfg.height,
+                                     m_ecs, m_assets, m_textures, m_materials,
+                                     m_skeletons);
+    m_hdrOutput = ok && m_renderer->hdrBackbufferActive();
+    if (m_hdrOutput)
+        LOG_INFO("Renderer", "HDR surface after device init: %s",
+                 m_platform->hdrSurfaceDescription().c_str());
+    return ok;
 #endif
 }
 

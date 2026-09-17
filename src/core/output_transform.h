@@ -28,17 +28,32 @@
 
 #include "core/colour.h"
 #include "core/cube_lut.h"
+#include "core/display_output.h"
 #include "core/display_transform.h"
 
 namespace display {
 
 inline Rgb outputPixel(Rgb hdr, float exposure, ToneMapper toneMapper,
-                       const CubeLut* grade = nullptr) {
+                       const CubeLut* grade = nullptr, DisplayOutput out = {}) {
     auto clamp01 = [](float v) { return std::clamp(v, 0.0f, 1.0f); };
 
     Rgb c = { std::max(hdr.r * exposure, 0.0f),
               std::max(hdr.g * exposure, 0.0f),
               std::max(hdr.b * exposure, 0.0f) };
+
+    // ── HDR output: tone map to the display's peak, and STOP ────────────────
+    // No sRGB encode — the surface is linear and wants values above 1. And no
+    // grade: a .cube here is display-referred sRGB [0,1] by construction
+    // (LutLibrary refuses anything else), so there is nothing correct to do
+    // with it against an extended-range image. The output pass reports that
+    // once rather than applying it to a domain it was not authored for.
+    if (out.encoding == OutputEncoding::ExtendedLinear) {
+        const float peak = out.headroom > 1.0f ? out.headroom : 1.0f;
+        c = toneMapper == ToneMapper::PbrNeutral
+            ? pbrNeutralPeak(c, peak)
+            : Rgb{ std::min(c.r, peak), std::min(c.g, peak), std::min(c.b, peak) };
+        return { c.r * out.unitScale, c.g * out.unitScale, c.b * out.unitScale };
+    }
 
     if (toneMapper == ToneMapper::PbrNeutral) c = pbrNeutral(c);
 

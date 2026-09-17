@@ -73,6 +73,17 @@ struct EngineConfig {
     // loaded. Games that build their own world from scratch disable this.
     bool defaultScene = true;
 
+    // ── Extended-range (HDR) output for the game window ─────────────────────
+    // Colour pipeline stage C. Off by default: it changes what the swapchain IS
+    // (RGBA16F, linear, extended range), and an editor compositing ImGui into
+    // that surface would draw its UI dim — C4's paper-white problem, which is
+    // not built. The standalone player is the supported consumer.
+    //
+    // Requesting it is not getting it: the platform must be able to configure an
+    // extended-range surface AND the backend must present RGBA16F. Ask
+    // EngineRuntime::hdrOutputActive() for what happened.
+    bool hdrOutput = false;
+
     // Enable the frame/boot profiler. Defaults on when ENGINE_PROFILE is
     // compiled in (debug); shipping release builds compile it out entirely.
     bool enableProfiler = (ENGINE_PROFILE != 0);
@@ -350,6 +361,8 @@ public:
     mem::FrameArena&  frameArena() { return m_frameArena; }
     input::InputManager& inputManager() { return m_input; }
     LutLibrary&          luts()         { return m_luts; }
+    // True when the window really is an extended-range surface (stage C).
+    bool                 hdrOutputActive() const { return m_hdrOutput; }
     InputLatencyChannel* inputLatency() { return m_inputLatency.get(); }
     // Frame-time distribution — the "is there actually a hitch?" channel.
     // Reports at shutdown on its own; grab it to dump mid-run or export CSV.
@@ -447,6 +460,12 @@ private:
     KitHost        m_kits;              // project kits — dlopened lazily at Play
     PrimaryCameraFinder m_cameraFinder; // cached camera query (game tick)
     LutLibrary          m_luts;         // grading LUTs by path (colour stage B)
+    bool                m_hdrOutput = false;  // extended-range window (stage C)
+    // Two steps, not a frame counter: there is no render-frame count on the
+    // runtime, and the state worth logging is the one AFTER a frame has been
+    // presented — the swapchain format reaches the layer only then.
+    bool                m_hdrFramePresented = false;
+    bool                m_hdrSurfaceLogged  = false;
     mem::FrameArena     m_frameArena;   // per-frame transient allocator
     input::InputManager m_input;        // action layer over raw input
     std::unique_ptr<InputLatencyChannel> m_inputLatency;   // profiler channel

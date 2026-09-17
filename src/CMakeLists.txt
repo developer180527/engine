@@ -306,10 +306,13 @@ endif()
 # normal title bar (title_bar.h explains why that beats a borderless window).
 if(APPLE)
     list(APPEND ENGINE_PLATFORM_SOURCES runtime/platform/title_bar_macos.mm)
+    # Colour stage C: EDR needs Cocoa + QuartzCore, so it is ObjC++ too.
+    list(APPEND ENGINE_PLATFORM_SOURCES runtime/platform/hdr_surface_macos.mm)
 elseif(WIN32)
     # UNVERIFIED — written without a Windows toolchain to compile it against.
     # See the header of that file and docs/process/roadmap.md.
     list(APPEND ENGINE_PLATFORM_SOURCES runtime/platform/title_bar_windows.cpp)
+    list(APPEND ENGINE_PLATFORM_SOURCES runtime/platform/hdr_surface_stub.cpp)
 else()
     # Linux/BSD: no implementation. Whether a title bar exists at all is the
     # COMPOSITOR's decision there (server- vs client-side decorations), and it

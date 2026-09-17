@@ -28,6 +28,23 @@ vec3 pbrNeutral(vec3 color) {
     return mix(color, vec3_splat(newPeak), g);
 }
 
+// The same curve aimed at a display brighter than SDR white (stage C). Mirrors
+// core/display_transform.h's pbrNeutralPeak: the knee and ceiling scale with the
+// peak, the toe offset does NOT — it is a black level in SDR units.
+vec3 pbrNeutralPeak(vec3 color, float peak) {
+    float x = min(color.r, min(color.g, color.b));
+    float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+    color -= vec3_splat(offset);
+    float pk = max(color.r, max(color.g, color.b));
+    float s = 0.76 * peak;
+    if (pk < s) return color;
+    float d = peak - s;
+    float newPeak = peak - d * d / (pk + d - s);
+    color *= newPeak / pk;
+    float g = 1.0 - 1.0 / (0.15 * (pk - newPeak) / peak + 1.0);
+    return mix(color, vec3_splat(newPeak), g);
+}
+
 vec3 srgbToLinear(vec3 c) {
     vec3 lo = c / 12.92;
     vec3 hi = pow((max(c, vec3_splat(0.0)) + 0.055) / 1.055, vec3_splat(2.4));

@@ -124,6 +124,15 @@ required.
   to `"<path>\n#superseded:<n>"`: `unloadMesh` and `evictOverBudget` match by
   HANDLE and walk the whole map, so old holders still drain correctly, while
   path lookups reach only the new entry. Pinned by `mesh_ownership_test` §6–§7.
+- **Extended-range (HDR) output** (2026-09-18, colour stage C). `EngineConfig::
+  hdrOutput` is off by default. Boot configures the SURFACE first
+  (`IPlatform::enableHdrOutput`, implemented for macOS in
+  `platform/hdr_surface_macos.mm`) and only then asks the renderer for an RGBA16F
+  backbuffer, because the layer must be extended-range before bgfx builds a
+  swapchain against it. `hdrOutputActive()` reports what actually happened. Each
+  frame the backbuffer's `DisplayTransform` carries the surface's encoding and the
+  headroom read fresh from the platform — it moves with the user's screen
+  brightness, so it is never stored. Windows/Linux return false and stay SDR.
 - **Grading LUTs by path — `LutLibrary`** (2026-09-17, colour stage B). A camera's
   `ColourGrading::lutPath` resolves through `services/lut_library.h`: parsed once
   per path, failures cached as null and logged once, the cache dropped when the

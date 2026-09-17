@@ -85,6 +85,11 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   `exposureGain`) and Khronos PBR Neutral with a derived inverse. The CPU reference
   `shaders/colour.sh` is held to by `colour_test`. AgX is deliberately absent: its
   published references disagree (colour-pipeline.md §4a).
+- **`display_output.h`** (2026-09-18, colour pipeline stage C) — what the screen
+  at the other end can show: `OutputEncoding` (sRGB-encoded [0,1], or extended
+  linear where 1.0 is SDR white and more is headroom), the headroom itself, and
+  `unitScale` for surfaces like scRGB whose 1.0 is 80 nits rather than SDR white.
+  Vocabulary only; the platform layer fills it in.
 - **`cube_lut.h`** (2026-09-17) — the `.cube` grading LUT parser and a trilinear
   CPU reference. Untrusted input by construction: it refuses unknown keywords, 1D
   LUTs, sizes outside 2..128, counts that are not exactly size³, non-finite values

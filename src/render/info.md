@@ -310,6 +310,13 @@ Stage A fixed that without adding a feature:
   LUT and never evicted (bounded by the `.cube` files a session references); a
   2³ identity LUT is bound when a view is ungraded so the 3D sampler is never empty.
   Backends without RGBA16F 3D textures skip grading with one warning.
+* **Stage C (2026-09-18): extended-range output.** `Renderer::requestHdrBackbuffer`
+  (before `init`) asks for an RGBA16F swapchain; it is honoured only if the backend
+  can present that format, and `resize()` carries the format or the first window
+  drag would silently drop back to 8-bit. `DisplayTransform::output` says what the
+  surface can show, and the output pass branches on it: extended-linear surfaces
+  get `pbrNeutralPeak(c, headroom)` and **no** sRGB encode and **no** grade (a
+  `.cube` is display-referred by construction). The editor's panels are always SDR.
 * **Shader includes are dependencies now.** bgfx's rule tracked only the `.sc` and
   `varying.def.sc`, so editing `colour.sh` would have left shaders silently stale;
   `src/CMakeLists.txt` appends it to every fragment shader.

@@ -38,6 +38,7 @@ struct OutputPass {
     bgfx::UniformHandle       uDisplay  = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle       uLutMin   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle       uLutScale = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle       uOutput   = BGFX_INVALID_HANDLE;   // stage C
     bgfx::UniformHandle       sLut      = BGFX_INVALID_HANDLE;
     // Bound whenever a view has no grade, so the shader's 3D sampler is never
     // left empty — Metal and Vulkan validation both object to an unbound slot.

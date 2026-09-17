@@ -4,7 +4,8 @@ status: target
 # Colour pipeline
 
 Design and staged plan, written 2026-09-11. **Stages A and B are built
-(2026-09-17); C and D are not.** §1 is the measurement stage A was designed
+(2026-09-17); C is built for Apple/EDR (2026-09-18) and stubbed for Windows; D is
+not.** §1 is the measurement stage A was designed
 against and is kept as the record of what was wrong; §3a and §4a say what shipped
 and where it differs from the design.
 
@@ -353,6 +354,49 @@ needs the same treatment.
 **Linux** HDR (Wayland) is deferred.
 
 ---
+
+## 5a. Stage C as built (2026-09-18)
+
+Extended-range output for the game window, verified on an XDR display. The
+renderer half is platform-neutral; the window half exists for Apple only.
+
+| §5 said | Built | Why |
+|---|---|---|
+| C2: own the `CAMetalLayer`, and pass it to bgfx | The engine installs a `CAMetalLayer` **on the window's content view** and keeps passing the `NSWindow` | bgfx's NSWindow path *reuses* an existing `CAMetalLayer` (`SwapChainMtl::init`), so nothing about the native handle had to change — no platform-layer surgery, and SDL3 gets it for free because it also returns an `NSWindow` |
+| C2: "extended linear Display P3" | **Extended linear sRGB** (`kCGColorSpaceExtendedLinearSRGB`) | The engine shades in linear Rec.709/sRGB primaries. Handing those values to a P3 colour space would silently over-saturate everything on screen; the plan's P3 was a gamut error |
+| C2: verify with a spike that bgfx does not clobber the layer's EDR state | **Spiked and confirmed** | bgfx sets only pixel format, drawable size, vsync and frame latency, on init and on every resize. Observed live: `edr=YES colorspace=kCGColorSpaceExtendedLinearSRGB pixelFormat=115 (RGBA16Float)` while rendering, after init and after a resize |
+| C3: tone map takes the display's range | `pbrNeutralPeak(c, peak)`, with the headroom read **per frame** from `maximumExtendedDynamicRangeColorComponentValue` | Measured 1.20 on this panel at the current brightness, 16.0 potential — it moves with the brightness slider, so storing it as a setting would be wrong |
+| (not in §5) | The **toe offset does not scale** with peak; only the knee and ceiling do | Scaling it would darken every ordinary colour on a brighter display (0.04 → 0.16 at peak 4). SDR-range colour must look the same; the headroom is for highlights. At peak 1 the function is `pbrNeutral` bit for bit, so the SDR path keeps its vendor provenance |
+| (not in §5) | The **grade is skipped** on an HDR surface, reported once | A `.cube` here is display-referred sRGB [0,1] by construction (stage B's review). There is nothing correct to do with it against an extended-range image; an HDR grade needs a PQ/log-domain LUT, which is stage D's territory |
+| C1: Windows scRGB — "already wired" | Renderer side **is** built (request an RGBA16F backbuffer; bgfx then selects scRGB from the format). The window half is a **stub that returns false** | Two pieces cannot be written honestly from here: deciding whether the display is in HDR mode (`IDXGIOutput6::GetDesc1`, which bgfx reads but does not expose) and scRGB's paper white (1.0 = 80 nits, so `unitScale = paperWhite/80`). No Windows toolchain in this tree to compile them, no HDR Windows display to verify them. A Windows build behaves exactly as it does today |
+| C4: UI at paper white | **Not built**, and it has no consumer yet | The standalone player draws no ImGui, and the editor stays SDR deliberately (its panels are composited into an 8-bit swapchain). `DisplayOutput::unitScale` is where a paper-white scale belongs when a UI does land on an HDR surface |
+
+**How it is turned on.** `EngineConfig::hdrOutput` (off by default), or
+`engine_host <project> --hdr`. Asking is not getting: the platform must configure
+an extended-range surface *and* the backend must present RGBA16F.
+`EngineRuntime::hdrOutputActive()` reports what actually happened, and the log
+names the surface after init and again after the first presented frame — the
+swapchain format only reaches the layer on the frame after the reset, so the
+earlier line still shows the old pixel format.
+
+**Verification.** `colour_test` §9: at peak 1 the curve is `pbrNeutral` exactly;
+SDR-range colour is untouched by headroom; bounded, monotonic and continuous at
+the scaled knee; HDR output is linear (not encoded); the grade is skipped;
+`unitScale` is the last multiply; the shader's `pbrNeutralPeak` constants match
+and its HDR branch returns before the encode. Four mutations, each red on its own
+check. On Metal, `engine_host fps_shooter --frames 240 --hdr` ran with no asserts
+and the surface described above; the SDR run is unchanged.
+
+**Not verified:** that the picture is *brighter* — there is still no readback, and
+"HDR looks right" needs eyes on an XDR panel. Windows entirely.
+
+**Limits carried forward:**
+- Windows and Linux: SDR only (above).
+- The editor is SDR; only the standalone window can be extended-range.
+- No PQ/HDR10 path, no HDR grading, no UI paper-white scaling.
+- Headroom is read from the window's screen; dragging a window between an XDR
+  and an SDR display changes it, which is handled (per frame), but nothing
+  re-negotiates the swapchain format.
 
 ## 6. Stage D — authoring-grade colour (film product, later)
 

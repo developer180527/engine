@@ -1,3 +1,4 @@
+#include "runtime/platform/hdr_surface.h"
 #include "runtime/platform/glfw_platform.h"
 
 #include <cstdio>
@@ -107,4 +108,15 @@ void GlfwPlatform::setCursorMode(CursorMode mode) {
     if (!m_window) return;
     glfwSetInputMode(m_window, GLFW_CURSOR,
         mode == CursorMode::Captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+}
+
+// ── HDR output (colour stage C) ─────────────────────────────────────────────
+bool GlfwPlatform::enableHdrOutput() {
+    return platwin::enableExtendedDynamicRange(nativeWindowHandle());
+}
+float GlfwPlatform::hdrHeadroom() const {
+    return platwin::extendedDynamicRangeHeadroom(nativeWindowHandle());
+}
+std::string GlfwPlatform::hdrSurfaceDescription() const {
+    return platwin::describeHdrSurface(nativeWindowHandle());
 }

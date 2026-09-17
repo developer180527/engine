@@ -127,4 +127,44 @@ inline Rgb pbrNeutralInverse(Rgb y) {
     return { c0.r + offset, c0.g + offset, c0.b + offset };
 }
 
+// ── The same curve, aimed at a display brighter than SDR white ──────────────
+// Colour pipeline stage C. `peak` is the display's peak white in SDR-WHITE
+// UNITS: 1.0 is an SDR display and 4.0 is a display that can show four times the
+// luminance of SDR white. Apple's EDR reports exactly this number, and it
+// CHANGES with screen brightness, so it is read per frame rather than stored.
+//
+// DERIVED, not vendor: Khronos PBR Neutral is defined for SDR output only. Two
+// properties decide the generalisation, and both are tested:
+//
+//   * At peak == 1 this IS pbrNeutral — the same function, bit for bit, so the
+//     SDR path keeps its vendor provenance and cannot drift from it.
+//   * The TOE OFFSET DOES NOT SCALE. It is a black-level adjustment in SDR
+//     units; multiplying it by the headroom would darken every ordinary colour
+//     on a brighter display (0.04 -> 0.16 at peak 4), which is backwards. Only
+//     the compression knee and the ceiling scale, so SDR-range colour looks the
+//     same and the extra range is spent where it belongs: on highlights.
+inline Rgb pbrNeutralPeak(Rgb c, float peak) {
+    if (!(peak > 1.0f)) return pbrNeutral(c);   // SDR, or a nonsense peak
+
+    const float x = std::min(c.r, std::min(c.g, c.b));
+    const float offset = x < kPbrToeEnd ? x - kPbrToeScale * x * x : kPbrOffset;
+    c.r -= offset; c.g -= offset; c.b -= offset;
+
+    const float pk = std::max(c.r, std::max(c.g, c.b));
+    const float s  = kPbrStartCompression * peak;      // the knee, scaled
+    if (pk < s) return c;
+
+    const float d = peak - s;
+    const float newPeak = peak - d * d / (pk + d - s);
+    const float scale = newPeak / pk;
+    c.r *= scale; c.g *= scale; c.b *= scale;
+
+    // The desaturation term is relative to the range, so it behaves the same at
+    // any peak rather than vanishing as the numbers grow.
+    const float g = 1.0f - 1.0f / (kPbrDesaturation * (pk - newPeak) / peak + 1.0f);
+    return { c.r * (1.0f - g) + newPeak * g,
+             c.g * (1.0f - g) + newPeak * g,
+             c.b * (1.0f - g) + newPeak * g };
+}
+
 }  // namespace display

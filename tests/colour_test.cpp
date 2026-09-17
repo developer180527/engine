@@ -20,6 +20,7 @@
 
 #include "core/colour.h"
 #include "core/cube_lut.h"
+#include "core/display_output.h"
 #include "core/display_transform.h"
 #include "core/output_transform.h"
 #include "render/clear_colour.h"
@@ -413,6 +414,117 @@ int main() {
         CHECK(found && clampAt < toneAt && toneAt < encodeAt && encodeAt < gradeAt,
               "fs_output.sc runs exposure+clamp, tone map, encode, grade — in that "
               "order (%zu < %zu < %zu < %zu)", clampAt, toneAt, encodeAt, gradeAt);
+    }
+
+    // ── 9. Stage C: output for a display brighter than SDR white ──────────
+    {
+        std::printf("\n-- 9. HDR output --\n");
+        using namespace display;
+
+        // The anchor: at peak 1 the generalised curve IS the vendor function.
+        bool same = true;
+        for (int i = 0; i <= 3000 && same; ++i) {
+            const float v = (float)i * 0.01f;
+            const Rgb in = { v, v * 0.6f, v * 0.2f };
+            const Rgb a = pbrNeutral(in), b = pbrNeutralPeak(in, 1.0f);
+            same = a.r == b.r && a.g == b.g && a.b == b.b;
+        }
+        CHECK(same, "at peak 1, pbrNeutralPeak is pbrNeutral exactly — the SDR path "
+                    "keeps the Khronos function, bit for bit");
+        const Rgb odd = pbrNeutralPeak({ 2.0f, 2.0f, 2.0f }, 0.0f);
+        CHECK(odd.r == pbrNeutral({ 2.0f, 2.0f, 2.0f }).r,
+              "and a nonsense peak falls back to it rather than dividing by it");
+
+        // SDR-range colour must look the SAME on a brighter display: only the
+        // toe offset applies below the (scaled) knee. This is the property the
+        // whole generalisation exists for.
+        const Rgb sdrRange = pbrNeutralPeak({ 1.0f, 0.8f, 0.5f }, 4.0f);
+        CHECK(std::fabs(sdrRange.r - 0.96f) < 1e-6f &&
+              std::fabs(sdrRange.g - 0.76f) < 1e-6f &&
+              std::fabs(sdrRange.b - 0.46f) < 1e-6f,
+              "below the scaled knee only the toe offset applies — an ordinary "
+              "colour is untouched by headroom (%.4f %.4f %.4f)",
+              (double)sdrRange.r, (double)sdrRange.g, (double)sdrRange.b);
+        CHECK(pbrNeutralPeak({ 1.0f, 1.0f, 1.0f }, 4.0f).r >
+              pbrNeutral({ 1.0f, 1.0f, 1.0f }).r,
+              "and SDR white is no longer compressed when there is headroom to "
+              "show it (%.4f vs %.4f)",
+              (double)pbrNeutralPeak({ 1.0f, 1.0f, 1.0f }, 4.0f).r,
+              (double)pbrNeutral({ 1.0f, 1.0f, 1.0f }).r);
+
+        bool bounded = true, mono = true;
+        float prev = -1.0f;
+        for (int i = 0; i <= 20000; ++i) {
+            const float v = (float)i * 0.05f;
+            const float o = pbrNeutralPeak({ v, v, v }, 4.0f).r;
+            if (o > 4.0f) bounded = false;
+            if (o < prev - 1e-5f) mono = false;
+            prev = o;
+        }
+        CHECK(bounded && mono, "grey 0..1000 stays monotonic and inside the peak");
+        // The toe offset (0.04) shifts the knee in INPUT terms, so these straddle
+        // 0.76*4 + 0.04. The curve's slope is ~1 there, so probes must be closer
+        // together than the tolerance — an earlier version compared points 0.002
+        // apart and measured the slope rather than a step.
+        const float belowKnee = pbrNeutralPeak({ 3.0799f, 3.0799f, 3.0799f }, 4.0f).r;
+        const float aboveKnee = pbrNeutralPeak({ 3.0801f, 3.0801f, 3.0801f }, 4.0f).r;
+        CHECK(std::fabs(aboveKnee - belowKnee) < 1e-3f,
+              "and is continuous at the scaled knee (%.5f vs %.5f)",
+              (double)belowKnee, (double)aboveKnee);
+
+        // The pipeline: HDR output is LINEAR — no encode — and skips the grade.
+        DisplayOutput hdrOut;
+        hdrOut.encoding = OutputEncoding::ExtendedLinear;
+        hdrOut.headroom = 4.0f;
+        const Rgb lin = outputPixel({ 0.214041f, 0.214041f, 0.214041f }, 1.0f,
+                                    ToneMapper::None, nullptr, hdrOut);
+        CHECK(std::fabs(lin.r - 0.214041f) < 1e-6f,
+              "an extended-linear surface receives LINEAR light (%.6f, not the "
+              "encoded 0.5)", (double)lin.r);
+        std::string sq9 = "LUT_3D_SIZE 5\n";
+        for (int b = 0; b < 5; ++b)
+            for (int g = 0; g < 5; ++g)
+                for (int r = 0; r < 5; ++r) {
+                    char line[80];
+                    const double x = r / 4.0, y = g / 4.0, z = b / 4.0;
+                    std::snprintf(line, sizeof line, "%.8f %.8f %.8f\n", x * x, y * y, z * z);
+                    sq9 += line;
+                }
+        CubeLut squareAgain;
+        parseCubeLut(sq9, squareAgain);
+        const Rgb ungraded = outputPixel({ 0.5f, 0.5f, 0.5f }, 1.0f,
+                                         ToneMapper::PbrNeutral, nullptr, hdrOut);
+        const Rgb withLut  = outputPixel({ 0.5f, 0.5f, 0.5f }, 1.0f,
+                                         ToneMapper::PbrNeutral, &squareAgain, hdrOut);
+        CHECK(ungraded.r == withLut.r,
+              "and the display-referred grade is SKIPPED there rather than applied "
+              "to a domain it was not authored for");
+        hdrOut.unitScale = 2.0f;
+        const Rgb scaled = outputPixel({ 0.214041f, 0.214041f, 0.214041f }, 1.0f,
+                                       ToneMapper::None, nullptr, hdrOut);
+        CHECK(std::fabs(scaled.r - 2.0f * lin.r) < 1e-6f,
+              "unitScale is the last multiply (scRGB's 1.0 = 80 nits lives here)");
+
+        // The shader twin: same constants, and its HDR branch must return before
+        // the encode — an encoded value on a linear surface is the whole bug.
+        std::ifstream cf(ENGINE_SOURCE_DIR "/shaders/colour.sh");
+        std::stringstream cs; cs << cf.rdbuf();
+        const std::vector<double> peakLits = literalsIn(cs.str(), "vec3 pbrNeutralPeak");
+        bool peakOk = !peakLits.empty();
+        for (double w : { (double)kPbrToeEnd, (double)kPbrToeScale, (double)kPbrOffset,
+                          (double)kPbrStartCompression, (double)kPbrDesaturation })
+            peakOk = peakOk && containsNear(peakLits, w);
+        CHECK(peakOk, "shaders/colour.sh's pbrNeutralPeak uses the same constants");
+
+        std::ifstream ff(ENGINE_SOURCE_DIR "/shaders/fs_output.sc");
+        std::stringstream fs2; fs2 << ff.rdbuf();
+        const std::string fsrc = fs2.str();
+        const size_t hdrBranch = fsrc.find("u_output.x > 0.5");
+        const size_t hdrReturn = fsrc.find("return;", hdrBranch);
+        const size_t encodeAt  = fsrc.find("linearToSrgb(");
+        CHECK(hdrBranch != std::string::npos && hdrReturn != std::string::npos &&
+              encodeAt != std::string::npos && hdrReturn < encodeAt,
+              "and fs_output.sc's HDR branch returns BEFORE the sRGB encode");
     }
 
     if (g_failures) {

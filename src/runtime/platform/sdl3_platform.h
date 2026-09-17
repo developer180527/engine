@@ -37,6 +37,11 @@ public:
     void  waitEvents(double timeoutSeconds) override;
     void  setTitle(const std::string& title) override;
     void  setCursorMode(CursorMode mode) override;
+    // Colour stage C — both backends hand back an NSWindow on macOS, so
+    // the one platwin implementation serves both.
+    bool  enableHdrOutput() override;
+    float hdrHeadroom() const override;
+    std::string hdrSurfaceDescription() const override;
     void  setNativeEventHook(NativeEventHook hook) override;
 
 private:

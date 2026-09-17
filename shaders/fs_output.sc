@@ -28,10 +28,22 @@ uniform vec4 u_display;    // x exposure, y tone mapper (0 None, 1 PBR Neutral),
                            // z grade enabled, w LUT size
 uniform vec4 u_lutMin;     // xyz: the LUT's DOMAIN_MIN
 uniform vec4 u_lutScale;   // xyz: 1 / (DOMAIN_MAX - DOMAIN_MIN)
+uniform vec4 u_output;     // x encoding (0 SDR sRGB, 1 extended linear),
+                           // y headroom (SDR-white units), z unit scale
 
 void main() {
     vec4 hdr = texture2D(s_hdr, v_texcoord0);
     vec3 c = max(hdr.rgb * u_display.x, vec3_splat(0.0));
+
+    // ── HDR surface: tone map to the display's peak and stop ────────────────
+    // Linear out, no encode, no grade (the LUT's domain is display-referred
+    // sRGB — core/output_transform.h says why). Stage C.
+    if (u_output.x > 0.5) {
+        float peak = max(u_output.y, 1.0);
+        c = u_display.y > 0.5 ? pbrNeutralPeak(c, peak) : min(c, vec3_splat(peak));
+        gl_FragColor = vec4(c * u_output.z, hdr.a);
+        return;
+    }
 
     // A uniform branch, not a variant per tone mapper: two cases do not earn a
     // shader permutation, and the output pass draws one triangle per view.

@@ -132,6 +132,25 @@ bool Renderer::init(void* nwh, int width, int height,
     m_output = std::make_unique<OutputPass>();
     m_output->create();
 
+    // ── Colour stage C: an extended-range backbuffer, if asked and possible ──
+    // Done AFTER init rather than through init.resolution.formatColor: the caps
+    // that say whether this backend can PRESENT RGBA16F are only known once the
+    // device exists, and bgfx asserts on a reset to a format it cannot present.
+    if (m_wantHdrBackbuffer) {
+        const bool canPresent =
+            0 != (bgfx::getCaps()->formats[bgfx::TextureFormat::RGBA16F]
+                  & BGFX_CAPS_FORMAT_TEXTURE_BACKBUFFER);
+        if (canPresent) {
+            bgfx::reset((uint32_t)width, (uint32_t)height, BGFX_RESET_VSYNC,
+                        bgfx::TextureFormat::RGBA16F);
+            m_hdrBackbuffer = true;
+            LOG_INFO("Renderer", "HDR output: RGBA16F backbuffer (extended linear)");
+        } else {
+            LOG_WARN("Renderer", "HDR output requested, but this backend cannot "
+                     "present RGBA16F — staying on the SDR swapchain");
+        }
+    }
+
     createSceneFB(width, height);
 
     static const uint8_t kFlatNorm[4] = {128, 128, 255, 255};
@@ -189,7 +208,12 @@ void Renderer::shutdown() {
 
 void Renderer::resize(int w, int h) {
     m_backW = w; m_backH = h;
-    bgfx::reset((uint32_t)w, (uint32_t)h, BGFX_RESET_VSYNC);
+    // The FORMAT goes with the reset: bgfx keeps resolution.formatColor only if
+    // it is told Count, and dropping it here would put an HDR window back on an
+    // 8-bit swapchain the first time someone dragged its corner.
+    bgfx::reset((uint32_t)w, (uint32_t)h, BGFX_RESET_VSYNC,
+                m_hdrBackbuffer ? bgfx::TextureFormat::RGBA16F
+                                : bgfx::TextureFormat::Count);
     // The standalone game's HDR target follows the backbuffer; ensureBackHdrFB
     // notices the size mismatch and recreates it on the next frame.
 }

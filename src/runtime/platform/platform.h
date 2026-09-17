@@ -61,6 +61,22 @@ public:
     // to avoid spinning). Default: no wait — fine for headless platforms.
     virtual void waitEvents(double /*timeoutSeconds*/) {}
 
+    // ── HDR output (colour pipeline stage C) ────────────────────────────────
+    // Configure this window's surface for extended-range output, returning true
+    // only if it will now accept linear values above 1.0. Called BEFORE renderer
+    // init, because the surface must be right before the device is created.
+    // Default false: a platform with no implementation stays SDR, which is the
+    // behaviour every platform had before.
+    virtual bool enableHdrOutput() { return false; }
+
+    // Peak white in SDR-WHITE UNITS (1 = SDR). Read PER FRAME: on Apple's EDR
+    // this moves with the user's brightness slider.
+    virtual float hdrHeadroom() const { return 1.0f; }
+
+    // What the surface actually is, for the log — so "HDR is on" can be an
+    // observation rather than a claim.
+    virtual std::string hdrSurfaceDescription() const { return {}; }
+
     // Update the window title (no-op where there is no window). Used when a
     // project is opened after init — the title follows the project name.
     virtual void setTitle(const std::string& /*title*/) {}

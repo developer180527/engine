@@ -174,9 +174,26 @@ bool EngineRuntime::tick(float dt) {
                              m_renderer->homogeneousDepth(), &grading))
         return false;
     // Colour stage B: the primary camera's exposure, tone map and grade.
-    m_renderer->setDisplayTransform(
-        DisplayView::Backbuffer,
-        resolveDisplayTransform(grading, m_luts, m_project.projectRoot));
+    DisplayTransform display =
+        resolveDisplayTransform(grading, m_luts, m_project.projectRoot);
+    // Stage C: and what the surface at the other end can show. The headroom is
+    // read EVERY FRAME because it moves with the user's screen brightness.
+    if (m_hdrOutput) {
+        display.output.encoding  = display::OutputEncoding::ExtendedLinear;
+        display.output.headroom  = m_platform->hdrHeadroom();
+        display.output.unitScale = 1.0f;   // EDR: 1.0 already means SDR white
+        // Once, after the first presented frame — the swapchain format reaches
+        // the LAYER on the frame after the reset, so a description taken at init
+        // still shows the old pixel format. This is the state that matters, and
+        // it is reported rather than assumed.
+        if (!m_hdrSurfaceLogged && m_hdrFramePresented) {
+            m_hdrSurfaceLogged = true;
+            LOG_INFO("Renderer", "HDR surface in use: %s",
+                     m_platform->hdrSurfaceDescription().c_str());
+        }
+    }
+    m_renderer->setDisplayTransform(DisplayView::Backbuffer, display);
+    m_hdrFramePresented = m_hdrOutput;
 
     flecs::world* world = m_gameWorld ? m_gameWorld.get() : nullptr;
     ENGINE_PROFILE_SCOPE("Render");

@@ -119,6 +119,13 @@ struct IRenderer {
     // ColourGrading every frame (runtime/services/lut_library.h).
     virtual void setDisplayTransform(DisplayView view, const DisplayTransform& t) = 0;
 
+    // Colour stage C: ask for an extended-range (RGBA16F) backbuffer, BEFORE
+    // init(). Honoured only if the backend can present that format; ask
+    // hdrBackbufferActive() afterwards for what actually happened. Defaults do
+    // nothing, so a renderer without an HDR path is correct by inheritance.
+    virtual void requestHdrBackbuffer(bool /*on*/) {}
+    virtual bool hdrBackbufferActive() const { return false; }
+
     // ── Bring-your-own-system draw submission ──────────────────────────────
     // The ONE method here that is per-DRAW rather than per-frame: kit code
     // calls it from the job pool. Capped at 1 024 a frame, so a virtual costs

@@ -20,6 +20,11 @@ public:
     void  waitEvents(double timeoutSeconds) override;
     void  setTitle(const std::string& title) override;
     void  setCursorMode(CursorMode mode) override;
+    // Colour stage C — both backends hand back an NSWindow on macOS, so
+    // the one platwin implementation serves both.
+    bool  enableHdrOutput() override;
+    float hdrHeadroom() const override;
+    std::string hdrSurfaceDescription() const override;
 
     // Opaque GLFWwindow* for the ImGui platform backend and the editor's
     // window-ops implementation — neither of which should have to name a

@@ -80,6 +80,7 @@ bool OutputPass::create() {
     uDisplay  = bgfx::createUniform("u_display",  bgfx::UniformType::Vec4);
     uLutMin   = bgfx::createUniform("u_lutMin",   bgfx::UniformType::Vec4);
     uLutScale = bgfx::createUniform("u_lutScale", bgfx::UniformType::Vec4);
+    uOutput   = bgfx::createUniform("u_output",   bgfx::UniformType::Vec4);
 
     // ── Grading needs a sampleable 3D half-float texture ────────────────────
     lutSupported = (caps->supported & BGFX_CAPS_TEXTURE_3D) &&
@@ -123,6 +124,7 @@ void OutputPass::destroy() {
     kill(uDisplay);
     kill(uLutMin);
     kill(uLutScale);
+    kill(uOutput);
 }
 
 bgfx::TextureHandle OutputPass::lutTexture(const std::shared_ptr<const CubeLut>& lut) {
@@ -196,6 +198,22 @@ void OutputPass::submit(bgfx::ViewId view, bgfx::TextureHandle hdr,
             lutMin[c]   = display.lut->domainMin[c];
             lutScale[c] = 1.0f / (display.lut->domainMax[c] - display.lut->domainMin[c]);
         }
+    const float outParams[4] = {
+        (float)(uint8_t)display.output.encoding,
+        display.output.headroom,
+        display.output.unitScale,
+        0.0f,
+    };
+    // A grade cannot be applied to an extended-range image (its domain is
+    // display-referred sRGB), so say so once rather than dropping it silently.
+    if (useLut && display.output.encoding != display::OutputEncoding::SdrSrgb) {
+        static std::atomic_flag warned = ATOMIC_FLAG_INIT;
+        if (!warned.test_and_set())
+            LOG_WARN("Renderer", "a grading LUT is set on an HDR output — skipped: "
+                     "a .cube is authored for display-referred sRGB [0,1] "
+                     "(reported once)");
+    }
+    bgfx::setUniform(uOutput,   outParams);
     bgfx::setUniform(uDisplay,  disp);
     bgfx::setUniform(uLutMin,   lutMin);
     bgfx::setUniform(uLutScale, lutScale);

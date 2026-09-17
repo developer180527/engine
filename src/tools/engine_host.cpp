@@ -98,6 +98,7 @@ int main(int argc, char** argv) {
             "usage: engine_host <project-dir> [dev-module.dylib]\n"
             "       [--record-input <file.irec>]\n"
             "       [--frames N]            exit after N frames\n"
+            "       [--hdr]                 extended-range output (colour stage C)\n"
             "       [--frame-csv <file>]    per-frame timings for plotting\n");
         return 2;
     }
@@ -110,10 +111,14 @@ int main(int argc, char** argv) {
     // --frame-csv writes the raw per-frame timings for offline plotting.
     long     frameLimit = 0;      // 0 = run until the window closes
     fs::path frameCsv;
+    // --hdr: extended-range output (colour stage C). Off unless asked, and
+    // asking is not getting — the platform and backend both have to agree.
+    bool     hdrOutput = false;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if      (a == "--record-input" && i + 1 < argc) recordPath = argv[++i];
         else if (a == "--frames"       && i + 1 < argc) frameLimit = std::strtol(argv[++i], nullptr, 10);
+        else if (a == "--hdr")                          hdrOutput  = true;
         else if (a == "--frame-csv"    && i + 1 < argc) frameCsv   = argv[++i];
     }
     // argv[2] is the optional dev module ONLY if it isn't a --flag.
@@ -128,6 +133,7 @@ int main(int argc, char** argv) {
     EngineConfig cfg;
     cfg.projectRoot  = projectDir;
     cfg.defaultScene = false;
+    cfg.hdrOutput    = hdrOutput;
     auto  platform = makeDefaultPlatform();
     auto* plat     = platform.get();
     EngineRuntime engine;
