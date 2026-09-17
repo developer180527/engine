@@ -25,5 +25,7 @@ enum class DisplayView : uint8_t {
 struct DisplayTransform {
     float                          exposure   = 1.0f;   // linear, already resolved
     display::ToneMapper            toneMapper = display::ToneMapper::PbrNeutral;
-    std::shared_ptr<const CubeLut> lut;                 // null = no grade
+    // null = no grade. Sampled with sRGB-ENCODED, display-referred [0,1] input,
+    // after tone mapping — core/output_transform.h is the order.
+    std::shared_ptr<const CubeLut> lut;
 };

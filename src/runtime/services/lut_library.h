@@ -12,6 +12,13 @@
 // a cooked format's reader would be (fuzz_cube_lut), so moving the parse into a
 // cooker later changes WHERE it runs, not what it accepts.
 //
+// ── WHAT A LUT HERE MUST BE BUILT FOR ───────────────────────────────────────
+// DISPLAY-REFERRED, sRGB-ENCODED input in [0,1]: the output pass grades AFTER
+// the tone map and the sRGB encode (core/output_transform.h is that order, and
+// colour_test pins the shader to it). A .cube whose declared domain reaches
+// outside [0,1] was built for scene-linear or log input and is refused here with
+// that said, rather than applied to values it was never designed for.
+//
 // ── A PATH FROM A SCENE FILE IS UNTRUSTED ───────────────────────────────────
 // It must stay inside the project: absolute paths and any path that climbs out
 // with `..` are refused before the filesystem is touched. Files over 64 MB are

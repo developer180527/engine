@@ -206,6 +206,10 @@ int main() {
         { std::ofstream(root / "grades" / "id.cube") << identityCube(3); }
         { std::ofstream(root / "grades" / "bad.cube") << "LUT_3D_SIZE 3\n0 0 0\n"; }
         { std::ofstream(root.parent_path() / "outside.cube") << identityCube(2); }
+        { std::ofstream(root / "grades" / "linear.cube")
+              << "LUT_3D_INPUT_RANGE -0.05 4\n" + identityCube(2); }
+        { std::ofstream(root / "grades" / "subset.cube")
+              << "DOMAIN_MIN 0.1 0.1 0.1\nDOMAIN_MAX 0.9 0.9 0.9\n" + identityCube(2); }
 
         LutLibrary lib;
         const auto a = lib.get(root, "grades/id.cube");
@@ -217,6 +221,11 @@ int main() {
         CHECK(!lib.get(root, (root.parent_path() / "outside.cube").string()),
               "and so is an absolute path");
         CHECK(!lib.get(root, "grades/bad.cube"), "a malformed .cube is refused");
+        CHECK(!lib.get(root, "grades/linear.cube"),
+              "a LUT built for scene-linear/log input (domain -0.05..4) is refused — "
+              "the engine grades display-referred sRGB [0,1]");
+        CHECK(lib.get(root, "grades/subset.cube") != nullptr,
+              "a domain INSIDE [0,1] is still accepted");
         const size_t n = lib.cachedCount();
         (void)lib.get(root, "grades/bad.cube");
         (void)lib.get(root, "grades/missing.cube");

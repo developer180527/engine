@@ -69,6 +69,23 @@ std::shared_ptr<const CubeLut> LutLibrary::get(const std::filesystem::path& proj
                  "ungraded", relPath.c_str(), err.c_str());
         return nullptr;
     }
+    // ── The engine grades DISPLAY-REFERRED, sRGB-ENCODED [0,1] ──────────────
+    // A .cube declares the input range it was built for. One reaching outside
+    // [0,1] — LUT_3D_INPUT_RANGE -0.05 4, a DOMAIN_MAX of 16 — was built for
+    // scene-linear or log input. Applied here it would receive values it was
+    // never designed for (at most 1.0, and encoded), and render "cursed" with no
+    // error. Refused, naming what the LUT appears to expect.
+    for (int c = 0; c < 3; ++c) {
+        if (lut->domainMin[c] < 0.0f || lut->domainMax[c] > 1.0f) {
+            LOG_WARN("Colour", "grading LUT '%s' refused: its domain [%g, %g] "
+                     "reaches outside [0, 1], so it was built for scene-linear or "
+                     "log input. This engine grades display-referred, sRGB-encoded "
+                     "values in [0, 1] (after tone mapping) — export the grade for "
+                     "a Rec.709 / sRGB display", relPath.c_str(),
+                     (double)lut->domainMin[c], (double)lut->domainMax[c]);
+            return nullptr;
+        }
+    }
     LOG_INFO("Colour", "grading LUT '%s': %u³", relPath.c_str(), lut->size);
     slot = std::move(lut);
     return slot;

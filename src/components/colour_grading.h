@@ -40,7 +40,11 @@ struct ColourGrading {
     float       aperture       = 16.0f;   // f-number     ┐
     float       shutterSeconds = 0.01f;   // seconds      ├ Physical mode only
     float       iso            = 100.0f;  // sensitivity  ┘
-    std::string lutPath;                  // project-relative .cube; empty = none
+    // Project-relative .cube; empty = none. The LUT must be built for DISPLAY-
+    // REFERRED, sRGB-ENCODED input in [0,1] — it is applied after the tone map
+    // and the encode (a Resolve / OCIO "Rec.709 / sRGB" export). A scene-linear
+    // or log LUT is refused on load (runtime/services/lut_library.h).
+    std::string lutPath;
 };
 
 // The linear scale the output pass multiplies scene radiance by. Never NaN or

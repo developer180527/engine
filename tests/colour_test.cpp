@@ -21,6 +21,7 @@
 #include "core/colour.h"
 #include "core/cube_lut.h"
 #include "core/display_transform.h"
+#include "core/output_transform.h"
 #include "render/clear_colour.h"
 
 static int g_failures = 0;
@@ -332,6 +333,86 @@ int main() {
         CHECK(allRefused && keep.size == 99,
               "all %zu malformed LUTs are refused, and the output is left alone",
               sizeof bad / sizeof *bad);
+    }
+
+    // ── 8. The ORDER of the output pass, and the LUT's domain ─────────────
+    // Review, 2026-09-17: a LUT can be built for linear, log or display-
+    // referred input, and nothing but prose said which this engine feeds it.
+    // These make the answer — sRGB-ENCODED, display-referred [0,1] — fail
+    // loudly if it ever changes.
+    {
+        std::printf("\n-- 8. output pass order and the grade's domain --\n");
+        using namespace display;
+
+        // A LUT that SQUARES its input coordinate. Linear 0.214041 encodes to
+        // exactly 0.5, which sits on a grid point of a 17³ LUT, so a grade of
+        // ENCODED values returns 0.25. Grading LINEAR values and encoding after
+        // would give encode(0.214041²) = 0.235 — measurably different.
+        std::string sq = "LUT_3D_SIZE 17\n";
+        for (int b = 0; b < 17; ++b)
+            for (int g = 0; g < 17; ++g)
+                for (int r = 0; r < 17; ++r) {
+                    char line[80];
+                    const double x = r / 16.0, y = g / 16.0, z = b / 16.0;
+                    std::snprintf(line, sizeof line, "%.8f %.8f %.8f\n", x * x, y * y, z * z);
+                    sq += line;
+                }
+        CubeLut square; std::string err;
+        CHECK(parseCubeLut(sq, square, &err), "a squaring LUT parses (%s)", err.c_str());
+        const Rgb graded = outputPixel({ 0.214041f, 0.214041f, 0.214041f }, 1.0f,
+                                       ToneMapper::None, &square);
+        CHECK(std::fabs(graded.r - 0.25f) < 1e-4f,
+              "the grade sees the ENCODED value: linear 0.214 -> sRGB 0.5 -> "
+              "LUT -> %.4f (0.25 expected; grading linear would give ~0.235)",
+              (double)graded.r);
+
+        std::string idText = "LUT_3D_SIZE 9\n";
+        for (int b = 0; b < 9; ++b)
+            for (int g = 0; g < 9; ++g)
+                for (int r = 0; r < 9; ++r) {
+                    char line[64];
+                    std::snprintf(line, sizeof line, "%.8f %.8f %.8f\n", r / 8.0, g / 8.0, b / 8.0);
+                    idText += line;
+                }
+        CubeLut id;
+        parseCubeLut(idText, id);
+        float worst = 0.0f;
+        for (int i = 0; i <= 400; ++i) {
+            const float v = (float)i * 0.01f;       // linear 0..4, past the knee
+            const Rgb a = outputPixel({ v, v * 0.5f, v * 0.25f }, 1.0f, ToneMapper::PbrNeutral);
+            const Rgb b = outputPixel({ v, v * 0.5f, v * 0.25f }, 1.0f, ToneMapper::PbrNeutral, &id);
+            worst = std::max({ worst, std::fabs(a.r - b.r), std::fabs(a.g - b.g), std::fabs(a.b - b.b) });
+        }
+        CHECK(worst < 1e-5f, "an identity grade changes nothing (worst %.2e)", (double)worst);
+
+        // Negative linear input — the reference pbrNeutral is not defined for
+        // it, and folds it BRIGHT. Pinned as a fact about the reference, so the
+        // clamp below is visibly necessary rather than decorative.
+        const Rgb raw = pbrNeutral({ -1.0f, -1.0f, -1.0f });
+        CHECK(raw.r > 0.5f,
+              "the Khronos reference maps linear -1 to %.3f (bright) — it needs an "
+              "upstream clamp, and gets one", (double)raw.r);
+        const Rgb neg  = outputPixel({ -1.0f, -0.5f, 0.2f }, 1.0f, ToneMapper::PbrNeutral);
+        const Rgb zero = outputPixel({  0.0f,  0.0f, 0.2f }, 1.0f, ToneMapper::PbrNeutral);
+        CHECK(neg.r == zero.r && neg.g == zero.g && neg.b == zero.b,
+              "the output pass clamps before the tone map: negative channels render "
+              "exactly as zero (%.4f vs %.4f)", (double)neg.r, (double)zero.r);
+
+        // The shader must run the same four steps in the same order.
+        std::ifstream f(ENGINE_SOURCE_DIR "/shaders/fs_output.sc");
+        std::stringstream ss; ss << f.rdbuf();
+        std::string src = ss.str();
+        const size_t mainAt = src.find("void main()");
+        src = mainAt == std::string::npos ? std::string() : src.substr(mainAt);
+        const size_t clampAt  = src.find("max(hdr.rgb * u_display.x, vec3_splat(0.0))");
+        const size_t toneAt   = src.find("pbrNeutral(");
+        const size_t encodeAt = src.find("linearToSrgb(");
+        const size_t gradeAt  = src.find("texture3D(s_lut");
+        const bool found = clampAt != std::string::npos && toneAt != std::string::npos &&
+                           encodeAt != std::string::npos && gradeAt != std::string::npos;
+        CHECK(found && clampAt < toneAt && toneAt < encodeAt && encodeAt < gradeAt,
+              "fs_output.sc runs exposure+clamp, tone map, encode, grade — in that "
+              "order (%zu < %zu < %zu < %zu)", clampAt, toneAt, encodeAt, gradeAt);
     }
 
     if (g_failures) {

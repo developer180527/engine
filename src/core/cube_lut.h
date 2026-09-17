@@ -44,6 +44,9 @@ inline constexpr uint32_t kCubeLutMinSize = 2;
 // common sizes) and a sane ceiling on what a hostile header can make us allocate.
 inline constexpr uint32_t kCubeLutMaxSize = 128;
 
+// The PARSER is domain-agnostic: it reads whatever a .cube declares. The ENGINE's
+// use is not — its output pass grades display-referred, sRGB-encoded [0,1], and
+// LutLibrary refuses a LUT declaring any other domain.
 struct CubeLut {
     uint32_t           size = 0;
     float              domainMin[3] = { 0.0f, 0.0f, 0.0f };
