@@ -169,9 +169,14 @@ bool EngineRuntime::tick(float dt) {
     float view[16], proj[16], clear[4];
     const float aspect = m_height > 0
         ? float(m_width) / float(m_height) : 16.0f / 9.0f;
+    const ColourGrading* grading = nullptr;
     if (!m_cameraFinder.find(simWorld(), view, proj, aspect, clear,
-                             m_renderer->homogeneousDepth()))
+                             m_renderer->homogeneousDepth(), &grading))
         return false;
+    // Colour stage B: the primary camera's exposure, tone map and grade.
+    m_renderer->setDisplayTransform(
+        DisplayView::Backbuffer,
+        resolveDisplayTransform(grading, m_luts, m_project.projectRoot));
 
     flecs::world* world = m_gameWorld ? m_gameWorld.get() : nullptr;
     ENGINE_PROFILE_SCOPE("Render");

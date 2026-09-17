@@ -153,7 +153,8 @@ void Renderer::renderScene(const float view[16], const float proj[16]) {
     RenderContext rc = makeContext();
     m_pipeline->render(rv, rc);
     m_output->submit(kSceneOutputView, gpu::toBgfx(m_sceneHdrTex),
-                     gpu::toBgfx(m_sceneFB), target.w, target.h);
+                     gpu::toBgfx(m_sceneFB), target.w, target.h,
+                     m_display[(size_t)DisplayView::Scene]);
 }
 
 void Renderer::renderGameView(const float view[16], const float proj[16],
@@ -172,7 +173,8 @@ void Renderer::renderGameView(const float view[16], const float proj[16],
     RenderContext rc = makeContext();
     m_pipeline->render(rv, rc);
     m_output->submit(kGameOutputView, gpu::toBgfx(m_gameHdrTex),
-                     gpu::toBgfx(m_gameFB), target.w, target.h);
+                     gpu::toBgfx(m_gameFB), target.w, target.h,
+                     m_display[(size_t)DisplayView::Game]);
 }
 
 void Renderer::renderToBackbuffer(const float view[16], const float proj[16],
@@ -195,5 +197,10 @@ void Renderer::renderToBackbuffer(const float view[16], const float proj[16],
     RenderContext rc = makeContext();
     m_pipeline->render(rv, rc);
     m_output->submit(kBackOutputView, gpu::toBgfx(m_backHdrTex),
-                     BGFX_INVALID_HANDLE, target.w, target.h);
+                     BGFX_INVALID_HANDLE, target.w, target.h,
+                     m_display[(size_t)DisplayView::Backbuffer]);
+}
+
+void Renderer::setDisplayTransform(DisplayView view, const DisplayTransform& t) {
+    if (view < DisplayView::Count) m_display[(size_t)view] = t;
 }

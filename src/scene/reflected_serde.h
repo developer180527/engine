@@ -40,7 +40,7 @@ inline bool isHandwritten(const std::string& path) {
     static const char* k[] = {
         "Transform", "Name", "MeshRenderer", "Camera", "Spinner", "RigidBody",
         "CollisionEvents", "ScriptComponent", "EntityId", "CharacterController",
-        "Light", "SkinnedMesh", "Animator",
+        "Light", "SkinnedMesh", "Animator", "ColourGrading",
         "PhysicsServiceRef", "AudioServiceRef",
         "bx::Vec3", "bx::Quaternion",
     };

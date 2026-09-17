@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-16
+verified: 2026-09-17
 covers:
   - src/components/
 tests:
@@ -105,6 +105,15 @@ the ABI is the plain-data structs listed below, not the helpers beside them.
   `remove<T>()` (leaves an orphaned `(EventStale, T)` staleness marker). Events
   are MESSAGES; persistent-within-session markers (e.g. combat::Died) stay
   plain SerdeTransient STATE, cleared by their owner.
+- `colour_grading.h` — exposure (Manual gain or Physical aperture/shutter/ISO),
+  tone mapper and grading-LUT path for a camera (colour pipeline stage B). A
+  component BESIDE `Camera`, not fields in it: `Camera` is in
+  `componentLayoutHash`, and this is presentation no kit reads — not re-exported,
+  not hashed, `SimExempt`. Enums are stored as bytes; `resolvedExposure` and
+  `resolvedToneMapper` refuse NaN, overflow and unknown ids at use rather than at
+  load, so a newer engine's scene round-trips. Meta is registered by
+  POINTER-TO-MEMBER so the inspector's offsets come from the real layout —
+  `colour_grading_test` §3 reads every field back through flecs.
 
 ## Every component carries a classification
 

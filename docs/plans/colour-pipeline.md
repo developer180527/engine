@@ -3,10 +3,10 @@ status: target
 ---
 # Colour pipeline
 
-Design and staged plan, written 2026-09-11. **Stage A is built (2026-09-17); B, C
-and D are not.** §1 is the measurement the stage was designed against and is kept
-as the record of what was wrong; §3a says what shipped and where it differs from
-§3.
+Design and staged plan, written 2026-09-11. **Stages A and B are built
+(2026-09-17); C and D are not.** §1 is the measurement stage A was designed
+against and is kept as the record of what was wrong; §3a and §4a say what shipped
+and where it differs from the design.
 
 Evidence is graded on the ladder in `docs/rhi/workflow.md` §1. Each claim below is
 marked **[measured]** (read in this tree, with a path), **[vendor]** (the owner's
@@ -231,6 +231,52 @@ processor to at most one 3D LUT [vendor], which is exactly the artefact the runt
 wants — so OCIO stays a *tool*, and the runtime stays a texture fetch.
 
 ---
+
+## 4a. Stage B as built (2026-09-17)
+
+Exposure, a swappable tone mapper and 3D-LUT grading, applied by the renderer's
+output pass in the order §2 requires: **exposure → tone map → sRGB encode →
+grade**. A camera carries them in a new `ColourGrading` component; the primary
+camera's grading drives the game view and the standalone player.
+
+| §4 said | Built | Why |
+|---|---|---|
+| B1: exposure by EV100, `1/(1.2·2^EV100)` [recalled] | Both modes: **Manual** (a gain of `2^EV`, the default) and **Physical** (aperture/shutter/ISO, the formula above), with `exposureEV` as compensation on top | The formula is now **[vendor]**: `filament/src/Exposure.cpp`, whose comments derive 1.2 = 78/(q·S), q = 0.65, S = 100. But it assumes photometric lights, and this engine's are unitless — a sun of intensity 3 at sunny-16 settings renders black. Manual at 0 EV is exactly gain 1, so no existing scene changes brightness |
+| B2: PBR Neutral default, **AgX** as the filmic alternative | **PBR Neutral** (default) and **None** (stage A's clip). AgX not built | PBR Neutral is **[vendor]**, copied constant for constant from `KhronosGroup/ToneMapping`'s `pbrNeutral.glsl`. AgX's references **disagree**: Filament takes Rec.2020 input with an 8-term contrast fit, three.js and the "minimal AgX" it credits take Rec.709 through a conversion with a 7-term fit. A subtly wrong tone curve is invisible to every test in the tree, so the enum has room for AgX and nothing more until its constants come from one named source file |
+| B2: `inverse(forward(x)) ≈ x` for PBR Neutral | `pbrNeutralInverse`, **derived** here (Khronos's inverse was not copied) | Held to the forward function by `colour_test` across [0, 8]: worst relative error 1.0e-5 |
+| B3: authored `.cube`, **the cooker converts it** | Parsed at load by `core/cube_lut.h`, cached per path by `runtime/services/lut_library.h`, uploaded as an RGBA16F 3D texture | A 33³ LUT is ~36 000 short lines, parsed once per path per process; a cooker, cooked format and registry entry would be most of the stage for no measurable gain. The parser is **fuzzed** (`fuzz_cube_lut`) exactly as a cooked-format reader would be, so moving the parse into a cooker later changes where it runs, not what it accepts |
+| B3: grade after tone mapping | After tone map **and** the sRGB encode, with texel-centre sampling | A Resolve or OCIO "Rec.709 / sRGB" export expects display-referred, encoded [0,1]. Sampling [0,1] without the half-texel inset would stretch the outermost cells at black and white |
+| (not in §4) | Settings live in `ColourGrading`, beside `Camera`, not in it | `Camera` is in `componentLayoutHash`; a field there makes every kit refuse to load. Not re-exported to kits, not hashed, `SimExempt` |
+| (not in §4) | A LUT path is untrusted | It comes from a scene file: absolute paths and paths climbing out with `..` are refused, files over 64 MB are refused unread, failures are cached and logged once |
+
+**Verification.**
+- `colour_test` §6–§7 covers the maths and the reader:
+  - EV100 of sunny-16 settings, the 1/1.2 scale, and manual gain.
+  - PBR Neutral: its sub-knee offset, the toe, bounded and monotonic output over 0–1000, continuity at the knee, and the inverse round trip.
+  - The shader's `pbrNeutral` constants, read from `colour.sh`.
+  - `.cube` axis order, checked with channel-distinguishable values, plus domain, clamping and twelve malformed files refused.
+- `colour_grading_test` covers the path from a camera entity to the output pass:
+  - Resolving the settings, including NaN and overflow.
+  - Serializer round trip, hostile fields, and future tone-mapper ids kept.
+  - Not double-saved by reflected serde.
+  - **Reflection offsets read back through flecs.**
+  - Classification and hash invariance.
+  - The camera finder handing the grading over.
+  - `LutLibrary`: caching, path escape and absolute paths refused, failures cached once, project switch.
+- `fuzz_cube_lut` and `fuzz_entity_serde` now include the component.
+- Every property above was mutation-checked.
+- On Metal, `engine_host fps_shooter --frames 240` built the output program with the 3D sampler bound at index 1 and exited cleanly. Its shutdown leak list was identical in size with and without the identity LUT (20 objects): those leaks predate stage B.
+
+**Not verified:** the rendered image, still — no readback or golden-image test.
+Tone mapping changes how every scene looks above the knee (≈0.76 after exposure)
+and darkens the darks by up to 0.04; look at a scene before relying on it.
+
+**Limits carried forward:**
+- AgX (above).
+- Editing a `.cube` does not reload it; restart the session.
+- Symlinks inside the project that point out of it are not detected.
+- The editor's scene viewport uses the default transform, not the scene camera's.
+- Auto-exposure (histogram) is not built; it needs a compute path confirmed on every backend.
 
 ## 5. Stage C — HDR display output
 

@@ -5,6 +5,7 @@
 
 #include "components/camera.h"
 #include "components/camera_look.h"
+#include "components/colour_grading.h"
 #include "core/transform.h"
 #include "components/transform_hierarchy.h"
 #include "runtime/world_query_cache.h"
@@ -25,7 +26,12 @@ public:
     bool find(flecs::world& world,
               float view[16], float proj[16],
               float aspect, float clearColor[4],
-              bool homogeneousDepth) {
+              bool homogeneousDepth,
+              const ColourGrading** grading = nullptr) {
+        // The primary camera's grading, or null if it has none. A POINTER into
+        // the world, valid until the next structural change — read it this
+        // frame, never keep it (a copy would allocate lutPath every frame).
+        if (grading) *grading = nullptr;
         bool found = false;
         m_query.get(world).each(
             [&](flecs::entity e, const Transform& t, const Camera& c) {
@@ -67,6 +73,7 @@ public:
                                  c.nearPlane, c.farPlane, 0.0f, rhNdc);
                 }
                 std::memcpy(clearColor, c.clearColor, 16);
+                if (grading) *grading = e.try_get<ColourGrading>();
             });
         return found;
     }

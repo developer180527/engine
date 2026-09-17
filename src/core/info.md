@@ -80,6 +80,17 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   Callers today: the enkiTS pool (`Initiated`) and `CookService::cookLoop`
   (`Utility`). Pinned by `tests/thread_qos_test.cpp`.
 - **`math_types.h`** — small shared math types.
+- **`display_transform.h`** (2026-09-17, colour pipeline stage B) — exposure
+  (`ev100`, `exposureFromEv100` — Filament's `Exposure.cpp` — and manual
+  `exposureGain`) and Khronos PBR Neutral with a derived inverse. The CPU reference
+  `shaders/colour.sh` is held to by `colour_test`. AgX is deliberately absent: its
+  published references disagree (colour-pipeline.md §4a).
+- **`cube_lut.h`** (2026-09-17) — the `.cube` grading LUT parser and a trilinear
+  CPU reference. Untrusted input by construction: it refuses unknown keywords, 1D
+  LUTs, sizes outside 2..128, counts that are not exactly size³, non-finite values
+  and empty domains, and is fuzzed (`fuzz_cube_lut`). Red changes fastest; pinned
+  with channel-distinguishable values, because a swapped reader still returns an
+  identity on grey.
 - **`colour.h`** (2026-09-17, colour pipeline stage A) — the sRGB transfer
   function, `srgbToLinear` / `linearToSrgb`, IEC 61966-2-1 piecewise (not a 2.2
   power). The ONE CPU definition: the renderer's clear colours and Kelvin lights

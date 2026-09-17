@@ -24,6 +24,7 @@
 #include "components/name.h"
 #include "components/mesh_renderer.h"
 #include "components/camera.h"
+#include "components/colour_grading.h"
 #include "components/light.h"
 #include "components/rigid_body.h"
 #include "components/script_component.h"
@@ -147,6 +148,40 @@ inline void loadCamera(flecs::entity e, const nlohmann::json& j, SerdeContext&) 
     c.farPlane   = readFloat(j, "farPlane", 1000.0f);
     readFloats(j, "clearColor", c.clearColor, 4);
     e.set<Camera>(c);
+}
+
+// ── ColourGrading (colour pipeline stage B) ──────────────────────────────────
+// Tolerant like every loader here: a wrong-typed or out-of-range field keeps its
+// default. An unknown enum value is kept AS READ — resolvedToneMapper() and
+// resolvedExposure() refuse it at use — so a scene saved by a newer engine with
+// a tone mapper this one lacks round-trips instead of being silently rewritten.
+inline bool hasColourGrading(flecs::entity e) { return e.try_get<ColourGrading>() != nullptr; }
+inline void saveColourGrading(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
+    const ColourGrading* g = e.try_get<ColourGrading>(); if (!g) return;
+    j["exposureMode"]   = g->exposureMode;
+    j["toneMapper"]     = g->toneMapper;
+    j["exposureEV"]     = g->exposureEV;
+    j["aperture"]       = g->aperture;
+    j["shutterSeconds"] = g->shutterSeconds;
+    j["iso"]            = g->iso;
+    if (!g->lutPath.empty()) j["lutPath"] = g->lutPath;
+}
+inline void loadColourGrading(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
+    ColourGrading g;
+    auto byteField = [&](const char* key, uint8_t& out) {
+        if (!j.is_object() || !j.contains(key) || !j[key].is_number_unsigned()) return;
+        const uint64_t v = j[key].get<uint64_t>();
+        if (v <= 255) out = (uint8_t)v;
+    };
+    byteField("exposureMode", g.exposureMode);
+    byteField("toneMapper",   g.toneMapper);
+    g.exposureEV     = readFloat(j, "exposureEV", 0.0f);
+    g.aperture       = readFloat(j, "aperture", 16.0f);
+    g.shutterSeconds = readFloat(j, "shutterSeconds", 0.01f);
+    g.iso            = readFloat(j, "iso", 100.0f);
+    if (j.is_object() && j.contains("lutPath") && j["lutPath"].is_string())
+        g.lutPath = j["lutPath"].get<std::string>();
+    e.set<ColourGrading>(std::move(g));
 }
 
 // ── RigidBody (incl. collider dims that the old undo snapshot dropped) ────────
@@ -524,6 +559,7 @@ inline const std::vector<ComponentSerde>& table() {
         // coarser levels of THAT mesh, and load order is the table order.
         { "lodMesh",      hasLodMesh,   saveLodMesh,   loadLodMesh   },
         { "camera",       hasCamera,    saveCamera,    loadCamera    },
+        { "colourGrading", hasColourGrading, saveColourGrading, loadColourGrading },
         { "rigidBody",    hasRigidBody, saveRigidBody, loadRigidBody },
         { "script",       hasScript,    saveScript,    loadScript    },
         { "characterController", hasCharacterController, saveCharacterController, loadCharacterController },

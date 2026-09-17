@@ -124,6 +124,15 @@ required.
   to `"<path>\n#superseded:<n>"`: `unloadMesh` and `evictOverBudget` match by
   HANDLE and walk the whole map, so old holders still drain correctly, while
   path lookups reach only the new entry. Pinned by `mesh_ownership_test` §6–§7.
+- **Grading LUTs by path — `LutLibrary`** (2026-09-17, colour stage B). A camera's
+  `ColourGrading::lutPath` resolves through `services/lut_library.h`: parsed once
+  per path, failures cached as null and logged once, the cache dropped when the
+  project changes, no allocation on a hit (keyed by the string the component
+  holds). Paths are untrusted: absolute and `..`-escaping paths are refused before
+  the filesystem is touched, files over 64 MB unread. `tick()` resolves the primary
+  camera's grading into the backbuffer's display transform; the editor does the
+  same for its game view. `PrimaryCameraFinder::find` hands the grading back as a
+  pointer — never copied, because a copy would allocate the path every frame.
 - **Cooked textures upload in the colour space the cook recorded** (2026-09-17,
   colour pipeline stage A). `cookedColourSpace` (`services/texture_colour.h`) is
   the one rule for AssetService's sync load and async stage and the editor async

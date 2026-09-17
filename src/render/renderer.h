@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <atomic>
 #include <mutex>
 #include <filesystem>
@@ -77,6 +78,7 @@ public:
     bool homogeneousDepth() const override;      // clip-space depth convention
 
     void renderScene(const float view[16], const float proj[16]) override;
+    void setDisplayTransform(DisplayView view, const DisplayTransform& t) override;
     void renderGameView(const float view[16], const float proj[16],
                         const float clearColor[4], flecs::world* gameWorld) override;
     // Standalone-game path: render a world straight to the backbuffer (no
@@ -314,6 +316,8 @@ private:
     gpu::TextureHandle     m_backHdrDepthTex;
     int m_backHdrW = 0, m_backHdrH = 0;
     std::unique_ptr<OutputPass> m_output;
+    // Stage B: what each display output applies — indexed by DisplayView.
+    std::array<DisplayTransform, (size_t)DisplayView::Count> m_display;
     int m_sceneW = 1280, m_sceneH = 720;
     int m_backW  = 1280, m_backH  = 720; // backbuffer (window) size
 

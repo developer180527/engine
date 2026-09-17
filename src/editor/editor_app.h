@@ -574,10 +574,18 @@ private:
         const bool inSim = m_editor.simState != SimState::Editing
                            && m_rt.simulating();
         flecs::world& camWorld = inSim ? m_rt.simWorld() : m_rt.ctx().ecs;
+        const ColourGrading* gameGrading = nullptr;
         bool hasCam = m_cameraFinder.find(camWorld, gameView, gameProj,
                                           aspect, gameClear,
-                                          bgfx::getCaps()->homogeneousDepth);
+                                          bgfx::getCaps()->homogeneousDepth,
+                                          &gameGrading);
         if (hasCam) {
+            // Colour stage B: the game view shows the camera's grade, exactly as
+            // the standalone player will. The scene viewport keeps the defaults.
+            m_rt.renderer().setDisplayTransform(
+                DisplayView::Game,
+                resolveDisplayTransform(gameGrading, m_rt.luts(),
+                                        m_rt.project().projectRoot));
             flecs::world* renderWorld = inSim ? &m_rt.simWorld() : nullptr;
             m_rt.renderGameView(gameView, gameProj, gameClear, renderWorld);
         }

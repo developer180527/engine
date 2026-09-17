@@ -1,0 +1,17 @@
+# cube_lut, generator version 1. Seeds, not blobs: each regenerates a LUT and
+# its mutations. No regressions yet — a spread so the gating lane is not one case.
+1
+2
+3
+5
+8
+13
+21
+34
+55
+89
+144
+1000
+65535
+123456789
+18446744073709551615

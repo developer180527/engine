@@ -124,6 +124,9 @@ engine_test(profiler_test  LIB engine_core)
 engine_test(colour_test    LIB engine_core)
 target_compile_definitions(colour_test PRIVATE
     ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# Stage B's path from a camera entity to the output pass: serde, reflection
+# offsets, classification, the camera finder and LutLibrary.
+engine_test(colour_grading_test)
 # The log ring. Speed is a benchmark's job; this pins the three properties the
 # speed rests on, each of which fails silently: a filtered line must do NO work
 # (asserted through the sequence counter and through argument side effects, not
@@ -492,6 +495,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
 
     engine_fuzz_target(fuzz_ddc_manifest_test ddc_manifest)
     engine_fuzz_target(fuzz_take_decode       take_decode)
+    engine_fuzz_target(fuzz_cube_lut          cube_lut)
     engine_fuzz_target(fuzz_mesh_loader_test  mesh_loader)
     engine_fuzz_target(fuzz_scene_loader_test scene_loader)
     engine_fuzz_target(fuzz_entity_serde_test entity_serde LIB engine_runtime)

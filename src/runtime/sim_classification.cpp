@@ -25,6 +25,7 @@
 #include "components/animator.h"
 #include "components/camera.h"
 #include "components/camera_look.h"
+#include "components/colour_grading.h"
 #include "components/character_controller.h"
 #include "components/collision_events.h"
 #include "components/entity_id.h"
@@ -154,6 +155,8 @@ void registerClassification(flecs::world& w) {
     // what this does NOT fix.
     exempt<CameraLook>(w,   "presentation — where the camera is aimed, latched "
                             "at render rate so look does not lag the frame");
+    exempt<ColourGrading>(w, "presentation — exposure, tone map and grade: how "
+                             "the picture looks, read only by the renderer");
     exempt<Light>(w,        "presentation — shading parameters");
     exempt<LodMesh>(w,      "presentation — which detail level to draw");
     exempt<MeshRenderer>(w, "presentation — which mesh and material to draw");

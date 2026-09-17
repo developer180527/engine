@@ -19,6 +19,8 @@
 #include <vector>
 
 #include "core/colour.h"
+#include "core/cube_lut.h"
+#include "core/display_transform.h"
 #include "render/clear_colour.h"
 
 static int g_failures = 0;
@@ -187,6 +189,149 @@ int main() {
         CHECK(half.linear[3] == 0.5f && (half.packedRgba & 0xffu) == 128u,
               "alpha is never encoded (%.2f, %u)", (double)half.linear[3],
               half.packedRgba & 0xffu);
+    }
+
+    // ── 6. Stage B: exposure and PBR Neutral ───────────────────────────────
+    {
+        std::printf("\n-- 6. exposure and tone mapping --\n");
+        using namespace display;
+        CHECK(std::fabs(ev100(16.0f, 1.0f / 100.0f, 100.0f) - 14.6439f) < 1e-3f,
+              "sunny-16 settings are EV100 14.64 (%.4f)",
+              (double)ev100(16.0f, 1.0f / 100.0f, 100.0f));
+        CHECK(std::fabs(ev100(1.0f, 1.0f, 100.0f)) < 1e-6f &&
+              std::fabs(exposureFromEv100(0.0f) - 1.0f / 1.2f) < 1e-6f,
+              "EV100 0 scales radiance by 1/1.2 (Filament's Exposure.cpp)");
+        CHECK(exposureGain(0.0f) == 1.0f && exposureGain(1.0f) == 2.0f &&
+              exposureGain(-1.0f) == 0.5f,
+              "manual exposure: 0 stops changes nothing, +1 doubles, -1 halves");
+
+        // Below the knee the colour is only offset — hue and ratios survive.
+        Rgb lo = pbrNeutral({ 0.5f, 0.4f, 0.3f });
+        CHECK(std::fabs(lo.r - 0.46f) < 1e-6f && std::fabs(lo.g - 0.36f) < 1e-6f &&
+              std::fabs(lo.b - 0.26f) < 1e-6f,
+              "below the knee PBR Neutral subtracts 0.04 and nothing else "
+              "(%.4f %.4f %.4f)", (double)lo.r, (double)lo.g, (double)lo.b);
+        Rgb toe = pbrNeutral({ 0.05f, 0.05f, 0.05f });
+        CHECK(std::fabs(toe.r - 0.015625f) < 1e-6f,
+              "in the toe the offset is x - 6.25x² (0.05 -> %.6f)", (double)toe.r);
+
+        bool bounded = true, mono = true;
+        float prev = -1.0f;
+        for (int i = 0; i <= 20000; ++i) {
+            const float v = (float)i * 0.05f;        // 0 .. 1000
+            const float o = pbrNeutral({ v, v, v }).r;
+            if (o > 1.0f) bounded = false;
+            if (o < prev - 1e-6f) mono = false;
+            prev = o;
+        }
+        CHECK(bounded && mono,
+              "grey 0..1000 maps monotonically into [0, 1] — highlights roll off "
+              "instead of clipping");
+        const float below = pbrNeutral({ 0.7999f, 0.7999f, 0.7999f }).r;
+        const float above = pbrNeutral({ 0.8001f, 0.8001f, 0.8001f }).r;
+        CHECK(std::fabs(above - below) < 1e-3f,
+              "and it is continuous at the compression knee (%.5f vs %.5f)",
+              (double)below, (double)above);
+
+        // The inverse is DERIVED in display_transform.h, not copied, so it is
+        // held to the forward function here over a spread of colours.
+        float worstInv = 0.0f;
+        for (int i = 0; i < 4000; ++i) {
+            const float t = (float)i / 4000.0f;
+            const Rgb in = { 8.0f * t * t, 3.0f * t, 0.5f + 2.0f * t * (1.0f - t) };
+            const Rgb back = pbrNeutralInverse(pbrNeutral(in));
+            const float e = std::max({ std::fabs(back.r - in.r), std::fabs(back.g - in.g),
+                                       std::fabs(back.b - in.b) }) /
+                            std::max(1.0f, std::max({ in.r, in.g, in.b }));
+            worstInv = std::max(worstInv, e);
+        }
+        CHECK(worstInv < 2e-3f,
+              "inverse(forward(x)) returns x across [0, 8] (worst relative %.2e)",
+              (double)worstInv);
+
+        std::ifstream f(ENGINE_SOURCE_DIR "/shaders/colour.sh");
+        std::stringstream ss; ss << f.rdbuf();
+        const std::vector<double> got = literalsIn(ss.str(), "vec3 pbrNeutral");
+        const std::vector<double> want = { kPbrToeEnd, kPbrToeScale, kPbrOffset,
+                                           kPbrStartCompression, kPbrDesaturation };
+        bool all = !got.empty(), stray = false;
+        for (double w : want) all = all && containsNear(got, w);
+        for (double g : got)
+            if (!containsNear(want, g) && std::fabs(g) > 1e-9 && std::fabs(g - 1.0) > 1e-9)
+                stray = true;
+        CHECK(all && !stray,
+              "shaders/colour.sh's pbrNeutral uses exactly the reference constants");
+    }
+
+    // ── 7. Stage B3: the .cube grading LUT ─────────────────────────────────
+    {
+        std::printf("\n-- 7. .cube LUTs --\n");
+        // A LUT whose output IS its input coordinate. Reading the axes in the
+        // wrong order still returns an identity on GREY, so the probe colour
+        // below has three different channels.
+        auto identityText = [](int n, const char* header = "") {
+            std::string s = std::string("TITLE \"identity\"\r\n") + header +
+                            "LUT_3D_SIZE " + std::to_string(n) + "\n# data\n";
+            for (int b = 0; b < n; ++b)
+                for (int g = 0; g < n; ++g)
+                    for (int r = 0; r < n; ++r) {           // red fastest
+                        char line[64];
+                        std::snprintf(line, sizeof line, "%.6f %.6f %.6f\r\n",
+                                      r / double(n - 1), g / double(n - 1), b / double(n - 1));
+                        s += line;
+                    }
+            return s;
+        };
+        CubeLut lut; std::string err;
+        CHECK(parseCubeLut(identityText(17), lut, &err) && lut.size == 17 &&
+              lut.rgb.size() == 17u * 17 * 17 * 3 && lut.title == "\"identity\"",
+              "a 17³ identity .cube parses, CRLF line endings included (%s)", err.c_str());
+        float probe[3] = { 0.2f, 0.5f, 0.9f };
+        applyCubeLut(lut, probe);
+        CHECK(std::fabs(probe[0] - 0.2f) < 1e-5f && std::fabs(probe[1] - 0.5f) < 1e-5f &&
+              std::fabs(probe[2] - 0.9f) < 1e-5f,
+              "and returns (0.2, 0.5, 0.9) unchanged — red, not blue, changes fastest "
+              "(%.4f %.4f %.4f)", (double)probe[0], (double)probe[1], (double)probe[2]);
+        float over[3] = { 1.5f, -0.5f, 0.5f };
+        applyCubeLut(lut, over);
+        CHECK(std::fabs(over[0] - 1.0f) < 1e-5f && std::fabs(over[1]) < 1e-5f,
+              "inputs outside the domain clamp to its edge");
+
+        CubeLut ranged;
+        CHECK(parseCubeLut(identityText(2, "LUT_3D_INPUT_RANGE 0 2\n"), ranged, &err) &&
+              ranged.domainMax[0] == 2.0f,
+              "LUT_3D_INPUT_RANGE sets the domain (%s)", err.c_str());
+        float half[3] = { 1.0f, 1.0f, 1.0f };
+        applyCubeLut(ranged, half);
+        CHECK(std::fabs(half[0] - 0.5f) < 1e-5f, "and an input of 1 in [0,2] lands mid-LUT");
+
+        struct Bad { const char* why; std::string text; };
+        const Bad bad[] = {
+            { "a 1D LUT",                "LUT_1D_SIZE 16\n0 0 0\n" },
+            { "size 1",                  "LUT_3D_SIZE 1\n0 0 0\n" },
+            { "size 129",                "LUT_3D_SIZE 129\n" },
+            { "a fractional size",       "LUT_3D_SIZE 2.5\n" },
+            { "too few entries",         "LUT_3D_SIZE 2\n0 0 0\n1 1 1\n" },
+            { "a NaN entry",             identityText(2).replace(identityText(2).rfind("1.000000"), 8, "nan") },
+            { "an unknown keyword",      "LUT_3D_SIZE 2\nFOO 1\n" },
+            { "a keyword after data",    identityText(2) + "DOMAIN_MIN 0 0 0\n" },
+            { "an inverted domain",      identityText(2, "DOMAIN_MIN 1 1 1\nDOMAIN_MAX 0 0 0\n") },
+            { "four numbers on a line",  "LUT_3D_SIZE 2\n0 0 0 0\n" },
+            { "data before the size",    "0 0 0\nLUT_3D_SIZE 2\n" },
+            { "nothing at all",          "" },
+        };
+        CubeLut keep; keep.size = 99;
+        bool allRefused = true;
+        for (const Bad& b : bad) {
+            std::string why;
+            if (parseCubeLut(b.text, keep, &why)) {
+                allRefused = false;
+                std::printf("        accepted %s\n", b.why);
+            }
+        }
+        CHECK(allRefused && keep.size == 99,
+              "all %zu malformed LUTs are refused, and the output is left alone",
+              sizeof bad / sizeof *bad);
     }
 
     if (g_failures) {

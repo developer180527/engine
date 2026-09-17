@@ -55,6 +55,7 @@ struct NullRenderer final : IRenderer {
                         flecs::world*) override {}
     void renderToBackbuffer(const float[16], const float[16], const float[4],
                             flecs::world*) override {}
+    void setDisplayTransform(DisplayView, const DisplayTransform&) override {}
 
     // COUNTED, then discarded at frame end — the same observable lifecycle the
     // real renderer has, minus the GPU and minus storing anything.

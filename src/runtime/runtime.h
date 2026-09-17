@@ -17,6 +17,7 @@
 #include "runtime/platform/platform.h"
 #include "core/memory/mem.h"          // mem::Tag — EngineConfig::memBudgetMB
 #include "runtime/camera_util.h"
+#include "runtime/services/lut_library.h"
 #include "runtime/runtime_context.h"
 #include "runtime/input/input_manager.h"
 #include "runtime/input/input_latency_channel.h"
@@ -348,6 +349,7 @@ public:
     // Memory is valid ONLY within the current frame (see core/frame_arena.h).
     mem::FrameArena&  frameArena() { return m_frameArena; }
     input::InputManager& inputManager() { return m_input; }
+    LutLibrary&          luts()         { return m_luts; }
     InputLatencyChannel* inputLatency() { return m_inputLatency.get(); }
     // Frame-time distribution — the "is there actually a hitch?" channel.
     // Reports at shutdown on its own; grab it to dump mid-run or export CSV.
@@ -444,6 +446,7 @@ private:
     PluginRegistry m_plugins;
     KitHost        m_kits;              // project kits — dlopened lazily at Play
     PrimaryCameraFinder m_cameraFinder; // cached camera query (game tick)
+    LutLibrary          m_luts;         // grading LUTs by path (colour stage B)
     mem::FrameArena     m_frameArena;   // per-frame transient allocator
     input::InputManager m_input;        // action layer over raw input
     std::unique_ptr<InputLatencyChannel> m_inputLatency;   // profiler channel

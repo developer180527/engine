@@ -301,6 +301,15 @@ Stage A fixed that without adding a feature:
   strong.
 * **Highlights still clip** above 1.0, after lighting instead of inside it. Mapping
   them is stage B (exposure, tone map).
+* **Stage B (2026-09-17): exposure, tone map, grade.** The output pass now applies
+  a per-view `DisplayTransform` (`render/display_settings.h`) — exposure, then
+  PBR Neutral or None, then the encode, then an optional 3D LUT sampled at texel
+  centres — set through `IRenderer::setDisplayTransform` for the scene, game and
+  backbuffer outputs. The runtime resolves it every frame from the primary
+  camera's `ColourGrading`. LUTs upload as RGBA16F 3D textures, cached by the parsed
+  LUT and never evicted (bounded by the `.cube` files a session references); a
+  2³ identity LUT is bound when a view is ungraded so the 3D sampler is never empty.
+  Backends without RGBA16F 3D textures skip grading with one warning.
 * **Shader includes are dependencies now.** bgfx's rule tracked only the `.sc` and
   `varying.def.sc`, so editing `colour.sh` would have left shaders silently stale;
   `src/CMakeLists.txt` appends it to every fragment shader.

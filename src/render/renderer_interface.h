@@ -7,6 +7,7 @@
 
 #include "core/handle.h"
 #include "render/gpu.h"
+#include "render/display_settings.h"
 #include "render/world/lod.h"   // rworld::kMaxLodLevels
 
 class AssetRegistry;
@@ -111,6 +112,12 @@ struct IRenderer {
     virtual void renderToBackbuffer(const float view[16], const float proj[16],
                                     const float clearColor[4],
                                     flecs::world* world) = 0;
+
+    // Colour pipeline stage B: exposure, tone mapper and grade for one of the
+    // three display outputs. Latched until changed; the default for each is gain
+    // 1, PBR Neutral, no LUT. The runtime resolves it from the primary camera's
+    // ColourGrading every frame (runtime/services/lut_library.h).
+    virtual void setDisplayTransform(DisplayView view, const DisplayTransform& t) = 0;
 
     // ── Bring-your-own-system draw submission ──────────────────────────────
     // The ONE method here that is per-DRAW rather than per-frame: kit code

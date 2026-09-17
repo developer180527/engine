@@ -147,6 +147,15 @@ json buildEntity(fuzz::Rng& rng) {
         c["clearColor"] = vec(rng, 4, 0.1f);
         c["isPrimary"]  = rng.chance(70) ? json(true) : fuzzValue(rng);
         maybe("camera", std::move(c)); }
+    {   json g = json::object();
+        g["exposureMode"]   = rng.chance(60) ? json(rng.below(4)) : fuzzValue(rng);
+        g["toneMapper"]     = rng.chance(60) ? json(rng.below(4)) : fuzzValue(rng);
+        g["exposureEV"]     = fuzzValue(rng);
+        g["aperture"]       = fuzzValue(rng);
+        g["shutterSeconds"] = fuzzValue(rng);
+        g["iso"]            = fuzzValue(rng);
+        g["lutPath"]        = rng.chance(60) ? json(str(40)) : fuzzValue(rng);
+        maybe("colourGrading", std::move(g)); }
     {   json r = json::object();
         r["bodyType"]    = rng.chance(60) ? json(rng.below(4)) : fuzzValue(rng);
         r["shape"]       = rng.chance(60) ? json(rng.below(4)) : fuzzValue(rng);

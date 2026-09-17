@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-16
+verified: 2026-09-17
 parses-external-input: true
 covers:
   - src/scene/
@@ -57,6 +57,14 @@ One subtlety worth keeping: the check is NOT `is_number_unsigned()` alone.
 nlohmann stores a positive literal built in-process from an `int` as SIGNED, so
 that spelling rejected valid ids depending only on how the JSON was
 constructed — parsed-from-disk and built-in-memory disagreed.
+
+## ColourGrading (2026-09-17)
+The colour stage B camera component serializes through the hand-written table as
+`"colourGrading"`, after `camera`, and is listed in `reflected_serde.h`'s
+hand-written set so the generic path does not save it a second time. Tolerant:
+wrong-typed fields keep defaults; an unknown-but-in-range tone mapper id is kept
+as read, so a scene from a newer engine round-trips. `fuzz_entity_serde_test`
+generates it.
 
 ## Purpose
 World (de)serialization — the single component serde path that scene save/

@@ -7,6 +7,7 @@
 #include "components/mesh_renderer.h"
 #include "components/camera.h"
 #include "components/camera_look.h"
+#include "components/colour_grading.h"
 #include "components/spinner.h"
 #include "components/rigid_body.h"
 #include "components/collision_events.h"
@@ -79,6 +80,21 @@ inline void registerAll(flecs::world& ecs) {
     ecs.component<CameraLook>()
         .member<float>("yaw")
         .member<float>("pitch");
+
+    // ColourGrading: colour stage B. Registered through POINTER-TO-MEMBER, which
+    // takes each offset from the real layout. The plain member<T>(name) form
+    // computes offsets itself — sequentially, with alignment — which is correct
+    // only while registration order and types match the struct exactly, and
+    // silently wrong the day someone registers a field out of order or skips
+    // one. lutPath (std::string) is not registered; the scene serializer
+    // carries it (reflected_serde.h's hand-written list).
+    ecs.component<ColourGrading>()
+        .member("exposureMode",   &ColourGrading::exposureMode)
+        .member("toneMapper",     &ColourGrading::toneMapper)
+        .member("exposureEV",     &ColourGrading::exposureEV)
+        .member("aperture",       &ColourGrading::aperture)
+        .member("shutterSeconds", &ColourGrading::shutterSeconds)
+        .member("iso",            &ColourGrading::iso);
 
     // Spinner: editor-only, excluded from game world snapshots
     ecs.component<Spinner>()

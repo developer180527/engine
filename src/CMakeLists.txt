@@ -361,6 +361,7 @@ add_library(engine_runtime STATIC
     render/shader/shader_library.cpp
     runtime/services/asset_service.cpp
     runtime/services/scene_service.cpp
+    runtime/services/lut_library.cpp   # grading LUTs by path (colour stage B3)
     runtime/services/nav_service.cpp
     runtime/scripting/engine_api.cpp
     runtime/scripting/engine_api_table.cpp
