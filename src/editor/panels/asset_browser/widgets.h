@@ -1,7 +1,8 @@
 #pragma once
 #include "types.h"
 #include "registry.h"
-#include "assets/importers/importer_registry.h"
+#include "scan.h"
+#include "model.h"
 #include <imgui.h>
 #include <filesystem>
 #include <vector>
@@ -9,50 +10,9 @@
 
 namespace ab {
 
-// OS file-manager junk that should never show up as "assets":
-// macOS (.DS_Store, AppleDouble ._*, .localized, Spotlight/Trash/fsevents),
-// Windows (Thumbs.db, desktop.ini, ehthumbs.db), Linux/KDE (.directory).
-inline bool isOsJunk(const std::string& name) {
-    if (name == ".DS_Store" || name == ".localized" ||
-        name == ".Spotlight-V100" || name == ".Trashes" || name == ".fseventsd")
-        return true;
-    if (name.rfind("._", 0) == 0) return true;              // AppleDouble sidecars
-    if (name == "Thumbs.db" || name == "ehthumbs.db" || name == "desktop.ini")
-        return true;
-    if (name == ".directory") return true;                   // KDE folder metadata
-    return false;
-}
+// The one place a browser colour becomes an ImGui colour.
+inline ImU32 toImU32(Rgba c) { return IM_COL32(c.r, c.g, c.b, c.a); }
 
-// Scan one directory level and return sorted FileEntry list.
-inline std::vector<FileEntry> scanDir(const std::filesystem::path& dir,
-                                      const ImporterRegistry&      importers,
-                                      assetlib::AssetRegistry*     reg,
-                                      const std::filesystem::path& projectRoot,
-                                      const std::filesystem::path& cacheRoot) {
-    std::vector<FileEntry> out;
-    if (!std::filesystem::is_directory(dir)) return out;
-    for (const auto& de : std::filesystem::directory_iterator(dir)) {
-        if (isOsJunk(de.path().filename().string())) continue;
-        FileEntry e;
-        e.name     = de.path().filename().string();
-        e.fullPath = de.path().string();
-        e.isDir    = de.is_directory();
-        if (!e.isDir) {
-            if (!de.is_regular_file()) continue;
-            e.ext       = lowerExt(de.path());
-            e.supported = importers.supportsFile(de.path());
-            try { e.sizeBytes = de.file_size(); } catch (...) {}
-            e.reg = queryRegistry(reg, e.fullPath, projectRoot, cacheRoot);
-        }
-        out.push_back(e);
-    }
-    std::sort(out.begin(), out.end(), [](const FileEntry& a, const FileEntry& b){
-        if (a.isDir    != b.isDir)    return a.isDir    > b.isDir;
-        if (a.supported!= b.supported)return a.supported> b.supported;
-        return a.name < b.name;
-    });
-    return out;
-}
 
 // Draw a single icon cell in grid view.
 // Returns true on double-click; sets singleClick=true on single click.
@@ -89,13 +49,13 @@ inline bool drawIconCell(int id, const FileEntry& f, bool selected,
     auto    sty = iconStyle(f.ext, f.isDir);
 
     // Icon body
-    dl->AddRectFilled(ip, {ip.x+isz.x, ip.y+isz.y}, sty.bg, 6.f);
+    dl->AddRectFilled(ip, {ip.x+isz.x, ip.y+isz.y}, toImU32(sty.bg), 6.f);
 
     // Type label centered
     auto ts = ImGui::CalcTextSize(sty.label);
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
                 {ip.x+(isz.x-ts.x)*.5f, ip.y+(isz.y-ts.y)*.5f-3},
-                sty.fg, sty.label);
+                toImU32(sty.fg), sty.label);
 
     // Loaded marker (small green square, top-left)
     if (f.loaded)
@@ -105,7 +65,7 @@ inline bool drawIconCell(int id, const FileEntry& f, bool selected,
     if (f.reg.found && !f.isDir) {
         ImVec2 bc = {ip.x+isz.x-8, ip.y+isz.y-8};
         dl->AddCircleFilled(bc, 7.f, IM_COL32(18,18,18,220));
-        dl->AddCircleFilled(bc, 5.f, stateColor(f.reg.state));
+        dl->AddCircleFilled(bc, 5.f, toImU32(stateColor(f.reg.state)));
     }
 
     // Filename label (truncated, centered below icon)
@@ -117,44 +77,27 @@ inline bool drawIconCell(int id, const FileEntry& f, bool selected,
     return dbl;
 }
 
-// Draw recursive folder tree; sets currentDir and needRefresh on click.
-inline void drawFolderTree(const std::filesystem::path& dir,
-                           const std::filesystem::path& root,
-                           std::filesystem::path&       currentDir,
-                           bool&                        needRefresh) {
-    namespace fs = std::filesystem;
-    bool hasSubs = false;
-    try { for (const auto& e : fs::directory_iterator(dir))
-              if (e.is_directory() && !isOsJunk(e.path().filename().string()))
-                  { hasSubs = true; break; }
-    } catch (...) {}
-
-    std::string label     = (dir == root) ? "assets" : dir.filename().string();
-    bool        selected  = (dir == currentDir);
+// Draw the recursive folder tree; a click navigates the model there.
+inline void drawFolderTree(const std::filesystem::path& dir, AssetBrowserModel& model) {
+    const std::vector<std::filesystem::path> subs = listSubdirs(dir);
+    const bool  hasSubs  = !subs.empty();
+    const bool  isRoot   = (dir == model.root());
+    std::string label    = isRoot ? "assets" : dir.filename().string();
+    bool        selected = (dir == model.currentDir());
 
     ImGuiTreeNodeFlags flags =
         ImGuiTreeNodeFlags_OpenOnArrow |
         ImGuiTreeNodeFlags_SpanFullWidth;
     if (selected) flags |= ImGuiTreeNodeFlags_Selected;
     if (!hasSubs) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-    if (dir==root)flags |= ImGuiTreeNodeFlags_DefaultOpen;
+    if (isRoot)   flags |= ImGuiTreeNodeFlags_DefaultOpen;
 
     bool open = ImGui::TreeNodeEx(label.c_str(), flags);
-    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-        currentDir  = dir;
-        needRefresh = true;
-    }
+    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+        model.navigate(dir);
 
     if (open && hasSubs) {
-        try {
-            std::vector<fs::path> subs;
-            for (const auto& e : fs::directory_iterator(dir))
-                if (e.is_directory() && !isOsJunk(e.path().filename().string()))
-                    subs.push_back(e.path());
-            std::sort(subs.begin(), subs.end());
-            for (auto& s : subs)
-                drawFolderTree(s, root, currentDir, needRefresh);
-        } catch (...) {}
+        for (auto& s : subs) drawFolderTree(s, model);
         ImGui::TreePop();
     }
 }

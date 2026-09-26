@@ -5,14 +5,14 @@
 
 namespace ab {
 
-inline ImU32 stateColor(assetlib::AssetState s) {
+inline Rgba stateColor(assetlib::AssetState s) {
     switch(s) {
-        case assetlib::AssetState::Ready:   return IM_COL32(80,210,80,255);
+        case assetlib::AssetState::Ready:   return Rgba{80,210,80,255};
         case assetlib::AssetState::Stale:
-        case assetlib::AssetState::Dirty:   return IM_COL32(230,190,40,255);
+        case assetlib::AssetState::Dirty:   return Rgba{230,190,40,255};
         case assetlib::AssetState::Failed:
-        case assetlib::AssetState::Missing: return IM_COL32(220,60,60,255);
-        default:                            return IM_COL32(110,110,110,255);
+        case assetlib::AssetState::Missing: return Rgba{220,60,60,255};
+        default:                            return Rgba{110,110,110,255};
     }
 }
 

@@ -1,7 +1,8 @@
 #pragma once
 #include <string>
+#include <cctype>
 #include <cstdint>
-#include <imgui.h>
+#include <ctime>
 #include <assetlib/asset_registry.h>
 #include <cstdio>
 #include <filesystem>
@@ -9,6 +10,11 @@
 namespace ab {
 
 enum class ViewMode { Grid, List };
+
+// A colour the browser's data carries (icon styles, registry-state badges),
+// 8-bit straight RGBA. Plain data rather than ImU32, so the model and these
+// tables stay GUI-toolkit-free; each GUI converts at its drawing edge.
+struct Rgba { uint8_t r = 0, g = 0, b = 0, a = 255; };
 
 struct RegistryInfo {
     bool                   found       = false;
@@ -61,22 +67,22 @@ inline std::string lowerExt(const std::filesystem::path& p) {
 }
 
 // ── Icon styles ──────────────────────────────────────────────────────────────
-struct IconStyle { ImU32 bg; ImU32 fg; const char* label; };
+struct IconStyle { Rgba bg; Rgba fg; const char* label; };
 
 inline IconStyle iconStyle(const std::string& ext, bool isDir = false) {
     if (isDir)
-        return {IM_COL32(190,155,45,255), IM_COL32(255,230,130,255), "DIR"};
+        return {Rgba{190,155,45,255}, Rgba{255,230,130,255}, "DIR"};
     if (ext==".fbx"||ext==".obj"||ext==".dae"||ext==".ply"||ext==".stl")
-        return {IM_COL32(200,110,40,255), IM_COL32(255,200,140,255), "MESH"};
+        return {Rgba{200,110,40,255}, Rgba{255,200,140,255}, "MESH"};
     if (ext==".glb"||ext==".gltf")
-        return {IM_COL32(50,110,210,255), IM_COL32(160,200,255,255), "GLTF"};
+        return {Rgba{50,110,210,255}, Rgba{160,200,255,255}, "GLTF"};
     if (ext==".png"||ext==".jpg"||ext==".jpeg"||ext==".tga"||ext==".bmp")
-        return {IM_COL32(140,60,190,255), IM_COL32(220,170,255,255), "TEX"};
+        return {Rgba{140,60,190,255}, Rgba{220,170,255,255}, "TEX"};
     if (ext==".hdr"||ext==".exr")
-        return {IM_COL32(40,160,160,255), IM_COL32(160,240,240,255), "HDR"};
+        return {Rgba{40,160,160,255}, Rgba{160,240,240,255}, "HDR"};
     if (ext==".scene"||ext==".json")
-        return {IM_COL32(50,150,80,255),  IM_COL32(160,240,180,255), "SCN"};
-    return      {IM_COL32(70,70,70,255),  IM_COL32(180,180,180,255), "FILE"};
+        return {Rgba{50,150,80,255},  Rgba{160,240,180,255}, "SCN"};
+    return      {Rgba{70,70,70,255},  Rgba{180,180,180,255}, "FILE"};
 }
 
 } // namespace ab

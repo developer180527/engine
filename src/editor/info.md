@@ -145,6 +145,15 @@ only layer that links ImGui/ImGuizmo — the runtime stays UI-free.
 - **Panels** — each a `draw*Panel(ctx)` free function or small header:
   hierarchy, inspector, asset browser, console/terminal, profiler, game view, scene
   view, project settings, menu bar. All receive `EngineContext` per frame.
+- **Asset browser = model + front end.** `panels/asset_browser/model.h`
+  (`ab::AssetBrowserModel`) holds what the browser knows and does — current
+  folder, listing (`scan.h`), selection, the context menu's target, open /
+  create / rename / delete / duplicate — with **no GUI toolkit**; `panel.h`
+  draws it with ImGui and keeps only widget state (edit buffer, which modal).
+  `open()` returns what to do (spawn, view text) instead of doing it, so the
+  model runs without an engine context. `asset_browser_model_test` pins the
+  behaviour and fails to build if `model.h` includes ImGui. The split exists
+  so a second front end (the libgui experiment) drives the same model.
 - **`EngineContext`** (`src/engine_context.h`) — `RuntimeContext` +
   `EditorState` + `GizmoState`, built on the stack each frame in `buildCtx()`.
   Never stored.

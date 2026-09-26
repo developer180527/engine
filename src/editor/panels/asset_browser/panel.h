@@ -1,6 +1,8 @@
 #pragma once
-// Asset browser panel — main entry point.
-// Split across: types.h registry.h spawn.h widgets.h actions.h
+// Asset browser panel — the ImGui front end of AssetBrowserModel (model.h).
+// Split across: types.h registry.h scan.h model.h spawn.h widgets.h actions.h
+// What the browser knows and does lives in the model; this file draws it and
+// keeps only widget state (the name edit buffer, which modal to open).
 // Owns a ScriptViewer (function-static) for double-click code viewing; its
 // floating windows are drawn after the Assets window's End() so they're real
 // top-level windows. Fully self-contained — no editor_app changes required.
@@ -10,6 +12,7 @@
 #include "spawn.h"
 #include "widgets.h"
 #include "actions.h"
+#include "model.h"
 
 #include "editor/engine_context.h"
 #include "runtime/services/async_loader.h"
@@ -32,74 +35,43 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
     using namespace ab;
     namespace fs = std::filesystem;
 
-    static fs::path           s_root;
-    static fs::path           s_currentDir;
-    static std::vector<FileEntry> s_files;
-    static int                s_selectedIdx = -1;
-    static bool               s_needRefresh = true;
-    static ViewMode           s_viewMode    = ViewMode::Grid;
+    static AssetBrowserModel  s_model;
     static ScriptViewer       s_scriptViewer;
 
-    // context-menu / modal state
+    // Widget-only state: which modal to open, and the name being typed.
     static ab::NewKind s_newKind = ab::NewKind::None;
     static char        s_nameBuf[128] = {};
     static bool        s_openCreate = false, s_openRename = false, s_openDelete = false;
-    static std::string s_actionTarget;
-    static bool        s_actionIsDir = false, s_actionSupported = false;
-    static std::string s_actionExt;
 
-    if (s_root.empty() || s_root != ctx.project.assetsRoot) {
-        s_root       = ctx.project.assetsRoot;
-        s_currentDir = s_root;
-        s_needRefresh = true;
-    }
-    auto cacheRoot = ctx.project.projectRoot / ".cache";
+    s_model.syncRoot(ctx.project.assetsRoot);
 
     ImGui::Begin(ICON_FA_FOLDER_OPEN " Assets", open);
 
     // ── Toolbar ──────────────────────────────────────────────────────────────
-    {
-        std::error_code ec;
-        auto rel = fs::relative(s_currentDir, s_root, ec);
-        std::string crumb = "assets";
-        if (!ec && rel != ".") crumb += " / " + rel.generic_string();
-        ImGui::TextDisabled("%s", crumb.c_str());
-    }
+    ImGui::TextDisabled("%s", s_model.breadcrumb().c_str());
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 110);
     if (ImGui::Button("Refresh")) {
-        s_needRefresh = true;
-        s_selectedIdx = -1;
-        if (cookService) cookService->requestRefresh();
+        s_model.clearSelection();
+        s_model.requestRefresh(cookService);
     }
     ImGui::SameLine();
-    if (ImGui::Button(s_viewMode == ViewMode::Grid ? "[=]" : "[#]", {36,0}))
-        s_viewMode = (s_viewMode == ViewMode::Grid) ? ViewMode::List : ViewMode::Grid;
+    if (ImGui::Button(s_model.viewMode() == ViewMode::Grid ? "[=]" : "[#]", {36,0}))
+        s_model.toggleViewMode();
 
     ImGui::Separator();
 
     // ── File list refresh ─────────────────────────────────────────────────────
-    if (s_needRefresh) {
-        s_files = scanDir(s_currentDir, ctx.importers,
-                          ctx.assetLib, ctx.project.projectRoot, cacheRoot);
-        s_needRefresh = false;
-    } else {
-        for (auto& f : s_files)
-            if (!f.isDir)
-                f.loaded = ctx.importers.isLoaded(f.fullPath)
-                         || loader.isLoaded(f.fullPath);
-    }
+    s_model.update(ctx.importers, ctx.assetLib, ctx.project.projectRoot,
+                   [&](const std::string& p) {
+                       return ctx.importers.isLoaded(p) || loader.isLoaded(p);
+                   });
+    const std::vector<FileEntry>& files = s_model.files();
 
-    // shared routing helpers
-    auto setAction = [&](const FileEntry& f) {
-        s_actionTarget    = f.fullPath;
-        s_actionIsDir     = f.isDir;
-        s_actionSupported = f.supported;
-        s_actionExt       = f.ext;
-    };
-    auto openEntry = [&](const FileEntry& f) {
-        if (f.isDir)            { s_currentDir = f.fullPath; s_needRefresh = true; }
-        else if (f.supported)     spawnFile(f, ctx, loader);
-        else if (isViewableText(f.ext)) s_scriptViewer.open(f.fullPath);
+    // What opening an entry resolved to, carried out here: spawning needs the
+    // engine, viewing text needs the code viewer.
+    auto perform = [&](const OpenRequest& r) {
+        if (r.kind == OpenKind::Spawn && r.entry) spawnFile(*r.entry, ctx, loader);
+        else if (r.kind == OpenKind::ViewText)    s_scriptViewer.open(r.path);
     };
 
     // ── 3-column layout: [tree] [grid] [detail] ──────────────────────────────
@@ -110,7 +82,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
 
     // ── Left: folder tree ────────────────────────────────────────────────────
     ImGui::BeginChild("##tree", {kTreeW, fullH}, true);
-    drawFolderTree(s_root, s_root, s_currentDir, s_needRefresh);
+    drawFolderTree(s_model.root(), s_model);
     ImGui::EndChild();
 
     ImGui::SameLine();
@@ -118,39 +90,39 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
     // ── Center: file grid / list ─────────────────────────────────────────────
     ImGui::BeginChild("##grid", {-(kDetailW + 6), fullH}, false);
 
-    if (s_files.empty()) {
+    if (files.empty()) {
         ImGui::TextDisabled("(empty)");
-    } else if (s_viewMode == ViewMode::Grid) {
+    } else if (s_model.viewMode() == ViewMode::Grid) {
         constexpr float kIconW = 74.f;
         constexpr float kIconH = 52.f;
         constexpr float kCellW = kIconW + 10.f;
         int cols = std::max(1, (int)(ImGui::GetContentRegionAvail().x / kCellW));
         int col  = 0;
 
-        for (int i = 0; i < (int)s_files.size(); ++i) {
-            auto& f = s_files[i];
+        for (int i = 0; i < (int)files.size(); ++i) {
+            const auto& f = files[i];
             if (col > 0) ImGui::SameLine(0, 4);
 
             bool clicked = false, rclick = false;
-            bool dbl = drawIconCell(i, f, s_selectedIdx == i, kIconW, kIconH,
+            bool dbl = drawIconCell(i, f, s_model.selectedIndex() == i, kIconW, kIconH,
                                     clicked, rclick);
-            if (clicked) s_selectedIdx = i;
-            if (rclick)  { s_selectedIdx = i; setAction(f); ImGui::OpenPopup("##itemctx"); }
-            if (dbl)     openEntry(f);
+            if (clicked) s_model.select(i);
+            if (rclick)  { s_model.select(i); s_model.setActionTarget(f); ImGui::OpenPopup("##itemctx"); }
+            if (dbl)     perform(s_model.open(f));
 
             if (++col >= cols) { col = 0; ImGui::Dummy({0, 4}); }
         }
     } else {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {4, 2});
-        for (int i = 0; i < (int)s_files.size(); ++i) {
-            auto& f = s_files[i];
+        for (int i = 0; i < (int)files.size(); ++i) {
+            const auto& f = files[i];
             ImGui::PushID(i);
 
             if (!f.isDir && f.reg.found) {
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 p.y += ImGui::GetTextLineHeight() * 0.5f;
                 ImGui::GetWindowDrawList()->AddCircleFilled(
-                    {p.x+6, p.y}, 4.f, stateColor(f.reg.state));
+                    {p.x+6, p.y}, 4.f, toImU32(stateColor(f.reg.state)));
             }
             ImGui::Dummy({14,0}); ImGui::SameLine();
 
@@ -161,10 +133,10 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
                 ImGui::PushStyleColor(ImGuiCol_Text,
                     ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 
-            if (ImGui::Selectable(row.c_str(), s_selectedIdx == i,
+            if (ImGui::Selectable(row.c_str(), s_model.selectedIndex() == i,
                                   ImGuiSelectableFlags_AllowDoubleClick)) {
-                s_selectedIdx = i;
-                if (ImGui::IsMouseDoubleClicked(0)) openEntry(f);
+                s_model.select(i);
+                if (ImGui::IsMouseDoubleClicked(0)) perform(s_model.open(f));
             }
             if (!f.supported && !f.isDir) ImGui::PopStyleColor();
 
@@ -175,37 +147,27 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
                 ImGui::EndDragDropSource();
             }
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                s_selectedIdx = i; setAction(f); ImGui::OpenPopup("##itemctx");
+                s_model.select(i); s_model.setActionTarget(f); ImGui::OpenPopup("##itemctx");
             }
             ImGui::PopID();
         }
         ImGui::PopStyleVar();
     }
 
-    // ── Per-item context menu (operates on captured s_actionTarget) ───────────
+    // ── Per-item context menu (operates on the model's action target) ───────────
     if (ImGui::BeginPopup("##itemctx")) {
-        fs::path tp = s_actionTarget;
+        fs::path tp = s_model.actionTarget();
         ImGui::TextDisabled("%s", tp.filename().string().c_str());
         ImGui::Separator();
-        if (ImGui::MenuItem("Open")) {
-            if (s_actionIsDir) { s_currentDir = tp; s_needRefresh = true; }
-            else if (s_actionSupported) {
-                for (auto& fe : s_files)
-                    if (fe.fullPath == s_actionTarget) { spawnFile(fe, ctx, loader); break; }
-            } else if (isViewableText(s_actionExt)) {
-                s_scriptViewer.open(s_actionTarget);
-            }
-        }
+        if (ImGui::MenuItem("Open")) perform(s_model.openActionTarget());
         if (ImGui::MenuItem("Rename")) {
             std::strncpy(s_nameBuf, tp.filename().string().c_str(), sizeof s_nameBuf - 1);
             s_nameBuf[sizeof s_nameBuf - 1] = 0;
             s_openRename = true;
         }
-        if (!s_actionIsDir && ImGui::MenuItem("Duplicate")) {
-            ab::duplicatePath(tp);
-            s_needRefresh = true; if (cookService) cookService->requestRefresh();
-        }
-        if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(s_actionTarget.c_str());
+        if (!s_model.actionTargetIsDir() && ImGui::MenuItem("Duplicate"))
+            s_model.duplicateTarget(cookService);
+        if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(s_model.actionTarget().c_str());
         if (ImGui::MenuItem("Reveal in Finder")) ab::revealInFinder(tp);
         ImGui::Separator();
         if (ImGui::MenuItem("Delete")) s_openDelete = true;
@@ -235,10 +197,8 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Reveal in Finder")) ab::revealInFinder(s_currentDir);
-        if (ImGui::MenuItem("Refresh")) {
-            s_needRefresh = true; if (cookService) cookService->requestRefresh();
-        }
+        if (ImGui::MenuItem("Reveal in Finder")) ab::revealInFinder(s_model.currentDir());
+        if (ImGui::MenuItem("Refresh")) s_model.requestRefresh(cookService);
         ImGui::EndPopup();
     }
     ImGui::EndChild();
@@ -248,8 +208,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
     // ── Right: detail panel ──────────────────────────────────────────────────
     ImGui::BeginChild("##detail", {kDetailW, fullH}, true);
 
-    const FileEntry* sel = (s_selectedIdx >= 0 && s_selectedIdx < (int)s_files.size())
-                         ? &s_files[s_selectedIdx] : nullptr;
+    const FileEntry* sel = s_model.selected();
 
     if (sel && !sel->isDir) {
         ImGui::TextColored({1, 0.9f, 0.5f, 1}, "%s", sel->name.c_str());
@@ -259,13 +218,13 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
             ImVec2 p  = ImGui::GetCursorScreenPos();
             float  sz = kDetailW - 24.f;
             float  ih = sz * 0.52f;
-            ImGui::GetWindowDrawList()->AddRectFilled(p, {p.x+sz, p.y+ih}, sty.bg, 8.f);
+            ImGui::GetWindowDrawList()->AddRectFilled(p, {p.x+sz, p.y+ih}, toImU32(sty.bg), 8.f);
             auto ts = ImGui::CalcTextSize(sty.label);
             float scale = 1.8f;
             ImGui::GetWindowDrawList()->AddText(
                 ImGui::GetFont(), ImGui::GetFontSize() * scale,
                 {p.x+(sz-ts.x*scale)*.5f, p.y+(ih-ts.y*scale)*.5f},
-                sty.fg, sty.label);
+                toImU32(sty.fg), sty.label);
             ImGui::Dummy({sz, ih});
             ImGui::Spacing();
         }
@@ -284,7 +243,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
 
             ImGui::TextDisabled("State   "); ImGui::SameLine(62);
             ImGui::TextColored(
-                ImGui::ColorConvertU32ToFloat4(stateColor(sel->reg.state)),
+                ImGui::ColorConvertU32ToFloat4(toImU32(stateColor(sel->reg.state))),
                 "* %s", stateName(sel->reg.state));
 
             ImGui::TextDisabled("Cook v  "); ImGui::SameLine(62);
@@ -363,12 +322,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
         ImGui::SameLine();
         if (ImGui::Button("Cancel", {120,0})) { s_newKind = ab::NewKind::None; ImGui::CloseCurrentPopup(); }
         if (ok && s_nameBuf[0]) {
-            if (s_newKind == ab::NewKind::Folder) {
-                ab::createFolder(s_currentDir, s_nameBuf);
-            } else {
-                ab::createScript(s_currentDir, s_nameBuf, s_newKind);
-            }
-            s_needRefresh = true; if (cookService) cookService->requestRefresh();
+            s_model.createInCurrentDir(s_newKind, s_nameBuf, cookService);
             s_newKind = ab::NewKind::None; ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -385,9 +339,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
         ImGui::SameLine();
         if (ImGui::Button("Cancel", {120,0})) ImGui::CloseCurrentPopup();
         if (ok && s_nameBuf[0]) {
-            ab::renamePath(s_actionTarget, s_nameBuf);
-            s_needRefresh = true; s_selectedIdx = -1;
-            if (cookService) cookService->requestRefresh();
+            s_model.renameTarget(s_nameBuf, cookService);
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -396,13 +348,11 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
     if (ImGui::BeginPopupModal("Delete?###deletemodal", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Delete \"%s\"?",
-                    fs::path(s_actionTarget).filename().string().c_str());
+                    fs::path(s_model.actionTarget()).filename().string().c_str());
         ImGui::TextDisabled("This cannot be undone.");
         ImGui::Spacing();
         if (ImGui::Button("Delete", {120,0})) {
-            ab::deletePath(s_actionTarget);
-            s_needRefresh = true; s_selectedIdx = -1;
-            if (cookService) cookService->requestRefresh();
+            s_model.deleteTarget(cookService);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();

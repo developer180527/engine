@@ -518,6 +518,11 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
 # sits outside the try/catch that only covers json::parse.
 engine_test(scene_parents_test)
 engine_test(editor_undo_test)
+# The asset browser's behaviour, with no GUI: AssetBrowserModel is what the
+# ImGui panel draws and what the libgui experiment will draw, so both front
+# ends share one definition of what a click does. Fails to BUILD if model.h
+# includes ImGui — which is also why it links no imgui.
+engine_test(asset_browser_model_test)
 # editor.json comes back FROM DISK, which makes EditorPrefs::load untrusted
 # input on the project-open path — a crash there means the project cannot be
 # opened at all. Needs imgui only because EditorCamera's header includes it.
