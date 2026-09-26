@@ -86,9 +86,13 @@ int main() {
         // Opening only MARKS the rescan: the list a front end is iterating
         // this frame is still the old one.
         CHECK(m.needsRefresh() && m.files().size() == 4, "list must survive until update()");
-        CHECK(m.selectedIndex() == 3, "navigation leaves the selection alone (as the panel always has)");
+        CHECK(m.selectedIndex() == 3, "until the rescan, the selection still points into the old list");
         rescan();
         CHECK(m.files().empty(), "models/ is empty");
+        // The bug this pins: selection was an INDEX, so row 3 of the parent
+        // became "whatever is row 3 here". It is a path now.
+        CHECK(m.selectedIndex() == -1 && m.selected() == nullptr,
+              "a file from another folder must not appear selected here");
         m.navigate(assets);
         rescan();
     }
@@ -124,11 +128,19 @@ int main() {
         CHECK(!m.createInCurrentDir(ab::NewKind::Folder, "", nullptr), "an empty name is refused");
         CHECK(!m.needsRefresh(), "a refused create does not rescan");
 
-        m.select(2);
+        m.select(2);   // alpha.bin
         CHECK(m.createInCurrentDir(ab::NewKind::Folder, "textures", nullptr), "create folder");
         CHECK(fs::is_directory(assets / "textures"), "folder exists on disk");
-        CHECK(m.needsRefresh() && m.selectedIndex() == 2, "create rescans, keeps selection");
+        CHECK(m.needsRefresh(), "create rescans");
         rescan();
+        // The second incident: the new folder sorts ABOVE alpha.bin, pushing it
+        // from row 2 to row 3. An index-based selection moved onto the folder.
+        CHECK(m.selected() && m.selected()->name == "alpha.bin",
+              "the selection follows its file across a rescan, got %s",
+              m.selected() ? m.selected()->name.c_str() : "(none)");
+        CHECK(m.selectedIndex() == 3, "alpha.bin is now row 3, got %d", m.selectedIndex());
+        m.select(99);
+        CHECK(m.selectedIndex() == -1 && m.selectedPath().empty(), "an out-of-range select selects nothing");
 
         CHECK(m.createInCurrentDir(ab::NewKind::ScriptLua, "Player", nullptr), "create script");
         CHECK(fs::exists(assets / "Player.lua"), "script gets its extension");

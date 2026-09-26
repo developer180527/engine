@@ -404,6 +404,17 @@ target_include_directories(
 #   engine_cook     — CLI asset cooker.
 add_subdirectory(src)
 
+# ── Experiment: libgui front end (off by default) ────────────────────────────
+# A sandbox drawing editor panels with libgui over the same models the ImGui
+# editor uses. Nothing else depends on it, and it is only configured when
+# asked for, in its own build directory:
+#   cmake -B build-libgui -DENGINE_EXPERIMENT_LIBGUI=ON -DENGINE_BUILD_TOOLS=OFF \
+#         -DENGINE_BUILD_SAMPLES=OFF -DBUILD_TESTING=OFF
+option(ENGINE_EXPERIMENT_LIBGUI "Build experiments/libgui_sandbox (needs cargo)" OFF)
+if(ENGINE_EXPERIMENT_LIBGUI)
+    add_subdirectory(experiments/libgui_sandbox)
+endif()
+
 # ── Tests — CTest-registered gauntlets + stress suite (tests/CMakeLists.txt) ─
 # Lanes: ctest -L unit (fast) / -L stress (torture) / -L asset (needs content).
 include(CTest)

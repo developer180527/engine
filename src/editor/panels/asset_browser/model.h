@@ -56,7 +56,8 @@ public:
         return crumb;
     }
 
-    // Selection is left as it is, as the ImGui panel always has.
+    // The selection is kept by PATH (see select()), so entering a folder
+    // leaves nothing selected there unless the selected file is in it.
     void navigate(const std::filesystem::path& dir) {
         m_currentDir  = dir;
         m_needRefresh = true;
@@ -73,6 +74,7 @@ public:
             m_files = scanDir(m_currentDir, importers, registry, projectRoot,
                               projectRoot / ".cache");
             m_needRefresh = false;
+            resolveSelection();
         } else if (isLoaded) {
             for (auto& f : m_files)
                 if (!f.isDir) f.loaded = isLoaded(f.fullPath);
@@ -90,9 +92,20 @@ public:
     const std::vector<FileEntry>& files() const { return m_files; }
 
     // ── Selection ───────────────────────────────────────────────────────────
+    // The selection is a PATH; the index is only where that path sits in the
+    // current listing. It used to be the index itself, so every rescan
+    // (entering a folder, creating or duplicating a file, Refresh) left it on
+    // whatever entry now occupied that slot: a double-click into a folder
+    // showed a file nobody clicked as selected, and creating a folder moved
+    // the selection onto the new folder. A path that is no longer listed
+    // selects nothing.
     int  selectedIndex() const { return m_selectedIdx; }
-    void select(int i)         { m_selectedIdx = i; }
-    void clearSelection()      { m_selectedIdx = -1; }
+    const std::string& selectedPath() const { return m_selectedPath; }
+    void select(int i) {
+        if (i >= 0 && i < (int)m_files.size()) { m_selectedPath = m_files[i].fullPath; m_selectedIdx = i; }
+        else clearSelection();
+    }
+    void clearSelection() { m_selectedPath.clear(); m_selectedIdx = -1; }
     const FileEntry* selected() const {
         return (m_selectedIdx >= 0 && m_selectedIdx < (int)m_files.size())
              ? &m_files[m_selectedIdx] : nullptr;
@@ -172,10 +185,18 @@ public:
     }
 
 private:
+    void resolveSelection() {
+        m_selectedIdx = -1;
+        if (m_selectedPath.empty()) return;
+        for (int i = 0; i < (int)m_files.size(); ++i)
+            if (m_files[i].fullPath == m_selectedPath) { m_selectedIdx = i; return; }
+    }
+
     std::filesystem::path  m_root;
     std::filesystem::path  m_currentDir;
     std::vector<FileEntry> m_files;
-    int                    m_selectedIdx = -1;
+    std::string            m_selectedPath;       // what is selected
+    int                    m_selectedIdx = -1;   // where it is in m_files, or -1
     bool                   m_needRefresh = true;
     ViewMode               m_viewMode    = ViewMode::Grid;
 
