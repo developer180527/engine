@@ -5,27 +5,9 @@
 #include <algorithm>
 #include <cmath>
 
-// Free-fly editor camera. Owned by EditorApp, never serialized into scenes.
-// The game camera will be a scene component; this is developer-only.
-struct EditorCamera {
-    bx::Vec3 position { 0.0f, 6.0f, 18.0f };
-    float    yaw   = 0.0f;
-    float    pitch = 0.0f;
-
-    bx::Vec3 forward() const {
-        return {
-             std::sin(yaw) * std::cos(pitch),
-             std::sin(pitch),
-            -std::cos(yaw) * std::cos(pitch)
-        };
-    }
-    bx::Vec3 right() const { return { std::cos(yaw), 0.0f, std::sin(yaw) }; }
-    bx::Vec3 up()    const { return { 0.0f, 1.0f, 0.0f }; }
-
-    void getViewMatrix(float out[16]) const {
-        bx::mtxLookAt(out, position, bx::add(position, forward()), up());
-    }
-};
+// Free-fly editor camera: EditorCamera and the movement are GUI-free
+// (fly_camera.h); this file gathers the ImGui editor's input for it.
+#include "editor/fly_camera.h"
 
 struct EditorInput {
     bool   rightMouseHeld = false;
@@ -52,40 +34,25 @@ inline void updateEditorCamera(EditorCamera& cam, EditorInput& inp,
         inp.rightMouseHeld = false;
     }
 
+    FlyInput in;
     if (inp.rightMouseHeld) {
         double mx, my;
         wsi::cursorPos(window, mx, my);
-        const float dx = float(mx - inp.lastMouseX);
-        const float dy = float(my - inp.lastMouseY);
+        in.lookDx = float(mx - inp.lastMouseX);
+        in.lookDy = float(my - inp.lastMouseY);
         inp.lastMouseX = mx;
         inp.lastMouseY = my;
-
-        constexpr float kSensitivity = 0.0025f;
-        // Clamp delta to 200px max — prevents a single bad frame from a
-        // Bluetooth hiccup or focus-loss event spinning the camera wildly.
-        constexpr float kMaxDelta = 200.0f;
-        const float cdx = std::clamp(dx, -kMaxDelta, kMaxDelta);
-        const float cdy = std::clamp(dy, -kMaxDelta, kMaxDelta);
-        cam.yaw   -= cdx * kSensitivity;
-        cam.pitch -= cdy * kSensitivity;
-        const float kLimit = bx::kPiHalf - 0.01f;
-        cam.pitch = std::clamp(cam.pitch, -kLimit, kLimit);
     }
-
-    if (typing || !sceneHovered) return;
-
-    const float speed = (wsi::isKeyDown(window, Key::LeftShift) ||
-                         wsi::isKeyDown(window, Key::RightShift))
-                        ? 20.0f : 5.0f;
-    const float step = speed * dt;
-    const bx::Vec3 fwd = cam.forward();
-    const bx::Vec3 rt  = cam.right();
-
-    if (wsi::isKeyDown(window, Key::W)) cam.position = bx::add(cam.position, bx::mul(fwd,  step));
-    if (wsi::isKeyDown(window, Key::S)) cam.position = bx::add(cam.position, bx::mul(fwd, -step));
-    if (wsi::isKeyDown(window, Key::D)) cam.position = bx::add(cam.position, bx::mul(rt,  -step));
-    if (wsi::isKeyDown(window, Key::A)) cam.position = bx::add(cam.position, bx::mul(rt,   step));
-    const bx::Vec3 wup = {0.0f, 1.0f, 0.0f};
-    if (wsi::isKeyDown(window, Key::E)) cam.position = bx::add(cam.position, bx::mul(wup,  step));
-    if (wsi::isKeyDown(window, Key::Q)) cam.position = bx::add(cam.position, bx::mul(wup, -step));
+    // Looking still applies while typing or away from the panel (the drag
+    // began in it); moving does not.
+    if (!typing && sceneHovered) {
+        in.fast    = wsi::isKeyDown(window, Key::LeftShift) || wsi::isKeyDown(window, Key::RightShift);
+        in.forward = wsi::isKeyDown(window, Key::W);
+        in.back    = wsi::isKeyDown(window, Key::S);
+        in.right   = wsi::isKeyDown(window, Key::D);
+        in.left    = wsi::isKeyDown(window, Key::A);
+        in.up      = wsi::isKeyDown(window, Key::E);
+        in.down    = wsi::isKeyDown(window, Key::Q);
+    }
+    applyFly(cam, in, dt);
 }

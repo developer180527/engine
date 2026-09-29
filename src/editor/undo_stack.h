@@ -57,6 +57,9 @@ public:
 
     bool        canUndo()         const { return m_index >= 0; }
     bool        canRedo()         const { return m_index < (int)m_history.size()-1; }
+    // Steps currently applied (the position in the history), for tests and
+    // diagnostics: one per undoable action, down by one per undo.
+    int stepsDone() const { return m_index + 1; }
     std::string undoDescription() const { return canUndo() ? m_history[m_index].description : ""; }
     std::string redoDescription() const { return canRedo() ? m_history[m_index+1].description : ""; }
     void        clear()                 { m_history.clear(); m_index = -1; }

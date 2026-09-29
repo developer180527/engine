@@ -78,11 +78,11 @@ inline void gizmoHandleHotkeys(wsi::WindowHandle window, EngineContext& ctx) {
     if (ctx.editor.playing()) return;          // editor authoring is inert in play
     if (ImGui::GetIO().WantTextInput) return;
     if (wsi::isKeyDown(window, Key::T))
-        ctx.gizmoState.operation = ImGuizmo::TRANSLATE;
+        ctx.gizmoState.operation = GizmoOp::Translate;
     if (wsi::isKeyDown(window, Key::R))
-        ctx.gizmoState.operation = ImGuizmo::ROTATE;
+        ctx.gizmoState.operation = GizmoOp::Rotate;
     if (wsi::isKeyDown(window, Key::Y))
-        ctx.gizmoState.operation = ImGuizmo::SCALE;
+        ctx.gizmoState.operation = GizmoOp::Scale;
 }
 
 inline void drawGizmo(EngineContext& ctx,
@@ -121,10 +121,13 @@ inline void drawGizmo(EngineContext& ctx,
         ctx.gizmoState.lastSyncedFrom = ctx.editor.selected;
     }
 
-    ImGuizmo::Manipulate(view, proj,
-                         ctx.gizmoState.operation,
-                         ctx.gizmoState.mode,
-                         ctx.gizmoState.matrix);
+    const ImGuizmo::OPERATION op =
+        ctx.gizmoState.operation == GizmoOp::Rotate ? ImGuizmo::ROTATE
+      : ctx.gizmoState.operation == GizmoOp::Scale  ? ImGuizmo::SCALE
+                                                    : ImGuizmo::TRANSLATE;
+    const ImGuizmo::MODE mode =
+        ctx.gizmoState.mode == GizmoSpace::World ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
+    ImGuizmo::Manipulate(view, proj, op, mode, ctx.gizmoState.matrix);
 
     const bool using_ = ImGuizmo::IsUsing();
 
@@ -144,16 +147,15 @@ inline void drawGizmo(EngineContext& ctx,
             std::memcpy(local, ctx.gizmoState.matrix, sizeof(local));
         }
         switch (ctx.gizmoState.operation) {
-            case ImGuizmo::TRANSLATE:
+            case GizmoOp::Translate:
                 t.position = gizmo_detail::mtxTranslation(local);
                 break;
-            case ImGuizmo::ROTATE:
+            case GizmoOp::Rotate:
                 t.rotation = gizmo_detail::mtxToQuat(local);
                 break;
-            case ImGuizmo::SCALE:
+            case GizmoOp::Scale:
                 t.scale = gizmo_detail::mtxScale(local);
                 break;
-            default: break;
         }
     }
 

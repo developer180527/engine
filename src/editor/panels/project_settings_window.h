@@ -7,66 +7,12 @@
 #include "runtime/input/input_map.h"
 #include "runtime/input/input_system.h"
 #include "editor/editor_state.h"
+#include "editor/panels/project_settings/model.h"
 
 // ── Key display name ───────────────────────────────────────────────────────
 // Label for a key in the binding UI. The switch covers keys with no
 // printable form; anything else falls back to the backend's layout-aware
 // name (wsi::keyName), which is what shows the user "q" vs "a" on AZERTY.
-inline const char* keyDisplayName(Key key) {
-    switch (key) {
-    case Key::Space:         return "Space";
-    case Key::Enter:         return "Enter";
-    case Key::Escape:        return "Escape";
-    case Key::Tab:           return "Tab";
-    case Key::Backspace:     return "Backspace";
-    case Key::Delete:        return "Delete";
-    case Key::Right:         return "Right";
-    case Key::Left:          return "Left";
-    case Key::Up:            return "Up";
-    case Key::Down:          return "Down";
-    case Key::LeftShift:    return "L.Shift";
-    case Key::RightShift:   return "R.Shift";
-    case Key::LeftCtrl:  return "L.Ctrl";
-    case Key::RightCtrl: return "R.Ctrl";
-    case Key::LeftAlt:      return "L.Alt";
-    case Key::RightAlt:     return "R.Alt";
-    case Key::LeftSuper:    return "L.Cmd";
-    case Key::RightSuper:   return "R.Cmd";
-    case Key::F1:  return "F1";  case Key::F2:  return "F2";
-    case Key::F3:  return "F3";  case Key::F4:  return "F4";
-    case Key::F5:  return "F5";  case Key::F6:  return "F6";
-    case Key::F7:  return "F7";  case Key::F8:  return "F8";
-    case Key::F9:  return "F9";  case Key::F10: return "F10";
-    case Key::F11: return "F11"; case Key::F12: return "F12";
-    case Key::Unknown: return "None";
-    default: {
-        const char* n = wsi::keyName(key);
-        return n ? n : "?";
-    }
-    }
-}
-
-// ── Settings categories ────────────────────────────────────────────────────
-enum class SettingsCategory { General, Input, Physics, Audio, Rendering, Scripting };
-
-// ── Project Settings window ────────────────────────────────────────────────
-// Call drawProjectSettings() each frame when open.
-// Pass bool* open — set to false when user closes it.
-struct ProjectSettingsState {
-    SettingsCategory  category   = SettingsCategory::Input;
-
-    // Key capture state
-    bool      capturing     = false;
-    StringID  captureAction {};
-    StringID  captureAxis   {};
-    bool      captureIsAxis = false;
-    bool      captureIsPos  = false; // for axes: positive or negative slot
-
-    // Add action/axis UI state
-    char newActionName[64] = {};
-    char newAxisName[64]   = {};
-};
-
 inline void drawCategoryInput(ProjectSettingsState& s, SimState simState) {
     auto& map = InputMap::get();
     auto& sys = InputSystem::get();
@@ -84,19 +30,8 @@ inline void drawCategoryInput(ProjectSettingsState& s, SimState simState) {
         ImGui::PopStyleColor();
 
         // Check for key
-        int k = sys.anyKeyPressedRaw();
-        if (k >= 0 && (Key)k != Key::Escape) {
-            if (!s.captureIsAxis) {
-                map.addActionKey(s.captureAction, (Key)k);
-            } else if (s.captureIsPos) {
-                map.setAxisPositive(s.captureAxis, (Key)k);
-            } else {
-                map.setAxisNegative(s.captureAxis, (Key)k);
-            }
-            s.capturing = false;
-        } else if ((Key)k == Key::Escape) {
-            s.capturing = false;
-        }
+        const int k = sys.anyKeyPressedRaw();
+        if (k >= 0) acceptCapturedKey(s, (Key)k);
         ImGui::Spacing();
     }
 
@@ -139,11 +74,7 @@ inline void drawCategoryInput(ProjectSettingsState& s, SimState simState) {
             // + Add binding
             ImGui::PushID((int)action.id.id);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f,0.4f,0.2f,1.0f));
-            if (ImGui::SmallButton("+")) {
-                s.capturing      = true;
-                s.captureIsAxis  = false;
-                s.captureAction  = action.id;
-            }
+            if (ImGui::SmallButton("+")) beginCaptureActionKey(s, action.id);
             ImGui::PopStyleColor();
             ImGui::PopID();
 
@@ -192,12 +123,7 @@ inline void drawCategoryInput(ProjectSettingsState& s, SimState simState) {
             ImGui::TableSetColumnIndex(1);
             ImGui::PushID((int)axis.id.id + 20000);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f,0.45f,0.15f,1.0f));
-            if (ImGui::Button(keyDisplayName(axis.positive))) {
-                s.capturing      = true;
-                s.captureIsAxis  = true;
-                s.captureIsPos   = true;
-                s.captureAxis    = axis.id;
-            }
+            if (ImGui::Button(keyDisplayName(axis.positive))) beginCaptureAxisKey(s, axis.id, true);
             ImGui::PopStyleColor();
             ImGui::PopID();
 
@@ -205,12 +131,7 @@ inline void drawCategoryInput(ProjectSettingsState& s, SimState simState) {
             ImGui::TableSetColumnIndex(2);
             ImGui::PushID((int)axis.id.id + 30000);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f,0.15f,0.15f,1.0f));
-            if (ImGui::Button(keyDisplayName(axis.negative))) {
-                s.capturing      = true;
-                s.captureIsAxis  = true;
-                s.captureIsPos   = false;
-                s.captureAxis    = axis.id;
-            }
+            if (ImGui::Button(keyDisplayName(axis.negative))) beginCaptureAxisKey(s, axis.id, false);
             ImGui::PopStyleColor();
             ImGui::PopID();
 
@@ -276,14 +197,7 @@ inline void drawProjectSettings(bool* open, SimState simState,
     // ── Sidebar ───────────────────────────────────────────────────────────
     ImGui::BeginChild("##sidebar", ImVec2(160, 0), true);
 
-    struct { const char* label; SettingsCategory cat; } categories[] = {
-        {"General",   SettingsCategory::General},
-        {"Input",     SettingsCategory::Input},
-        {"Physics",   SettingsCategory::Physics},
-        {"Audio",     SettingsCategory::Audio},
-        {"Rendering", SettingsCategory::Rendering},
-        {"Scripting", SettingsCategory::Scripting},
-    };
+    const auto& categories = settingsCategories();
     for (auto& c : categories) {
         bool sel = (s.category == c.cat);
         if (ImGui::Selectable(c.label, sel))

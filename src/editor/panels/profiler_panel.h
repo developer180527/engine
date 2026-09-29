@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include "core/profiler.h"
+#include "editor/panels/profiler/model.h"
 #include "core/frame_arena.h"
 #include "runtime/mem_channel.h"
 #include "editor/editor_icons.h"
@@ -22,35 +23,21 @@ namespace detail_prof {
 // A simple flamegraph from the timer's last frame (thread 0). Each sample is a
 // bar positioned by its start offset within the frame and stacked by depth.
 inline void drawFlamegraph(const prof::TimerChannel& timer) {
-    const auto& frame = timer.lastFrame();
-    const uint64_t t0 = timer.lastFrameStart();
-    const uint64_t t1 = timer.lastFrameEnd();
-    const double span = (t1 > t0) ? double(t1 - t0) : 1.0;
-
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const float  width  = ImGui::GetContentRegionAvail().x;
     const float  rowH   = 18.0f;
-
     int maxDepth = 0;
-    for (const auto& s : frame)
-        if (s.threadIndex == 0 && s.depth > maxDepth) maxDepth = s.depth;
-
+    const auto bars = profview::flameBars(timer, maxDepth);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    for (const auto& s : frame) {
-        if (s.threadIndex != 0 || s.end <= s.start) continue;
-        float x0 = origin.x + (float)((double)(s.start - t0) / span) * width;
-        float x1 = origin.x + (float)((double)(s.end   - t0) / span) * width;
+    for (const auto& b : bars) {
+        float x0 = origin.x + b.x0 * width, x1 = origin.x + b.x1 * width;
         if (x1 - x0 < 1.0f) x1 = x0 + 1.0f;
-        const float y0 = origin.y + s.depth * rowH;
-        // Stable per-name colour from the string-literal address.
-        const uint32_t h = (uint32_t)((uintptr_t)s.name >> 4);
-        const ImU32 col = IM_COL32(70 + (h * 53) % 160,
-                                   70 + (h * 97) % 160,
-                                   70 + (h * 131) % 160, 235);
+        const float y0 = origin.y + b.depth * rowH;
+        const ImU32 col = ImGui::ColorConvertFloat4ToU32(ImVec4(b.color.r, b.color.g, b.color.b, b.color.a));
         dl->AddRectFilled({x0, y0}, {x1, y0 + rowH - 2.0f}, col, 2.0f);
         if (x1 - x0 > 32.0f) {
             dl->PushClipRect({x0, y0}, {x1, y0 + rowH}, true);
-            dl->AddText({x0 + 3.0f, y0 + 2.0f}, IM_COL32_WHITE, s.name);
+            dl->AddText({x0 + 3.0f, y0 + 2.0f}, IM_COL32_WHITE, b.name);
             dl->PopClipRect();
         }
     }
@@ -72,37 +59,31 @@ inline void drawProfilerPanel(bool* open, mem::FrameArena& arena) {
     ImGui::TextDisabled("instrumenting profiler — phase granularity");
 
     // ── Rolling frame-time graph ────────────────────────────────────────────
-    static float hist[120] = {0};
-    static int   head = 0;
-    const float  ms   = (float)timer.lastFrameMs();
-    hist[head] = ms;
-    head = (head + 1) % 120;
+    static profview::FrameHistory hist;
+    const float ms = (float)timer.lastFrameMs();
+    hist.push(ms);
     char overlay[48];
     std::snprintf(overlay, sizeof(overlay), "%.2f ms  (%.0f fps)",
                   ms, ms > 0.0f ? 1000.0f / ms : 0.0f);
-    ImGui::PlotLines("##frametime", hist, 120, head, overlay,
+    ImGui::PlotLines("##frametime", hist.raw(), profview::FrameHistory::kSize, hist.head(), overlay,
                      0.0f, 33.3f, ImVec2(-1, 64));
 
     // ── CPU: per-phase table (parent-ID tree → depth indent) ────────────────
     if (ImGui::CollapsingHeader("CPU — frame phases", ImGuiTreeNodeFlags_DefaultOpen)) {
-        const double frameMs = timer.lastFrameMs();
         if (ImGui::BeginTable("##timers", 3,
                 ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
             ImGui::TableSetupColumn("Scope");
             ImGui::TableSetupColumn("ms", ImGuiTableColumnFlags_WidthFixed, 72);
             ImGui::TableSetupColumn("%",  ImGuiTableColumnFlags_WidthFixed, 52);
             ImGui::TableHeadersRow();
-            for (const auto& s : timer.lastFrame()) {
-                if (s.threadIndex != 0) continue;
-                const double sms = (s.end - s.start) / 1e6;
+            for (const auto& r : profview::phaseRows(timer)) {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                if (s.depth) ImGui::Indent(s.depth * 12.0f);
-                ImGui::TextUnformatted(s.name);
-                if (s.depth) ImGui::Unindent(s.depth * 12.0f);
-                ImGui::TableNextColumn(); ImGui::Text("%.3f", sms);
-                ImGui::TableNextColumn();
-                ImGui::Text("%.0f%%", frameMs > 0 ? 100.0 * sms / frameMs : 0.0);
+                if (r.depth) ImGui::Indent(r.depth * 12.0f);
+                ImGui::TextUnformatted(r.name);
+                if (r.depth) ImGui::Unindent(r.depth * 12.0f);
+                ImGui::TableNextColumn(); ImGui::Text("%.3f", r.ms);
+                ImGui::TableNextColumn(); ImGui::Text("%.0f%%", r.pct);
             }
             ImGui::EndTable();
         }
@@ -118,29 +99,23 @@ inline void drawProfilerPanel(bool* open, mem::FrameArena& arena) {
 
     // ── Memory ──────────────────────────────────────────────────────────────
     if (ImGui::CollapsingHeader("Memory", ImGuiTreeNodeFlags_DefaultOpen)) {
-        MemoryChannel* mem = nullptr;
-        for (auto* ch : profiler.channels())
-            if (auto* m = dynamic_cast<MemoryChannel*>(ch)) mem = m;
-        if (mem) {
+        const profview::Memory m = profview::memory(profiler, &arena);
+        if (m.hasChannel) {
             ImGui::Text("C++   new %llu  free %llu  (%llu B)",
-                        (unsigned long long)mem->cppAllocs(),
-                        (unsigned long long)mem->cppFrees(),
-                        (unsigned long long)mem->cppBytes());
+                        (unsigned long long)m.cppAllocs, (unsigned long long)m.cppFrees,
+                        (unsigned long long)m.cppBytes);
             ImGui::Text("flecs alloc %llu  free %llu",
-                        (unsigned long long)mem->flecsAllocs(),
-                        (unsigned long long)mem->flecsFrees());
+                        (unsigned long long)m.flecsAllocs, (unsigned long long)m.flecsFrees);
         } else {
             ImGui::TextDisabled("No memory channel registered");
         }
         ImGui::Separator();
-        const size_t used = arena.used(), cap = arena.capacity(), peak = arena.highWater();
         ImGui::Text("Frame arena: %zu / %zu KB   peak %zu KB",
-                    used / 1024, cap / 1024, peak / 1024);
-        ImGui::ProgressBar(cap ? (float)used / (float)cap : 0.0f, ImVec2(-1, 0));
-        if (arena.overflowBytes())
+                    m.arenaUsed / 1024, m.arenaCap / 1024, m.arenaPeak / 1024);
+        ImGui::ProgressBar(m.arenaCap ? (float)m.arenaUsed / (float)m.arenaCap : 0.0f, ImVec2(-1, 0));
+        if (m.arenaOverflow)
             ImGui::TextColored({1.0f, 0.6f, 0.2f, 1.0f},
-                "arena overflowed to heap (%zu B) — raise size",
-                arena.overflowBytes());
+                "arena overflowed to heap (%zu B) — raise size", m.arenaOverflow);
     }
 
     ImGui::End();

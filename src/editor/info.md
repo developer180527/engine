@@ -145,6 +145,30 @@ only layer that links ImGui/ImGuizmo — the runtime stays UI-free.
 - **Panels** — each a `draw*Panel(ctx)` free function or small header:
   hierarchy, inspector, asset browser, console/terminal, profiler, game view, scene
   view, project settings, menu bar. All receive `EngineContext` per frame.
+- **`editor_core`** (`src/editor/core/`) — the editor's GUI-free library, built
+  whether or not the ImGui editor is: `shortcuts.h` (commands and chords
+  written with an abstract Primary modifier — Cmd on Apple, Ctrl on PC — and
+  per-convention defaults where platforms really differ, e.g. Redo; user
+  overrides in `~/.engine/shortcuts.json`; menu spelling ⌘S / Ctrl+S) and
+  `editor_commands.h` (the command list). The ImGui editor dispatches through
+  it (`imgui_shortcuts.h`) and its menu hints come from it; its shortcuts
+  were "LeftSuper + key", i.e. dead off macOS. `editor_shortcuts_test`.
+- **Hierarchy and Inspector models** (`panels/hierarchy/model.h`,
+  `panels/inspector_panel/model.h`) — listing / add / delete / reparent (world
+  pose kept, structural changes deferred to `apply()`), and edit transactions
+  (`PropertyEdit`, `TransformEdit`: one continuous edit = one undo step, each
+  front end mapping its own widget signals) plus meta-schema field walking for
+  kit components. The ImGui panels draw them. `GizmoState` now carries its own
+  `GizmoOp`/`GizmoSpace` instead of ImGuizmo types, which had put ImGui into
+  `EngineContext` and so into every panel model. `editor_panel_models_test`.
+- **Tool-panel models** — Console (`panels/console/`: the game-audience
+  filter, Clear, counts, demand-gated watching), Terminal (`terminal/`),
+  Script Viewer (`script_viewer/`: documents and the highlighter), Profiler
+  (`profiler/`), Plug-in Manager (`plugins/`: plugin and kit rows with states),
+  Input Bindings (`input_bindings/`: input.json as an editable document with
+  capture fed by the front end) and Project Settings (`project_settings/`).
+  Colours are `edui::Color` (`core/color.h`), not ImVec4/ImU32. The ImGui
+  panels draw these; `editor_tool_panels_test` pins them.
 - **Asset browser = model + front end.** `panels/asset_browser/model.h`
   (`ab::AssetBrowserModel`) holds what the browser knows and does — current
   folder, listing (`scan.h`), selection, the context menu's target, open /

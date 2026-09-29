@@ -12,33 +12,13 @@
 
 #include "editor/engine_context.h"
 #include "editor/undo_stack.h"
+#include "editor/panels/inspector_panel/model.h"
 
 namespace inspector_detail {
 
-// ── Quaternion <-> Euler conversion (UI boundary only) ──────────────────────
-inline bx::Vec3 quatToEulerDeg(const bx::Quaternion& q) {
-    const float sinp = 2.0f * (q.w * q.x - q.y * q.z);
-    float pitch;
-    if      (sinp >=  1.0f) pitch =  bx::kPiHalf;
-    else if (sinp <= -1.0f) pitch = -bx::kPiHalf;
-    else                    pitch = std::asin(sinp);
-    const float sinyCosp = 2.0f * (q.w * q.y + q.x * q.z);
-    const float cosyCosp = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
-    const float yaw      = std::atan2(sinyCosp, cosyCosp);
-    const float sinrCosp = 2.0f * (q.w * q.z + q.x * q.y);
-    const float cosrCosp = 1.0f - 2.0f * (q.z * q.z + q.x * q.x);
-    const float roll     = std::atan2(sinrCosp, cosrCosp);
-    constexpr float kRadToDeg = 57.2957795f;
-    return { pitch * kRadToDeg, yaw * kRadToDeg, roll * kRadToDeg };
-}
-
-inline bx::Quaternion eulerDegToQuat(const bx::Vec3& eulerDeg) {
-    constexpr float kDegToRad = 0.01745329f;
-    const bx::Quaternion qPitch = bx::fromAxisAngle({1,0,0}, eulerDeg.x * kDegToRad);
-    const bx::Quaternion qYaw   = bx::fromAxisAngle({0,1,0}, eulerDeg.y * kDegToRad);
-    const bx::Quaternion qRoll  = bx::fromAxisAngle({0,0,1}, eulerDeg.z * kDegToRad);
-    return bx::normalize(bx::mul(qYaw, bx::mul(qPitch, qRoll)));
-}
+// Euler <-> quaternion lives in the GUI-free inspector model.
+using inspect::quatToEulerDeg;
+using inspect::eulerDegToQuat;
 
 // ── Small colored circle — texture slot status indicator ────────────────────
 inline void texDot(bool loaded, bool isNormal = false) {
@@ -117,26 +97,13 @@ scanLuaScripts(const std::filesystem::path& projectRoot) {
 }
 
 // ── Shared continuous-widget undo helper ────────────────────────────────────
-// Captures snapshot on ImGui::IsItemActivated(), pushes undo on
-// IsItemDeactivatedAfterEdit(). Only one widget is active at a time in ImGui,
-// so a single static pair is safe.
+// ImGui's widget signals onto the model's edit transaction. Only one widget is
+// active at a time in ImGui, so one PropertyEdit is enough.
 inline void propEdit(EngineContext& ctx, flecs::entity e,
                      const char* key, const char* desc) {
-    static nlohmann::json s_propBefore;
-    static bool           s_propCapturing = false;
-    if (ImGui::IsItemActivated()) {
-        s_propBefore = UndoStack::snapshotComponent(e, key);
-        s_propCapturing = true;
-    }
-    if (s_propCapturing && ImGui::IsItemDeactivatedAfterEdit()) {
-        auto after = UndoStack::snapshotComponent(e, key);
-        if (s_propBefore != after)
-            ctx.editor.undoStack.pushPropertyEdit(e, key, s_propBefore, after, desc);
-        s_propCapturing = false;
-        ctx.editor.sceneDirty = true;
-    } else if (s_propCapturing && ImGui::IsItemDeactivated()) {
-        s_propCapturing = false;
-    }
+    static inspect::PropertyEdit s_edit;
+    s_edit.track(ctx, e, key, desc, ImGui::IsItemActivated(),
+                 ImGui::IsItemDeactivatedAfterEdit(), ImGui::IsItemDeactivated());
 }
 
 } // namespace inspector_detail

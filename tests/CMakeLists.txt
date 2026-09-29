@@ -523,6 +523,16 @@ engine_test(editor_undo_test)
 # ends share one definition of what a click does. Fails to BUILD if model.h
 # includes ImGui — which is also why it links no imgui.
 engine_test(asset_browser_model_test)
+# Editor commands resolve per keyboard convention: Primary is Cmd on Apple and
+# Ctrl elsewhere. The shortcuts used to be "LeftSuper + key", i.e. dead off
+# macOS. GUI-free, so it links editor_core only.
+engine_test(editor_shortcuts_test LIB editor_core)
+# The Hierarchy and Inspector models: what add / delete / reparent / edit do,
+# shared by every editor front end. Fails to build if the models include ImGui.
+engine_test(editor_panel_models_test)
+# The tool panels' models (Console, Terminal, Script Viewer, Profiler, Plug-in
+# Manager, Input Bindings, Project Settings), shared by every editor front end.
+engine_test(editor_tool_panels_test)
 # editor.json comes back FROM DISK, which makes EditorPrefs::load untrusted
 # input on the project-open path — a crash there means the project cannot be
 # opened at all. Needs imgui only because EditorCamera's header includes it.
@@ -631,6 +641,25 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/scripts/engine_doctor.py status --check)
     set_tests_properties(docs_status_current PROPERTIES LABELS docs TIMEOUT 120)
+
+    # The contract registry's own checks (docs/contracts/, the Contracts chart
+    # in ENGINE_STATUS.md), run against a scratch tree: that a frozen contract
+    # needs its evidence, that a test only counts when ctest runs it, and that
+    # an implementation only counts as exercised when a test includes or names
+    # it — not when a comment mentions it.
+    add_test(NAME contract_registry_test
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/contract_registry_test.py)
+    set_tests_properties(contract_registry_test PROPERTIES LABELS docs TIMEOUT 60)
+
+    # The work-order board (docs/work/): the checker's rules on a scratch tree,
+    # and that BOARD.md is what the orders generate — edit an order without
+    # regenerating and this fails, as docs_status_current does for the status.
+    add_test(NAME work_orders_test
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/work_orders_test.py)
+    set_tests_properties(work_orders_test PROPERTIES LABELS docs TIMEOUT 60)
+    add_test(NAME work_board_current
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/work_orders.py board --check)
+    set_tests_properties(work_board_current PROPERTIES LABELS docs TIMEOUT 60)
 
     # ── Missing standard headers, caught here instead of on a Linux runner ────
     # libc++ (macOS) pulls much of the standard library in transitively;

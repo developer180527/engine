@@ -16,9 +16,11 @@
 // subsystem grid in here, which hands a game developer a diagnostic console for
 // somebody else's problem and buries theirs in it.
 #include <imgui.h>
+#include <cstdint>
 #include <cstring>
 
 #include "core/logger.h"
+#include "editor/panels/console/model.h"
 #include "editor/panels/terminal_panel.h"
 #include "editor/editor_icons.h"
 
@@ -27,17 +29,30 @@ inline TerminalPanel& getTerminal() {
     return t;
 }
 
-// Shared with the internal console so the two panels agree on colour per level.
+// Shared with the internal console so the two panels agree on colour per
+// level; the colours themselves are the console model's.
 inline const ImVec4* elogLevelColors() {
-    static const ImVec4 c[(int)elog::Level::Count] = {
-        {0.45f,0.45f,0.55f,1},   // Trace
-        {0.5f, 0.5f, 0.5f, 1},   // Debug
-        {0.85f,0.85f,0.85f,1},   // Info
-        {0.3f, 0.9f, 0.4f, 1},   // Success
-        {1.0f, 0.8f, 0.2f, 1},   // Warning
-        {1.0f, 0.35f,0.35f,1},   // Error
-    };
+    static ImVec4 c[(int)elog::Level::Count];
+    static const bool init = [] {
+        for (int i = 0; i < (int)elog::Level::Count; ++i) {
+            const edui::Color k = console::levelColor((elog::Level)i);
+            c[i] = ImVec4(k.r, k.g, k.b, k.a);
+        }
+        return true;
+    }();
+    (void)init;
     return c;
+}
+
+// One log line, as both consoles print it.
+inline void drawLogLine(const console::Line& l, bool withFrame) {
+    const ImVec4 col = elogLevelColors()[(int)l.level];
+    if (withFrame) ImGui::TextDisabled("[%6.2f|f%llu]", l.t, (unsigned long long)l.frame);
+    else           ImGui::TextDisabled("[%6.2f]", l.t);
+    ImGui::SameLine();
+    ImGui::TextColored(col, "[%s]", l.cat.c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(col, "%s", l.msg.c_str());
 }
 
 inline void drawConsolePanel(bool* open) {
@@ -48,73 +63,51 @@ inline void drawConsolePanel(bool* open) {
 
         // ── Log tab ──────────────────────────────────────────────────
         if (ImGui::BeginTabItem("Log")) {
-            static uint64_t viewFrom   = 0;    // "Clear" moves the view, not the ring
-            static bool     autoScroll = true;
-            const ImVec4*   col        = elogLevelColors();
+            static console::LogView view(console::Audience::Game);
+            static bool autoScroll = true;
+            const ImVec4* col = elogLevelColors();
 
-            if (ImGui::Button("Clear")) viewFrom = elog::written();
+            if (ImGui::Button("Clear")) view.clear();
             ImGui::SameLine();
             ImGui::Checkbox("Auto-scroll", &autoScroll);
 
             // Levels a game builder cares about. Debug/Trace are engine-side and
             // are not offered here at all.
             ImGui::SameLine(); ImGui::TextDisabled("|");
-            static bool show[(int)elog::Level::Count] = { false,false,true,true,true,true };
             for (int i = (int)elog::Level::Info; i < (int)elog::Level::Count; ++i) {
                 ImGui::SameLine();
+                bool on = view.showing((elog::Level)i);
                 ImGui::PushStyleColor(ImGuiCol_Text, col[i]);
-                ImGui::Checkbox(elog::levelName((elog::Level)i), &show[i]);
+                if (ImGui::Checkbox(elog::levelName((elog::Level)i), &on)) view.setShowing((elog::Level)i, on);
                 ImGui::PopStyleColor();
             }
 
             ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
             static char find[64] = {};
             ImGui::SetNextItemWidth(160.0f);
-            ImGui::InputText("Find", find, sizeof(find));
+            if (ImGui::InputText("Find", find, sizeof(find))) view.find() = find;
 
-            // Counts, so "no errors" is a statement rather than an absence.
-            const uint64_t total = elog::written();
-            uint32_t warns = 0, errs = 0;
+            const console::LogView::Result r = view.collect(SIZE_MAX);
 
             ImGui::Separator();
             ImGui::BeginChild("##gamelog", ImVec2(0,0), false,
                               ImGuiWindowFlags_HorizontalScrollbar);
-
-            const uint64_t begin = elog::oldest() > viewFrom ? elog::oldest() : viewFrom;
-            elog::Entry e;
-            for (uint64_t s = begin; s < total; ++s) {
-                if (!elog::read(s, e)) continue;
-                const int li = (int)e.level;
-                if (li < 0 || li >= (int)elog::Level::Count) continue;
-                // THE audience rule. Everything else in this panel is chrome.
-                if (!elog::visibleToGame(elog::category(e.cat ? e.cat : "?"), e.level))
-                    continue;
-                if (e.level == elog::Level::Warning) ++warns;
-                if (e.level == elog::Level::Error)   ++errs;
-                if (!show[li]) continue;
-                if (find[0] && !std::strstr(e.msg, find) &&
-                    !(e.cat && std::strstr(e.cat, find))) continue;
-                ImGui::TextDisabled("[%6.2f]", e.t); ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_Text, col[li]);
-                ImGui::Text("[%s]", e.cat ? e.cat : "?");
-                ImGui::PopStyleColor(); ImGui::SameLine();
-                ImGui::TextColored(col[li], "%s%s", e.msg, e.truncated ? " …" : "");
-            }
+            for (const auto& l : r.lines) drawLogLine(l, /*withFrame*/ false);
             if (autoScroll) ImGui::SetScrollHereY(1.0f);
             ImGui::EndChild();
 
-            // Drawn after the loop so the counts are this frame's.
-            if (errs || warns) {
+            // Counts, so "no errors" is a statement rather than an absence.
+            if (r.errors || r.warnings) {
                 ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 190.0f, 30.0f));
-                if (errs) {
+                if (r.errors) {
                     ImGui::TextColored(col[(int)elog::Level::Error],
-                                       ICON_FA_TERMINAL " %u error%s", errs,
-                                       errs == 1 ? "" : "s");
-                    if (warns) ImGui::SameLine();
+                                       ICON_FA_TERMINAL " %u error%s", r.errors,
+                                       r.errors == 1 ? "" : "s");
+                    if (r.warnings) ImGui::SameLine();
                 }
-                if (warns)
+                if (r.warnings)
                     ImGui::TextColored(col[(int)elog::Level::Warning], "%u warning%s",
-                                       warns, warns == 1 ? "" : "s");
+                                       r.warnings, r.warnings == 1 ? "" : "s");
             }
             ImGui::EndTabItem();
         }

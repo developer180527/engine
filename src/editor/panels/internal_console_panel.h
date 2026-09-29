@@ -40,20 +40,16 @@ inline void drawInternalConsolePanel(bool* open) {
     // Edge-triggered on the open bool rather than refreshed every frame, because
     // acquire/release is a refcount: calling acquire once per frame would leak a
     // watcher per frame and the lights would never go out.
-    static bool s_watching = false;
+    static console::WatchWhileOpen s_watch;
     const bool wantOpen = !open || *open;
-    if (wantOpen != s_watching) {
-        s_watching = wantOpen;
-        if (wantOpen) elog::acquireWatch(); else elog::releaseWatch();
-    }
+    s_watch.update(wantOpen);
     if (!wantOpen) return;
 
     ImGui::Begin(ICON_FA_BUG " Internal Console", open);
 
     const ImVec4* col = elogLevelColors();
-    static uint64_t viewFrom   = 0;
+    static console::LogView view(console::Audience::Engine);
     static bool     autoScroll = true;
-    static bool     onlyEngine = false;   // hide game-facing chatter
 
     // ── Ring health ─────────────────────────────────────────────────────────
     const uint64_t total   = elog::written();
@@ -61,9 +57,9 @@ inline void drawInternalConsolePanel(bool* open) {
     const uint64_t trunc   = elog::truncated();
     const uint64_t inRing  = total - elog::oldest();
 
-    if (ImGui::Button("Clear")) viewFrom = elog::written();
+    if (ImGui::Button("Clear")) view.clear();
     ImGui::SameLine(); ImGui::Checkbox("Auto-scroll", &autoScroll);
-    ImGui::SameLine(); ImGui::Checkbox("Engine only", &onlyEngine);
+    ImGui::SameLine(); ImGui::Checkbox("Engine only", &view.engineOnly());
     ImGui::SameLine();
     if (ImGui::Button("Watch all")) elog::watchAll();
     ImGui::SameLine();
@@ -171,43 +167,23 @@ inline void drawInternalConsolePanel(bool* open) {
     // ── Display-side filters ────────────────────────────────────────────────
     // Distinct from the masks above: these hide what was already recorded. The
     // masks stop it being recorded at all, and that is where the cost is.
-    static bool show[(int)elog::Level::Count] = { true,true,true,true,true,true };
     for (int i = 0; i < (int)elog::Level::Count; ++i) {
         if (i) ImGui::SameLine();
+        bool on = view.showing((elog::Level)i);
         ImGui::PushStyleColor(ImGuiCol_Text, col[i]);
-        ImGui::Checkbox(elog::levelName((elog::Level)i), &show[i]);
+        if (ImGui::Checkbox(elog::levelName((elog::Level)i), &on)) view.setShowing((elog::Level)i, on);
         ImGui::PopStyleColor();
     }
     static char find[64] = {};
     ImGui::SetNextItemWidth(200.0f);
-    ImGui::InputText("Find", find, sizeof(find));
+    if (ImGui::InputText("Find", find, sizeof(find))) view.find() = find;
 
     ImGui::Separator();
     ImGui::BeginChild("##internallog", ImVec2(0,0), false,
                       ImGuiWindowFlags_HorizontalScrollbar);
-
-    const uint64_t begin = elog::oldest() > viewFrom ? elog::oldest() : viewFrom;
-    elog::Entry e;
-    for (uint64_t s = begin; s < total; ++s) {
-        // `read` refuses a slot a writer recycled mid-copy, so a flooding
-        // subsystem shows fewer lines here rather than spliced ones.
-        if (!elog::read(s, e)) continue;
-        const int li = (int)e.level;
-        if (li < 0 || li >= (int)elog::Level::Count || !show[li]) continue;
-        if (onlyEngine && elog::visibleToGame(
-                elog::category(e.cat ? e.cat : "?"), elog::Level::Info) &&
-            e.level < elog::Level::Warning) continue;
-        if (find[0] && !std::strstr(e.msg, find) &&
-            !(e.cat && std::strstr(e.cat, find))) continue;
-        // Frame number, which the game console omits: "which frame" is the
-        // question an engine bug is actually about.
-        ImGui::TextDisabled("[%6.2f|f%llu]", e.t, (unsigned long long)e.frame);
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, col[li]);
-        ImGui::Text("[%s]", e.cat ? e.cat : "?");
-        ImGui::PopStyleColor(); ImGui::SameLine();
-        ImGui::TextColored(col[li], "%s%s", e.msg, e.truncated ? " …" : "");
-    }
+    // Frame number, which the game console omits: "which frame" is the
+    // question an engine bug is actually about.
+    for (const auto& l : view.collect(SIZE_MAX).lines) drawLogLine(l, /*withFrame*/ true);
     if (autoScroll) ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();
 

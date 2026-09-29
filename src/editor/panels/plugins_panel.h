@@ -11,6 +11,7 @@
 #include "plugins/jolt_plugin.h"
 #include "plugins/lua_script_plugin.h"
 #include "plugins/audio_plugin.h"
+#include "editor/panels/plugins/model.h"
 
 // ── Plug-in Manager + per-plugin windows ─────────────────────────────────────
 // The manager is a directory: a row per running plugin (with an "Open" button)
@@ -28,11 +29,7 @@ namespace {
 inline const ImVec4 kGreen{0.30f, 1.00f, 0.42f, 1.0f};
 inline const ImVec4 kRed  {1.00f, 0.42f, 0.42f, 1.0f};
 
-inline bool isBuiltinPlugin(IEnginePlugin* p) {
-    return dynamic_cast<JoltPlugin*>(p)
-        || dynamic_cast<LuaScriptPlugin*>(p)
-        || dynamic_cast<AudioPlugin*>(p);
-}
+inline bool isBuiltinPlugin(IEnginePlugin* p) { return pluginsview::isBuiltin(p); }
 inline std::filesystem::path resolveKitModule(const ProjectContext& project,
                                               const std::string& module) {
     std::filesystem::path p(module);
@@ -118,66 +115,30 @@ inline void drawPluginsPanel(bool* open, bool* focus, PluginRegistry& plugins,
     if (project.kits.empty()) {
         ImGui::TextDisabled("No kits declared in project.json");
     } else {
-        bool dirty = false;
-        for (auto& k : project.kits) {
-            ImGui::PushID(&k);
-
-            const KitHost::KitStatus* st = nullptr;   // truth while playing
-            for (const auto& s : kits.status())
-                if (s.name == k.name) { st = &s; break; }
-
-            bool en = k.enabled;
-            if (ImGui::Checkbox("##enabled", &en)) { k.enabled = en; dirty = true; }
+        for (const pluginsview::KitRow& r : pluginsview::kitRows(project, &kits, simulating)) {
+            ImGui::PushID((int)r.index);
+            bool en = r.enabled;
+            if (ImGui::Checkbox("##enabled", &en)) pluginsview::setKitEnabled(project, r.index, en);
             ImGui::SameLine();
-            ImGui::TextUnformatted(k.name.empty() ? k.module.c_str() : k.name.c_str());
+            ImGui::TextUnformatted(r.name.c_str());
             ImGui::SameLine();
-
-            const std::filesystem::path full = resolveKitModule(project, k.module);
-            const char* errLine = nullptr;
-            if (!k.enabled) {
-                ImGui::TextColored(kRed, ICON_FA_CIRCLE_XMARK " disabled");
-            } else if (st) {
-                using S = KitHost::KitStatus::State;
-                switch (st->state) {
-                    case S::Loaded:
-                        ImGui::TextColored(kGreen, ICON_FA_CIRCLE_CHECK " loaded"); break;
-                    case S::Unloaded:
-                        ImGui::TextDisabled(ICON_FA_CIRCLE_XMARK " unloaded"); break;
-                    case S::FileNotFound:
-                        ImGui::TextColored(kRed, ICON_FA_TRIANGLE_EXCLAMATION " missing");
-                        errLine = st->message.c_str(); break;
-                    case S::LoadFailed:
-                        ImGui::TextColored(kRed, ICON_FA_TRIANGLE_EXCLAMATION " failed");
-                        errLine = st->message.c_str(); break;
-                }
-            } else if (!std::filesystem::exists(full)) {
-                ImGui::TextColored(kRed, ICON_FA_TRIANGLE_EXCLAMATION " path not found");
-                errLine = "module file does not exist at this path";
-            } else {
-                ImGui::TextDisabled(ICON_FA_CIRCLE_PLAY " loads at Play");
+            using pluginsview::KitState;
+            switch (r.state) {
+            case KitState::Disabled:     ImGui::TextColored(kRed, ICON_FA_CIRCLE_XMARK " disabled"); break;
+            case KitState::Loaded:       ImGui::TextColored(kGreen, ICON_FA_CIRCLE_CHECK " loaded"); break;
+            case KitState::Unloaded:     ImGui::TextDisabled(ICON_FA_CIRCLE_XMARK " unloaded"); break;
+            case KitState::Missing:      ImGui::TextColored(kRed, ICON_FA_TRIANGLE_EXCLAMATION " missing"); break;
+            case KitState::Failed:       ImGui::TextColored(kRed, ICON_FA_TRIANGLE_EXCLAMATION " failed"); break;
+            case KitState::PathNotFound: ImGui::TextColored(kRed, ICON_FA_TRIANGLE_EXCLAMATION " path not found"); break;
+            case KitState::LoadsAtPlay:  ImGui::TextDisabled(ICON_FA_CIRCLE_PLAY " loads at Play"); break;
             }
-
-            // Mid-play single-kit control: unload a running kit, or (re)load an
-            // enabled one that isn't in (unloaded / fixed on disk since Play).
-            if (simulating && k.enabled) {
-                ImGui::SameLine();
-                if (kits.isLoaded(k.name)) {
-                    if (ImGui::SmallButton("Unload") && unloadKit) unloadKit(k.name);
-                } else if (std::filesystem::exists(full)) {
-                    if (ImGui::SmallButton("Load") && loadKit) loadKit(k.name);
-                }
-            }
-
-            ImGui::TextDisabled("      %s", full.string().c_str());
-            if (!k.requiresKits.empty()) {
-                std::string req;
-                for (const auto& d : k.requiresKits) { if (!req.empty()) req += ", "; req += d; }
-                ImGui::TextDisabled("      requires: %s", req.c_str());
-            }
-            if (errLine) ImGui::TextColored(kRed, "      %s", errLine);
+            if (r.canUnload) { ImGui::SameLine(); if (ImGui::SmallButton("Unload") && unloadKit) unloadKit(project.kits[r.index].name); }
+            if (r.canLoad)   { ImGui::SameLine(); if (ImGui::SmallButton("Load")   && loadKit)   loadKit(project.kits[r.index].name); }
+            ImGui::TextDisabled("      %s", r.path.string().c_str());
+            if (!r.requiredKits.empty()) ImGui::TextDisabled("      requires: %s", r.requiredKits.c_str());
+            if (!r.error.empty()) ImGui::TextColored(kRed, "      %s", r.error.c_str());
             ImGui::PopID();
         }
-        if (dirty) project.save();
         if (simulating)
             ImGui::TextDisabled("Enable/disable applies on the next Play.");
     }
