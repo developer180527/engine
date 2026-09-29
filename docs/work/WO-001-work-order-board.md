@@ -5,7 +5,9 @@ title: Work-order board
 program: process
 priority: P1
 size: S
-state: active
+state: done
+done: 2026-09-30
+evidence: ctest -L docs runs work_orders_test and work_board_current
 touches:
   - scripts/work_orders.py
   - docs/work/README.md
@@ -21,7 +23,7 @@ The board makes the queue a file in the repo, checked like everything else, so c
 - [x] `docs/work/README.md`: the format, the rules and the contract rule, in plain words
 - [x] every open item from the September reviews and plans recorded as an order
 - [x] `tests/work_orders_test.py` pins each rule on a scratch tree
-- [ ] registered in the ctest `docs` lane (`work_orders_test` plus `board --check`). Waits for the editor/contracts work in progress to be committed, because `tests/CMakeLists.txt` is mid-edit there.
+- [x] registered in the ctest `docs` lane (`work_orders_test` plus `board --check` as `work_board_current`)
 
 ## Steps
 Registration, next to `contract_registry_test` in `tests/CMakeLists.txt`:

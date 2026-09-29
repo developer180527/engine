@@ -695,6 +695,275 @@ def check_docs(docs: list[Doc], strict_missing: bool) -> list[Finding]:
     return f
 
 
+# ── Contracts ────────────────────────────────────────────────────────────────
+# A CONTRACT is a subsystem boundary other code is written against: an
+# interface, a C ABI, a set of free functions, or a data layout. Each one is a
+# document in docs/contracts/ whose front-matter names the pieces and whose body
+# states the MEANING — the half of a contract a header cannot carry. See
+# docs/contracts/README.md for the format and docs/plans/subsystem-contracts.md
+# for why.
+#
+# Everything the chart shows is DERIVED from the tree, like the tier table:
+# whether the header and each implementation exist, how many files outside the
+# owner use the header, which implementations a test actually exercises, and
+# whether that test is registered with ctest. Only `state` is declared, and it
+# is checked against evidence the same way a tier is.
+CONTRACT_DIR = "docs/contracts/"
+CONTRACT_KINDS = {
+    "interface": "abstract C++ class(es) implemented elsewhere",
+    "c-abi":     "C structs + function tables, stable across builds/languages",
+    "functions": "free functions over opaque handles, one implementation linked",
+    "data":      "a data layout and who may write/read it (ECS components)",
+}
+CONTRACT_STATES = ["planned", "provisional", "frozen"]
+CONTRACT_RULES = {
+    "planned":     "declared intent; the header may not exist yet",
+    "provisional": "header exists + ≥1 implementation exists; may still change",
+    "frozen":      "provisional + a null (or `null: none` explained under "
+                   "Nothing) + ≥1 registered test + all five meaning sections "
+                   "written; changes only by adding or by versioning",
+}
+IMPL_KINDS = ("real", "null", "fake", "stub")
+# The meaning half: one `## <name>` section each in the contract's body.
+SEMANTICS = ("Nothing", "Ownership", "Threading", "Timing", "Errors")
+_UNWRITTEN = re.compile(r"^\s*(not yet written|todo|tbd)\b", re.I)
+
+
+@dataclass
+class Impl:
+    kind: str
+    path: str            # "" when the entry is `none`
+    symbol: str = ""     # optional: "path#Symbol" names a class inside the file
+
+
+@dataclass
+class Contract:
+    doc: Doc
+    name: str
+    kind: str
+    state: str
+    owner: str
+    header: str
+    impls: list
+    tests: list
+    semantics: dict      # section -> written?
+
+
+def _parse_impl(entry: str) -> Impl | None:
+    m = re.match(r"^(\w+)\s*:\s*(.+)$", entry.strip())
+    if not m:
+        return None
+    kind, rest = m.group(1), m.group(2).strip()
+    if rest.lower().startswith("none"):
+        return Impl(kind, "")
+    path, _, sym = rest.partition("#")
+    return Impl(kind, path.strip(), sym.strip())
+
+
+def _semantic_sections(path: Path, body_start: int) -> dict:
+    """Which of SEMANTICS have a `## Name` section with real content."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[body_start:]
+    except OSError:
+        return {k: False for k in SEMANTICS}
+    found: dict = {}
+    current = None
+    for line in lines:
+        m = re.match(r"^##\s+(\w+)", line)
+        if m:
+            current = m.group(1) if m.group(1) in SEMANTICS else None
+            if current:
+                found.setdefault(current, [])
+            continue
+        if current and line.strip():
+            found[current].append(line)
+    return {k: bool(found.get(k)) and not _UNWRITTEN.match(found[k][0]) for k in SEMANTICS}
+
+
+def find_contracts(docs: list) -> list:
+    out = []
+    for d in docs:
+        if not d.rel.startswith(CONTRACT_DIR) or "contract" not in d.meta:
+            continue
+        impls = [i for i in (_parse_impl(e) for e in d.get_list("implementations")) if i]
+        out.append(Contract(
+            doc=d, name=str(d.meta.get("contract", "")), kind=str(d.meta.get("kind", "")),
+            state=str(d.meta.get("state", "")), owner=str(d.meta.get("owner", "")),
+            header=str(d.meta.get("header", "") or ""), impls=impls,
+            tests=d.get_list("tests"),
+            semantics=_semantic_sections(d.path, d.body_start)))
+    return sorted(out, key=lambda c: c.name)
+
+
+_CTEST_TEXT: str | None = None
+
+
+def test_registered(test_path: str) -> bool:
+    """Is this test built AND run? A test file with an executable and no
+    add_test ran nowhere for weeks once (hid_ring_test), so 'exists' is not
+    evidence. Registration is: its stem appears as an engine_test/add_test
+    name in tests/CMakeLists.txt (a directory counts by its own name)."""
+    global _CTEST_TEXT
+    if _CTEST_TEXT is None:
+        try:
+            _CTEST_TEXT = (REPO / "tests" / "CMakeLists.txt").read_text(encoding="utf-8")
+        except OSError:
+            _CTEST_TEXT = ""
+    stem = Path(test_path).stem
+    word = rf"\b{re.escape(stem)}\b"
+    # engine_test(stem ...) / engine_fuzz_target(stem ...), or any add_test(...)
+    # whose NAME or COMMAND is the executable (add_test(NAME x COMMAND stem)).
+    if re.search(rf"(engine_test|engine_fuzz_target)\s*\(\s*{re.escape(stem)}\b", _CTEST_TEXT):
+        return True
+    if any(re.search(word, m) for m in re.findall(r"add_test\s*\(([^)]*)\)", _CTEST_TEXT)):
+        return True
+    # A test that is a DIRECTORY (a Cargo suite) is run by a custom command
+    # naming that directory.
+    return (REPO / test_path).is_dir() and re.search(word, _CTEST_TEXT) is not None
+
+
+def _read_tree_text(rel: str) -> str:
+    p = REPO / rel
+    if p.is_dir():
+        chunks = []
+        for q in sorted(p.rglob("*")):
+            if q.is_file() and q.suffix in (".c", ".cc", ".cpp", ".h", ".hpp", ".rs", ".py", ".lua"):
+                try:
+                    chunks.append(q.read_text(encoding="utf-8", errors="ignore"))
+                except OSError:
+                    pass
+        return "\n".join(chunks)
+    try:
+        return p.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
+def impl_exercised(impl: Impl, tests: list) -> bool:
+    """Does any listed test NAME this implementation — its symbol, or its
+    file's stem (an #include, a link target, a class)? Weaker than coverage,
+    stronger than trust: a test that never mentions the null renderer cannot
+    be testing it."""
+    if not impl.path:
+        return False
+    if impl.symbol:
+        # A class inside a file: the test must name the class.
+        pats = [re.compile(rf"(?<![A-Za-z0-9_]){re.escape(impl.symbol)}(?![A-Za-z0-9_])")]
+    elif impl.path.endswith((".h", ".hpp")):
+        # A header implementation: the test must INCLUDE it. A word in a
+        # comment ("the renderer that does nothing") is not evidence.
+        inc = re.sub(r"^(src|include)/", "", impl.path)
+        inc = re.sub(r"^modules/[^/]+/include/", "", inc)
+        pats = [re.compile(rf'#\s*include\s*[<"][^>"]*{re.escape(inc)}[>"]')]
+    else:
+        # A source file is linked, not included; its stem as a whole word is
+        # the best static evidence available (weaker, and said so here).
+        pats = [re.compile(rf"(?<![A-Za-z0-9_]){re.escape(Path(impl.path).stem)}(?![A-Za-z0-9_])")]
+    return any(p.search(_read_tree_text(t)) for p in pats for t in tests)
+
+
+def header_users(header: str, owner: str) -> int:
+    """Files outside the owner that #include the header: its fan-in."""
+    if not header:
+        return 0
+    h = header
+    for prefix in ("src/", "include/"):
+        if h.startswith(prefix):
+            h = h[len(prefix):]
+    h = re.sub(r"^modules/[^/]+/include/", "", h)
+    pat = re.compile(rf'#\s*include\s*[<"][^>"]*{re.escape(h)}[>"]')
+    owner = owner.rstrip("/") + "/" if owner else "\0"
+    n = 0
+    for rel in git("ls-files", "src", "modules", "include", "tests", "experiments").split("\n"):
+        if not rel or rel.startswith(owner) or rel == header:
+            continue
+        if not rel.endswith((".h", ".hpp", ".cpp", ".cc", ".c", ".mm")):
+            continue
+        try:
+            if pat.search((REPO / rel).read_text(encoding="utf-8", errors="ignore")):
+                n += 1
+        except OSError:
+            pass
+    return n
+
+
+def check_contracts(contracts: list) -> list:
+    f = []
+    seen = {}
+    for c in contracts:
+        rel = c.doc.rel
+        if not c.name:
+            f.append(Finding("error", rel, "contract has an empty `contract:` name"))
+        elif c.name in seen:
+            f.append(Finding("error", rel, f"contract `{c.name}` also declared in {seen[c.name]}"))
+        seen.setdefault(c.name, rel)
+        if c.kind not in CONTRACT_KINDS:
+            f.append(Finding("error", rel, f"unknown contract kind `{c.kind}` "
+                                           f"(want: {'/'.join(CONTRACT_KINDS)})"))
+        if c.state not in CONTRACT_STATES:
+            f.append(Finding("error", rel, f"unknown contract state `{c.state}` "
+                                           f"(want: {'/'.join(CONTRACT_STATES)})"))
+            continue
+        if c.owner and not (REPO / c.owner).exists():
+            f.append(Finding("error", rel, f"`owner:` does not exist: {c.owner}"))
+        for i in c.impls:
+            if i.kind not in IMPL_KINDS:
+                f.append(Finding("error", rel, f"unknown implementation kind `{i.kind}` "
+                                               f"(want: {'/'.join(IMPL_KINDS)})"))
+            if i.path and not (REPO / i.path).exists():
+                f.append(Finding("error", rel, f"implementation does not exist: {i.path}"))
+            elif i.path and i.symbol and i.symbol not in _read_tree_text(i.path):
+                f.append(Finding("error", rel, f"`{i.symbol}` not found in {i.path}"))
+        for t in c.tests:
+            if (REPO / t).exists() and not test_registered(t):
+                f.append(Finding("error", rel, f"test is not registered with ctest: {t} "
+                                               "(it builds, and nothing runs it)"))
+
+        # ── State evidence, the same way a tier is earned ─────────────────
+        if c.state == "planned":
+            continue
+        if not c.header or not (REPO / c.header).exists():
+            f.append(Finding("error", rel, f"state `{c.state}` requires the header to "
+                                           f"exist: {c.header or '(none given)'}"))
+        if not any(i.path for i in c.impls):
+            f.append(Finding("error", rel, f"state `{c.state}` requires ≥1 implementation "
+                                           f"— {CONTRACT_RULES[c.state]}"))
+        if c.state == "frozen":
+            if not any(i.kind == "null" for i in c.impls):
+                f.append(Finding("error", rel, "state `frozen` requires a `null:` entry "
+                                               "(a path, or `none` explained under ## Nothing)"))
+            if not [t for t in c.tests if (REPO / t).exists() and test_registered(t)]:
+                f.append(Finding("error", rel, "state `frozen` requires ≥1 registered test"))
+            missing = [k for k, ok in c.semantics.items() if not ok]
+            if missing:
+                f.append(Finding("error", rel, "state `frozen` requires every meaning section "
+                                               f"written; missing: {', '.join(missing)}"))
+    return f
+
+
+def contract_rows(contracts: list) -> list:
+    rows = []
+    for c in contracts:
+        impls = []
+        for i in c.impls:
+            if not i.path:
+                impls.append(f"{i.kind}: none")
+                continue
+            name = i.symbol or Path(i.path).stem
+            mark = "✓" if impl_exercised(i, c.tests) else "·"
+            impls.append(f"{i.kind} `{name}` {mark}")
+        registered = [t for t in c.tests if (REPO / t).exists() and test_registered(t)]
+        rows.append({
+            "name": c.name, "doc": c.doc.rel, "kind": c.kind, "state": c.state,
+            "owner": c.owner, "users": header_users(c.header, c.owner) if c.state != "planned" or c.header else 0,
+            "impls": impls, "tests": f"{len(registered)}/{len(c.tests)}",
+            "meaning": f"{sum(c.semantics.values())}/{len(SEMANTICS)}",
+        })
+    order = {s: i for i, s in enumerate(reversed(CONTRACT_STATES))}
+    rows.sort(key=lambda r: (order.get(r["state"], 9), -r["users"], r["name"]))
+    return rows
+
+
 # ── Status generation ────────────────────────────────────────────────────────
 def subsystem_rows(docs: list[Doc]) -> list[dict]:
     rows = []
@@ -799,6 +1068,32 @@ def render_status(docs: list[Doc]) -> str:
         out.append("")
         for d in unreviewed:
             out.append(f"- `{d.rel}`")
+        out.append("")
+
+    contracts = find_contracts(docs)
+    if contracts:
+        crows = contract_rows(contracts)
+        by_state = {st: sum(1 for r in crows if r["state"] == st) for st in CONTRACT_STATES}
+        out.append("## Contracts")
+        out.append("")
+        out.append("Subsystem boundaries other code is written against "
+                   "(`docs/contracts/`). *users*: files outside the owner that "
+                   "include the header. Implementations: ✓ = a listed test names "
+                   "it, · = none does. *tests*: registered with ctest / listed. "
+                   "*meaning*: sections of the contract's semantics written "
+                   f"({', '.join(SEMANTICS)}).")
+        out.append("")
+        out.append("- " + " · ".join(f"**{st}:** {by_state[st]}" for st in reversed(CONTRACT_STATES)))
+        out.append("")
+        out.append("| contract | kind | state | owner | users | implementations | tests | meaning |")
+        out.append("|---|---|---|---|---:|---|---|---|")
+        for r in crows:
+            out.append(f"| [{r['name']}]({r['doc']}) | {r['kind']} | {r['state']} | "
+                       f"`{r['owner']}` | {r['users']} | {'<br>'.join(r['impls']) or '—'} | "
+                       f"{r['tests']} | {r['meaning']} |")
+        out.append("")
+        out.append("Contract states: " + "; ".join(f"**{s}** — {CONTRACT_RULES[s]}"
+                                                    for s in CONTRACT_STATES) + ".")
         out.append("")
 
     out.append("## Tier ladder")
@@ -973,6 +1268,7 @@ def main() -> int:
         return 0
 
     findings = check_docs(docs, strict_missing=args.strict_missing)
+    findings += check_contracts(find_contracts(docs))
     findings += check_bugs()
     findings += check_bug_records_are_not_docs(docs)
     errs = [f for f in findings if f.level == "error"]

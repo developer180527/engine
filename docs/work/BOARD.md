@@ -12,14 +12,14 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-- [WO-001](WO-001-work-order-board.md) **Work-order board** — 4/5 done. Still open:
-  - registered in the ctest `docs` lane (`work_orders_test` plus `board --check`). Waits for the editor/contracts work in progress to be committed, because `tests/CMakeLists.txt` is mid-edit there.
+Nothing. Start the first order under **Next up**.
+
 
 ## Next up
 
 1. [WO-002](WO-002-skinned-gltf-fails-loudly.md) **A skinned glTF fails loudly instead of cooking as a static mesh** · P0 · size S — A skinned `.glb` silently loses its skeleton and animations and cooks as a static mesh.
-2. [WO-004](WO-004-roadmap-stops-lying.md) **The roadmap stops lying about where we are** · P1 · size S — `docs/README.md` tells you to read the roadmap second, and its numbers are a month old.
-3. [WO-005](WO-005-reveal-in-file-manager-per-os.md) **"Reveal in Finder" works per OS instead of running `open` everywhere** · P1 · size S — `revealInFinder` runs `std::system("open -R '…'")` unguarded on every OS. On Linux, `open` is a different program altogether.
+2. [WO-003](WO-003-brief-reentry-command.md) **One command to regain context — `brief`** · P1 · size S — Coming back after a week should take one command, not an afternoon of re-reading.
+3. [WO-004](WO-004-roadmap-stops-lying.md) **The roadmap stops lying about where we are** · P1 · size S — `docs/README.md` tells you to read the roadmap second, and its numbers are a month old.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -31,8 +31,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-001](WO-001-work-order-board.md) | Work-order board | Process & context | S | **active** 4/5 | — |
-| [WO-003](WO-003-brief-reentry-command.md) | One command to regain context — `brief` | Process & context | S | blocked by WO-001 | — |
+| [WO-003](WO-003-brief-reentry-command.md) | One command to regain context — `brief` | Process & context | S | **ready** | — |
 | [WO-004](WO-004-roadmap-stops-lying.md) | The roadmap stops lying about where we are | Process & context | S | **ready** | — |
 | [WO-005](WO-005-reveal-in-file-manager-per-os.md) | "Reveal in Finder" works per OS instead of running `open` everywhere | Portability | S | **ready** | — |
 | [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | Portability | M | **ready** | — |
@@ -72,3 +71,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-025](WO-025-static-module-registration.md) | Static module registration for platforms without dlopen | M | a console or iOS target is real |
 | [WO-026](WO-026-rhi-g0a-spike.md) | RHI G0a spike — answer the specific open questions, then throw it away | M | WO-020 is done (so the spike asks the retained scene's questions), or a free weekend |
 | [WO-027](WO-027-custom-rhi.md) | Custom RHI implementation | XL | WO-019, WO-020 and WO-026 are done, then split into G-phase orders of size L or less |
+
+## Done
+
+| order | title | done | evidence |
+|---|---|---|---|
+| [WO-001](WO-001-work-order-board.md) | Work-order board | 2026-09-30 | ctest -L docs runs work_orders_test and work_board_current |
