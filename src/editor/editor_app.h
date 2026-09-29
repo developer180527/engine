@@ -34,6 +34,10 @@
 #include "editor/panels/profiler_panel.h"
 #include "editor/panels/project_settings_window.h"
 #include "editor/gizmo.h"
+#include "editor/core/editor_commands.h"
+#include "editor/imgui_shortcuts.h"
+#include <fstream>
+#include <sstream>
 #include "editor/imgui/imgui_bgfx.h"
 #include <imgui.h>
 #include <ImGuizmo.h>
@@ -123,6 +127,7 @@ public:
     // Requires ImGui to be initialized already (main.cpp does imguiInit +
     // applyEditorTheme before the project hub, which also draws ImGui).
     void init() {
+        initShortcuts();
         // Input system — register window callbacks + default action bindings
         InputSystem::get().init(m_window);
         auto& map = InputMap::get();
@@ -354,6 +359,10 @@ private:
     PluginWindows                 m_pluginWindows;   // per-plugin dockable windows
     PanelVisibility               m_panels;          // View > Panels toggles
     bool                          m_resetLayout      = false;
+    // Commands and their chords, per keyboard convention (editor/core). The
+    // same map the libgui front end uses; ImGui feeds it through
+    // imgui_shortcuts.h.
+    shortcuts::ShortcutMap        m_shortcuts;
     ProjectSettingsState          m_projectSettingsState;
 
     // Build a fresh EngineContext for this frame's panels.
@@ -367,6 +376,24 @@ private:
             rc.assetService, rc.sceneService,
             rc.skeletons, rc.clips, rc.clipLibrary
         };
+    }
+
+    // The platform says which keyboard convention it follows (Cmd vs Ctrl);
+    // the user's rebindings live in ~/.engine/shortcuts.json. A bad file is
+    // reported and ignored whole — the defaults still work.
+    void initShortcuts() {
+        m_shortcuts.setConvention(m_rt.platform().keyboardConvention());
+        shortcuts::defineEditorCommands(m_shortcuts);
+        const auto path = ProjectContext::homeDir() / ".engine" / "shortcuts.json";
+        if (std::ifstream in{path}) {
+            std::stringstream ss; ss << in.rdbuf();
+            std::string err;
+            if (!m_shortcuts.overridesFromJson(ss.str(), err))
+                LOG_WARN("Editor", "%s ignored: %s", path.string().c_str(), err.c_str());
+        }
+        for (const auto& c : m_shortcuts.conflicts())
+            LOG_WARN("Editor", "shortcut %s is bound to both %s and %s",
+                     m_shortcuts.spell(c.chord).c_str(), c.first.c_str(), c.second.c_str());
     }
 
     void onPlay() {
@@ -534,29 +561,24 @@ private:
             [this]{ platwin::beginWindowDrag(m_rt.platform().nativeWindowHandle()); },
             [this]{ platwin::toggleWindowZoom(m_rt.platform().nativeWindowHandle()); },
             [this]{ platwin::minimizeWindow(m_rt.platform().nativeWindowHandle()); },
-            platwin::titleBarNeedsCustomButtons()
+            platwin::titleBarNeedsCustomButtons(),
+            &m_shortcuts
         });
 
-        // Cmd+S: save  |  Cmd+P: play/pause  |  Escape: stop
-        if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
-            ImGui::IsKeyPressed(ImGuiKey_S, false))
-            saveScene();
-        if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
-            !ImGui::IsKeyDown(ImGuiKey_LeftShift) &&
-            ImGui::IsKeyPressed(ImGuiKey_Z, false))
-            m_editor.undoStack.undo(m_rt.ctx().ecs);
-        if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
-            ImGui::IsKeyDown(ImGuiKey_LeftShift) &&
-            ImGui::IsKeyPressed(ImGuiKey_Z, false))
-            m_editor.undoStack.redo(m_rt.ctx().ecs);
-        if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
-            ImGui::IsKeyPressed(ImGuiKey_Comma, false)) // Cmd+,
-            m_showProjectSettings = true;
-        if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) &&
-            ImGui::IsKeyPressed(ImGuiKey_P, false)) {
-            if (m_editor.simState == SimState::Editing) onPlay();
-            else onPause();
-        }
+        // Editor commands (editor/core/editor_commands.h). These were
+        // "LeftSuper + key" checks, i.e. Cmd on a Mac and the Windows key
+        // everywhere else — so none of them worked off macOS. Escape (stop)
+        // is handled with the cursor-capture logic above.
+        imgui_shortcuts::dispatch(m_shortcuts, [this](std::string_view id) {
+            if      (id == cmd::Save)     saveScene();
+            else if (id == cmd::Undo)     m_editor.undoStack.undo(m_rt.ctx().ecs);
+            else if (id == cmd::Redo)     m_editor.undoStack.redo(m_rt.ctx().ecs);
+            else if (id == cmd::Settings) m_showProjectSettings = true;
+            else if (id == cmd::PlayPause) {
+                if (m_editor.simState == SimState::Editing) onPlay();
+                else onPause();
+            }
+        });
 
         auto ctx = buildCtx();
 

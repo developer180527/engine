@@ -1,5 +1,6 @@
 #pragma once
 #include "editor/window_chrome.h"   // shared title-bar chrome
+#include "editor/core/editor_commands.h"
 #include <imgui.h>
 #include <functional>
 #include <string>
@@ -58,9 +59,18 @@ struct MenuBarCallbacks {
     // traffic lights). Not a style choice: on Windows the caption buttons are
     // non-client area, so the window has no way to be closed without these.
     bool needsWindowButtons = false;
+    // Shortcut spelling for the menu hints, in the platform's style (⌘S on a
+    // Mac, Ctrl+S elsewhere). These were literal "Cmd+S" strings, which was
+    // wrong on every platform but one. Null: no hints.
+    const shortcuts::ShortcutMap* keys = nullptr;
 };
 
 inline void drawMenuBar(const MenuBarCallbacks& cb) {
+    // The chord for a command as a menu hint; a temporary that lives to the
+    // end of the MenuItem call it is passed to.
+    auto hint = [&](const char* id) {
+        return cb.keys ? cb.keys->spell(std::string_view(id)) : std::string();
+    };
     // Grow the bar to the native band height by padding the FRAME, which is
     // what ImGui derives the menu-bar height from. Pushed before Begin (the
     // height is computed there) and popped straight after, so dropdown items
@@ -88,13 +98,13 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
         if (ImGui::MenuItem("Settings..."))         {} // TODO: settings panel
         if (ImGui::MenuItem("Preferences..."))      {} // TODO: editor prefs panel
         ImGui::Separator();
-        if (ImGui::MenuItem("Quit", "Cmd+Q"))       cb.quit();
+        if (ImGui::MenuItem("Quit", hint(cmd::Quit).c_str()))       cb.quit();
         ImGui::EndMenu();
     }
 
     // ── File ─────────────────────────────────────────────────────────
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("Save Scene",   "Cmd+S")) cb.saveScene();
+        if (ImGui::MenuItem("Save Scene",   hint(cmd::Save).c_str())) cb.saveScene();
         if (ImGui::MenuItem("Reload Scene"))          cb.reloadScene();
         ImGui::Separator();
         if (ImGui::MenuItem("New Scene"))             {} // TODO
@@ -108,23 +118,23 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
     if (ImGui::BeginMenu("Edit")) {
         if (!cb.canUndo) ImGui::BeginDisabled();
         { std::string label = cb.undoDesc.empty() ? "Undo" : "Undo " + cb.undoDesc;
-          if (ImGui::MenuItem(label.c_str(), "Cmd+Z") && cb.onUndo) cb.onUndo(); }
+          if (ImGui::MenuItem(label.c_str(), hint(cmd::Undo).c_str()) && cb.onUndo) cb.onUndo(); }
         if (!cb.canUndo) ImGui::EndDisabled();
         if (!cb.canRedo) ImGui::BeginDisabled();
         { std::string label = cb.redoDesc.empty() ? "Redo" : "Redo " + cb.redoDesc;
-          if (ImGui::MenuItem(label.c_str(), "Cmd+Shift+Z") && cb.onRedo) cb.onRedo(); }
+          if (ImGui::MenuItem(label.c_str(), hint(cmd::Redo).c_str()) && cb.onRedo) cb.onRedo(); }
         if (!cb.canRedo) ImGui::EndDisabled();
         ImGui::Separator();
         ImGui::BeginDisabled(); // TODO: clipboard ops
-        ImGui::MenuItem("Cut",   "Cmd+X");
-        ImGui::MenuItem("Copy",  "Cmd+C");
-        ImGui::MenuItem("Paste", "Cmd+V");
+        ImGui::MenuItem("Cut",   hint(cmd::Cut).c_str());
+        ImGui::MenuItem("Copy",  hint(cmd::Copy).c_str());
+        ImGui::MenuItem("Paste", hint(cmd::Paste).c_str());
         ImGui::EndDisabled();
         ImGui::Separator();
-        if (ImGui::MenuItem("Duplicate",  "Cmd+D")) {} // TODO
-        if (ImGui::MenuItem("Delete",     "Del"))    {} // TODO: wires to hierarchy
+        if (ImGui::MenuItem("Duplicate",  hint(cmd::Duplicate).c_str())) {} // TODO
+        if (ImGui::MenuItem("Delete",     hint(cmd::Delete).c_str()))    {} // TODO: wires to hierarchy
         ImGui::Separator();
-        if (ImGui::MenuItem("Select All", "Cmd+A")) {} // TODO
+        if (ImGui::MenuItem("Select All", hint(cmd::SelectAll).c_str())) {} // TODO
         ImGui::EndMenu();
     }
 
@@ -165,7 +175,7 @@ inline void drawMenuBar(const MenuBarCallbacks& cb) {
         if (ImGui::MenuItem("Shader Compiler...")) {} // TODO
         ImGui::Separator();
         if (ImGui::MenuItem("Asset Importer Settings...")) {} // TODO
-        if (ImGui::MenuItem("Project Settings...", "Cmd+,"))
+        if (ImGui::MenuItem("Project Settings...", hint(cmd::Settings).c_str()))
             if (cb.openProjectSettings) cb.openProjectSettings();
         ImGui::Separator();
         if (ImGui::MenuItem("Generate Project Files"))     {} // TODO: CMake

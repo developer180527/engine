@@ -653,6 +653,7 @@ set_target_properties(engine_cook_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+add_subdirectory(editor/core)   # GUI-free; also used by tests and the libgui experiment
 if(ENGINE_BUILD_EDITOR)
     add_subdirectory(editor)
     # Spawners locate the worker next to their own binary at runtime — make
