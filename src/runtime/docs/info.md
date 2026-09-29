@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-17
+verified: 2026-09-30
 parses-external-input: true
 covers:
   - src/runtime/
@@ -105,6 +105,37 @@ required.
   reachable from exactly two TUs — its `IPlatform` and its `window_ops` — and
   `engine_runtime` links only the one selected. Verified: `libglfw3.a` is in the
   SDL3 link line before the change and absent after.
+- **UI input** (`platform/ui_input.h`, 2026-09-27) — what a GUI toolkit needs
+  from the window, backend-free: pointer in window points, wheel in the unit the
+  device reported, keys with auto-repeat, typed TEXT (not keys: dead keys, IME
+  commit), IME composition, focus loss; and back to the OS: clipboard, cursor
+  shape, text-input area. `IPlatform` gained `enableUiInput` / `takeUiEvents` /
+  `windowSize` / `clipboardText` / `setClipboardText` / `setUiCursor` /
+  `setTextInput` / `keyboardConvention`, all with do-nothing defaults, and OFF
+  until enabled — a game and the ImGui editor (which keeps ImGui's own backends)
+  see no change. Before this only ImGui had UI input, through ImGui's GLFW/SDL
+  backends, so any other GUI had to talk to GLFW or SDL directly and a new OS
+  meant porting each GUI. Now the platform translates once: SDL3 in
+  `pollEvents` (its queue is process-wide, so events are filtered to this
+  window), GLFW through CHAINED callbacks installed once (ImGui and the
+  `wsi::` input sink keep running). `keyboardConvention()` (Apple/PC) is a
+  property of the platform, not the compile target, so an unusual OS reports the
+  one it follows. Consumed by the libgui experiment; exercised live on both
+  backends (mouse on both, keyboard on SDL3), no automated test yet.
+  **Tool windows** (`IToolWindow`, same day): `IPlatform::createToolWindow`
+  makes a secondary OS window — a torn-off panel — sharing the platform's event
+  pump (SDL routes each event by window id; GLFW installs the same chained
+  callbacks per window, each with its own sink). Positions, `contentOrigin` and
+  `globalPointer` are desktop POINTS, the unit both backends place windows in.
+  Default null: a platform that cannot make windows (headless, console, phone)
+  keeps floating panels inside the main window. GLFW tool windows expose X11
+  handles only (no Wayland yet). Verified live on SDL3: a libgui tab dragged
+  onto the desktop becomes its own window.
+- **`Key` covers what GUIs and shortcuts need** (2026-09-27): Home/End/PageUp/
+  PageDown/Insert/CapsLock/Menu, punctuation by US-layout position, and the
+  keypad — additive, GLFW-valued like every other Key, static_asserted in
+  `window_ops_glfw.cpp` and mapped in `sdl3_keymap.h`, which also gained the
+  reverse `fromScancode` built from the same table.
 - **Three budgets, and only two of them evict** (2026-09-06).
   `EngineConfig::meshBudgetMB` and `textureBudgetMB` free memory; `memBudgetMB[]`
   is a per-tag SOFT ceiling that warns once and keeps allocating. Conflating them

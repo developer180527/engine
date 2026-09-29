@@ -1,7 +1,10 @@
 #pragma once
+#include "runtime/platform/ui_input.h"
+
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 struct PlatformConfig {
     std::string title  = "Engine";
@@ -28,6 +31,34 @@ struct PlatformConfig {
 // nativeWindowHandle() returning null means headless: EngineRuntime skips
 // renderer (bgfx) initialization entirely.
 enum class CursorMode { Normal, Captured };
+
+// ── IToolWindow — a secondary OS window for tools ────────────────────────────
+// A torn-off panel is its own OS window. Games never need one; an editor does,
+// and before this only ImGui could make them (through ImGui's own backends), so
+// any other GUI had to create windows with GLFW or SDL directly — the coupling
+// IPlatform exists to prevent, and a port to a new OS meant porting each GUI.
+//
+// Created by the platform, so it shares the platform's event pump: SDL has one
+// process-wide queue, and the platform routes each event to the window it
+// belongs to. UI events are in THIS window's points. Positions are in desktop
+// points (the unit GLFW and SDL both use for window placement), the same space
+// as IPlatform::globalPointer and contentOrigin.
+class IToolWindow {
+public:
+    virtual ~IToolWindow() = default;
+    virtual void* nativeWindowHandle() const = 0;      // what bgfx renders into
+    virtual void* nativeDisplayHandle() const { return nullptr; }
+    virtual void  windowSize(int& w, int& h) const = 0;       // points
+    virtual void  framebufferSize(int& w, int& h) const = 0;  // pixels
+    // Top-left of the CLIENT area (not the frame) in desktop points.
+    virtual void  contentOrigin(float& x, float& y) const = 0;
+    virtual void  setContentOrigin(float x, float y) = 0;
+    virtual void  setVisible(bool visible) = 0;
+    virtual bool  closeRequested() const = 0;
+    virtual void  takeUiEvents(std::vector<uiin::Event>& out) = 0;
+    virtual void  setUiCursor(uiin::Cursor /*cursor*/) {}
+    virtual void  setTextInput(bool /*active*/, float, float, float, float) {}
+};
 
 class IPlatform {
 public:
@@ -104,6 +135,45 @@ public:
     // implementation are compiled in, without naming GLFW or SDL themselves.
     // Null when there is no window (headless).
     virtual void* backendWindowHandle() const { return nullptr; }
+
+    // ── UI input (runtime/platform/ui_input.h) ──────────────────────────────
+    // For a GUI toolkit that is not ImGui (ImGui still uses its own backends).
+    // OFF until enabled, so a game or the ImGui editor pays nothing and sees no
+    // change. Once on, each pollEvents() appends to a queue the GUI drains.
+    // The defaults are "no UI input": a platform without an implementation
+    // (headless, a new port not done yet) simply delivers nothing.
+    virtual void enableUiInput(bool /*on*/) {}
+    // Move the queued events into `out` (appended) and clear the queue.
+    virtual void takeUiEvents(std::vector<uiin::Event>& /*out*/) {}
+    // Logical window size (points), which is what UI coordinates are in —
+    // framebufferSize() is PIXELS. Their ratio is the content scale.
+    virtual void windowSize(int& w, int& h) const { framebufferSize(w, h); }
+    virtual std::string clipboardText() const { return {}; }
+    virtual void setClipboardText(const std::string& /*utf8*/) {}
+    virtual void setUiCursor(uiin::Cursor /*cursor*/) {}
+    // Text entry: while active the OS may show an on-screen keyboard or an IME
+    // candidate window, placed at this rect (logical units).
+    virtual void setTextInput(bool /*active*/, float /*x*/, float /*y*/,
+                              float /*w*/, float /*h*/) {}
+    virtual uiin::KeyboardConvention keyboardConvention() const {
+        return uiin::defaultKeyboardConvention();
+    }
+
+    // ── Tool windows (see IToolWindow) ──────────────────────────────────────
+    // Null where the platform cannot make more windows (headless, a console,
+    // a phone): a GUI then keeps floating panels inside the main window.
+    // `cfg.width/height` are the client size in points.
+    virtual std::unique_ptr<IToolWindow> createToolWindow(const PlatformConfig& /*cfg*/) {
+        return nullptr;
+    }
+    // The main window's client top-left, in desktop points.
+    virtual void contentOrigin(float& x, float& y) const { x = 0; y = 0; }
+    // Where the pointer is on the DESKTOP, in points, and whether the primary
+    // button is down — a panel dragged between windows is in no one window's
+    // space. False where the platform cannot say.
+    virtual bool globalPointer(float& /*x*/, float& /*y*/, bool& /*primaryDown*/) const {
+        return false;
+    }
 };
 
 // The platform for the backend this build selected (ENGINE_WINDOW_BACKEND).

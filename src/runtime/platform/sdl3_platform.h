@@ -1,7 +1,12 @@
 #pragma once
 #include "runtime/platform/platform.h"
 
+#include <unordered_map>
+
 struct SDL_Window;
+struct SDL_Cursor;
+union  SDL_Event;
+class  Sdl3ToolWindow;
 
 // ── Sdl3Platform ─────────────────────────────────────────────────────────────
 // IPlatform on SDL3. Selected with -DENGINE_WINDOW_BACKEND=sdl3; GLFW remains
@@ -44,8 +49,31 @@ public:
     std::string hdrSurfaceDescription() const override;
     void  setNativeEventHook(NativeEventHook hook) override;
 
+    // UI input (ui_input.h)
+    void  enableUiInput(bool on) override { m_uiInput = on; }
+    void  takeUiEvents(std::vector<uiin::Event>& out) override;
+    void  windowSize(int& w, int& h) const override;
+    std::string clipboardText() const override;
+    void  setClipboardText(const std::string& utf8) override;
+    void  setUiCursor(uiin::Cursor cursor) override;
+    void  setTextInput(bool active, float x, float y, float w, float h) override;
+
+    // Tool windows (IToolWindow)
+    std::unique_ptr<IToolWindow> createToolWindow(const PlatformConfig& cfg) override;
+    void  contentOrigin(float& x, float& y) const override;
+    bool  globalPointer(float& x, float& y, bool& primaryDown) const override;
+
 private:
+    friend class Sdl3ToolWindow;
+    void translateUiEvent(const SDL_Event& e);
+    std::unordered_map<uint32_t, Sdl3ToolWindow*> m_tools;   // by SDL_WindowID
+
     NativeEventHook m_eventHook;
+    bool                     m_uiInput = false;
+    std::vector<uiin::Event> m_uiEvents;
+    bool                     m_textInputOn = false;
+    uiin::Cursor             m_cursor = uiin::Cursor::Arrow;
+    SDL_Cursor*              m_cursors[(int)uiin::Cursor::Hidden] = {};
     SDL_Window* m_window      = nullptr;
     bool        m_shouldClose = false;
     bool        m_ownsSdl     = false;   // did WE call SDL_Init?

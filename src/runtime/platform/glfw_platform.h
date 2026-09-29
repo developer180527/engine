@@ -2,6 +2,7 @@
 #include "runtime/platform/platform.h"
 
 struct GLFWwindow;
+struct GLFWcursor;
 
 // Default IPlatform: creates and owns a GLFW window. The editor (and any
 // game that wants a stock OS window) uses this. Callers that need raw GLFW
@@ -26,6 +27,20 @@ public:
     float hdrHeadroom() const override;
     std::string hdrSurfaceDescription() const override;
 
+    // UI input (ui_input.h). Enabling installs CHAINED callbacks: whatever was
+    // registered before (ImGui, window_ops' input sink) still runs.
+    void  enableUiInput(bool on) override;
+    void  takeUiEvents(std::vector<uiin::Event>& out) override;
+    void  windowSize(int& w, int& h) const override;
+    std::string clipboardText() const override;
+    void  setClipboardText(const std::string& utf8) override;
+    void  setUiCursor(uiin::Cursor cursor) override;
+
+    // Tool windows (IToolWindow)
+    std::unique_ptr<IToolWindow> createToolWindow(const PlatformConfig& cfg) override;
+    void  contentOrigin(float& x, float& y) const override;
+    bool  globalPointer(float& x, float& y, bool& primaryDown) const override;
+
     // Opaque GLFWwindow* for the ImGui platform backend and the editor's
     // window-ops implementation — neither of which should have to name a
     // concrete platform class. Prefer this over glfwWindow().
@@ -39,4 +54,18 @@ public:
 
 private:
     GLFWwindow* m_window = nullptr;
+
+public:   // the C callbacks append here; not part of the interface
+    // Where one window's UI events go: this platform's own, or a tool
+    // window's. The callbacks are shared; the sink is per window.
+    struct UiSink {
+        bool                     enabled = false;
+        std::vector<uiin::Event> events;
+        uiin::Modifiers          mods;       // GLFW gives mods on keys/buttons only
+        bool                     close = false;
+    };
+    UiSink                   m_ui;
+    bool                     m_uiInstalled = false;
+    uiin::Cursor             m_cursor = uiin::Cursor::Arrow;
+
 };
