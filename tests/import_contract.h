@@ -184,7 +184,7 @@ struct Report {
 // ── Comparison by meaning ───────────────────────────────────────────────────
 namespace detail {
 
-struct Corner { Float3 p, n; Float2 uv; std::string bone; float weight = 0; };
+struct Corner { Float3 p, n; Float2 uv; std::string bone; float weight = 0; Float3 rest; };
 struct Tri    { Corner c[3]; std::string material; Float4 colour; };
 
 inline float q(float v) { return std::round(v * 1000.0f) / 1000.0f; }  // compare at 1 mm / 1e-3
@@ -230,6 +230,20 @@ inline std::vector<Tri> soup(const ImportedScene& s) {
                                     (*bones)[m.joints[v][j]].name < (*bones)[m.joints[v][best]].name) best = j;
                             c.bone = (*bones)[m.joints[v][best]].name;
                             c.weight = ws[best];
+                            // Skinned AT REST: sum of weight * boneRestWorld * inverseBind * vertex.
+                            // This is what an inverseBind MEANS, whatever frame a front end keeps
+                            // it in: if the skin was bound at rest, the vertex stays where the
+                            // scene puts it. A wrong or missing inverseBind moves it.
+                            Float3 r{0, 0, 0};
+                            for (int j = 0; j < 4; ++j) {
+                                if (ws[j] <= 0) continue;
+                                const Bone& b = (*bones)[m.joints[v][j]];
+                                const Float3 q = transformPoint(mul(worldOf(*bones, m.joints[v][j], &Bone::bindLocal), b.inverseBind), m.positions[v]);
+                                r = {r.x + ws[j] * q.x, r.y + ws[j] * q.y, r.z + ws[j] * q.z};
+                            }
+                            c.rest = r;
+                        } else {
+                            c.rest = c.p;
                         }
                     }
                     // Rotate (never reorder) so the smallest corner leads: winding survives.
@@ -264,6 +278,7 @@ inline void compareGeometry(const ImportedScene& got, const ImportedScene& want,
             if (!near3(a.p, b.p)) { why.push_back("triangle " + std::to_string(i) + " corner " + std::to_string(k) + ": position " + str(a.p) + ", want " + str(b.p) + " (winding, units, axes or node transforms)"); return; }
             if (!near3(a.n, b.n)) { why.push_back("triangle " + std::to_string(i) + ": normal " + str(a.n) + ", want " + str(b.n)); return; }
             if (!near(a.uv.x, b.uv.x) || !near(a.uv.y, b.uv.y)) { why.push_back("triangle " + std::to_string(i) + ": UV differs (origin must be top-left)"); return; }
+            if (!near3(a.rest, b.rest)) { why.push_back("triangle " + std::to_string(i) + " corner " + std::to_string(k) + ": skinned at rest it lands at " + str(a.rest) + ", want " + str(b.rest) + " (inverse bind matrices)"); return; }
             if (a.bone != b.bone || !near(a.weight, b.weight)) { why.push_back("triangle " + std::to_string(i) + ": dominant bone '" + a.bone + "' " + std::to_string(a.weight) + ", want '" + b.bone + "' " + std::to_string(b.weight)); return; }
         }
         if (g[i].material != w[i].material || !near(g[i].colour.x, w[i].colour.x) ||
@@ -311,29 +326,6 @@ inline void compareSkeleton(const ImportedScene& got, const ImportedScene& want,
 // animated wanted bone, at the clip's first and last key, the bone's motion in
 // world space, world(t) * inverse(bindWorld), is applied to the bone's bind origin
 // and three points around it, and those positions must match.
-inline Float4x4 inverse4(const Float4x4& a) {                  // general 4x4 inverse (cofactors)
-    const float* m = a.m; float inv[16];
-    inv[0] = m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] + m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
-    inv[4] = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] - m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
-    inv[8] = m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] + m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
-    inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] - m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
-    inv[1] = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] - m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
-    inv[5] = m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] + m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
-    inv[9] = -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] - m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
-    inv[13] = m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] + m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
-    inv[2] = m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15] + m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
-    inv[6] = -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15] - m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
-    inv[10] = m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15] + m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
-    inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14] - m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
-    inv[3] = -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11] - m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
-    inv[7] = m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11] + m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
-    inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11] - m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
-    inv[15] = m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10] + m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
-    const float det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
-    Float4x4 r;
-    for (int i = 0; i < 16; ++i) r.m[i] = det != 0 ? inv[i] / det : 0.0f;
-    return r;
-}
 
 // A bone's local transform at the key nearest `t`: each channel the track has
 // comes from its key, each it lacks from the bind pose.
@@ -384,7 +376,7 @@ inline void compareClips(const ImportedScene& got, const ImportedScene& want, st
             size_t wi = 0; while (wi < wb.size() && wb[wi].name != wt.bone) ++wi;
             size_t gi = 0; while (gi < gb.size() && gb[gi].name != wt.bone) ++gi;
             if (wi == wb.size() || gi == gb.size()) { why.push_back("clips: '" + wc.name + "' bone '" + wt.bone + "' missing"); return; }
-            const Float4x4 gBind = inverse4(worldOf(gb, gi, &Bone::bindLocal)), wBind = inverse4(worldOf(wb, wi, &Bone::bindLocal));
+            const Float4x4 gBind = inverse(worldOf(gb, gi, &Bone::bindLocal)), wBind = inverse(worldOf(wb, wi, &Bone::bindLocal));
             const Float3 o = transformPoint(worldOf(wb, wi, &Bone::bindLocal), {0, 0, 0});
             for (float t : {0.0f, wc.duration}) {
                 const Float4x4 gm = mul(posedWorld(gb, *gc, gi, t), gBind), wm = mul(posedWorld(wb, wc, wi, t), wBind);

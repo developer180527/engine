@@ -46,14 +46,6 @@ Float4x4 conversion(const Authoring& a) {          // C, column-major
     for (int i : {0, 1, 2, 4, 5, 6, 8, 9, 10}) c.m[i] *= a.unit;
     return c;
 }
-Float4x4 inverse(const Float4x4& m) {              // rigid-plus-uniform-scale, as C is
-    const float s2 = m.m[0] * m.m[0] + m.m[1] * m.m[1] + m.m[2] * m.m[2];
-    Float4x4 r;
-    for (int c = 0; c < 3; ++c) for (int rr = 0; rr < 3; ++rr) r.m[c * 4 + rr] = m.m[rr * 4 + c] / s2;
-    const Float3 t = transformPoint(r, {m.m[12], m.m[13], m.m[14]});
-    r.m[12] = -t.x; r.m[13] = -t.y; r.m[14] = -t.z;
-    return r;
-}
 // Written in the file: C^-1 * M * C for a transform, C^-1 * p for a point.
 struct Frame {
     Float4x4 c, ci;

@@ -19,9 +19,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-014](WO-014-gltf-skins-and-animations.md) **glTF skins and animations, supported for real** · P2 · size M — This closes C2 properly. glTF is the format the engine says it owns, and today it can't carry a character.
-2. [WO-015](WO-015-animation-off-assimp-types.md) **Animation takes engine types, not Assimp types** · P2 · size M — `buildOzzClip(aiAnimation*)` and `extractSkeleton(aiScene*)` tie the animation module to one parser.
-3. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
+1. [WO-015](WO-015-animation-off-assimp-types.md) **Animation takes engine types, not Assimp types** · P2 · size M — `buildOzzClip(aiAnimation*)` and `extractSkeleton(aiScene*)` tie the animation module to one parser.
+2. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
+3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
@@ -34,7 +34,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-014](WO-014-gltf-skins-and-animations.md) | glTF skins and animations, supported for real | Asset import & cooking | M | **ready** | import-frontend |
 | [WO-015](WO-015-animation-off-assimp-types.md) | Animation takes engine types, not Assimp types | Asset import & cooking | M | **ready** | — |
 | [WO-016](WO-016-offline-clip-cooker.md) | Offline clip cooker — no clip is cooked at runtime | Asset import & cooking | M | blocked by WO-015 | cooker |
 | [WO-017](WO-017-cook-library-split.md) | Cook library split — the runtime never links the cook stack | Asset import & cooking | L | **ready** | — |
@@ -45,6 +44,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-022](WO-022-decision-records.md) | Decision records — the "why" survives the person | Process & context | M | **ready** | — |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
+| [WO-036](WO-036-a-real-skinned-gltf.md) | A real skinned glTF, cooked and animating in the editor | Asset import & cooking | S | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
@@ -70,6 +70,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 |---|---|---|---|
 | [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) | The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan | 2026-09-30 | pass_states.h (static_assert refuses both bits); tests/cull_mode_test.cpp; the visual check moved to WO-033 |
 | [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | 2026-09-30 | tests/scene_mesh_reference_test.cpp (7 cases) + editor_panel_models_test §8; 4 mutations each red on their own check |
+| [WO-014](WO-014-gltf-skins-and-animations.md) | glTF skins and animations, supported for real | 2026-09-30 | frontend_cgltf_test (contract suite: all 8 cases, none skipped; spline; WO-002 inverted); cooker_test s2c inverted; 6 mutations red. The real-file check moved to WO-036 |
 | [WO-013](WO-013-assimp-front-end.md) | Assimp front end (static and skinned), retiring cookStatic/cookSkinned | 2026-09-30 | frontend_assimp_test (contract suite on COLLADA: 7 pass, 1 skipped with reason); cooked_texture_resolution_test (red on the old path, BUG-0063/0064); old-vs-new on 11 real files (imported-scene.md §7.3); IMP-01; mutations red |
 | [WO-012](WO-012-cgltf-front-end.md) | cgltf front end (static), retiring cookGltf | 2026-09-30 | frontend_cgltf_test (contract suite: 6 pass, 2 skinned skipped for WO-014); old-vs-new comparison on 6 real glTFs (imported-scene.md §7.2); 6 mutations red |
 | [WO-011](WO-011-one-cook-back-end.md) | One cook back end — ImportedScene to cooked assets | 2026-09-30 | src/assets/cookers/mesh/mesh_backend.cpp; tests/mesh_backend_test.cpp (38 checks, reads cooked bytes back); 8 mutations each red |

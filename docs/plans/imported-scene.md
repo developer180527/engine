@@ -3,7 +3,7 @@ status: target
 ---
 # ImportedScene — the engine's own import format
 
-> **Status: design (WO-009), type landed (WO-010), back end built (WO-011), glTF switched (WO-012), Assimp switched (WO-013): every mesh format cooks through ImportedScene.** `src/assets/import/` holds
+> **Status: design (WO-009), type landed (WO-010), back end built (WO-011), glTF switched (WO-012), Assimp switched (WO-013), glTF skins and clips (WO-014): every mesh format cooks through ImportedScene, glTF characters included.** `src/assets/import/` holds
 > the type, the contract's shape, its structural checks and its fake, and
 > `tests/import_contract.h` is the suite every front end must pass. Still to
 > build: WO-011 (the one back end), WO-012/013 (the front ends). The contract is
@@ -365,6 +365,24 @@ worked around:**
 
 **Units are unchanged.** FBX arrives in the units it was authored in, as it
 always has. Converting to metres would rescale every project's FBX: WO-035.
+
+### 7.4 glTF skins and clips (WO-014)
+
+The cgltf front end now reads skins and animations, and WO-002's refusal is
+gone. It follows the glTF spec:
+- **the skeleton** is the skins' joints plus their ancestors
+- **a skinned mesh's node transform is ignored**; the mesh hangs from a node
+  holding the skin's bind space
+- **`JOINTS_0`** is remapped from the skin's list to bones
+- **clips** are translation, rotation and scale channels on bones. Cubic-spline
+  keeps its keyed values, and the loss of its tangents is reported.
+
+**The suite's `inverseBind` check is back, in the form that means something.**
+WO-013 relaxed "inverseBind is the inverse of the rest pose", which real FBX
+breaks. That left nothing checking inverse binds at all. Now each skinned
+vertex is skinned at rest (Σ weight × boneRestWorld × inverseBind × vertex),
+and must land where the scene places it: exactly what an inverse bind is for,
+in whatever frame a front end keeps it.
 
 **Not moved into the back end:** vertex cache ordering. Assimp's
 `ImproveCacheLocality` stays in the Assimp front end, so FBX output is

@@ -41,8 +41,9 @@ never a verdict on the asset.
 
 **A feature in the source that the cooked format cannot carry is a refusal that
 names what was lost, never a success.** A cooked asset that silently lacks part
-of its source is worse than no asset: nothing downstream can tell. Current case:
-a skinned or animation-only glTF (`src/assets/importers/gltf_losses.h`, WO-002,
-pinned by `tests/cooker_test.cpp` §2c). The one sanctioned exception is a loss
+of its source is worse than no asset: nothing downstream can tell. The rule
+now lives in the import front ends' `Dropped` list (`Wrong` refuses the cook):
+see `docs/contracts/import-frontend.md`. Its first case, a skinned glTF
+(WO-002), is no longer a loss: WO-014 cooks glTF skins. The one sanctioned exception is a loss
 that leaves the asset *correct but less*: node animations on a static glTF mesh
 cook as the static mesh and are reported in the cook log.

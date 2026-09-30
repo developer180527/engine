@@ -144,6 +144,7 @@ int main() {
             {"weights on the wrong bone",       Case::SkinnedColumn,         [](ImportedScene& s) { s.meshes[0].joints[0] = {1, 0, 0, 0}; }},
             {"a bone re-parented",              Case::SkinnedColumn,         [](ImportedScene& s) { s.skeleton->bones[1].parent = -1; }},
             {"the clip's last key wrong",       Case::SkinnedColumn,         [](ImportedScene& s) { s.clips[0].tracks[0].rotation[1].value = {0, 0, 0, 1}; }},
+            {"an inverse bind ignored",         Case::SkinnedColumn,         [](ImportedScene& s) { s.skeleton->bones[1].inverseBind = {}; }},
             {"a loss not reported",             Case::Unrepresentable,       [](ImportedScene& s) { s.dropped.pop_back(); }},
             {"a loss with the wrong effect",    Case::Unrepresentable,       [](ImportedScene& s) { s.dropped[0].effect = Dropped::Effect::Wrong; }},
         };

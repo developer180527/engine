@@ -61,6 +61,16 @@ private:
     std::variant<ImportedScene, ImportError> m_v;
 };
 
+// A clip's display name. DCC tools name every take "Take 001" (or Mixamo's
+// "mixamo.com", or nothing); such a clip is named after the file, "<stem>_<i>"
+// when the file has several. Shared by every front end, so an FBX and a glTF
+// of the same clip name it the same.
+inline std::string clipDisplayName(const std::string& raw, const std::string& stem,
+                                   unsigned index, unsigned count) {
+    if (!raw.empty() && raw != "mixamo.com" && raw.rfind("Take", 0) != 0) return raw;
+    return count > 1 ? stem + "_" + std::to_string(index) : stem;
+}
+
 struct ImportOptions {
     // Reserved. Conventions are fixed (imported_scene.h), so nothing a caller
     // passes may change what a scene means; options can only ever add detail.

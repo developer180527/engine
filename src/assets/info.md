@@ -111,9 +111,10 @@ format / scheduling).
   `imp::AssimpFrontend` for FBX, OBJ, COLLADA, 3DS, PLY, STL and Blend, WO-013)
   reads it into an `ImportedScene`, and `meshcook::cookImportedScene` cooks it.
   `mesh_cooker.cpp` only dispatches, and names no parser (audit IMP-01). Every
-  loss is reported: a `Wrong` one (a glTF skin, until WO-014) refuses the cook,
+  loss is reported: a `Wrong` one (an unsupported required glTF extension) refuses the cook,
   and a `Less` one (morphs, vertex colours, cameras, lights, textures that do
-  not resolve) is logged and cooked around. An animation-only file is skipped
+  not resolve, cubic-spline tangents) is logged and cooked around. Skinned
+  glTF cooks with its skeleton and clips (WO-014). An animation-only file is skipped
   for the clip cooker (WO-016). How the output changed, file by file, is in
   `docs/plans/imported-scene.md` §7.2 (glTF) and §7.3 (Assimp).
   Also emits an **LOD chain** — see below.

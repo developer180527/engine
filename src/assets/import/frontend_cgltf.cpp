@@ -1,12 +1,14 @@
 // ── CgltfFrontend — see frontend_cgltf.h ──────────────────────────────────────
 #include "assets/import/frontend_cgltf.h"
-#include "assets/importers/gltf_losses.h"   // the skin/animation judgement, shared with GltfImporter
+#include "assets/import/imported_scene_check.h"   // worldOf, inverse, nearIdentity
 
 #include <cgltf.h>
 
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
+#include <array>
 #include <map>
 #include <set>
 #include <string>
@@ -44,7 +46,11 @@ struct Reader {
     std::filesystem::path dir;
     ImportedScene& out;
 
-    std::map<const cgltf_mesh*, std::vector<uint32_t>> meshIds;   // glTF mesh -> one imp::Mesh per primitive
+    // glTF mesh (+ the skin it is drawn with) -> one imp::Mesh per primitive
+    std::map<std::pair<const cgltf_mesh*, const cgltf_skin*>, std::vector<uint32_t>> meshIds;
+    std::vector<const cgltf_node*> gltfOf;               // imp node index -> glTF node
+    std::map<const cgltf_node*, uint16_t> boneOf;        // glTF node -> imp bone index
+    uint32_t unweighted = 0, extraInfluences = 0;
     int32_t  defaultMaterial = -1;
     uint32_t nonTriangles = 0, extraUvSets = 0, vertexColours = 0, noPositions = 0;
     std::set<std::string> droppedTextures;
@@ -125,9 +131,9 @@ struct Reader {
 
     // One imp::Mesh per triangle primitive, in file order, so the back end emits
     // them in the order the old cook path did.
-    const std::vector<uint32_t>& meshesOf(const cgltf_mesh* gm) {
-        if (auto it = meshIds.find(gm); it != meshIds.end()) return it->second;
-        std::vector<uint32_t>& ids = meshIds[gm];
+    const std::vector<uint32_t>& meshesOf(const cgltf_mesh* gm, const cgltf_skin* skin) {
+        if (auto it = meshIds.find({gm, skin}); it != meshIds.end()) return it->second;
+        std::vector<uint32_t>& ids = meshIds[{gm, skin}];
         const std::string meshName = gm->name && *gm->name ? gm->name : "mesh " + std::to_string(gm - data.meshes);
         uint32_t morphs = 0;
         for (cgltf_size pi = 0; pi < gm->primitives_count; ++pi) {
@@ -173,6 +179,34 @@ struct Reader {
                     m.tangents[v] = {t[0], t[1], t[2], t[3] < 0 ? -1.0f : 1.0f};
                 }
             }
+            // Skin weights: JOINTS_0 indexes the SKIN's joint list; remap each to
+            // the skeleton's bone. Weights are normalised; a vertex influenced by
+            // nothing follows the root bone rather than collapsing to the origin.
+            const cgltf_accessor* ja = attribute(p, cgltf_attribute_type_joints);
+            const cgltf_accessor* wa = attribute(p, cgltf_attribute_type_weights);
+            if (skin && ja && wa) {
+                if (attribute(p, cgltf_attribute_type_joints, 1)) ++extraInfluences;
+                m.joints.resize(n); m.weights.resize(n);
+                for (size_t v = 0; v < n; ++v) {
+                    cgltf_uint j[4] = {0, 0, 0, 0};
+                    float w[4] = {0, 0, 0, 0};
+                    cgltf_accessor_read_uint(ja, v, j, 4);
+                    cgltf_accessor_read_float(wa, v, w, 4);
+                    float sum = 0;
+                    for (int k = 0; k < 4; ++k) {
+                        if (w[k] < 0 || j[k] >= skin->joints_count) w[k] = 0;
+                        sum += w[k];
+                    }
+                    if (sum < 1e-6f) { w[0] = 1; sum = 1; j[0] = 0; ++unweighted; }
+                    std::array<uint16_t, 4> bones{};
+                    for (int k = 0; k < 4; ++k) {
+                        bones[k] = w[k] > 0 ? boneOf.at(skin->joints[j[k]]) : 0;
+                        w[k] /= sum;
+                    }
+                    m.joints[v] = bones;
+                    m.weights[v] = {w[0], w[1], w[2], w[3]};
+                }
+            }
             if (m.indices.empty()) continue;
             m.submeshes = {{0, (uint32_t)m.indices.size(), materialOf(p)}};
             ids.push_back((uint32_t)out.meshes.size());
@@ -184,6 +218,8 @@ struct Reader {
     }
 
     // Depth-first, pre-order: the order the old cook path emitted nodes in.
+    // Only the tree here; meshes are attached once the skeleton exists, because
+    // skin weights are remapped to its bones.
     void node(const cgltf_node* gn, int32_t parent) {
         const int32_t self = (int32_t)out.nodes.size();
         Node nd;
@@ -191,11 +227,136 @@ struct Reader {
         nd.parent = parent;
         cgltf_node_transform_local(gn, nd.local.m);         // column-major, as Float4x4
         out.nodes.push_back(std::move(nd));
-        if (gn->mesh) {
-            const std::vector<uint32_t> ids = meshesOf(gn->mesh);   // copy: meshesOf may grow the map
-            out.nodes[(size_t)self].meshes = ids;
-        }
+        gltfOf.push_back(gn);
         for (cgltf_size c = 0; c < gn->children_count; ++c) node(gn->children[c], self);
+    }
+
+    // ── The skeleton (WO-014) ────────────────────────────────────────────────
+    // Bones are every skin's joints plus their ancestors, in node order: the
+    // ancestors carry any conversion a file puts above its armature, as the
+    // Assimp front end does. Rest pose is the node transforms; a joint's
+    // inverseBind is its skin's own matrix (the pose the skin was bound in),
+    // an ancestor's is the inverse of its world. `animatedOnly` builds the
+    // skeleton of an animation-only file from the nodes its clips animate.
+    void skeleton(bool animatedOnly) {
+        std::set<const cgltf_node*> keep;
+        auto withAncestors = [&](const cgltf_node* n) { for (; n; n = n->parent) keep.insert(n); };
+        for (cgltf_size si = 0; si < data.skins_count; ++si)
+            for (cgltf_size j = 0; j < data.skins[si].joints_count; ++j) withAncestors(data.skins[si].joints[j]);
+        if (animatedOnly)
+            for (cgltf_size a = 0; a < data.animations_count; ++a)
+                for (cgltf_size c = 0; c < data.animations[a].channels_count; ++c)
+                    withAncestors(data.animations[a].channels[c].target_node);
+        if (keep.empty()) return;
+
+        Skeleton sk;
+        std::set<std::string> names;
+        for (size_t ni = 1; ni < out.nodes.size(); ++ni) {        // node 0 is the synthetic root
+            const cgltf_node* gn = gltfOf[ni];
+            if (!keep.count(gn)) continue;
+            Bone b;
+            b.name = out.nodes[ni].name;
+            if (!names.insert(b.name).second) b.name += " #" + std::to_string(ni);   // clips bind by name
+            b.parent = -1;
+            for (const cgltf_node* p = gn->parent; p; p = p->parent)
+                if (auto it = boneOf.find(p); it != boneOf.end()) { b.parent = it->second; break; }
+            b.bindLocal = out.nodes[ni].local;
+            b.inverseBind = inverse(worldOf(out.nodes, ni, &Node::local));
+            boneOf[gn] = (uint16_t)sk.bones.size();
+            sk.bones.push_back(std::move(b));
+        }
+        for (cgltf_size si = 0; si < data.skins_count; ++si) {    // the skin's own bind matrices
+            const cgltf_skin& skin = data.skins[si];
+            if (!skin.inverse_bind_matrices) continue;             // absent means identity (spec)
+            for (cgltf_size j = 0; j < skin.joints_count; ++j)
+                cgltf_accessor_read_float(skin.inverse_bind_matrices, j,
+                                          sk.bones[boneOf.at(skin.joints[j])].inverseBind.m, 16);
+        }
+        for (cgltf_size si = 0; si < data.skins_count; ++si)       // spec default when IBMs are absent
+            if (!data.skins[si].inverse_bind_matrices)
+                for (cgltf_size j = 0; j < data.skins[si].joints_count; ++j)
+                    sk.bones[boneOf.at(data.skins[si].joints[j])].inverseBind = Float4x4{};
+        out.skeleton = std::move(sk);
+    }
+
+    // ── Meshes, attached to the nodes that place them ────────────────────────
+    // A skinned mesh's own node transform is IGNORED (glTF spec): its vertices
+    // live in the space the skin was bound in, which is a joint's bind world
+    // times that joint's inverse bind. It hangs from a node with exactly that
+    // transform (the root itself when it is identity), so the scene means what
+    // the file means; the back end cooks skinned meshes in their own space.
+    void meshes() {
+        const size_t fileNodes = out.nodes.size();       // bind-space nodes are appended below
+        for (size_t ni = 1; ni < fileNodes; ++ni) {
+            const cgltf_node* gn = gltfOf[ni];
+            if (!gn->mesh) continue;
+            const cgltf_skin* skin = gn->skin && out.skeleton ? gn->skin : nullptr;
+            const std::vector<uint32_t> ids = meshesOf(gn->mesh, skin);   // copy: meshesOf may grow the map
+            if (!skin || skin->joints_count == 0) { out.nodes[ni].meshes = ids; continue; }
+            const uint16_t j0 = boneOf.at(skin->joints[0]);
+            const Float4x4 bindSpace = mul(worldOf(out.skeleton->bones, j0, &Bone::bindLocal),
+                                           out.skeleton->bones[j0].inverseBind);
+            if (nearIdentity(bindSpace, 1e-5f)) {
+                for (uint32_t id : ids) out.nodes[0].meshes.push_back(id);
+            } else {
+                Node place; place.name = out.nodes[ni].name + " (bind space)"; place.parent = 0;
+                place.local = bindSpace; place.meshes = ids;
+                out.nodes.push_back(std::move(place));
+                gltfOf.push_back(nullptr);
+            }
+        }
+    }
+
+    // ── Clips ────────────────────────────────────────────────────────────────
+    // Translation, rotation and scale channels on bones. Morph-weight channels,
+    // channels on nodes that are not bones, and interpolation the engine does
+    // not play (CUBICSPLINE: its values are kept, its tangents are not; STEP:
+    // keyed values, played linearly) are each reported, never silently lost.
+    void clips(const std::string& stem) {
+        uint32_t weightChannels = 0, strayChannels = 0, splineChannels = 0, stepChannels = 0;
+        for (cgltf_size a = 0; a < data.animations_count; ++a) {
+            const cgltf_animation& ga = data.animations[a];
+            Clip c;
+            c.name = clipDisplayName(ga.name ? ga.name : "", stem, (unsigned)a, (unsigned)data.animations_count);
+            std::map<std::string, Track> tracks;
+            for (cgltf_size ci = 0; ci < ga.channels_count; ++ci) {
+                const cgltf_animation_channel& ch = ga.channels[ci];
+                if (ch.target_path == cgltf_animation_path_type_weights) { ++weightChannels; continue; }
+                auto bone = boneOf.find(ch.target_node);
+                if (bone == boneOf.end()) { ++strayChannels; continue; }
+                const cgltf_animation_sampler& sm = *ch.sampler;
+                const bool spline = sm.interpolation == cgltf_interpolation_type_cubic_spline;
+                if (spline) ++splineChannels;
+                if (sm.interpolation == cgltf_interpolation_type_step) ++stepChannels;
+                Track& tr = tracks[out.skeleton->bones[bone->second].name];
+                tr.bone = out.skeleton->bones[bone->second].name;
+                for (cgltf_size k = 0; k < sm.input->count; ++k) {
+                    float t = 0; cgltf_accessor_read_float(sm.input, k, &t, 1);
+                    c.duration = std::max(c.duration, t);
+                    const cgltf_size at = spline ? k * 3 + 1 : k;  // spline outputs: in-tangent, value, out-tangent
+                    float v[4] = {0, 0, 0, 1};
+                    if (ch.target_path == cgltf_animation_path_type_rotation) {
+                        cgltf_accessor_read_float(sm.output, at, v, 4);
+                        tr.rotation.push_back({t, {v[0], v[1], v[2], v[3]}});    // source convention, not conjugated
+                    } else {
+                        cgltf_accessor_read_float(sm.output, at, v, 3);
+                        (ch.target_path == cgltf_animation_path_type_translation ? tr.translation : tr.scale)
+                            .push_back({t, {v[0], v[1], v[2]}});
+                    }
+                }
+            }
+            for (auto& [name, tr] : tracks) c.tracks.push_back(std::move(tr));
+            c.duration = std::max(c.duration, 1e-4f);
+            if (!c.tracks.empty()) out.clips.push_back(std::move(c));
+        }
+        if (weightChannels) drop(Dropped::Kind::MorphTargets, Dropped::Effect::Less, weightChannels,
+                                 std::to_string(weightChannels) + " morph-weight animation channel(s)");
+        if (strayChannels) drop(Dropped::Kind::Animation, Dropped::Effect::Less, strayChannels,
+                                std::to_string(strayChannels) + " animation channel(s) on nodes that are not bones");
+        if (splineChannels) drop(Dropped::Kind::Animation, Dropped::Effect::Less, splineChannels,
+                                 std::to_string(splineChannels) + " cubic-spline channel(s): keyed values kept, tangents dropped");
+        if (stepChannels) drop(Dropped::Kind::Animation, Dropped::Effect::Less, stepChannels,
+                               std::to_string(stepChannels) + " step-interpolated channel(s), played linearly");
     }
 };
 
@@ -226,11 +387,6 @@ ImportResult CgltfFrontend::importScene(const std::filesystem::path& source, con
     Reader r{*data, source.parent_path(), scene};
 
     // ── What the file has that this front end does not carry ────────────────
-    const GltfLosses losses = gltfLosses(*data);
-    if (losses.skins > 0)
-        r.drop(Dropped::Kind::Skin, Dropped::Effect::Wrong, (uint32_t)losses.skins, losses.describe());
-    else if (losses.animations > 0 && losses.meshes > 0)
-        r.drop(Dropped::Kind::Animation, Dropped::Effect::Less, (uint32_t)losses.animations, losses.describe());
     for (cgltf_size i = 0; i < data->extensions_required_count; ++i)
         if (!understood(data->extensions_required[i]))
             r.drop(Dropped::Kind::Extension, Dropped::Effect::Wrong, 1,
@@ -255,8 +411,23 @@ ImportResult CgltfFrontend::importScene(const std::filesystem::path& source, con
     const cgltf_scene* gs = data->scene ? data->scene : (data->scenes_count ? &data->scenes[0] : nullptr);
     Node root; root.name = "root";
     scene.nodes.push_back(root);
+    r.gltfOf.push_back(nullptr);                         // node 0 is ours, not the file's
     if (gs)
         for (cgltf_size i = 0; i < gs->nodes_count; ++i) r.node(gs->nodes[i], 0);
+
+    // Skins make a skeleton; so do the clips of an animation-only file. Node
+    // animation on a static model has no skeleton to play on, and is reported.
+    const bool animationOnly = data->meshes_count == 0 && data->animations_count > 0;
+    r.skeleton(animationOnly);
+    r.meshes();
+    if (scene.skeleton) r.clips(source.stem().string());
+    else if (data->animations_count)
+        r.drop(Dropped::Kind::Animation, Dropped::Effect::Less, (uint32_t)data->animations_count,
+               std::to_string(data->animations_count) + " node animation(s) on a model with no skin");
+    if (r.unweighted) r.drop(Dropped::Kind::Skin, Dropped::Effect::Less, r.unweighted,
+                             std::to_string(r.unweighted) + " skinned vertex(es) had no bone influence; bound to the root bone");
+    if (r.extraInfluences) r.drop(Dropped::Kind::Skin, Dropped::Effect::Less, r.extraInfluences,
+                                  "JOINTS_1 on " + std::to_string(r.extraInfluences) + " primitive(s): only the first 4 influences are kept");
 
     if (r.nonTriangles) r.drop(Dropped::Kind::NonTriangles, Dropped::Effect::Less, r.nonTriangles,
                                std::to_string(r.nonTriangles) + " point/line primitive(s)");
@@ -270,11 +441,10 @@ ImportResult CgltfFrontend::importScene(const std::filesystem::path& source, con
         r.drop(Dropped::Kind::Texture, Dropped::Effect::Less, 1, "texture " + t);
 
     // ── Nothing to import is its own answer (the contract's Empty) ──────────
-    if (scene.meshes.empty()) {
-        std::string why = "nothing to import: " + src;
-        if (losses.animations > 0 || losses.skins > 0) why += " (" + losses.describe() + ")";
-        return ImportError{ImportError::Kind::Empty, why};
-    }
+    // A file of clips alone is not empty: it is the clip cooker's input (WO-016),
+    // and the mesh back end skips it.
+    if (scene.meshes.empty() && scene.clips.empty())
+        return ImportError{ImportError::Kind::Empty, "nothing to import: " + src};
     return scene;
 }
 

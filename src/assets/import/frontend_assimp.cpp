@@ -49,14 +49,6 @@ Float4x4 toFloat4x4(const aiMatrix4x4& m) {
     return out;
 }
 
-// Mixamo and most DCC tools export junk take names; the old path fell back to
-// the file stem ("<stem>_<i>" when there are several), and so does this.
-std::string clipName(const aiAnimation* a, const std::string& stem, unsigned i, unsigned count) {
-    const std::string n = a->mName.length ? a->mName.C_Str() : "";
-    if (!n.empty() && n != "mixamo.com" && n.rfind("Take", 0) != 0) return n;
-    return count > 1 ? stem + "_" + std::to_string(i) : stem;
-}
-
 struct Converter {
     const aiScene& sc;
     std::filesystem::path dir;
@@ -310,7 +302,7 @@ ImportResult AssimpFrontend::importScene(const std::filesystem::path& source, co
             const aiAnimation* an = sc->mAnimations[a];
             const double tps = an->mTicksPerSecond > 0.0 ? an->mTicksPerSecond : 24.0;
             Clip c;
-            c.name = clipName(an, stem, a, sc->mNumAnimations);
+            c.name = clipDisplayName(an->mName.length ? an->mName.C_Str() : "", stem, a, sc->mNumAnimations);
             c.duration = std::max((float)(an->mDuration / tps), 1e-4f);
             auto t = [&](double ticks) { return std::clamp((float)(ticks / tps), 0.0f, c.duration); };
             for (unsigned ch = 0; ch < an->mNumChannels; ++ch) {

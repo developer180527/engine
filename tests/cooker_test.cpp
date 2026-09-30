@@ -21,6 +21,7 @@
 #include "assets/cookers/texture/texture_encode.h"
 #include "assets/cookers/texture/texture_cooker.h"
 #include "assets/importers/gltf_losses.h"
+#include "assets/import/frontend_cgltf.h"
 #include <cgltf.h>
 // Assimp's matrix members are inline templates defined in .inl headers this
 // TU must instantiate ITSELF: with assimp built -O0 the archive happened to
@@ -60,16 +61,19 @@ static assetlib::CookResult cookMeshResult(const fs::path& src, const fs::path& 
 // per case. Written by the test, so no binary fixture is checked in.
 // Buffer: pos 0..35, nrm 36..71, idx 72..77, pad, time 80..83, xyz 84..95.
 static std::string tinyGltf(bool mesh, bool skin, bool anim) {
-    unsigned char buf[96] = {};
+    unsigned char buf[168] = {};
     const float pos[9] = {0,0,0, 1,0,0, 0,1,0};
     const float nrm[9] = {0,0,1, 0,0,1, 0,0,1};
     const uint16_t idx[3] = {0,1,2};
     const float t = 0.0f, xyz[3] = {0,0,0};
     std::memcpy(buf, pos, 36); std::memcpy(buf + 36, nrm, 36); std::memcpy(buf + 72, idx, 6);
     std::memcpy(buf + 80, &t, 4); std::memcpy(buf + 84, xyz, 12);
+    // Skin data for all three vertices: JOINTS_0 = (0,0,0,0), WEIGHTS_0 = (1,0,0,0).
+    const float w[4] = {1, 0, 0, 0};
+    for (int v = 0; v < 3; ++v) std::memcpy(buf + 120 + v * 16, w, 16);
     static const char* tab = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string b64;                                   // 96 % 3 == 0: no padding
-    for (int i = 0; i < 96; i += 3) {
+    std::string b64;                                   // 168 % 3 == 0: no padding
+    for (int i = 0; i < 168; i += 3) {
         const unsigned v = buf[i] << 16 | buf[i+1] << 8 | buf[i+2];
         b64 += tab[(v >> 18) & 63]; b64 += tab[(v >> 12) & 63];
         b64 += tab[(v >> 6) & 63];  b64 += tab[v & 63];
@@ -78,7 +82,8 @@ static std::string tinyGltf(bool mesh, bool skin, bool anim) {
                                      : R"([{"mesh":0},{"name":"bone"}])")
                              : R"([{"name":"root"},{"name":"bone"}])";
     std::string j = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1]}],"nodes":)" + nodes;
-    if (mesh) j += R"(,"meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1},"indices":2}]}])";
+    if (mesh) j += skin ? R"(,"meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"JOINTS_0":5,"WEIGHTS_0":6},"indices":2}]}])"
+                        : R"(,"meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1},"indices":2}]}])";
     if (skin) j += R"(,"skins":[{"joints":[1]}])";
     if (anim) j += R"(,"animations":[{"channels":[{"sampler":0,"target":{"node":1,"path":"translation"}}],)"
                    R"("samplers":[{"input":3,"output":4}]}])";
@@ -87,12 +92,15 @@ static std::string tinyGltf(bool mesh, bool skin, bool anim) {
  {"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},
  {"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"},
  {"bufferView":3,"componentType":5126,"count":1,"type":"SCALAR","min":[0],"max":[0]},
- {"bufferView":4,"componentType":5126,"count":1,"type":"VEC3"}],
+ {"bufferView":4,"componentType":5126,"count":1,"type":"VEC3"},
+ {"bufferView":5,"componentType":5123,"count":3,"type":"VEC4"},
+ {"bufferView":6,"componentType":5126,"count":3,"type":"VEC4"}],
 "bufferViews":[
  {"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":36},
  {"buffer":0,"byteOffset":72,"byteLength":6},{"buffer":0,"byteOffset":80,"byteLength":4},
- {"buffer":0,"byteOffset":84,"byteLength":12}],
-"buffers":[{"byteLength":96,"uri":"data:application/octet-stream;base64,)" + b64 + R"("}]})";
+ {"buffer":0,"byteOffset":84,"byteLength":12},{"buffer":0,"byteOffset":96,"byteLength":24},
+ {"buffer":0,"byteOffset":120,"byteLength":48}],
+"buffers":[{"byteLength":168,"uri":"data:application/octet-stream;base64,)" + b64 + R"("}]})";
     return j;
 }
 
@@ -197,18 +205,18 @@ int main() {
         CHECK(allResolve, "every entity's interned path round-trips");
     }
 
-    // ── 2c. A skinned glTF is REFUSED, never cooked as a static mesh ─────
-    // WO-002. cookGltf reads meshes only, and Assimp has no glTF importer to
-    // fall back on, so a skinned .glb used to cook "successfully" with its
-    // skeleton and animations silently gone.
+    // ── 2c. A skinned glTF cooks WITH its skeleton (WO-014; was WO-002's refusal) ─
+    // WO-002 refused these, because the glTF path read meshes only and cooked a
+    // skinned .glb as a static mesh. WO-014 reads skins and clips, so the same
+    // fixtures now cook with bones: the test inverted, as that order required.
     {
-        struct Case { const char* name; bool mesh, skin, anim, cooks; const char* says; };
+        struct Case { const char* name; bool mesh, skin, anim; const char* expect; uint32_t version, bones; size_t clips; };
         const Case cases[] = {
-            {"static",            true,  false, false, true,  ""},
-            {"skinned",           true,  true,  false, false, "skinned glTF is not supported yet: 1 skin and 0 animations would be lost"},
-            {"skinned+animated",  true,  true,  true,  false, "1 skin and 1 animation would be lost"},
-            {"animation-only",    false, false, true,  false, "animation-only glTF: 1 animation"},
-            {"static+node anim",  true,  false, true,  true,  "1 node animation is not cooked; the static mesh is"},
+            {"static",           true,  false, false, "cooks",   2, 0, 0},
+            {"skinned",          true,  true,  false, "cooks",   6, 1, 0},
+            {"skinned+animated", true,  true,  true,  "cooks",   6, 1, 1},
+            {"animation-only",   false, false, true,  "skipped", 0, 0, 0},
+            {"static+node anim", true,  false, true,  "cooks",   2, 0, 0},
         };
         for (const Case& c : cases) {
             const fs::path src = dir / (std::string("wo002_") + c.name + ".gltf");
@@ -219,17 +227,24 @@ int main() {
             const fs::path out = dir / (std::string("wo002_") + c.name + ".cooked");
             fs::remove(out);
             const assetlib::CookResult r = cookMeshResult(src, out);
-            CHECK(r.success == c.cooks, "%s: %s (error: %s)", c.name,
-                  c.cooks ? "cooks" : "is refused", r.error.c_str());
-            if (!c.cooks)
-                CHECK(r.error.find(c.says) != std::string::npos && !fs::exists(out),
-                      "%s: the refusal says what would be lost, and writes nothing", c.name);
-            else if (*c.says)
-                CHECK(l.describe().find(c.says) != std::string::npos,
-                      "%s: the dropped animation is reported: %s", c.name, l.describe().c_str());
-            else
-                CHECK(!l.dropsAnything() && l.describe().empty(), "%s: nothing to report", c.name);
+            if (std::string(c.expect) == "skipped") {
+                CHECK(!r.success && r.skipped && !fs::exists(out),
+                      "%s: skipped for the clip cooker, WO-016 (%s)", c.name, r.error.c_str());
+                continue;
+            }
+            assetlib::MeshAsset a;
+            const bool loaded = r.success && assetlib::loadMesh(a, out);
+            CHECK(loaded && a.header.version == c.version && a.header.boneCount == c.bones && a.clips.size() == c.clips,
+                  "%s: cooks as v%u with %u bone(s) and %zu clip(s) (got v%u, %u, %zu; %s)", c.name, c.version, c.bones, c.clips,
+                  loaded ? a.header.version : 0u, loaded ? a.header.boneCount : 0u, loaded ? a.clips.size() : (size_t)0, r.error.c_str());
         }
+        // Node animation on a model with no skin has nothing to play on: it cooks
+        // static, and the loss is reported rather than silent.
+        const imp::ImportResult nodeAnim = imp::CgltfFrontend().importScene(dir / "wo002_static+node anim.gltf", {});
+        bool reported = false;
+        if (nodeAnim) for (const auto& d : nodeAnim.scene().dropped)
+            reported |= d.kind == imp::Dropped::Kind::Animation && d.effect == imp::Dropped::Effect::Less;
+        CHECK(reported, "static+node anim: the node animation is reported as dropped (Less)");
     }
 
     // ── 2b. glTF cook (cgltf path): transforms bake, normals survive ─────
