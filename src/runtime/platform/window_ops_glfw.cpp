@@ -124,7 +124,7 @@ void* nativeWindowHandle(WindowHandle w) {
     #endif
     return (void*)(uintptr_t)glfwGetX11Window(win(w));
 #else
-    return nullptr;
+#  error "port: window_ops (GLFW) needs native window handle retrieval"
 #endif
 }
 

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-13
+verified: 2026-09-30
 covers:
   - src/core/memory/
 tests:
@@ -88,8 +88,15 @@ map events, budget warnings, routed-vector proof. Run it after ANY change
 here.
 
 ## Future Work
-- Windows backend: VirtualAlloc2 with MEM_ADDRESS_REQUIREMENTS for aligned
-  reservations (mmap trick is POSIX-only) — fold into the Windows port.
+- Windows: the backend EXISTS (`mapAligned` reserves an oversized span with
+  VirtualAlloc and commits only the aligned 2 MB window, because
+  `MEM_RELEASE` cannot free part of a reservation). VirtualAlloc2 with
+  `MEM_ADDRESS_REQUIREMENTS` would ask for the alignment directly and drop the
+  oversized reservation; it is an optimisation, not a missing port.
+- Any other OS: every OS-specific block here ends in `#error "port: …"`
+  (WO-006), so a new port gets five named items (page mapping, page size,
+  release, the immortal mutex, and the includes) instead of POSIX code it may
+  not have. The list: `docs/process/porting.md`.
 - Engine core as dylib so kits share the allocator (removes the boundary rule).
 - Per-tag budgets set from project config; editor Memory panel over
   MemoryChannel (numbers already exposed).

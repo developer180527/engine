@@ -1,4 +1,5 @@
 #pragma once
+#include "core/os_family.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -87,11 +88,13 @@ private:
         void* p = nullptr;
 #if defined(_WIN32)
         p = _aligned_malloc(bytes, align < sizeof(void*) ? sizeof(void*) : align);
-#else
+#elif ENGINE_OS_POSIX
         if (align < sizeof(void*)) align = sizeof(void*);
         // size must be a multiple of alignment for aligned_alloc
         size_t sz = (bytes + align - 1) & ~(align - 1);
         if (posix_memalign(&p, align, sz) != 0) p = nullptr;
+#else
+#  error "port: FrameArena overflow needs an aligned heap allocation (and its matching free)"
 #endif
         if (p) { m_overflow.push_back(p); m_overflowBytes += bytes; }
         return p;
@@ -100,8 +103,10 @@ private:
         for (void* p : m_overflow)
 #if defined(_WIN32)
             _aligned_free(p);
-#else
+#elif ENGINE_OS_POSIX
             std::free(p);
+#else
+#  error "port: FrameArena overflow needs the free that matches its aligned allocation"
 #endif
         m_overflow.clear();
         m_overflowBytes = 0;

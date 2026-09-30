@@ -4,6 +4,7 @@
 // fprintf (no std::string), state is constant-initialized statics (no static
 // init order hazard), locks are immortal OS primitives (no allocation).
 #include "core/memory/mem.h"
+#include "core/os_family.h"
 
 #if defined(_WIN32)
 // WIN32_LEAN_AND_MEAN trims the socket/RPC/OLE headers; NOMINMAX stops
@@ -21,10 +22,12 @@
 #  define NOMINMAX
 #endif
 #  include <windows.h>
-#else
+#elif ENGINE_OS_POSIX
 #  include <pthread.h>
 #  include <sys/mman.h>
 #  include <unistd.h>
+#else
+#  error "port: core/memory needs page mapping, a page-size query and a trivially destructible mutex"
 #endif
 
 #include <atomic>
@@ -97,8 +100,10 @@ inline size_t pageSize() {
         SYSTEM_INFO si;
         ::GetSystemInfo(&si);
         s = (size_t)si.dwPageSize;
-#else
+#elif ENGINE_OS_POSIX
         s = (size_t)::getpagesize();
+#else
+#  error "port: core/memory needs the OS page size"
 #endif
         g_pageSize.store(s, std::memory_order_relaxed);
     }
@@ -132,7 +137,7 @@ Mapping mapAligned(size_t size) {
         ::VirtualFree(raw, 0, MEM_RELEASE);
         return {nullptr, nullptr};
     }
-#else
+#elif ENGINE_OS_POSIX
     void* raw = ::mmap(nullptr, over, PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANON, -1, 0);
     if (raw == MAP_FAILED) return {nullptr, nullptr};
@@ -142,6 +147,8 @@ Mapping mapAligned(size_t size) {
     if (head) ::munmap(raw, head);
     if (tail) ::munmap((void*)(base + size), tail);
     raw = (void*)base;   // head/tail are gone; the region IS the mapping
+#else
+#  error "port: core/memory needs a 2 MB-aligned reserve+commit of address space (mapAligned)"
 #endif
 
     g_mappedBytes.fetch_add(size, std::memory_order_relaxed);
@@ -155,8 +162,10 @@ void unmapRegion(void* raw, size_t bytes) {
 #if defined(_WIN32)
     (void)bytes;
     ::VirtualFree(raw, 0, MEM_RELEASE);
-#else
+#elif ENGINE_OS_POSIX
     ::munmap(raw, bytes);
+#else
+#  error "port: core/memory needs to release what mapAligned mapped (unmapRegion)"
 #endif
 }
 
@@ -177,11 +186,13 @@ using ImmortalMutex = SRWLOCK;
 #  define MEM_MUTEX_INIT SRWLOCK_INIT
 inline void mutexLock(ImmortalMutex& m)   { ::AcquireSRWLockExclusive(&m); }
 inline void mutexUnlock(ImmortalMutex& m) { ::ReleaseSRWLockExclusive(&m); }
-#else
+#elif ENGINE_OS_POSIX
 using ImmortalMutex = pthread_mutex_t;
 #  define MEM_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
 inline void mutexLock(ImmortalMutex& m)   { ::pthread_mutex_lock(&m); }
 inline void mutexUnlock(ImmortalMutex& m) { ::pthread_mutex_unlock(&m); }
+#else
+#  error "port: core/memory needs a mutex that is trivially destructible and statically initialisable (ImmortalMutex)"
 #endif
 
 static_assert(std::is_trivially_destructible_v<ImmortalMutex>,

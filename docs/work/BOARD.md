@@ -12,20 +12,20 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-Nothing. Start the first order under **Next up**.
-
+- [WO-006](WO-006-unknown-os-is-a-compile-error.md) **An unknown OS is a compile error with a to-do list, not silently POSIX** — 3/4 done. Still open:
+  - the macOS, Linux and Windows builds are unchanged. macOS was built locally on 2026-09-30; Linux and Windows are confirmed by the next nightly CI (Linux compiles the new Wayland branch in `GlfwToolWindow` for the first time)
 
 ## Next up
 
-1. [WO-006](WO-006-unknown-os-is-a-compile-error.md) **An unknown OS is a compile error with a to-do list, not silently POSIX** · P1 · size M — Core memory, threading and module loading go `#if _WIN32 … #else POSIX`, so a new port compiles, then quietly does the wrong thing.
-2. [WO-008](WO-008-game-module-static-claim.md) **game_module.h stops claiming a static-link path that does not exist** · P1 · size S — The header says shipped games "link engine::runtime statically and never dlopen anything". No code does that.
-3. [WO-009](WO-009-imported-scene-design.md) **ImportedScene — design the engine's own import format** · P1 · size M — Nothing the engine owns sits between "a parser read the file" and "write the cooked asset", so every source format is a complete cook path of its own.
+1. [WO-008](WO-008-game-module-static-claim.md) **game_module.h stops claiming a static-link path that does not exist** · P1 · size S — The header says shipped games "link engine::runtime statically and never dlopen anything". No code does that.
+2. [WO-009](WO-009-imported-scene-design.md) **ImportedScene — design the engine's own import format** · P1 · size M — Nothing the engine owns sits between "a parser read the file" and "write the cooked asset", so every source format is a complete cook path of its own.
+3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | Portability | M | **ready** | — |
+| [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | Portability | M | **active** 3/4 | — |
 | [WO-008](WO-008-game-module-static-claim.md) | game_module.h stops claiming a static-link path that does not exist | Providers & modules | S | **ready** | kit-abi |
 | [WO-009](WO-009-imported-scene-design.md) | ImportedScene — design the engine's own import format | Asset import & cooking | M | **ready** | import-frontend (new) |
 

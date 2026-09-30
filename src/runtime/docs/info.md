@@ -105,6 +105,13 @@ required.
   reachable from exactly two TUs — its `IPlatform` and its `window_ops` — and
   `engine_runtime` links only the one selected. Verified: `libglfw3.a` is in the
   SDL3 link line before the change and absent after.
+- **Native handles on an unknown OS are a compile error** (WO-006). The
+  GLFW, SDL3 and `wsi::` window-handle getters end in `#error "port: …"` rather
+  than `return nullptr`, because a null handle means nothing renders and nothing
+  says why. Display-connection getters keep a marked `// any OS:` fallback: only
+  X11 and Wayland need one. `GlfwToolWindow` used to hand out an X11 id on a
+  Wayland session while the main window handed out a Wayland surface; it now
+  follows the main window's order.
 - **UI input** (`platform/ui_input.h`, 2026-09-27) — what a GUI toolkit needs
   from the window, backend-free: pointer in window points, wheel in the unit the
   device reported, keys with auto-repeat, typed TEXT (not keys: dead keys, IME

@@ -80,7 +80,7 @@ enum class KeyboardConvention : uint8_t {
 constexpr KeyboardConvention defaultKeyboardConvention() {
 #if defined(__APPLE__)
     return KeyboardConvention::Apple;
-#else
+#else  // any OS: Ctrl-based shortcuts are the convention everywhere but Apple
     return KeyboardConvention::Pc;
 #endif
 }

@@ -130,8 +130,7 @@ void* nativeWindowHandle(WindowHandle w) {
     return (void*)(uintptr_t)SDL_GetNumberProperty(
         props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
 #else
-    (void)props;
-    return nullptr;
+#  error "port: window_ops (SDL3) needs native window handle retrieval"
 #endif
 }
 

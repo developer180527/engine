@@ -64,7 +64,7 @@ void* GlfwPlatform::nativeWindowHandle() const {
     #endif
     return (void*)glfwGetX11Window(m_window);
 #else
-    #error "Unsupported platform — add native window handle retrieval"
+    #error "port: the GLFW main window needs native window handle retrieval"
 #endif
 }
 
@@ -77,7 +77,7 @@ void* GlfwPlatform::nativeDisplayHandle() const {
         return (void*)glfwGetWaylandDisplay();
     #endif
     return (void*)glfwGetX11Display();
-#else
+#else  // any OS: only X11/Wayland pass a display connection alongside the window
     return nullptr;
 #endif
 }
@@ -297,8 +297,17 @@ public:
         return glfwGetCocoaWindow(m_window);
 #elif defined(_WIN32)
         return glfwGetWin32Window(m_window);
-#else
+#elif defined(__linux__)
+        // Same order as GlfwPlatform::nativeWindowHandle. This used to be the
+        // #else, so a tool window on a Wayland session handed out an X11 id
+        // while the main window handed out a Wayland surface.
+    #if defined(GLFW_EXPOSE_NATIVE_WAYLAND)
+        if (glfwGetPlatform && glfwGetPlatform() == GLFW_PLATFORM_WAYLAND)
+            return (void*)glfwGetWaylandWindow(m_window);
+    #endif
         return (void*)glfwGetX11Window(m_window);
+#else
+#  error "port: GLFW tool windows need native window handle retrieval"
 #endif
     }
     void windowSize(int& w, int& h) const override { glfwGetWindowSize(m_window, &w, &h); }

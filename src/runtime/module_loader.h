@@ -24,6 +24,8 @@
 #include <string>
 #include <vector>
 
+#include "core/os_family.h"
+
 #if defined(_WIN32)
 // Guarded: the top-level CMakeLists already defines both for MSVC
 // (add_compile_definitions), and an unguarded #define here is
@@ -37,9 +39,11 @@
 #    define NOMINMAX            // keep windows.h min/max macros out of bx/flecs/std
 #  endif
 #  include <windows.h>
-#else
+#elif ENGINE_OS_POSIX
 #  include <dlfcn.h>
 #  include <unistd.h>   // getpid — temp module names are PID-unique (M.4)
+#else
+#  error "port: module loading needs a dynamic loader, or static module registration (WO-025)"
 #endif
 
 namespace modload {
@@ -67,7 +71,7 @@ inline std::string libError() {
     if (buf) ::LocalFree(buf);
     return s;
 }
-#else
+#elif ENGINE_OS_POSIX
 using LibHandle = void*;
 inline LibHandle libOpen(const fs::path& p) { return ::dlopen(p.c_str(), RTLD_NOW | RTLD_LOCAL); }
 inline void*     libSym(LibHandle h, const char* n) { return ::dlsym(h, n); }
@@ -79,6 +83,8 @@ inline void*     libSym(LibHandle h, const char* n) { return ::dlsym(h, n); }
 inline void      libClose(LibHandle h) { if (h) ::dlclose(h); }
 inline std::string libError() { const char* e = ::dlerror(); return e ? e : ""; }
 inline unsigned long osProcessId() { return (unsigned long)::getpid(); }
+#else
+#  error "port: module loading needs libOpen/libSym/libClose/libError and a process id"
 #endif
 
 // ── Host-side adapter ────────────────────────────────────────────────────────

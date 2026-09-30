@@ -84,7 +84,7 @@ bool setForCurrentThread(Class c) {
     const auto tid = static_cast<id_t>(::syscall(SYS_gettid));
     return ::setpriority(PRIO_PROCESS, tid, nice) == 0;
 
-#else
+#else  // any OS: thread priority is a hint; "not applied" (false) is an honest answer
     return false;
 #endif
 }
@@ -115,7 +115,7 @@ Class currentThreadClass() {
 bool classIsObservable() {
 #if defined(__APPLE__)
     return true;
-#else
+#else  // any OS: only Apple can read a thread's class back
     return false;
 #endif
 }

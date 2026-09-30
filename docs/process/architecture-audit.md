@@ -56,6 +56,8 @@ rule nobody agreed to.
 | `TEST-02` | every test file is registered with ctest | `engineering-standards.md` §4.1 |
 | `DET-01` | the fixed step reads no clock and no RNG | `src/runtime/docs/info.md` |
 | `HDR-01` | the C ABI headers pull in nothing of ours | `extension-model.md` |
+| `RHI-01` | bgfx's math library (`bx/`) spreads no further outside the renderer | `docs/rhi/evidence-coupling.md` |
+| `OS-01` | in `src/core` and `src/runtime`, an `#else` after an OS check is `#error "port: …"` or marked `// any OS: <why>`; `docs/process/porting.md` is current | `src/core/os_family.h` |
 | `DOC-01` | every directory of code is covered by some document | `engineering-standards.md` §1 |
 
 `bx` is **not** treated as a graphics dependency, matching `check_gpu_seam.py`'s

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-17
+verified: 2026-09-30
 covers:
   - src/core/
 tests:
@@ -166,6 +166,11 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
 ## Rules
 - Keep this layer header-only and free of engine state; it should compile in
   a unit test with no GPU, no ECS, no filesystem.
+- **An unknown OS is a compile error, never silently POSIX** (WO-006). OS
+  code is `#if defined(_WIN32) … #elif ENGINE_OS_POSIX … #else #error "port: …"`,
+  with `ENGINE_OS_POSIX` defined once in `os_family.h`. A `#else` that suits any
+  OS says `// any OS: <why>` on the same line. Audit rule OS-01 enforces both,
+  and `docs/process/porting.md` is the generated list of every `port:` item.
 
 
 ## The log ring (2026-08-11 rewrite)

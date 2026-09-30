@@ -64,8 +64,7 @@ void* Sdl3Platform::nativeWindowHandle() const {
     return (void*)(uintptr_t)SDL_GetNumberProperty(
         props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
 #else
-    (void)props;
-    return nullptr;
+#  error "port: the SDL3 main window needs native window handle retrieval"
 #endif
 }
 
@@ -77,8 +76,8 @@ void* Sdl3Platform::nativeDisplayHandle() const {
             props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr))
         return wl;
     return SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
-#else
-    return nullptr;   // macOS/Windows: the window handle is sufficient
+#else  // any OS: only X11/Wayland pass a display connection alongside the window
+    return nullptr;
 #endif
 }
 
@@ -228,7 +227,7 @@ public:
             return surf;
         return (void*)(uintptr_t)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
 #else
-        (void)props; return nullptr;
+#  error "port: SDL3 tool windows need native window handle retrieval"
 #endif
     }
     void* nativeDisplayHandle() const override { return m_owner->nativeDisplayHandle(); }
