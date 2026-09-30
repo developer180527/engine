@@ -126,8 +126,10 @@ format / scheduling).
   loss is reported: a `Wrong` one (an unsupported required glTF extension) refuses the cook,
   and a `Less` one (morphs, vertex colours, cameras, lights, textures that do
   not resolve, cubic-spline tangents) is logged and cooked around. Skinned
-  glTF cooks with its skeleton and clips (WO-014). An animation-only file is skipped
-  for the clip cooker (WO-016). How the output changed, file by file, is in
+  glTF cooks with its skeleton and clips (WO-014). An animation-only file (clips, no
+  triangles) cooks as a CLIP instead: `clipcook::cookClip` (`cookers/clip/`)
+  writes a skeleton-independent `anim::CookedClip`, which `ClipLibrary` binds at
+  load and `engine_build` packages under its source path's name (WO-016). How the output changed, file by file, is in
   `docs/plans/imported-scene.md` §7.2 (glTF) and §7.3 (Assimp).
   Also emits an **LOD chain** — see below.
 - `TextureCooker` — stb decode → block-compressed texels + mips via

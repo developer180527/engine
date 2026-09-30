@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-17
+verified: 2026-09-30
 parses-external-input: true
 covers:
   - modules/assetlib/
@@ -171,6 +171,7 @@ the seams they already had internally — mechanically, with cook keys unchanged
 | `registry/scanner.cpp` | the filesystem walk, stat/hash change detection, move detection by content hash. The only registry code that touches the filesystem, and the hot path of a warm editor start. **One registry holds records from several roots** (project assets + engine defaults), so the deleted-file sweep is scoped to the root just walked — an unscoped one had every scan declaring the other root's assets Missing. |
 | `registry/asset_names.cpp` | `AssetType` ⇄ name/extension. Pure, no SQLite — what you edit to add a format. |
 | `formats/*.cpp` | the on-disk asset containers (mesh, texture, scene, material, shader): read/write, versioned headers, bounds-checked parse. |
+| `clip_asset.h` | the cooked standalone clip's IDENTITY only: magic, version, and the file name it has in a package (from its source path; a dist has no registry). Its payload, keys by bone name in an ozz archive, is encoded and decoded by `src/animation/cooked_clip.h`, which owns the ozz side. Here so packaging can recognise and place clips without depending on animation (WO-016). |
 | `ddc/hash.cpp` | BLAKE3 over bytes/files, and the ONE function composing a cook key. Pure — what a key covers fits on a screen. |
 | `ddc/store.cpp` | the two-tier store: roots, atomic ingest, hardlink materialization, shared→local promotion. Only ever about moving bytes safely. |
 | `ddc/gc.cpp` | budget + LRU eviction of the LOCAL tier. Content-addressed blobs have no referrer, so they cannot be reference counted. |

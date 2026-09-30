@@ -190,8 +190,8 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
                 // Skinned wiring (mirrors the editor's async-load callback in
                 // scene_serializer.h): SkinnedMesh gets the fresh skeleton
                 // handle; the Animator binds its clip at spawn — standalone
-                // clipPath through the ClipLibrary (cooked-clip cache in
-                // ship builds), else the mesh's embedded clip by index.
+                // clipPath through the ClipLibrary (the packaged cooked
+                // clip in ship builds, WO-016), else the mesh's embedded clip by index.
                 if (skin.skeleton.valid()) {
                     SkinnedMesh sm;
                     sm.skeleton = skin.skeleton;

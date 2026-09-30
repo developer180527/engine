@@ -142,4 +142,27 @@ inline AnimClip finishOzzClip(ozz::animation::offline::RawAnimation& raw, const 
     return clip;
 }
 
+// Bind a clip whose keys are held BY BONE NAME (keys.tracks[i] animates the
+// bone named trackBones[i]) to `skel`, which has its ozz data: each track moves
+// to the joint of that name, a track naming no bone is skipped and counted, and
+// finishOzzClip does the rest. Every clip is built through here: straight from
+// an ImportedScene (imp::buildOzzClip) and from a cooked clip (ClipLibrary), so
+// the two cannot differ (WO-016).
+inline AnimClip bindRawClip(const std::vector<std::string>& trackBones,
+                            const ozz::animation::offline::RawAnimation& keys,
+                            const Skeleton& skel) {
+    if (!skel.ozz) { LOG_ERROR("Anim", "bindRawClip: skeleton has no ozz data"); return {}; }
+    ozz::animation::offline::RawAnimation raw;
+    raw.duration = keys.duration;
+    raw.tracks.resize((size_t)skel.ozz->num_joints());
+    int mapped = 0;
+    for (size_t i = 0; i < trackBones.size() && i < keys.tracks.size(); ++i) {
+        const int ours = skel.findBone(trackBones[i].c_str());
+        if (ours < 0) continue;
+        raw.tracks[(size_t)skel.ozzJointOf[ours]] = keys.tracks[i];
+        ++mapped;
+    }
+    return finishOzzClip(raw, skel, keys.name.c_str(), mapped, (int)trackBones.size());
+}
+
 } // namespace anim

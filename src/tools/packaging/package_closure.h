@@ -139,4 +139,18 @@ MaterialTextureSet resolveMaterialTextures(
         const std::filesystem::path& cacheRoot,
         const std::filesystem::path& outDir);
 
+// ── Every cooked clip, under the name a registry-free runtime looks for ─────
+// A cooked scene names a standalone clip by its SOURCE path, and a dist has no
+// registry to turn that into the cooked file. So each cooked clip ships as
+// .cache/anim/<assetlib::packagedClipFileName(source path)>, which ClipLibrary
+// finds from the path alone (WO-016). EVERY cooked clip, not only those a scene
+// names: a script may play any clip, and they are small.
+struct ClipFile {
+    std::string cookedRel;      // "meshs/<uuid>.cooked", relative to the cache
+    std::string packagedName;   // file name under <dist>/.cache/anim/
+    std::string sourcePath;     // for messages
+};
+std::vector<ClipFile> packagedClips(assetlib::AssetRegistry& registry,
+                                    const std::filesystem::path& cacheRoot);
+
 } // namespace pkg

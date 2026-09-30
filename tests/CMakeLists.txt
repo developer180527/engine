@@ -420,6 +420,10 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # the one glTF the tests did not write. Read, checked against the spec's own
     # skinning and posing computed with cgltf's helpers, and cooked.
     engine_test(real_gltf_test)
+    # WO-016: an animation-only source cooks to a skeleton-independent clip in
+    # the normal pipeline; the editor binds it through the registry, and a
+    # shipped build (no registry, no source reader) through its packaged name.
+    engine_test(clip_cook_test)
     target_compile_definitions(real_gltf_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     # Cook infrastructure (scheduler / DDC / manifest / scanner) — needs only
     # the GPU-free core, no game assets.
@@ -548,6 +552,9 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # the two third-party deserializers reading out of it were not.
     # engine_runtime: cooked_skin.h pulls in ozz + the animation headers.
     engine_fuzz_target(fuzz_cooked_skin_test cooked_skin LIB engine_runtime)
+    # WO-016's cooked standalone clip: the engine's header and name table, then
+    # an ozz RawAnimation archive.
+    engine_fuzz_target(fuzz_cooked_clip_test cooked_clip LIB engine_runtime)
     engine_fuzz_target(fuzz_scene_service_test scene_service LIB engine_runtime)
     # The import front ends (cgltf, Assimp) read model files from outside the
     # engine, and the one back end cooks what they return. Mutated glTF and OBJ

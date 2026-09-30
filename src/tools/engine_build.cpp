@@ -529,11 +529,23 @@ int main(int argc, char** argv) {
                     "%zu name(s)\n", materials.files.size(),
                     materials.names.size());
 
-    if (fs::exists(cache / "anim"))
-        for (auto& e : fs::directory_iterator(cache / "anim", ec))
-            if (!copyFile(e.path(), dist / ".cache" / "anim"
-                                         / e.path().filename()))
-                return failed("copying an anim clip failed");
+    // Every cooked clip, named so the registry-free runtime finds it by the
+    // source path a scene stores (WO-016). This copied .cache/anim/, which held
+    // only the clips someone had played in the editor.
+    {
+        assetlib::AssetRegistry reg;
+        if (reg.open(cache / "registry.db")) {
+            const auto clips = pkg::packagedClips(reg, cache);
+            for (const pkg::ClipFile& c : clips)
+                if (!copyFile(cache / c.cookedRel, dist / ".cache" / "anim" / c.packagedName))
+                    return failed("copying the cooked clip for " + c.sourcePath + " failed");
+            if (!clips.empty())
+                std::printf("[engine_build] animation clips: %zu\n", clips.size());
+        } else {
+            warn("no registry at " + (cache / "registry.db").string()
+                 + " — no animation clips can be packaged");
+        }
+    }
     std::printf("[engine_build] cooked closure: %zu scene mesh ref(s), "
                 "%zu mesh file(s)\n", meshRefs.size(), shippedMeshFiles);
 

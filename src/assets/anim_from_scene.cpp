@@ -70,23 +70,29 @@ void decompose(const Float4x4& t, Float3& pos, Quat& rot, Float3& scl) {
     return out;
 }
 
-::AnimClip buildOzzClip(const Clip& c, const ::Skeleton& skel) {
-    if (!skel.ozz) { LOG_ERROR("Anim", "buildOzzClip: skeleton has no ozz data"); return {}; }
-    ozz::animation::offline::RawAnimation raw;
+void toRawClip(const Clip& c, std::vector<std::string>& trackBones,
+               ozz::animation::offline::RawAnimation& raw) {
+    raw = {};
+    raw.name = c.name.c_str();
     raw.duration = std::max(c.duration, 1e-4f);
-    raw.tracks.resize((size_t)skel.ozz->num_joints());
-    int mapped = 0;
+    raw.tracks.resize(c.tracks.size());
+    trackBones.clear();
     auto t = [&](float time) { return std::clamp(time, 0.0f, raw.duration); };
-    for (const Track& tr : c.tracks) {
-        const int ours = skel.findBone(tr.bone);
-        if (ours < 0) continue;
-        auto& track = raw.tracks[(size_t)skel.ozzJointOf[ours]];
+    for (size_t i = 0; i < c.tracks.size(); ++i) {
+        const Track& tr = c.tracks[i];
+        trackBones.push_back(tr.bone);
+        auto& track = raw.tracks[i];
         for (const auto& k : tr.translation) track.translations.push_back({t(k.time), {k.value.x, k.value.y, k.value.z}});
         for (const auto& k : tr.rotation)    track.rotations.push_back({t(k.time), {k.value.x, k.value.y, k.value.z, k.value.w}});
         for (const auto& k : tr.scale)       track.scales.push_back({t(k.time), {k.value.x, k.value.y, k.value.z}});
-        ++mapped;
     }
-    return anim::finishOzzClip(raw, skel, c.name, mapped, (int)c.tracks.size());
+}
+
+::AnimClip buildOzzClip(const Clip& c, const ::Skeleton& skel) {
+    std::vector<std::string> bones;
+    ozz::animation::offline::RawAnimation keys;
+    toRawClip(c, bones, keys);
+    return anim::bindRawClip(bones, keys, skel);
 }
 
 }  // namespace imp

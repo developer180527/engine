@@ -222,7 +222,7 @@ violation that the contract suite tests for (WO-010).
 | `cookStatic`, `cookSkinned` | Assimp front end + back end (WO-013) | two Assimp setups become one; baking and tangent handling move to the back end |
 | `cookGltf` | cgltf front end + back end (WO-012) | baking moves to the back end; missing tangents become generated instead of `(1,0,0)` |
 | `GltfImporter`, `AssimpImporter`, `parse.cpp` | **deleted** by WO-018: the runtime loads cooked assets only, and a missing one becomes a cook job | three runtime parsers, the four-directory texture search, and the "looks different until cooked" class of bug |
-| `clip_library` cook-on-first-bind | clip cooker over the same front end (WO-016) | an Assimp parse inside the running editor |
+| `clip_library` cook-on-first-bind | **done (WO-016):** the pipeline cooks every animation-only source to a skeleton-independent `anim::CookedClip`; `ClipLibrary` binds it at load and writes nothing | a shipped build playing only the clips someone had played in the editor |
 | `extractSkeleton(aiScene*)`, `buildOzzClip(aiAnimation*)` | **done (WO-015):** `imp::toAnimSkeleton` / `imp::buildOzzClip(const imp::Clip&)` in `assets/anim_from_scene.h`; the Assimp helpers moved into the Assimp front end; `ClipLibrary` reads uncooked clips through the front ends | animation depending on one parser's types |
 | `gltf_losses.h` | the cgltf front end's dropped list (WO-012) | a one-off loss check |
 

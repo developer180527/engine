@@ -1,4 +1,5 @@
 #include "tools/packaging/package_closure.h"
+#include <assetlib/clip_asset.h>     // isCookedClip, packagedClipFileName
 
 #include <assetlib/mesh_asset.h>
 #include <assetlib/scene_asset.h>
@@ -6,6 +7,7 @@
 #include <assetlib/shader_asset.h>
 
 #include <algorithm>
+#include <fstream>
 #include <set>
 
 namespace fs = std::filesystem;
@@ -199,6 +201,19 @@ MaterialTextureSet resolveMaterialTextures(const MaterialSet& materials,
 
     out.cookedRel.assign(shipped.begin(), shipped.end());
     out.unresolved.assign(missing.begin(), missing.end());
+    return out;
+}
+
+std::vector<ClipFile> packagedClips(assetlib::AssetRegistry& registry, const fs::path& cacheRoot) {
+    std::vector<ClipFile> out;
+    for (const assetlib::AssetRecord& r : registry.all()) {
+        if (r.state != assetlib::AssetState::Ready || r.cookedPath.empty()) continue;
+        std::ifstream f(cacheRoot / r.cookedPath, std::ios::binary);
+        uint8_t head[4] = {};
+        if (!f.read(reinterpret_cast<char*>(head), 4) || !assetlib::isCookedClip(head, 4)) continue;
+        out.push_back({r.cookedPath, assetlib::packagedClipFileName(r.sourcePath), r.sourcePath});
+    }
+    std::sort(out.begin(), out.end(), [](const ClipFile& a, const ClipFile& b) { return a.packagedName < b.packagedName; });
     return out;
 }
 

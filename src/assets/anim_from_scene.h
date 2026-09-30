@@ -17,6 +17,11 @@
 #include "animation/skeleton.h"
 #include "assets/import/imported_scene.h"
 
+#include <ozz/animation/offline/raw_animation.h>
+
+#include <string>
+#include <vector>
+
 namespace imp {
 
 // imp::Bone -> the engine's Bone. Matrices share one memory layout
@@ -33,5 +38,11 @@ namespace imp {
 // ImportedScene keeps them; rotations are not conjugated (ozz uses the source
 // convention). An invalid AnimClip on failure, already logged.
 ::AnimClip buildOzzClip(const Clip& clip, const ::Skeleton& bound);
+
+// The clip's keys by bone name, in the source's convention and seconds, key
+// times clamped into [0, duration]: what a cooked clip stores (anim::CookedClip)
+// and what buildOzzClip binds. Tracks keep the clip's order.
+void toRawClip(const Clip& clip, std::vector<std::string>& trackBones,
+               ozz::animation::offline::RawAnimation& keys);
 
 }  // namespace imp

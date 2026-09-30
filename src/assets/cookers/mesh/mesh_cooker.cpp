@@ -15,6 +15,7 @@
 // the back end writes one unique output, so the cook pipeline runs many cooks
 // concurrently.
 #include "assets/cookers/mesh/mesh_cooker.h"
+#include "assets/cookers/clip/clip_cook.h"
 #include "assets/cookers/mesh/mesh_backend.h"
 #include "assets/import/frontend_assimp.h"
 #include "assets/import/frontend_cgltf.h"
@@ -72,5 +73,11 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
     imp::ImportResult r = gltf ? imp::CgltfFrontend().importScene(ctx.sourcePath, {})
                                : imp::AssimpFrontend().importScene(ctx.sourcePath, {});
     if (!r) return {.success = false, .error = std::string(gltf ? "glTF: " : "") + r.error().message};
+    // Clips and no triangles: an animation file (a Mixamo clip FBX). It cooks
+    // as a clip, not a mesh (WO-016; it used to be skipped and cooked only when
+    // the editor first played it).
+    size_t triangles = 0;
+    for (const auto& m : r.scene().meshes) triangles += m.indices.size() / 3;
+    if (triangles == 0 && !r.scene().clips.empty()) return clipcook::cookClip(r.scene(), ctx);
     return meshcook::cookImportedScene(r.scene(), ctx);
 }

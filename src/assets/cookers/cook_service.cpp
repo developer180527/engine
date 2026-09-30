@@ -424,8 +424,8 @@ CookService::GcStats CookService::collectGarbage(bool prune) {
     // ── 2. Sweep — allowlist only ───────────────────────────────────────────
     // ONLY files this GC positively understands are candidates. Everything
     // else survives by default: registry.db (and its -wal/-shm, deleting which
-    // would corrupt an open database), anim/*.ozzclip (the ClipLibrary's cache,
-    // keyed by a different scheme this code cannot evaluate), and anything a
+    // would corrupt an open database), anim/*.ozzclip (the per-skeleton clip
+    // cache ClipLibrary wrote before WO-016; stale now, and not this GC's to judge), and anything a
     // future cooker adds before this function learns about it. A GC that
     // deletes what it does not recognise is how caches eat real data.
     std::error_code ec;

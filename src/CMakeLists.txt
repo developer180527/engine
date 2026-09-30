@@ -84,6 +84,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         assets/cookers/mesh/decimate.cpp
         assets/cookers/mesh/cook_common.cpp
         assets/cookers/mesh/mesh_backend.cpp
+        assets/cookers/clip/clip_cook.cpp   # animation-only sources cook to a clip (WO-016)
         assets/import/frontend_cgltf.cpp
         assets/import/frontend_assimp.cpp
         assets/anim_from_scene.cpp     # ImportedScene skeletons/clips -> anim (WO-015)

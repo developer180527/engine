@@ -347,7 +347,7 @@ CookResult cookImportedScene(const imp::ImportedScene& s, const CookContext& ctx
     for (const auto& m : s.meshes) triangles += m.indices.size() / 3;
     if (triangles == 0)
         return {.success = false, .skipped = true,
-                .error = "animation-only: clips are the clip cooker's input (WO-016)"};
+                .error = "animation-only: the mesh cooker routes it to the clip cooker (WO-016)"};
 
     bool anySkinned = false;
     for (const auto& m : s.meshes) anySkinned |= m.skinned();

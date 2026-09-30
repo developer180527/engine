@@ -183,18 +183,31 @@ switch detection does the rest.
 - Matrices are row-major, bx/bgfx row-vector convention: `child * parent`.
 - Animation ticks even when gameplay is paused (editor scrubbing).
 
-## The Clip Cooker (cook-on-first-bind)
-ClipLibrary persists every successful bind as an ozz Animation archive under
-`<project>/.cache/anim/<hash(source|skeletonSig)>.ozzclip` (small invalidation
-header: source size+mtime, joint-name signature, format version — bump
-kCookVersion on format change). Later binds and later RUNS deserialize in
-~0.1ms instead of a ~20-50ms Assimp parse. Names serialize inside the ozz
-animation (raw.name set in ozz_bridge). Hosts enable it via setCacheRoot at
-project open; bare tools run pure-Assimp.
+## The Clip Cooker (WO-016)
+Every animation-only source (a Mixamo clip FBX, a glTF of animations) is cooked
+by the normal pipeline, whether or not anyone plays it: the mesh cooker routes a
+scene with clips and no triangles to `clipcook::cookClip`
+(`assets/cookers/clip/`). The output is an `anim::CookedClip`
+(`cooked_clip.h`): the clip's keys BY BONE NAME, skeleton-independent, so one
+cook serves every character on the rig. Binding (`anim::bindRawClip`, the same
+code every clip is built with) happens in `ClipLibrary::load`, in memory.
+
+How the runtime finds it: the editor's `ClipLibrary` asks the asset registry
+(a locator the runtime installs); a shipped build has no registry, so
+`engine_build` copies every cooked clip to
+`.cache/anim/<assetlib::packagedClipFileName(source path)>`, which `ClipLibrary`
+finds from the source path a cooked scene stores. `clip_cook_test` runs both
+paths over a clip nothing ever bound.
+
+It replaced cook-on-first-bind: `ClipLibrary` wrote an `.ozzclip` per (source,
+TARGET skeleton) the first time the editor played a clip, so a shipped build had
+exactly the clips someone had played. The format is guarded like the mesh's
+ozz blobs: a digest checked before ozz reads a byte, a GuardedStream, and
+structural checks after (`fuzz_cooked_clip_test`).
 
 ## Future Work
 - Data-driven state machines as a client of the crossfade + engineAnim* API.
-- Eager cook mode (engine_cook walks scene clip refs) + async bind path
+- Async bind path (WO-018: a missing cooked clip becomes a pending job)
 - Skeleton/skinned-mesh cooking (mesh FBX still parses via Assimp at load): emit ozz archives (skeleton/animation serialization) so
   the runtime loads pre-built data instead of bridging Assimp at import.
 - Cook skinned meshes (currently they always take the Assimp fallback path).

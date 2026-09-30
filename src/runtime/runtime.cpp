@@ -126,8 +126,23 @@ bool EngineRuntime::openProject(const std::filesystem::path& root) {
     LOG_INFO("Project", "Opened: %s", m_project.projectRoot.string().c_str());
     // The editor boots projectless — input bindings arrive WITH the project.
     m_input.loadProjectBindings(m_project.projectRoot);
-    if (m_clipLibrary)   // cooked-clip cache lives with the project
+    if (m_clipLibrary) {
+        // Packaged clips (a shipped build has no registry) live here...
         m_clipLibrary->setCacheRoot(m_project.projectRoot / ".cache" / "anim");
+        // ...and in a project the registry knows where each clip was cooked
+        // (WO-016). The path a scene or the asset browser hands over may be
+        // absolute; the registry keys by project-relative path.
+        if (m_openAssetDatabase)
+            m_clipLibrary->setCookedLocator([this](const std::string& source) -> fs::path {
+                std::error_code ec;
+                fs::path rel(source);
+                if (rel.is_absolute()) rel = fs::relative(rel, m_project.projectRoot, ec);
+                if (ec || rel.empty()) return {};
+                const auto rec = m_assetLib.findBySourcePath(rel.generic_string());
+                if (!rec || rec->state != assetlib::AssetState::Ready || rec->cookedPath.empty()) return {};
+                return m_project.projectRoot / ".cache" / rec->cookedPath;
+            });
+    }
 
     // Asset database — open + scan so handles resolve immediately.
     const auto cacheRoot = m_project.projectRoot / ".cache";

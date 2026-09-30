@@ -159,8 +159,8 @@ inline Skeleton decodeCookedSkeleton(const assetlib::MeshAsset& asset) {
     }
     // findBone() answers from boneMap — WITHOUT this, every name lookup
     // returns -1 and standalone clips bind 0 tracks ("wrong rig?"). The
-    // old inline decode never built it either; cooked-clip cache hits
-    // masked the bug until the first fresh bind against a cooked skeleton.
+    // old inline decode never built it either; the old per-skeleton clip
+    // cache (gone since WO-016) masked the bug until the first fresh bind against a cooked skeleton.
     skel.buildBoneMap();
     return skel;
 }

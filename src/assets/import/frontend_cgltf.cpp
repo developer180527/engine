@@ -507,7 +507,8 @@ ImportResult CgltfFrontend::importScene(const std::filesystem::path& source, con
             r.drop(Dropped::Kind::Texture, Dropped::Effect::Less, 1, "texture " + t);
 
         // ── Nothing to import is its own answer (the contract's Empty) ──────────
-        // A file of clips alone is not empty: it is the clip cooker's input (WO-016),
+        // A file of clips alone is not empty: it is the clip cooker's input (WO-016:
+        // assets/cookers/clip/),
         // and the mesh back end skips it.
         if (scene.meshes.empty() && scene.clips.empty())
             return ImportError{ImportError::Kind::Empty, "nothing to import: " + src};

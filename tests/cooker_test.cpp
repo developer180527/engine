@@ -22,6 +22,7 @@
 #include "assets/cookers/texture/texture_cooker.h"
 #include "assets/importers/gltf_losses.h"
 #include "assets/import/frontend_cgltf.h"
+#include "animation/cooked_clip.h"
 #include <cgltf.h>
 // Assimp's matrix members are inline templates defined in .inl headers this
 // TU must instantiate ITSELF: with assimp built -O0 the archive happened to
@@ -215,7 +216,7 @@ int main() {
             {"static",           true,  false, false, "cooks",   2, 0, 0},
             {"skinned",          true,  true,  false, "cooks",   6, 1, 0},
             {"skinned+animated", true,  true,  true,  "cooks",   6, 1, 1},
-            {"animation-only",   false, false, true,  "skipped", 0, 0, 0},
+            {"animation-only",   false, false, true,  "clip",    0, 0, 1},
             {"static+node anim", true,  false, true,  "cooks",   2, 0, 0},
         };
         for (const Case& c : cases) {
@@ -227,9 +228,13 @@ int main() {
             const fs::path out = dir / (std::string("wo002_") + c.name + ".cooked");
             fs::remove(out);
             const assetlib::CookResult r = cookMeshResult(src, out);
-            if (std::string(c.expect) == "skipped") {
-                CHECK(!r.success && r.skipped && !fs::exists(out),
-                      "%s: skipped for the clip cooker, WO-016 (%s)", c.name, r.error.c_str());
+            if (std::string(c.expect) == "clip") {
+                // WO-016: it used to be skipped, cooked only when the editor first
+                // played it. Now it cooks, skeleton-independent, as a clip.
+                anim::CookedClip clip; std::string why;
+                CHECK(r.success && anim::readCookedClipFile(out, clip, why) && clip.trackBones.size() == 1,
+                      "%s: cooks as a clip, keys by bone name (%zu track(s); %s%s)", c.name, clip.trackBones.size(),
+                      r.error.c_str(), why.c_str());
                 continue;
             }
             assetlib::MeshAsset a;

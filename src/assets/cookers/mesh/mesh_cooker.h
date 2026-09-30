@@ -7,7 +7,9 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 20; // 20: a rig over kMaxBones (128, the GPU palette) is refused,
+    static constexpr uint32_t kVersion = 21; // 21: an animation-only source cooks to a clip
+                                             //     (animation/cooked_clip.h), not skipped (WO-016).
+                                             // 20: a rig over kMaxBones (128, the GPU palette) is refused,
                                              //     not cooked to draw unanimated (WO-040).
                                              // 19: a skinned mesh is bounded skinned at rest,
                                              //     not in bind space (WO-036).

@@ -44,8 +44,8 @@ public:
         PrimitiveLibrary* primitives = nullptr;
         // Optional — enables skinned spawn wiring (SkinnedMesh + Animator)
         // for v3 cooked meshes and v2 cooked scenes: standalone clipPath
-        // binding goes through the ClipLibrary (cooked-clip cache in ship
-        // builds), embedded clips come from the mesh itself.
+        // binding goes through the ClipLibrary (the packaged cooked clip in
+        // ship builds, WO-016), embedded clips come from the mesh itself.
         ClipLibrary*      clipLibrary = nullptr;
         SkeletonRegistry* skeletons   = nullptr;
         AnimClipRegistry* clips       = nullptr;

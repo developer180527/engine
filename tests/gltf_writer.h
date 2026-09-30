@@ -16,6 +16,10 @@
 // ── A minimal glTF writer, for tests ────────────────────────────────────────
 namespace gltfw {
 using namespace imp;
+// The engine's animation types share two names with the import format's; in a
+// file that includes both (clip_cook_test), these mean the import format's.
+using imp::Skeleton;
+using imp::Bone;
 
 struct Buffer {
     std::vector<uint8_t> data;
