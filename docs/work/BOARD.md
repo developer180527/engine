@@ -48,7 +48,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-022](WO-022-decision-records.md) | Decision records — the "why" survives the person | Process & context | M | **ready** | — |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
-| [WO-047](WO-047-scene-below-runtime-and-an-acyclic-gate.md) | Scene serialization stops reaching into runtime services; the module graph is gated acyclic | Process & context | M | **ready** | — |
 | [WO-049](WO-049-contacts-without-a-global-lock.md) | Jolt contacts are collected per thread, not under one mutex | Providers & modules | S | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
@@ -76,6 +75,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | done | evidence |
 |---|---|---|---|
 | [WO-048](WO-048-collision-events-without-archetype-churn.md) | Collision events without archetype churn; Sim.post stops growing faster than the world | 2026-10-01 | collision_events_test (delivery to scripts; 0 archetype moves after the first contact, 219 with the old removal); sim_profile Sim.post 443 -> 11 us at scale 2; determinism gate 0 divergences; BUG-0071 |
+| [WO-047](WO-047-scene-below-runtime-and-an-acyclic-gate.md) | Scene serialization stops reaching into runtime services; the module graph is gated acyclic | 2026-10-01 | audit LAYER-03 drops scene -> runtime (47 -> 46 edges) and LAYER-06 reports no cycle (mutation: restoring the include fails --check, naming the cycle and its files); scene_material_roundtrip_test (BUG-0072, both halves mutation-checked); 136 tests, audit and doctor clean |
 | [WO-046](WO-046-break-the-cheap-layer-back-edges.md) | Four upward includes out of the layer cycle (core, components, render, systems) | 2026-10-01 | scripts/audit_baseline.json LAYER-03 drops 5 edges and gains none (52 -> 47); the module graph's only remaining cycle is runtime <-> scene (WO-047); 133 tests, audit and doctor clean |
 | [WO-044](WO-044-abi-compat-test-covers-every-group.md) | The ABI compatibility test defends every API group (audit ABI-03) | 2026-09-30 | api_abi_compat_test (physics2 at 800, intent at 816, and a static_assert that frozen[] and offs[] list the same groups); audit ABI-03 ok with no baseline entries |
 | [WO-043](WO-043-fixed-step-reads-no-clock.md) | The fixed step reads no wall clock (audit DET-01) | 2026-09-30 | sim_clock_test (the boundary function; a catch-up frame's press/release/press lands one per tick, and with the clock read put back it is HPR H-- H--); audit DET-01 ok with no baseline entry; determinism_gate_test 0 divergences |

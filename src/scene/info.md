@@ -10,6 +10,7 @@ tests:
   - tests/fuzz_entity_serde_test.cpp  # the JSON deserializer, hostile input
   - tests/scene_parents_test.cpp      # the hierarchy post-pass, hostile input
   - tests/scene_mesh_reference_test.cpp  # a mesh that fails to load is never saved away
+  - tests/scene_material_roundtrip_test.cpp  # a material override survives save + load (BUG-0072)
 ---
 # Scene
 
@@ -107,12 +108,41 @@ prefabs.
   round-trips losslessly even with the kit disabled. One meta registration
   drives serde + the generic Inspector section + the + Add Component menu
   (`EditorAddable` tag) + Lua FFI schemas.
+- **`scene_assets.h`** — `SceneAssets`, the hooks through which loading and
+  saving reach assets: load a cooked mesh (with its LOD levels), a material by
+  name, a material's name back from its handle, and stream a source mesh on a
+  worker. See "How a scene reaches assets" below.
 - **`scene_serializer.h`** — `.scene` JSON save/load on top of the table:
   - `loadAsync` — names/transforms synchronous, meshes stream via
-    AsyncLoader; the import callback resolves skeleton/clip handles fresh
-    (Animator::clipIndex selects the clip).
+    `SceneAssets::streamMesh`; the completion resolves skeleton/clip handles
+    fresh (Animator::clipIndex selects the clip) and applies the authored
+    material.
+  - `save` — takes the host's `SceneAssets` for material names; without one,
+    material overrides are not written.
   - `saveToString`/`loadIntoWorld` — instant play-mode snapshot.
   - `cookScene` — thin wrapper over `assets/cookers/scene_cooker`.
+
+## How a scene reaches assets (WO-047)
+
+`src/scene` includes nothing from `src/runtime`. It used to: the serializers
+called `AssetService` and `AsyncLoader` directly, and that was the last edge of
+the module cycle (the runtime also includes scene, to load and snapshot
+worlds). Now the serializer DESCRIBES what it needs through `SceneAssets`
+(`scene_assets.h`, which includes only `core/handle.h`), and the host answers:
+`sceneAssetsFor(AssetService*, AsyncLoader*)` in
+`runtime/services/scene_assets_host.h` builds it from the runtime's services.
+The editor, `engine_host` and `scene_resave` call that. A test passes fakes.
+
+Every hook is optional, and an empty one means "this host cannot": no cooked
+loader falls through to the source path, no material hook leaves overrides
+unapplied (load) or unwritten (save), and no streamer keeps the reference in
+`UnresolvedMesh` with the reason "no loader".
+
+Cost: `std::function` calls, once per asset reference, while a scene loads or
+saves, each wrapping work measured in milliseconds. No tick calls them.
+
+Removing the field is what exposed BUG-0072: `save` tested `ctx.assetService`
+on a context where nothing set it, so material overrides were never saved.
 
 ## Invariants
 - Caller runs `assignMissingIds()` before save (set<> is illegal mid-query).

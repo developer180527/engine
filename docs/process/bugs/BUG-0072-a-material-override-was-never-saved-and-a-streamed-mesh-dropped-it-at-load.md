@@ -1,0 +1,11 @@
+## BUG-0072 — A material override was never saved, and a streamed mesh dropped it at load
+- found:     2026-10-01
+- status:    fixed
+- class:     logic
+- where:     src/scene/scene_serializer.h
+- symptom:   assign a material to a mesh in the editor, save, reopen: the mesh shows its own material again. No warning at save or at load. No scene file in the tree carries a `"material"` key, and none ever did.
+- cause:     two halves. SAVE: `SceneSerializer::save` installed the handle-to-name lookup only `if (ctx.assetService)`, testing a field of the `SerdeContext` it had built three lines above and never set, so the lookup was never installed and `saveMesh` skipped the key. The branch was written that way in 0f15c73 (2026-08-08), the commit that introduced material names, so the feature never worked on disk. LOAD: an entity whose mesh streamed on a worker (Assimp) resolved its override during the entity pass and then lost it: the completion callback set `MeshRenderer{mesh}` with no material. Cooked and glTF meshes kept it. The editor's save and `scene_resave` (the migration tool, which rewrites legacy scenes) both went through `save`.
+- pinned-by: tests/scene_material_roundtrip_test.cpp
+- lane:      unit
+- proof:     the test runs the real `save` and `loadAsync` with a fake `SceneAssets` (WO-047's hooks, so no GPU and no runtime). Mutation-checked 2026-10-01: removing the lookup from `save` fails 3 checks (the saved key and both round trips), and dropping the material from the streaming callback fails "streamed mesh: Glass applied".
+- note:      found while moving the serializers off `AssetService` (WO-047). The dead branch read like working code because the context type HAD the field; only removing the field made the branch's source visible.

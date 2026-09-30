@@ -17,6 +17,7 @@
 #include <engine/input.h>
 #include "scene/scene_serializer.h"
 #include "runtime/services/async_loader.h"
+#include "runtime/services/scene_assets_host.h"
 #include "runtime/module_loader.h"   // shared dlopen + gauntlet (also used by KitHost)
 #include "core/profiler.h"           // periodic frame-profile dump (dev runner)
 #include "runtime/frame_stats_channel.h"  // frame-time distribution + CSV
@@ -183,8 +184,8 @@ int main(int argc, char** argv) {
     loader.setProjectRoot(engine.project().projectRoot);
     SceneSerializer::loadAsync(
         engine.project().projectRoot / engine.project().lastScene,
-        ctx.ecs, storage, loader, ctx.importers, ctx.primitives,
-        ctx.assetService, engine.project().projectRoot, &engine.assetLib(),
+        ctx.ecs, storage, sceneAssetsFor(ctx.assetService, &loader),
+        ctx.importers, ctx.primitives, engine.project().projectRoot, &engine.assetLib(),
         &engine.clipLibrary());
 
     if (!recordPath.empty())

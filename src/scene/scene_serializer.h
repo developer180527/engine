@@ -22,8 +22,7 @@
 #include "render/material_registry.h"
 #include "assets/asset_storage.h"
 #include "assets/importers/importer_registry.h"
-#include "runtime/services/async_loader.h"
-#include "runtime/services/asset_service.h"
+#include "scene/scene_assets.h"
 #include "animation/clip_library.h"
 #include "render/primitive_library.h"
 #include "components/entity_id_util.h"
@@ -93,7 +92,8 @@ inline void restoreParents(flecs::world& w, const nlohmann::json& scene) {
 inline bool save(const std::filesystem::path& path,
                  flecs::world& ecs, AssetRegistry& assets,
                  assetlib::AssetRegistry* assetLib = nullptr,
-                 const std::filesystem::path& projectRoot = {}) {
+                 const std::filesystem::path& projectRoot = {},
+                 const SceneAssets* sceneAssets = nullptr) {
     std::filesystem::create_directories(path.parent_path());
     assignMissingIds(ecs);                              // before the query: set<> is illegal mid-iteration
 
@@ -105,10 +105,11 @@ inline bool save(const std::filesystem::path& path,
 
     // Handle -> authored material name, so a saved scene carries a reference
     // that survives the process. Without this the old code wrote a slot index.
-    if (ctx.assetService) {
-        AssetService* as = ctx.assetService;
-        ctx.materialNameLookup = [as](MaterialHandle h) { return as->materialNameOf(h); };
-    }
+    // The host passes the lookup in: this used to test a field of the context
+    // built three lines up, which nothing had set, so a material override was
+    // never saved and reopened as the default (BUG-0072).
+    if (sceneAssets && sceneAssets->materialName)
+        ctx.materialNameLookup = sceneAssets->materialName;
 
     // When the assetlib DB is available, resolve source paths → cooked paths
     // so runtime loading can skip Assimp and load straight from cooked binaries.
@@ -146,16 +147,16 @@ inline bool save(const std::filesystem::path& path,
 }
 
 // ── Disk load (async asset streaming) ────────────────────────────────────────
-// When assetService is provided, entities with a cookedPath in the scene file
-// load directly from cooked binaries (fast runtime path). Entities without a
-// cookedPath fall through to the legacy import (glTF / Assimp).
+// With a SceneAssets whose loadCookedMesh is set, entities with a cookedPath in
+// the scene file load directly from cooked binaries (fast runtime path).
+// Entities without one fall through to the legacy import (glTF / Assimp); the
+// ones that need a worker thread go through sceneAssets.streamMesh.
 inline bool loadAsync(const std::filesystem::path& scenePath,
                       flecs::world&     ecs,
                       AssetStorage&     storage,
-                      AsyncLoader&      loader,
+                      const SceneAssets& sceneAssets,
                       ImporterRegistry& importers,
                       PrimitiveLibrary* primitives = nullptr,
-                      AssetService*     assetService = nullptr,
                       const std::filesystem::path& projectRoot = {},
                       assetlib::AssetRegistry*     assetLib = nullptr,
                       ClipLibrary*                 clipLib = nullptr) {
@@ -175,7 +176,7 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
     std::vector<PendingMesh> pending;
     SerdeContext ctx;
     ctx.mode         = SerdeMode::Disk;
-    ctx.assetService = assetService;
+    ctx.sceneAssets  = &sceneAssets;
     ctx.importers    = &importers;
     ctx.storage      = &storage;
     ctx.primitives   = primitives;
@@ -202,8 +203,18 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
         flecs::entity_t   eid      = pm.entity.id();
         SkeletonRegistry* skels    = storage.skeletons;   // runtime-owned, outlive the load
         AnimClipRegistry* clipsReg = storage.clips;
-        loader.load(pm.assetPath, label,
-            [pw, eid, skels, clipsReg, clipLib](const AsyncLoadResult& r, const std::string&) {
+        const MaterialHandle mat   = pm.material;
+        if (!sceneAssets.streamMesh) {
+            // A host that cannot stream (a tool with no loader): say so, and
+            // keep the reference so a save still writes it.
+            if (UnresolvedMesh* u = pm.entity.try_get_mut<UnresolvedMesh>()) {
+                u->reason = "no loader"; u->pending = false;
+            }
+            LOG_WARN("Scene", "no mesh streaming in this host: %s", pm.assetPath.c_str());
+            continue;
+        }
+        sceneAssets.streamMesh(pm.assetPath, label,
+            [pw, eid, skels, clipsReg, clipLib, mat](const StreamedMesh& r) {
                 flecs::entity e = pw->entity(eid);
                 if (e.id() == 0 || !e.is_alive()) return;
                 if (!r.mesh.valid()) {
@@ -217,7 +228,7 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
                     }
                     return;
                 }
-                e.set<MeshRenderer>({r.mesh});
+                e.set<MeshRenderer>({r.mesh, mat});
                 e.remove<UnresolvedMesh>();
                 // Restore skeletal animation if the asset has bones.
                 // Handles are session-local — the scene file stores identity

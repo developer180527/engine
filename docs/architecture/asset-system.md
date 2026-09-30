@@ -412,8 +412,9 @@ these paths and calls `AssetService::loadMesh()` — no DB lookup, no Assimp, in
 
 The entity serializer's `loadMesh()` already has a two-tier resolution:
 
-1. **Fast path**: if JSON has `cookedPath` and `AssetService*` is non-null, load the cooked
-   binary directly — microseconds, no Assimp
+1. **Fast path**: if JSON has `cookedPath` and the host's `SceneAssets::loadCookedMesh` is
+   set (the runtime builds it from `AssetService`, `runtime/services/scene_assets_host.h`),
+   load the cooked binary directly — microseconds, no Assimp
 2. **Legacy fallback**: source path → primitive / glTF (sync) / Assimp (async worker)
 
 This means the editor loading path (`SceneSerializer::loadAsync()`) automatically uses

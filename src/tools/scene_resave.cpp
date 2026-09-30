@@ -12,6 +12,7 @@
 #include <engine/engine.h>
 #include "scene/scene_serializer.h"
 #include "runtime/services/async_loader.h"
+#include "runtime/services/scene_assets_host.h"
 
 #include <cstdio>
 
@@ -37,9 +38,9 @@ int main(int argc, char** argv) {
     std::filesystem::path scenePath = (argc > 2)
         ? std::filesystem::path(argv[2])
         : engine.project().projectRoot / engine.project().lastScene;
-    if (!SceneSerializer::loadAsync(scenePath, ctx.ecs, storage, loader,
+    const SceneAssets sceneAssets = sceneAssetsFor(ctx.assetService, &loader);
+    if (!SceneSerializer::loadAsync(scenePath, ctx.ecs, storage, sceneAssets,
                                     ctx.importers, ctx.primitives,
-                                    ctx.assetService,
                                     engine.project().projectRoot,
                                     &engine.assetLib()))
         return 1;
@@ -59,7 +60,7 @@ int main(int argc, char** argv) {
         : std::filesystem::path("/tmp") / (scenePath.stem().string() + ".resaved");
     bool ok = SceneSerializer::save(out, ctx.ecs, ctx.assets,
                                     &engine.assetLib(),
-                                    engine.project().projectRoot);
+                                    engine.project().projectRoot, &sceneAssets);
     std::printf("scene_resave: %s -> %s (%s)\n",
                 scenePath.string().c_str(), out.string().c_str(),
                 ok ? "ok" : "FAILED");

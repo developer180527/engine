@@ -48,6 +48,7 @@ rule nobody agreed to.
 | `LAYER-02` | nothing outside `src/editor` includes the editor or ImGui | `engineering-standards.md` §7 |
 | `LAYER-03` | no new module→module edge without a decision | `docs/plans/subsystem-audit.md` §2 |
 | `LAYER-04` | `src/render/world` is GPU-free *and* runtime-free | `src/render/world/info.md` |
+| `LAYER-06` | the module graph has no cycle; **not baselinable** — every cycle fails, naming its modules and the files behind each edge | §4 below (the layer order) |
 | `LAYER-05` | `src/assets/import/` (except `frontend_*`) includes only the standard library and itself | `src/assets/import/imported_scene.h` |
 | `ABI-01` | every API group has a frozen size, a pinned offset, a client guard row and a host row | `extension-model.md` §1.3 |
 | `ABI-02` | group offsets tile with no gap and no overlap | `engine_api_table.h` |
@@ -84,9 +85,15 @@ around a file does not read as "fixed one, found another".
 Shrinking the baseline is the cleanup. Adding to it requires `--update-baseline`
 and a reason in the commit message; nothing else should ever write that file.
 
+One rule is outside the ratchet. `LAYER-06` (no module cycle) is
+`baselinable=False`: `--update-baseline` does not record its findings, and a
+LAYER-06 entry edited into the file by hand is ignored. A cycle is not a debt
+to pay down later, because once one exists there is no layer order left to
+reason from.
+
 ## 4. What it found, and what that means
 
-Current state (2026-10-01): **71 findings, all baselined, 0 new.** 47 are the
+Current state (2026-10-01): **70 findings, all baselined, 0 new.** 46 are the
 module→module edges recorded as the declared dependency graph. The rest, and
 what the rules have caught and closed:
 
@@ -96,9 +103,27 @@ what the rules have caught and closed:
   hierarchy. Five back-edges held it; WO-046 removed four of them (header
   moves: `runtime/jobs` to `core/jobs`, the query cache to `components/`,
   `localMatrixLerp` beside the other lerp helpers, the LOD limit to core),
-  and a fifth, `audio -> runtime`, went with the jobs move. What remains is
-  `runtime <-> scene`: WO-047 removes it and adds LAYER-06, which fails on
-  any cycle.
+  and a fifth, `audio -> runtime`, went with the jobs move. WO-047 removed
+  the last, `scene -> runtime`: the serializers describe what they need
+  through `scene/scene_assets.h` hooks, and the runtime supplies them
+  (`runtime/services/scene_assets_host.h`). LAYER-06 now fails on any cycle.
+
+  **The layer order** (each module includes only modules on lower rows):
+
+  | layer | modules |
+  |---|---|
+  | 0 | `core`, `project` |
+  | 1 | `animation`, `audio`, `components` |
+  | 2 | `render`, `systems` |
+  | 3 | `assets` |
+  | 4 | `scene` |
+  | 5 | `runtime` |
+  | 6 | `plugins` |
+  | 7 | `editor`, `tools` |
+
+  This is the longest-path layering of the edges as they stand, not a
+  design decree. A new edge that closes no loop passes LAYER-06, and
+  LAYER-03 still asks for a decision on it.
 
 - **`RHI-01` ×22** — files outside the renderer using bx's math types. Recorded
   as evidence for the RHI programme (`docs/rhi/evidence-coupling.md`), not a

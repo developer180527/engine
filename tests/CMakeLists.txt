@@ -145,6 +145,10 @@ engine_test(reflected_pending_test)
 # is kept in UnresolvedMesh and written back unchanged by the next save — disk
 # and memory snapshot alike. Every case saves from a session that could not load.
 engine_test(scene_mesh_reference_test)
+# BUG-0072: a material override survives save and load, through the real
+# SceneSerializer with a fake SceneAssets (WO-047). save() never installed the
+# name lookup, and a streamed mesh dropped its override at load.
+engine_test(scene_material_roundtrip_test)
 # WO-010: the import-frontend contract. The ImportedScene invariants, each shown
 # failing on a scene broken its way; and the contract suite every front end must
 # pass (tests/import_contract.h), shown passing the fake AND failing front ends

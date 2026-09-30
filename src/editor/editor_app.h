@@ -14,6 +14,7 @@
 #include "project/project_context.h"
 
 #include "runtime/services/async_loader.h"
+#include "runtime/services/scene_assets_host.h"
 #include "runtime/plugin_registry.h"
 #include "runtime/input/input.h"
 #include "components/meta_registry.h"
@@ -82,10 +83,9 @@ public:
         SceneSerializer::loadAsync(m_scenePath,
                                    m_rt.ctx().ecs,
                                    storage,
-                                   m_loader,
+                                   sceneAssetsFor(m_rt.ctx().assetService, &m_loader),
                                    m_rt.ctx().importers,
                                    m_rt.ctx().primitives,
-                                   m_rt.ctx().assetService,
                                    ctx.projectRoot,
                                    m_rt.ctx().assetLib,
                                    &m_rt.clipLibrary());
@@ -101,8 +101,9 @@ public:
 
     void saveScene() {
         if (m_scenePath.empty()) return;
+        const SceneAssets sa = sceneAssetsFor(m_rt.ctx().assetService, nullptr);
         SceneSerializer::save(m_scenePath, m_rt.ctx().ecs, m_rt.ctx().assets,
-                              m_assetLib, m_projectRoot);
+                              m_assetLib, m_projectRoot, &sa);
 
         // Auto-cook: JSON → binary so the runtime format is always in sync.
         // Runs on the main thread (fast — just JSON parse + memcpy writes).

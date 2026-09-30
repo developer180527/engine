@@ -38,7 +38,8 @@
 #include "assets/asset_storage.h"
 #include "assets/importers/importer_registry.h"
 #include "render/primitive_library.h"
-#include "runtime/services/asset_service.h"
+#include "scene/scene_assets.h"
+#include "core/lod_limit.h"
 #include "scene/reflected_serde.h"
 #include "scene/unresolved_mesh.h"
 #include "core/logger.h"
@@ -53,7 +54,9 @@ enum class IdPolicy  { Preserve, Generate };
 
 // A mesh whose asset must be streamed in on a worker thread; the disk loader
 // drains these after the entity pass and wires the handle in via callback.
-struct PendingMesh { flecs::entity entity; std::string assetPath; };
+// `material` is the authored override, already resolved: the callback applies
+// it with the mesh, or a streamed mesh would lose it (BUG-0072).
+struct PendingMesh { flecs::entity entity; std::string assetPath; MaterialHandle material; };
 
 struct SerdeContext {
     SerdeMode mode = SerdeMode::Memory;
@@ -68,13 +71,14 @@ struct SerdeContext {
     // Returns empty string if the asset hasn't been cooked yet.
     std::function<std::string(const std::string& sourcePath)> cookedPathLookup;
 
-    // Load: fast runtime path — loads cooked assets via AssetService.
-    // When non-null and cookedPath is present, skips Assimp/glTF entirely.
-    AssetService*             assetService = nullptr;
+    // Load: the host's asset hooks (scene/scene_assets.h). With loadCookedMesh
+    // set and a cookedPath present, skips Assimp/glTF entirely. Scene never
+    // includes the runtime; the runtime fills these in (WO-047).
+    const SceneAssets*        sceneAssets = nullptr;
 
     // Save (disk): MaterialHandle -> the material's AUTHORED NAME. A handle is
     // a session-local slot index; writing one to disk is meaningless, which is
-    // what the old `matOverrideId` field did. Null when no AssetService.
+    // what the old `matOverrideId` field did. Empty when the host has none.
     std::function<std::string(MaterialHandle)> materialNameLookup;
 
     ImporterRegistry*         importers   = nullptr;     // disk load: glTF (sync)
@@ -294,8 +298,8 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
         return;
     }
 
-    // ── Fast path: cooked binary via AssetService (runtime) ────────────
-    // If cookedPath is present and AssetService is available, load directly
+    // ── Fast path: cooked binary via the host (SceneAssets) ────────────
+    // If cookedPath is present and the host can load cooked meshes, load directly
     // from the cooked binary — no Assimp, no glTF import, no worker queue.
     //
     // PASSED RELATIVE, DELIBERATELY. `cookedPath` comes from the registry as
@@ -323,10 +327,11 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
     // The authored material name, resolved to a handle. Empty is normal — most
     // entities use the material baked into their mesh.
     MaterialHandle matOverride;
-    if (ctx.assetService) {
+    const SceneAssets* sa = ctx.sceneAssets;
+    if (sa && sa->loadMaterial) {
         const std::string matName = j.value("material", std::string{});
         if (!matName.empty()) {
-            matOverride = ctx.assetService->loadMaterialAsset(matName.c_str());
+            matOverride = sa->loadMaterial(matName.c_str());
             if (!matOverride.valid())
                 LOG_WARN("Scene", "material \"%s\" not found — the mesh's own "
                          "material is used instead", matName.c_str());
@@ -334,19 +339,19 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
     }
 
     const std::string cookedPath = j.value("cookedPath", std::string{});
-    if (!cookedPath.empty() && ctx.assetService) {
+    if (!cookedPath.empty() && sa && sa->loadCookedMesh) {
         // Request the cooked LOD chain too. Without this the editor's load path
         // silently produced no levels while scene_service's did — the same
         // asset rendering with LOD in the player and without it in the editor.
-        AssetService::MeshLods lods;
-        MeshHandle h = ctx.assetService->loadMesh(cookedPath.c_str(), nullptr, &lods);
+        std::vector<MeshHandle> lods;
+        MeshHandle h = sa->loadCookedMesh(cookedPath.c_str(), &lods);
         if (h.valid()) {
             resolved({h, matOverride});
-            if (!lods.levels.empty()) {
+            if (!lods.empty()) {
                 LodMesh lm;
-                lm.count = (uint8_t)std::min(lods.levels.size(),
+                lm.count = (uint8_t)std::min(lods.size(),
                                              (size_t)(::kMaxLodLevels - 1));
-                for (uint8_t i = 0; i < lm.count; ++i) lm.mesh[i] = lods.levels[i];
+                for (uint8_t i = 0; i < lm.count; ++i) lm.mesh[i] = lods[i];
                 e.set<LodMesh>(lm);
             }
             return;
@@ -398,7 +403,7 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
         return;
     }
     if (ctx.pendingAsync) {
-        ctx.pendingAsync->push_back({e, srcPath});   // Assimp on a worker
+        ctx.pendingAsync->push_back({e, srcPath, matOverride});   // Assimp on a worker
         unresolved("loading", /*pending*/ true);    // the callback resolves it
     } else {
         LOG_WARN("Scene", "no importer in this build for %s — reference kept",
@@ -464,8 +469,8 @@ inline void loadLodMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& 
             h.id = lj.value("handleId", 0u);
         } else {
             const std::string cooked = lj.value("cookedPath", std::string{});
-            if (!cooked.empty() && ctx.assetService)
-                h = ctx.assetService->loadMesh(cooked.c_str());   // relative — see loadMesh
+            if (!cooked.empty() && ctx.sceneAssets && ctx.sceneAssets->loadCookedMesh)
+                h = ctx.sceneAssets->loadCookedMesh(cooked.c_str(), nullptr);   // relative — see above
         }
         if (!h.valid()) {
             LOG_WARN("Scene", "LOD level %u unresolved, chain shortened",

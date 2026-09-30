@@ -1,6 +1,6 @@
 {
-  "generated": "2026-09-30T18:33:02+00:00",
-  "commit": "04aba05122ced2872d9c9b4f8a853ade0283cce0",
+  "generated": "2026-09-30T20:01:25+00:00",
+  "commit": "b39bbed69dbc2409012ffae4ae8f13385024d783",
   "note": "Accepted architectural debt. The gate fails on findings NOT listed here; shrinking this file is the cleanup, and nothing may be added to it without a reason in the commit.",
   "findings": {
     "LAYER-03": [
@@ -40,7 +40,6 @@
       "LAYER-03|src/scene -> src/components",
       "LAYER-03|src/scene -> src/core",
       "LAYER-03|src/scene -> src/render",
-      "LAYER-03|src/scene -> src/runtime",
       "LAYER-03|src/systems -> src/animation",
       "LAYER-03|src/systems -> src/components",
       "LAYER-03|src/systems -> src/core",

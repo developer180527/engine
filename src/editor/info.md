@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: prototype
-verified: 2026-09-30
+verified: 2026-10-01
 covers:
   - src/editor/
 tests:
@@ -188,6 +188,11 @@ only layer that links ImGui/ImGuizmo — the runtime stays UI-free.
     pure function of path and OS): macOS `open -R`, Windows `explorer /select`,
     Linux `xdg-open` on the containing folder. It ran `open -R` everywhere
     (WO-005).
+- **Scene open and save** (`editor_app.h`) hand the serializer
+  `sceneAssetsFor(assetService, &m_loader)` (`runtime/services/scene_assets_host.h`):
+  `src/scene` no longer reaches into the runtime itself (WO-047). The save
+  passes it too, which is what finally writes material overrides by name
+  (BUG-0072: they were never saved).
 - **Terminal** (`panels/terminal/model.h`) runs each command in the project
   root through `cdInto`: POSIX single-quotes the path, so a folder named with
   `$`, a backtick or a quote is entered exactly (double quotes still expand
