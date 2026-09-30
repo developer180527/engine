@@ -67,6 +67,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-037](WO-037-fuzz-the-import-front-ends.md) | Fuzz the import front ends; nothing in them may crash the cook worker | 2026-09-30 | fuzz_import_frontend_test (regress + explore lanes); frontend_cgltf_test §4 (5 cases) and import_frontend_contract_test §7 each red with their fix removed; 20,000 explore iterations clean, and under ASan+UBSan |
 | [WO-036](WO-036-a-real-skinned-gltf.md) | A real skinned glTF, cooked and animating in the editor | 2026-09-30 | real_gltf_test (spec oracle, cook, bounds); render_pipeline_test skinnedProgramDraws; the user saw CesiumMan walk on the ground in the editor on 2026-09-30 |
 | [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) | The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan | 2026-09-30 | pass_states.h (static_assert refuses both bits); tests/cull_mode_test.cpp; the visual check moved to WO-033 |
 | [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | 2026-09-30 | tests/scene_mesh_reference_test.cpp (7 cases) + editor_panel_models_test §8; 4 mutations each red on their own check |

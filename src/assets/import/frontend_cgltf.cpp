@@ -53,6 +53,7 @@ struct Reader {
     uint32_t unweighted = 0, extraInfluences = 0;
     int32_t  defaultMaterial = -1;
     uint32_t nonTriangles = 0, extraUvSets = 0, vertexColours = 0, noPositions = 0;
+    uint32_t emptySkins = 0;   // mesh nodes whose skin lists no joints
     std::set<std::string> droppedTextures;
 
     void drop(Dropped::Kind k, Dropped::Effect e, uint32_t count, std::string what) {
@@ -268,6 +269,19 @@ struct Reader {
         for (cgltf_size si = 0; si < data.skins_count; ++si) {    // the skin's own bind matrices
             const cgltf_skin& skin = data.skins[si];
             if (!skin.inverse_bind_matrices) continue;             // absent means identity (spec)
+            // One MAT4 per joint. cgltf_validate checks neither, and
+            // cgltf_accessor_read_float does not bounds-check the index, so a
+            // short accessor was a heap overflow (found by
+            // fuzz_import_frontend_test under ASan). Without its bind matrices
+            // the skin is wrong, not less: refused, the bones left at identity.
+            const cgltf_accessor& ibm = *skin.inverse_bind_matrices;
+            if (ibm.type != cgltf_type_mat4 || ibm.count < skin.joints_count) {
+                drop(Dropped::Kind::Skin, Dropped::Effect::Wrong, 1,
+                     "skin " + std::to_string(si) + ": inverseBindMatrices holds " + std::to_string(ibm.count) +
+                     (ibm.type == cgltf_type_mat4 ? " matrices" : " non-MAT4 elements") + " for " +
+                     std::to_string(skin.joints_count) + " joints");
+                continue;
+            }
             for (cgltf_size j = 0; j < skin.joints_count; ++j)
                 cgltf_accessor_read_float(skin.inverse_bind_matrices, j,
                                           sk.bones[boneOf.at(skin.joints[j])].inverseBind.m, 16);
@@ -290,9 +304,15 @@ struct Reader {
         for (size_t ni = 1; ni < fileNodes; ++ni) {
             const cgltf_node* gn = gltfOf[ni];
             if (!gn->mesh) continue;
-            const cgltf_skin* skin = gn->skin && out.skeleton ? gn->skin : nullptr;
+            // A skin with "joints": [] is invalid glTF, but cgltf and
+            // cgltf_validate both accept it. Its weights can name no joint, and
+            // reading them bound every vertex to joints[0] of an empty array (a
+            // crash). The mesh is read static and the loss is Wrong: a skinned
+            // mesh without its skeleton is not a lesser asset but an incorrect one.
+            if (gn->skin && gn->skin->joints_count == 0) ++emptySkins;
+            const cgltf_skin* skin = gn->skin && gn->skin->joints_count && out.skeleton ? gn->skin : nullptr;
             const std::vector<uint32_t> ids = meshesOf(gn->mesh, skin);   // copy: meshesOf may grow the map
-            if (!skin || skin->joints_count == 0) { out.nodes[ni].meshes = ids; continue; }
+            if (!skin) { out.nodes[ni].meshes = ids; continue; }
             const uint16_t j0 = boneOf.at(skin->joints[0]);
             const Float4x4 bindSpace = mul(worldOf(out.skeleton->bones, j0, &Bone::bindLocal),
                                            out.skeleton->bones[j0].inverseBind);
@@ -337,7 +357,9 @@ struct Reader {
                     float v[4] = {0, 0, 0, 1};
                     if (ch.target_path == cgltf_animation_path_type_rotation) {
                         cgltf_accessor_read_float(sm.output, at, v, 4);
-                        tr.rotation.push_back({t, {v[0], v[1], v[2], v[3]}});    // source convention, not conjugated
+                        Quat q{v[0], v[1], v[2], v[3]};                           // source convention, not conjugated
+                        normalizeRotation(q);                                     // a bad key stays bad: checkScene names it
+                        tr.rotation.push_back({t, q});
                     } else {
                         cgltf_accessor_read_float(sm.output, at, v, 3);
                         (ch.target_path == cgltf_animation_path_type_translation ? tr.translation : tr.scale)
@@ -369,83 +391,111 @@ bool understood(const char* ext) {
 }  // namespace
 
 ImportResult CgltfFrontend::importScene(const std::filesystem::path& source, const ImportOptions&) const {
-    const std::string src = source.string();
-    cgltf_options options{};
-    cgltf_data* data = nullptr;
-    if (cgltf_parse_file(&options, src.c_str(), &data) != cgltf_result_success)
-        return ImportError{ImportError::Kind::Unreadable, "not a readable glTF: " + src};
-    struct Guard { cgltf_data* d; ~Guard() { cgltf_free(d); } } guard{data};
-    if (cgltf_load_buffers(&options, data, src.c_str()) != cgltf_result_success)
-        return ImportError{ImportError::Kind::Unreadable, "glTF buffers could not be loaded: " + src};
-    // Structural validation (accessor ranges, index bounds) before reading a
-    // byte: this is hostile input. The old cook path skipped it.
-    if (cgltf_validate(data) != cgltf_result_success)
-        return ImportError{ImportError::Kind::Unreadable, "invalid glTF (failed validation): " + src};
+    return guardedImport(source, "cgltf", [&]() -> ImportResult {
+        const std::string src = source.string();
+        cgltf_options options{};
+        cgltf_data* data = nullptr;
+        if (cgltf_parse_file(&options, src.c_str(), &data) != cgltf_result_success)
+            return ImportError{ImportError::Kind::Unreadable, "not a readable glTF: " + src};
+        struct Guard { cgltf_data* d; ~Guard() { cgltf_free(d); } } guard{data};
+        if (cgltf_load_buffers(&options, data, src.c_str()) != cgltf_result_success)
+            return ImportError{ImportError::Kind::Unreadable, "glTF buffers could not be loaded: " + src};
+        // Alignment, which the spec requires and cgltf_validate does not check: every
+        // accessor starts, and every element strides, on a multiple of its component
+        // size. cgltf reads through typed pointers, so a misaligned one is undefined
+        // behaviour (UBSan, found by fuzz_import_frontend_test), however well ARM64 and
+        // x86 happen to tolerate it. Checked BEFORE cgltf_validate, which itself reads
+        // index buffers through typed pointers to check their bounds.
+        for (cgltf_size i = 0; i < data->accessors_count; ++i) {
+            const cgltf_accessor& a = data->accessors[i];
+            const cgltf_size c = cgltf_component_size(a.component_type);
+            auto misaligned = [](const cgltf_buffer_view* v, cgltf_size offset, cgltf_size size) {
+                return v && size > 1 && (v->offset + offset) % size != 0;
+            };
+            // The dense data (absent: all zeros), then a sparse accessor's own
+            // index and value views, which cgltf reads the same way.
+            bool bad = misaligned(a.buffer_view, a.offset, c) || (a.buffer_view && c > 1 && a.stride % c != 0);
+            if (a.is_sparse)
+                bad |= misaligned(a.sparse.indices_buffer_view, a.sparse.indices_byte_offset,
+                                  cgltf_component_size(a.sparse.indices_component_type)) ||
+                       misaligned(a.sparse.values_buffer_view, a.sparse.values_byte_offset, c);
+            if (bad)
+                return ImportError{ImportError::Kind::Unreadable,
+                                   "invalid glTF: accessor " + std::to_string(i) + " is not aligned to its " +
+                                   std::to_string(c) + "-byte components: " + src};
+        }
+        // Structural validation (accessor ranges, index bounds) before reading a
+        // byte: this is hostile input. The old cook path skipped it.
+        if (cgltf_validate(data) != cgltf_result_success)
+            return ImportError{ImportError::Kind::Unreadable, "invalid glTF (failed validation): " + src};
 
-    ImportedScene scene;
-    scene.source = src;
-    Reader r{*data, source.parent_path(), scene};
+        ImportedScene scene;
+        scene.source = src;
+        Reader r{*data, source.parent_path(), scene};
 
-    // ── What the file has that this front end does not carry ────────────────
-    for (cgltf_size i = 0; i < data->extensions_required_count; ++i)
-        if (!understood(data->extensions_required[i]))
-            r.drop(Dropped::Kind::Extension, Dropped::Effect::Wrong, 1,
-                   std::string("requires ") + data->extensions_required[i]);
-    for (cgltf_size i = 0; i < data->extensions_used_count; ++i) {
-        const char* e = data->extensions_used[i];
-        bool required = false;
-        for (cgltf_size k = 0; k < data->extensions_required_count; ++k)
-            required |= std::strcmp(e, data->extensions_required[k]) == 0;
-        if (!required && !understood(e))
-            r.drop(Dropped::Kind::Extension, Dropped::Effect::Less, 1, std::string("ignores ") + e);
-    }
-    if (data->cameras_count)
-        r.drop(Dropped::Kind::Camera, Dropped::Effect::Less, (uint32_t)data->cameras_count,
-               std::to_string(data->cameras_count) + " camera(s)");
-    if (data->lights_count)
-        r.drop(Dropped::Kind::Light, Dropped::Effect::Less, (uint32_t)data->lights_count,
-               std::to_string(data->lights_count) + " light(s)");
+        // ── What the file has that this front end does not carry ────────────────
+        for (cgltf_size i = 0; i < data->extensions_required_count; ++i)
+            if (!understood(data->extensions_required[i]))
+                r.drop(Dropped::Kind::Extension, Dropped::Effect::Wrong, 1,
+                       std::string("requires ") + data->extensions_required[i]);
+        for (cgltf_size i = 0; i < data->extensions_used_count; ++i) {
+            const char* e = data->extensions_used[i];
+            bool required = false;
+            for (cgltf_size k = 0; k < data->extensions_required_count; ++k)
+                required |= std::strcmp(e, data->extensions_required[k]) == 0;
+            if (!required && !understood(e))
+                r.drop(Dropped::Kind::Extension, Dropped::Effect::Less, 1, std::string("ignores ") + e);
+        }
+        if (data->cameras_count)
+            r.drop(Dropped::Kind::Camera, Dropped::Effect::Less, (uint32_t)data->cameras_count,
+                   std::to_string(data->cameras_count) + " camera(s)");
+        if (data->lights_count)
+            r.drop(Dropped::Kind::Light, Dropped::Effect::Less, (uint32_t)data->lights_count,
+                   std::to_string(data->lights_count) + " light(s)");
 
-    // ── Materials, then the default scene's node tree under one root ────────
-    r.materials();
-    const cgltf_scene* gs = data->scene ? data->scene : (data->scenes_count ? &data->scenes[0] : nullptr);
-    Node root; root.name = "root";
-    scene.nodes.push_back(root);
-    r.gltfOf.push_back(nullptr);                         // node 0 is ours, not the file's
-    if (gs)
-        for (cgltf_size i = 0; i < gs->nodes_count; ++i) r.node(gs->nodes[i], 0);
+        // ── Materials, then the default scene's node tree under one root ────────
+        r.materials();
+        const cgltf_scene* gs = data->scene ? data->scene : (data->scenes_count ? &data->scenes[0] : nullptr);
+        Node root; root.name = "root";
+        scene.nodes.push_back(root);
+        r.gltfOf.push_back(nullptr);                         // node 0 is ours, not the file's
+        if (gs)
+            for (cgltf_size i = 0; i < gs->nodes_count; ++i) r.node(gs->nodes[i], 0);
 
-    // Skins make a skeleton; so do the clips of an animation-only file. Node
-    // animation on a static model has no skeleton to play on, and is reported.
-    const bool animationOnly = data->meshes_count == 0 && data->animations_count > 0;
-    r.skeleton(animationOnly);
-    r.meshes();
-    if (scene.skeleton) r.clips(source.stem().string());
-    else if (data->animations_count)
-        r.drop(Dropped::Kind::Animation, Dropped::Effect::Less, (uint32_t)data->animations_count,
-               std::to_string(data->animations_count) + " node animation(s) on a model with no skin");
-    if (r.unweighted) r.drop(Dropped::Kind::Skin, Dropped::Effect::Less, r.unweighted,
-                             std::to_string(r.unweighted) + " skinned vertex(es) had no bone influence; bound to the root bone");
-    if (r.extraInfluences) r.drop(Dropped::Kind::Skin, Dropped::Effect::Less, r.extraInfluences,
-                                  "JOINTS_1 on " + std::to_string(r.extraInfluences) + " primitive(s): only the first 4 influences are kept");
+        // Skins make a skeleton; so do the clips of an animation-only file. Node
+        // animation on a static model has no skeleton to play on, and is reported.
+        const bool animationOnly = data->meshes_count == 0 && data->animations_count > 0;
+        r.skeleton(animationOnly);
+        r.meshes();
+        if (scene.skeleton) r.clips(source.stem().string());
+        else if (data->animations_count)
+            r.drop(Dropped::Kind::Animation, Dropped::Effect::Less, (uint32_t)data->animations_count,
+                   std::to_string(data->animations_count) + " node animation(s) on a model with no skin");
+        if (r.unweighted) r.drop(Dropped::Kind::Skin, Dropped::Effect::Less, r.unweighted,
+                                 std::to_string(r.unweighted) + " skinned vertex(es) had no bone influence; bound to the root bone");
+        if (r.extraInfluences) r.drop(Dropped::Kind::Skin, Dropped::Effect::Less, r.extraInfluences,
+                                      "JOINTS_1 on " + std::to_string(r.extraInfluences) + " primitive(s): only the first 4 influences are kept");
 
-    if (r.nonTriangles) r.drop(Dropped::Kind::NonTriangles, Dropped::Effect::Less, r.nonTriangles,
-                               std::to_string(r.nonTriangles) + " point/line primitive(s)");
-    if (r.noPositions) r.drop(Dropped::Kind::NonTriangles, Dropped::Effect::Less, r.noPositions,
-                              std::to_string(r.noPositions) + " primitive(s) with no POSITION");
-    if (r.vertexColours) r.drop(Dropped::Kind::VertexColours, Dropped::Effect::Less, r.vertexColours,
-                                "COLOR_0 on " + std::to_string(r.vertexColours) + " primitive(s)");
-    if (r.extraUvSets) r.drop(Dropped::Kind::ExtraUvSets, Dropped::Effect::Less, r.extraUvSets,
-                              "TEXCOORD_1+ on " + std::to_string(r.extraUvSets) + " primitive(s)");
-    for (const std::string& t : r.droppedTextures)
-        r.drop(Dropped::Kind::Texture, Dropped::Effect::Less, 1, "texture " + t);
+        if (r.nonTriangles) r.drop(Dropped::Kind::NonTriangles, Dropped::Effect::Less, r.nonTriangles,
+                                   std::to_string(r.nonTriangles) + " point/line primitive(s)");
+        if (r.emptySkins) r.drop(Dropped::Kind::Skin, Dropped::Effect::Wrong, r.emptySkins,
+                                 std::to_string(r.emptySkins) + " mesh node(s) on a skin with no joints");
+        if (r.noPositions) r.drop(Dropped::Kind::NonTriangles, Dropped::Effect::Less, r.noPositions,
+                                  std::to_string(r.noPositions) + " primitive(s) with no POSITION");
+        if (r.vertexColours) r.drop(Dropped::Kind::VertexColours, Dropped::Effect::Less, r.vertexColours,
+                                    "COLOR_0 on " + std::to_string(r.vertexColours) + " primitive(s)");
+        if (r.extraUvSets) r.drop(Dropped::Kind::ExtraUvSets, Dropped::Effect::Less, r.extraUvSets,
+                                  "TEXCOORD_1+ on " + std::to_string(r.extraUvSets) + " primitive(s)");
+        for (const std::string& t : r.droppedTextures)
+            r.drop(Dropped::Kind::Texture, Dropped::Effect::Less, 1, "texture " + t);
 
-    // ── Nothing to import is its own answer (the contract's Empty) ──────────
-    // A file of clips alone is not empty: it is the clip cooker's input (WO-016),
-    // and the mesh back end skips it.
-    if (scene.meshes.empty() && scene.clips.empty())
-        return ImportError{ImportError::Kind::Empty, "nothing to import: " + src};
-    return scene;
+        // ── Nothing to import is its own answer (the contract's Empty) ──────────
+        // A file of clips alone is not empty: it is the clip cooker's input (WO-016),
+        // and the mesh back end skips it.
+        if (scene.meshes.empty() && scene.clips.empty())
+            return ImportError{ImportError::Kind::Empty, "nothing to import: " + src};
+        return scene;
+    });
 }
 
 }  // namespace imp

@@ -546,6 +546,11 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # engine_runtime: cooked_skin.h pulls in ozz + the animation headers.
     engine_fuzz_target(fuzz_cooked_skin_test cooked_skin LIB engine_runtime)
     engine_fuzz_target(fuzz_scene_service_test scene_service LIB engine_runtime)
+    # The import front ends (cgltf, Assimp) read model files from outside the
+    # engine, and the one back end cooks what they return. Mutated glTF and OBJ
+    # built from the contract suite's reference scenes: no crash, no escaping
+    # exception, nothing invalid cooks, and every cook loads back.
+    engine_fuzz_target(fuzz_import_frontend_test import_frontend LIB engine_runtime)
     engine_test(import_test)
     engine_test(residency_test)
 # ── The editor's first automated coverage ────────────────────────────────────

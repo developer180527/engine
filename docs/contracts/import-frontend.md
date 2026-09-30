@@ -86,3 +86,12 @@ Returned, never thrown across the boundary. `ImportError` carries a kind
 message with the path. A front end does not log failures itself: the caller
 has the context, such as the asset, the cook and the project, and logs once.
 Losses are data (`dropped`), not log lines.
+
+"Never thrown" is enforced, not hoped for: every front end's `importScene` runs
+inside `imp::guardedImport`, which turns any exception into `Unreadable` naming
+the file and the reason. A front end reads hostile input, and one bug in it
+must refuse that file, not terminate the cook worker and every cook queued
+behind it. The input is fuzzed (`fuzz_import_frontend_test`, under ASan and
+UBSan too); what cgltf's own validator does not check, the front end does:
+inverse-bind matrices one MAT4 per joint, accessors aligned to their
+components, skins with at least one joint.

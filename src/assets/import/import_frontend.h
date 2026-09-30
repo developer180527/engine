@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <exception>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -85,6 +86,23 @@ public:
     virtual ImportResult importScene(const std::filesystem::path& source,
                                      const ImportOptions& options) const = 0;
 };
+
+// The exception boundary every front end's importScene runs inside. A front
+// end reads hostile input; a bug in it (an .at() on a missing key, a bad_alloc
+// from a count in the file) must refuse THAT file, not terminate the cook
+// worker and every other cook queued behind it. Unreadable, with the reason.
+template <class F>
+ImportResult guardedImport(const std::filesystem::path& source, const char* frontend, F&& body) {
+    try {
+        return body();
+    } catch (const std::exception& e) {
+        return ImportError{ImportError::Kind::Unreadable,
+                           std::string(frontend) + " front end failed on " + source.string() + ": " + e.what()};
+    } catch (...) {
+        return ImportError{ImportError::Kind::Unreadable,
+                           std::string(frontend) + " front end failed on " + source.string()};
+    }
+}
 
 // Routes a path to the front end that claims its extension. With none, the
 // answer is the contract's stub: Unsupported, naming the extension.

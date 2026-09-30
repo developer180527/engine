@@ -17,6 +17,7 @@
 //   COUNTER-CLOCKWISE is the front face; matrices column-major with the
 //   translation in m[12], m[13], m[14] (the memory layout of glTF, bx and the
 //   engine's Mat4 alike).
+#include <cmath>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -29,6 +30,18 @@ struct Float2   { float x = 0, y = 0; };
 struct Float3   { float x = 0, y = 0, z = 0; };
 struct Float4   { float x = 0, y = 0, z = 0, w = 0; };
 struct Quat     { float x = 0, y = 0, z = 0, w = 1; };
+
+// Scale a rotation key to unit length, as glTF requires and ozz assumes. Real
+// exporters write keys a little off unit (float round-off, quantisation), so
+// front ends normalise what they read. Returns false, leaving `q` unchanged,
+// when it cannot be a rotation (zero length or not finite): that key is left
+// for checkScene to refuse by name rather than guessed at.
+inline bool normalizeRotation(Quat& q) {
+    const float len = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    if (!std::isfinite(len) || len < 1e-6f) return false;
+    q = {q.x / len, q.y / len, q.z / len, q.w / len};
+    return true;
+}
 struct Float4x4 { float m[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1}; };
 
 // ── Geometry ────────────────────────────────────────────────────────────────

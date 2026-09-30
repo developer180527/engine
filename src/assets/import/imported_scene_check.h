@@ -270,6 +270,26 @@ inline std::vector<Violation> checkScene(const ImportedScene& s) {
                 }
             };
             keysOk(t.translation, "translation"); keysOk(t.rotation, "rotation"); keysOk(t.scale, "scale");
+            // Values: finite, and every rotation a unit quaternion (front ends
+            // normalise; one that could not be normalised is not a rotation).
+            auto valuesOk = [&](const std::vector<KeyF3>& keys, const char* ch) {
+                for (const auto& k : keys)
+                    if (!detail::finite3(k.value)) {
+                        bad("clips", fmt("clip '%s' bone '%s' %s: a key at t=%g is not finite",
+                                         c.name.c_str(), t.bone.c_str(), ch, k.time));
+                        return;
+                    }
+            };
+            valuesOk(t.translation, "translation"); valuesOk(t.scale, "scale");
+            for (const auto& k : t.rotation) {
+                const Quat& q = k.value;
+                const float n2 = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+                if (!std::isfinite(n2) || std::fabs(n2 - 1.0f) > 2e-3f) {
+                    bad("clips", fmt("clip '%s' bone '%s' rotation: the key at t=%g is not a unit quaternion (|q|^2 = %g)",
+                                     c.name.c_str(), t.bone.c_str(), k.time, n2));
+                    break;
+                }
+            }
         }
     }
 

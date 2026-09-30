@@ -235,121 +235,125 @@ Skeleton animatedNodes(const aiScene& sc) {
 }  // namespace
 
 ImportResult AssimpFrontend::importScene(const std::filesystem::path& source, const ImportOptions&) const {
-    const std::string src = source.string();
-    AssimpGatePass gate;                                     // one resident import per permit
+    return guardedImport(source, "Assimp", [&]() -> ImportResult {
+        const std::string src = source.string();
+        AssimpGatePass gate;                                     // one resident import per permit
 
-    Assimp::Importer imp;                                    // per call: reentrant
-    imp.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE, aiPrimitiveType_POINT | aiPrimitiveType_LINE);
-    imp.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
-    // Without this, Assimp INVENTS a mesh for any file that has none: a
-    // "skeleton mesh" drawing the node hierarchy as geometry. An empty file would
-    // then import as one mesh, and an animation-only COLLADA as a stick figure
-    // instead of a clip. The old cook paths never set it (WO-013).
-    imp.SetPropertyBool(AI_CONFIG_IMPORT_NO_SKELETON_MESHES, true);
-    const aiScene* sc = imp.ReadFile(src, kImportFlags);
-    if (!sc || !sc->mRootNode) {
-        const char* why = imp.GetErrorString();
-        return ImportError{ImportError::Kind::Unreadable,
-                           "Assimp could not read " + src + ((why && *why) ? std::string(": ") + why : "")};
-    }
-    // Nothing in it is Empty, the contract's answer, even though Assimp also
-    // flags such a scene INCOMPLETE. An animation-only file is flagged INCOMPLETE
-    // too, and is valid. Anything ELSE incomplete is broken.
-    if (sc->mNumMeshes == 0 && sc->mNumAnimations == 0)
-        return ImportError{ImportError::Kind::Empty, "nothing to import: " + src};
-    const bool animationOnly = sc->mNumMeshes == 0 && sc->mNumAnimations > 0;
-    if ((sc->mFlags & AI_SCENE_FLAGS_INCOMPLETE) && !animationOnly)
-        return ImportError{ImportError::Kind::Unreadable, "Assimp read an incomplete scene (" +
-                           std::to_string(sc->mNumMeshes) + " meshes, " + std::to_string(sc->mNumAnimations) +
-                           " animations): " + src};
-
-    ImportedScene out;
-    out.source = src;
-    Converter cv{*sc, source.parent_path(), out};
-
-    bool anyBones = false;
-    for (unsigned i = 0; i < sc->mNumMeshes; ++i) anyBones |= sc->mMeshes[i]->mNumBones > 0;
-    ::Skeleton animSkel;
-    if (anyBones) {
-        animSkel = anim::extractSkeleton(sc);
-        if (animSkel.boneCount() > 0) out.skeleton = fromAnim(animSkel);
-    } else if (animationOnly) {
-        out.skeleton = animatedNodes(*sc);
-    }
-
-    cv.materials();
-    for (unsigned i = 0; i < sc->mNumMeshes; ++i)
-        cv.mesh(sc->mMeshes[i], out.skeleton && anyBones ? &animSkel : nullptr);
-    cv.node(sc->mRootNode, -1);
-    // An aiMesh with no triangles left (SBP_REMOVE) is on no node; drop it from
-    // the list rather than leave a mesh nothing places. Indices shift, so remap.
-    {
-        std::vector<int32_t> remap(out.meshes.size(), -1);
-        std::vector<Mesh> kept;
-        for (size_t i = 0; i < out.meshes.size(); ++i)
-            if (!out.meshes[i].indices.empty()) { remap[i] = (int32_t)kept.size(); kept.push_back(std::move(out.meshes[i])); }
-        out.meshes = std::move(kept);
-        for (Node& n : out.nodes) for (uint32_t& m : n.meshes) m = (uint32_t)remap[m];
-    }
-
-    // ── Clips: the skinned skeleton's, or an animation-only file's ───────────
-    if (out.skeleton) {
-        std::set<std::string> bones;
-        for (const Bone& b : out.skeleton->bones) bones.insert(b.name);
-        const std::string stem = source.stem().string();
-        uint32_t strayChannels = 0;
-        for (unsigned a = 0; a < sc->mNumAnimations; ++a) {
-            const aiAnimation* an = sc->mAnimations[a];
-            const double tps = an->mTicksPerSecond > 0.0 ? an->mTicksPerSecond : 24.0;
-            Clip c;
-            c.name = clipDisplayName(an->mName.length ? an->mName.C_Str() : "", stem, a, sc->mNumAnimations);
-            c.duration = std::max((float)(an->mDuration / tps), 1e-4f);
-            auto t = [&](double ticks) { return std::clamp((float)(ticks / tps), 0.0f, c.duration); };
-            for (unsigned ch = 0; ch < an->mNumChannels; ++ch) {
-                const aiNodeAnim* na = an->mChannels[ch];
-                if (!bones.count(na->mNodeName.C_Str())) { ++strayChannels; continue; }
-                Track tr; tr.bone = na->mNodeName.C_Str();
-                for (unsigned k = 0; k < na->mNumPositionKeys; ++k) {
-                    const auto& kv = na->mPositionKeys[k];
-                    tr.translation.push_back({t(kv.mTime), {kv.mValue.x, kv.mValue.y, kv.mValue.z}});
-                }
-                for (unsigned k = 0; k < na->mNumRotationKeys; ++k) {   // source convention: no conjugation
-                    const auto& kv = na->mRotationKeys[k];
-                    tr.rotation.push_back({t(kv.mTime), {kv.mValue.x, kv.mValue.y, kv.mValue.z, kv.mValue.w}});
-                }
-                for (unsigned k = 0; k < na->mNumScalingKeys; ++k) {
-                    const auto& kv = na->mScalingKeys[k];
-                    tr.scale.push_back({t(kv.mTime), {kv.mValue.x, kv.mValue.y, kv.mValue.z}});
-                }
-                c.tracks.push_back(std::move(tr));
-            }
-            out.clips.push_back(std::move(c));
+        Assimp::Importer imp;                                    // per call: reentrant
+        imp.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE, aiPrimitiveType_POINT | aiPrimitiveType_LINE);
+        imp.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
+        // Without this, Assimp INVENTS a mesh for any file that has none: a
+        // "skeleton mesh" drawing the node hierarchy as geometry. An empty file would
+        // then import as one mesh, and an animation-only COLLADA as a stick figure
+        // instead of a clip. The old cook paths never set it (WO-013).
+        imp.SetPropertyBool(AI_CONFIG_IMPORT_NO_SKELETON_MESHES, true);
+        const aiScene* sc = imp.ReadFile(src, kImportFlags);
+        if (!sc || !sc->mRootNode) {
+            const char* why = imp.GetErrorString();
+            return ImportError{ImportError::Kind::Unreadable,
+                               "Assimp could not read " + src + ((why && *why) ? std::string(": ") + why : "")};
         }
-        if (strayChannels)
-            out.dropped.push_back({Dropped::Kind::Animation, Dropped::Effect::Less, strayChannels,
-                                   std::to_string(strayChannels) + " animation channel(s) on nodes that are not bones"});
-    } else if (sc->mNumAnimations > 0) {
-        out.dropped.push_back({Dropped::Kind::Animation, Dropped::Effect::Less, sc->mNumAnimations,
-                               std::to_string(sc->mNumAnimations) + " node animation(s) on a static model"});
-    }
+        // Nothing in it is Empty, the contract's answer, even though Assimp also
+        // flags such a scene INCOMPLETE. An animation-only file is flagged INCOMPLETE
+        // too, and is valid. Anything ELSE incomplete is broken.
+        if (sc->mNumMeshes == 0 && sc->mNumAnimations == 0)
+            return ImportError{ImportError::Kind::Empty, "nothing to import: " + src};
+        const bool animationOnly = sc->mNumMeshes == 0 && sc->mNumAnimations > 0;
+        if ((sc->mFlags & AI_SCENE_FLAGS_INCOMPLETE) && !animationOnly)
+            return ImportError{ImportError::Kind::Unreadable, "Assimp read an incomplete scene (" +
+                               std::to_string(sc->mNumMeshes) + " meshes, " + std::to_string(sc->mNumAnimations) +
+                               " animations): " + src};
 
-    // ── Everything else read but not carried ────────────────────────────────
-    auto less = [&](Dropped::Kind k, uint32_t n, std::string what) {
-        if (n) out.dropped.push_back({k, Dropped::Effect::Less, n, std::move(what)});
-    };
-    less(Dropped::Kind::MorphTargets,  cv.morphMeshes,    std::to_string(cv.morphMeshes) + " mesh(es) with morph targets");
-    less(Dropped::Kind::VertexColours, cv.colouredMeshes, std::to_string(cv.colouredMeshes) + " mesh(es) with vertex colours");
-    less(Dropped::Kind::ExtraUvSets,   cv.extraUvMeshes,  std::to_string(cv.extraUvMeshes) + " mesh(es) with a second UV set");
-    less(Dropped::Kind::Camera, sc->mNumCameras, std::to_string(sc->mNumCameras) + " camera(s)");
-    less(Dropped::Kind::Light,  sc->mNumLights,  std::to_string(sc->mNumLights) + " light(s)");
-    for (const std::string& t : cv.droppedTextures) less(Dropped::Kind::Texture, 1, "texture " + t);
-    if (cv.unweightedVerts)
-        less(Dropped::Kind::Skin, cv.unweightedVerts,
-             std::to_string(cv.unweightedVerts) + " skinned vertex(es) had no bone influence; bound to the root bone");
+        ImportedScene out;
+        out.source = src;
+        Converter cv{*sc, source.parent_path(), out};
 
-    if (out.meshes.empty() && out.clips.empty())
-        return ImportError{ImportError::Kind::Empty, "nothing to import (no triangles, no clips): " + src};
-    return out;
+        bool anyBones = false;
+        for (unsigned i = 0; i < sc->mNumMeshes; ++i) anyBones |= sc->mMeshes[i]->mNumBones > 0;
+        ::Skeleton animSkel;
+        if (anyBones) {
+            animSkel = anim::extractSkeleton(sc);
+            if (animSkel.boneCount() > 0) out.skeleton = fromAnim(animSkel);
+        } else if (animationOnly) {
+            out.skeleton = animatedNodes(*sc);
+        }
+
+        cv.materials();
+        for (unsigned i = 0; i < sc->mNumMeshes; ++i)
+            cv.mesh(sc->mMeshes[i], out.skeleton && anyBones ? &animSkel : nullptr);
+        cv.node(sc->mRootNode, -1);
+        // An aiMesh with no triangles left (SBP_REMOVE) is on no node; drop it from
+        // the list rather than leave a mesh nothing places. Indices shift, so remap.
+        {
+            std::vector<int32_t> remap(out.meshes.size(), -1);
+            std::vector<Mesh> kept;
+            for (size_t i = 0; i < out.meshes.size(); ++i)
+                if (!out.meshes[i].indices.empty()) { remap[i] = (int32_t)kept.size(); kept.push_back(std::move(out.meshes[i])); }
+            out.meshes = std::move(kept);
+            for (Node& n : out.nodes) for (uint32_t& m : n.meshes) m = (uint32_t)remap[m];
+        }
+
+        // ── Clips: the skinned skeleton's, or an animation-only file's ───────────
+        if (out.skeleton) {
+            std::set<std::string> bones;
+            for (const Bone& b : out.skeleton->bones) bones.insert(b.name);
+            const std::string stem = source.stem().string();
+            uint32_t strayChannels = 0;
+            for (unsigned a = 0; a < sc->mNumAnimations; ++a) {
+                const aiAnimation* an = sc->mAnimations[a];
+                const double tps = an->mTicksPerSecond > 0.0 ? an->mTicksPerSecond : 24.0;
+                Clip c;
+                c.name = clipDisplayName(an->mName.length ? an->mName.C_Str() : "", stem, a, sc->mNumAnimations);
+                c.duration = std::max((float)(an->mDuration / tps), 1e-4f);
+                auto t = [&](double ticks) { return std::clamp((float)(ticks / tps), 0.0f, c.duration); };
+                for (unsigned ch = 0; ch < an->mNumChannels; ++ch) {
+                    const aiNodeAnim* na = an->mChannels[ch];
+                    if (!bones.count(na->mNodeName.C_Str())) { ++strayChannels; continue; }
+                    Track tr; tr.bone = na->mNodeName.C_Str();
+                    for (unsigned k = 0; k < na->mNumPositionKeys; ++k) {
+                        const auto& kv = na->mPositionKeys[k];
+                        tr.translation.push_back({t(kv.mTime), {kv.mValue.x, kv.mValue.y, kv.mValue.z}});
+                    }
+                    for (unsigned k = 0; k < na->mNumRotationKeys; ++k) {   // source convention: no conjugation
+                        const auto& kv = na->mRotationKeys[k];
+                        Quat q{kv.mValue.x, kv.mValue.y, kv.mValue.z, kv.mValue.w};
+                        normalizeRotation(q);                             // a bad key stays bad: checkScene names it
+                        tr.rotation.push_back({t(kv.mTime), q});
+                    }
+                    for (unsigned k = 0; k < na->mNumScalingKeys; ++k) {
+                        const auto& kv = na->mScalingKeys[k];
+                        tr.scale.push_back({t(kv.mTime), {kv.mValue.x, kv.mValue.y, kv.mValue.z}});
+                    }
+                    c.tracks.push_back(std::move(tr));
+                }
+                out.clips.push_back(std::move(c));
+            }
+            if (strayChannels)
+                out.dropped.push_back({Dropped::Kind::Animation, Dropped::Effect::Less, strayChannels,
+                                       std::to_string(strayChannels) + " animation channel(s) on nodes that are not bones"});
+        } else if (sc->mNumAnimations > 0) {
+            out.dropped.push_back({Dropped::Kind::Animation, Dropped::Effect::Less, sc->mNumAnimations,
+                                   std::to_string(sc->mNumAnimations) + " node animation(s) on a static model"});
+        }
+
+        // ── Everything else read but not carried ────────────────────────────────
+        auto less = [&](Dropped::Kind k, uint32_t n, std::string what) {
+            if (n) out.dropped.push_back({k, Dropped::Effect::Less, n, std::move(what)});
+        };
+        less(Dropped::Kind::MorphTargets,  cv.morphMeshes,    std::to_string(cv.morphMeshes) + " mesh(es) with morph targets");
+        less(Dropped::Kind::VertexColours, cv.colouredMeshes, std::to_string(cv.colouredMeshes) + " mesh(es) with vertex colours");
+        less(Dropped::Kind::ExtraUvSets,   cv.extraUvMeshes,  std::to_string(cv.extraUvMeshes) + " mesh(es) with a second UV set");
+        less(Dropped::Kind::Camera, sc->mNumCameras, std::to_string(sc->mNumCameras) + " camera(s)");
+        less(Dropped::Kind::Light,  sc->mNumLights,  std::to_string(sc->mNumLights) + " light(s)");
+        for (const std::string& t : cv.droppedTextures) less(Dropped::Kind::Texture, 1, "texture " + t);
+        if (cv.unweightedVerts)
+            less(Dropped::Kind::Skin, cv.unweightedVerts,
+                 std::to_string(cv.unweightedVerts) + " skinned vertex(es) had no bone influence; bound to the root bone");
+
+        if (out.meshes.empty() && out.clips.empty())
+            return ImportError{ImportError::Kind::Empty, "nothing to import (no triangles, no clips): " + src};
+        return out;
+    });
 }
 
 }  // namespace imp

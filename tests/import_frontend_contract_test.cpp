@@ -13,6 +13,7 @@
 //      fail proves nothing about the front ends it passes.
 #include <cmath>
 #include <cstdio>
+#include <stdexcept>
 #include <functional>
 #include <string>
 #include <vector>
@@ -99,6 +100,8 @@ int main() {
             {"a clip animating a non-bone",       "clips",     skin, [](ImportedScene& s) { s.clips[0].tracks[0].bone = "Tail"; }},
             {"keys out of order",                 "clips",     skin, [](ImportedScene& s) { std::swap(s.clips[0].tracks[0].rotation[0], s.clips[0].tracks[0].rotation[1]); }},
             {"a key past the duration",           "clips",     skin, [](ImportedScene& s) { s.clips[0].tracks[0].rotation[1].time = 2.0f; }},
+            {"a rotation key of length 2",        "clips",     skin, [](ImportedScene& s) { s.clips[0].tracks[0].rotation[0].value = {0, 0, 0, 2}; }},
+            {"a NaN translation key",             "clips",     skin, [nan](ImportedScene& s) { s.clips[0].tracks[0].translation = {{0.0f, {nan, 0, 0}}}; }},
             {"a clip with no skeleton",           "clips",     tri,  [](ImportedScene& s) { Clip c; c.name = "Swing"; c.duration = 1; s.clips = {c}; }},
             {"a dropped entry that says nothing", "dropped",   tri,  [](ImportedScene& s) { s.dropped = {{Dropped::Kind::Camera, Dropped::Effect::Less, 1, ""}}; }},
         };
@@ -181,6 +184,22 @@ int main() {
         const impcontract::Report r = impcontract::run(subj);
         CHECK(r.skipped.size() == 2 && r.passed == (int)std::size(impcontract::kAllCases) - 2 + 1,
               "two inexpressible cases are skipped (%zu) and not counted as passed (%d)", r.skipped.size(), r.passed);
+    }
+
+    std::printf("7. a front end that throws refuses the file\n");
+    {
+        // guardedImport is the boundary every real front end runs inside: a
+        // bug while reading hostile input refuses that file, Unreadable with
+        // the reason, instead of terminating the cook worker.
+        const imp::ImportResult thrown = imp::guardedImport("bad.glb", "test", []() -> imp::ImportResult {
+            throw std::out_of_range("map::at: key not found");
+        });
+        CHECK(!thrown && thrown.error().kind == imp::ImportError::Kind::Unreadable &&
+              thrown.error().message.find("bad.glb") != std::string::npos &&
+              thrown.error().message.find("map::at") != std::string::npos,
+              "an exception becomes Unreadable, naming the file and the reason");
+        const imp::ImportResult odd = imp::guardedImport("bad.glb", "test", []() -> imp::ImportResult { throw 42; });
+        CHECK(!odd && odd.error().kind == imp::ImportError::Kind::Unreadable, "so does a non-std exception");
     }
 
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
