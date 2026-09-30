@@ -28,6 +28,12 @@ public:
     }
     ImportResult importScene(const std::filesystem::path& source,
                              const ImportOptions& options) const override;
+
+private:
+    // The import itself, on whatever stack it is called on. importScene runs
+    // it on a large one (see kAssimpStack in the .cpp).
+    ImportResult importOnThisStack(const std::filesystem::path& source,
+                                   const ImportOptions& options) const;
 };
 
 }  // namespace imp

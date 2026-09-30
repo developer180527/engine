@@ -78,6 +78,19 @@ Float4x4 worldOf(const std::vector<T>& items, size_t i, Float4x4 T::*local) {
         w = mul(items[(size_t)p].*local, w);
     return w;
 }
+// Every element's world matrix, in one pass: parents come first, so each is
+// its parent's world times its local. Calling worldOf for every element walks
+// each ancestor chain again, O(n x depth), which a deep file makes quadratic.
+// An out-of-order parent (checkScene's to refuse) reads as a root, not a crash.
+template <class T>
+std::vector<Float4x4> worldsOf(const std::vector<T>& items, Float4x4 T::*local) {
+    std::vector<Float4x4> w(items.size());
+    for (size_t i = 0; i < items.size(); ++i) {
+        const int32_t p = items[i].parent;
+        w[i] = p >= 0 && (size_t)p < i ? mul(w[(size_t)p], items[i].*local) : items[i].*local;
+    }
+    return w;
+}
 
 namespace detail {
 inline bool finite3(const Float3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }

@@ -269,21 +269,44 @@ inline bool near(float a, float b, float eps = 1e-3f) { return std::fabs(a - b) 
 inline bool near3(Float3 a, Float3 b, float eps = 1e-3f) { return near(a.x, b.x, eps) && near(a.y, b.y, eps) && near(a.z, b.z, eps); }
 inline std::string str(Float3 v) { char b[96]; std::snprintf(b, sizeof b, "(%.4g, %.4g, %.4g)", v.x, v.y, v.z); return b; }
 
+// Triangles are PAIRED by position within the tolerance, not by their order
+// after sorting. The sort (on positions rounded to a 1 mm grid) only makes the
+// report deterministic: a vertex a hair off, across a rounding edge, changes
+// which corner leads a triangle and where it sorts, and pairing by index then
+// failed a correct import. Each wanted triangle takes the first unclaimed one
+// whose corners all lie within the tolerance under some ROTATION (never a
+// reordering, so winding is still checked), and everything else is compared
+// on that pairing.
 inline void compareGeometry(const ImportedScene& got, const ImportedScene& want, std::vector<std::string>& why) {
     const auto g = soup(got), w = soup(want);
     if (g.size() != w.size()) { why.push_back("triangles: got " + std::to_string(g.size()) + ", want " + std::to_string(w.size())); return; }
+    std::vector<bool> claimed(g.size(), false);
     for (size_t i = 0; i < w.size(); ++i) {
+        size_t gi = g.size(); int rot = 0;
+        for (size_t j = 0; j < g.size() && gi == g.size(); ++j) {
+            if (claimed[j]) continue;
+            for (int r = 0; r < 3; ++r)
+                if (near3(g[j].c[r].p, w[i].c[0].p) && near3(g[j].c[(r + 1) % 3].p, w[i].c[1].p) &&
+                    near3(g[j].c[(r + 2) % 3].p, w[i].c[2].p)) { gi = j; rot = r; break; }
+        }
+        if (gi == g.size()) {
+            why.push_back("triangle " + std::to_string(i) + ": nothing imported at " + str(w[i].c[0].p) + ", " + str(w[i].c[1].p) + ", " +
+                          str(w[i].c[2].p) + " in that winding (winding, units, axes or node transforms)");
+            return;
+        }
+        claimed[gi] = true;
+        Tri pg = g[gi];
+        for (int k = 0; k < 3; ++k) pg.c[k] = g[gi].c[(rot + k) % 3];
         for (int k = 0; k < 3; ++k) {
-            const Corner &a = g[i].c[k], &b = w[i].c[k];
-            if (!near3(a.p, b.p)) { why.push_back("triangle " + std::to_string(i) + " corner " + std::to_string(k) + ": position " + str(a.p) + ", want " + str(b.p) + " (winding, units, axes or node transforms)"); return; }
+            const Corner &a = pg.c[k], &b = w[i].c[k];
             if (!near3(a.n, b.n)) { why.push_back("triangle " + std::to_string(i) + ": normal " + str(a.n) + ", want " + str(b.n)); return; }
             if (!near(a.uv.x, b.uv.x) || !near(a.uv.y, b.uv.y)) { why.push_back("triangle " + std::to_string(i) + ": UV differs (origin must be top-left)"); return; }
             if (!near3(a.rest, b.rest)) { why.push_back("triangle " + std::to_string(i) + " corner " + std::to_string(k) + ": skinned at rest it lands at " + str(a.rest) + ", want " + str(b.rest) + " (inverse bind matrices)"); return; }
             if (a.bone != b.bone || !near(a.weight, b.weight)) { why.push_back("triangle " + std::to_string(i) + ": dominant bone '" + a.bone + "' " + std::to_string(a.weight) + ", want '" + b.bone + "' " + std::to_string(b.weight)); return; }
         }
-        if (g[i].material != w[i].material || !near(g[i].colour.x, w[i].colour.x) ||
-            !near(g[i].colour.y, w[i].colour.y) || !near(g[i].colour.z, w[i].colour.z) || !near(g[i].colour.w, w[i].colour.w)) {
-            why.push_back("triangle " + std::to_string(i) + ": material '" + g[i].material + "', want '" + w[i].material + "'"); return;
+        if (pg.material != w[i].material || !near(pg.colour.x, w[i].colour.x) ||
+            !near(pg.colour.y, w[i].colour.y) || !near(pg.colour.z, w[i].colour.z) || !near(pg.colour.w, w[i].colour.w)) {
+            why.push_back("triangle " + std::to_string(i) + ": material '" + pg.material + "', want '" + w[i].material + "'"); return;
         }
     }
 }

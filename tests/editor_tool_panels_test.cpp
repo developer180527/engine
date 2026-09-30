@@ -106,6 +106,25 @@ int main() {
               "commands are green");
     }
 
+#if !defined(_WIN32)
+    // ── 2b. Terminal: a project folder the shell would otherwise rewrite ────
+    // The root was wrapped in DOUBLE quotes, inside which sh still expands $,
+    // backticks and backslashes: a folder named `a $HOME` became a different
+    // path, and one containing a backtick ran it. Single-quoted, exactly.
+    {
+        const fs::path odd = tmp / "it's a $HOME `x` dir";
+        fs::create_directories(odd);
+        term::TerminalSession t;
+        t.setProjectRoot(odd.string());
+        t.runCommand("pwd -P");
+        const std::string want = fs::canonical(odd).string();
+        bool there = false;
+        for (const auto& l : t.history) there |= l == want;
+        CHECK(there, "a project folder named with ', $ and a backtick is entered exactly (pwd: %s)",
+              t.history.size() > 4 ? t.history[4].c_str() : "-");
+    }
+#endif
+
     // ── 3. Highlighter ──────────────────────────────────────────────────────
     {
         const auto lines = code::Highlighter::highlight("local x = \"hi\" -- note\nreturn 42", code::Lang::Lua);

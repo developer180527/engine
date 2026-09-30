@@ -1,5 +1,6 @@
 // ── AssimpFrontend — see frontend_assimp.h ────────────────────────────────────
 #include "assets/import/frontend_assimp.h"
+#include "core/thread_stack.h"
 #include "animation/assimp_skeleton_loader.h"   // extractSkeleton / extractBoneWeights: the old paths' own
 
 #include <assimp/Importer.hpp>
@@ -12,6 +13,7 @@
 #include <cstring>
 #include <map>
 #include <semaphore>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -166,16 +168,24 @@ struct Converter {
     }
 
     // Depth-first pre-order from Assimp's root, which becomes node 0.
-    void node(const aiNode* an, int32_t parent) {
-        Node nd;
-        nd.name   = an->mName.length ? an->mName.C_Str() : "node " + std::to_string(out.nodes.size());
-        nd.parent = parent;
-        nd.local  = toFloat4x4(an->mTransformation);
-        for (unsigned i = 0; i < an->mNumMeshes; ++i)
-            if (!out.meshes[an->mMeshes[i]].indices.empty()) nd.meshes.push_back(an->mMeshes[i]);
-        const int32_t self = (int32_t)out.nodes.size();
-        out.nodes.push_back(std::move(nd));
-        for (unsigned c = 0; c < an->mNumChildren; ++c) node(an->mChildren[c], self);
+    // An explicit stack, not recursion: the depth is the file's, and a deep
+    // one overflowed a 512 KB thread stack (SIGBUS, uncatchable). Children are
+    // pushed in reverse, so the order is the recursive pre-order exactly.
+    void node(const aiNode* top, int32_t topParent) {
+        std::vector<std::pair<const aiNode*, int32_t>> stack{{top, topParent}};
+        while (!stack.empty()) {
+            const auto [an, parent] = stack.back();
+            stack.pop_back();
+            Node nd;
+            nd.name   = an->mName.length ? an->mName.C_Str() : "node " + std::to_string(out.nodes.size());
+            nd.parent = parent;
+            nd.local  = toFloat4x4(an->mTransformation);
+            for (unsigned i = 0; i < an->mNumMeshes; ++i)
+                if (!out.meshes[an->mMeshes[i]].indices.empty()) nd.meshes.push_back(an->mMeshes[i]);
+            const int32_t self = (int32_t)out.nodes.size();
+            out.nodes.push_back(std::move(nd));
+            for (unsigned c = an->mNumChildren; c-- > 0;) stack.push_back({an->mChildren[c], self});
+        }
     }
 };
 
@@ -208,7 +218,7 @@ Skeleton animatedNodes(const aiScene& sc) {
     while (!stack.empty()) {
         const aiNode* n = stack.back(); stack.pop_back();
         if (animated.count(n->mName.C_Str()))
-            for (const aiNode* p = n; p; p = p->mParent) keep.insert(p);
+            for (const aiNode* p = n; p && keep.insert(p).second; p = p->mParent) {}   // stop at a kept one: O(n), not O(n x depth)
         for (unsigned c = 0; c < n->mNumChildren; ++c) stack.push_back(n->mChildren[c]);
     }
     Skeleton out;
@@ -234,7 +244,25 @@ Skeleton animatedNodes(const aiScene& sc) {
 
 }  // namespace
 
-ImportResult AssimpFrontend::importScene(const std::filesystem::path& source, const ImportOptions&) const {
+// Assimp's readers recurse once per level of the file's node tree, and so does
+// aiNode's destructor. A 10,000-deep COLLADA overflowed even an 8 MB stack, and
+// on a 512 KB one (a macOS secondary thread: the job pool, where the uncooked
+// preview imports) far less does. That recursion is Assimp's, not ours to
+// rewrite, so the whole import, destruction included, runs on a stack sized
+// for it: a reservation, committed only as touched. A file deeper still kills
+// the process it runs in, which for a cook is the isolated engine_cook_worker.
+constexpr size_t kAssimpStack = 256u << 20;
+
+ImportResult AssimpFrontend::importScene(const std::filesystem::path& source, const ImportOptions& options) const {
+    std::optional<ImportResult> result;
+    const bool ran = engine::threads::runWithStack(kAssimpStack, [&] { result.emplace(importOnThisStack(source, options)); });
+    if (!ran || !result)
+        return ImportError{ImportError::Kind::Unreadable,
+                           "Assimp front end could not start its import thread for " + source.string()};
+    return std::move(*result);
+}
+
+ImportResult AssimpFrontend::importOnThisStack(const std::filesystem::path& source, const ImportOptions&) const {
     return guardedImport(source, "Assimp", [&]() -> ImportResult {
         const std::string src = source.string();
         AssimpGatePass gate;                                     // one resident import per permit

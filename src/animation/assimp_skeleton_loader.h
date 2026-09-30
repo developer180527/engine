@@ -84,14 +84,16 @@ static bool isAssimpFbxHelper(const std::string& name) {
 
 // Walk past a chain of consecutive $AssimpFbx$ helper nodes, accumulating
 // their transforms. Returns the first non-helper descendant (the real bone)
-// with the combined transform, or nullptr if the chain dead-ends.
+// with the combined transform, or nullptr if the chain dead-ends. A loop, not
+// recursion: the chain's length is the file's.
 static const aiNode* collapseHelperChain(const aiNode* node,
                                          aiMatrix4x4& accumulated) {
     accumulated = accumulated * node->mTransformation;
-    // If this node has exactly one child and it's a helper, keep collapsing
-    if (node->mNumChildren == 1 &&
-        isAssimpFbxHelper(node->mChildren[0]->mName.C_Str())) {
-        return collapseHelperChain(node->mChildren[0], accumulated);
+    // While this node has exactly one child and it's a helper, keep collapsing
+    while (node->mNumChildren == 1 &&
+           isAssimpFbxHelper(node->mChildren[0]->mName.C_Str())) {
+        node = node->mChildren[0];
+        accumulated = accumulated * node->mTransformation;
     }
     // If this node has exactly one child that is the real bone, return it
     if (node->mNumChildren == 1) {
@@ -102,56 +104,62 @@ static const aiNode* collapseHelperChain(const aiNode* node,
     return nullptr;
 }
 
-inline bool hasDescendantBone(const aiNode* node,
-                              const std::unordered_set<std::string>& boneNames) {
-    std::vector<const aiNode*> stack;
-    for (unsigned c = 0; c < node->mNumChildren; ++c)
-        stack.push_back(node->mChildren[c]);
+// Every node whose subtree (itself included) holds a bone, in one post-order
+// pass. This used to be asked per node by walking that node's whole subtree,
+// O(n x depth); and like everything here it is a loop, not recursion, because
+// the depth is the file's (a deep one overflowed a 512 KB stack, WO-039).
+inline std::unordered_set<const aiNode*> nodesAboveBones(const aiNode* root,
+                                                         const std::unordered_set<std::string>& boneNames) {
+    std::vector<const aiNode*> order;                 // pre-order: parents before children
+    std::vector<const aiNode*> stack{root};
     while (!stack.empty()) {
         const aiNode* n = stack.back(); stack.pop_back();
-        if (boneNames.count(n->mName.C_Str())) return true;
-        for (unsigned c = 0; c < n->mNumChildren; ++c)
-            stack.push_back(n->mChildren[c]);
+        order.push_back(n);
+        for (unsigned c = 0; c < n->mNumChildren; ++c) stack.push_back(n->mChildren[c]);
     }
-    return false;
+    std::unordered_set<const aiNode*> has;
+    for (auto it = order.rbegin(); it != order.rend(); ++it) {   // children before parents
+        const aiNode* n = *it;
+        bool h = boneNames.count(n->mName.C_Str()) > 0;
+        for (unsigned c = 0; c < n->mNumChildren && !h; ++c) h = has.count(n->mChildren[c]) > 0;
+        if (h) has.insert(n);
+    }
+    return has;
 }
 
-inline void collectSkeletonNodes(const aiNode* node, int parentIdx,
+// The skeleton's nodes in pre-order: every node with a bone at or below it,
+// with $AssimpFbx$ helper chains collapsed into the real bone they lead to.
+// An explicit work stack, in the order the recursive version emitted: a Visit
+// emits a node and queues its children; a helper child is collapsed when its
+// parent is visited and queued as a Real, which emits the bone the chain leads
+// to and queues that bone's children.
+inline void collectSkeletonNodes(const aiNode* root, int rootParent,
                                  const std::unordered_set<std::string>& boneNames,
                                  std::vector<NodeInfo>& out) {
-    std::string name = node->mName.C_Str();
-    bool isBone = boneNames.count(name) > 0;
-
-    if (!isBone && !hasDescendantBone(node, boneNames)) return;
-
-    int myIdx = (int)out.size();
-    out.push_back({ name, parentIdx, node->mTransformation });
-
-    for (unsigned c = 0; c < node->mNumChildren; ++c) {
-        const aiNode* child = node->mChildren[c];
-        std::string childName = child->mName.C_Str();
-
-        if (isAssimpFbxHelper(childName)) {
-            // Collapse the entire helper chain into one combined transform
-            aiMatrix4x4 combined;  // identity
-            const aiNode* realBone = collapseHelperChain(child, combined);
-            if (realBone) {
-                // Emit the real bone with the combined transform
-                std::string realName = realBone->mName.C_Str();
-                bool realIsBone = boneNames.count(realName) > 0;
-                if (realIsBone || hasDescendantBone(realBone, boneNames)) {
-                    int realIdx = (int)out.size();
-                    out.push_back({ realName, myIdx, combined });
-                    // Continue recursion from the real bone's children
-                    for (unsigned gc = 0; gc < realBone->mNumChildren; ++gc)
-                        collectSkeletonNodes(realBone->mChildren[gc], realIdx,
-                                             boneNames, out);
-                }
+    const std::unordered_set<const aiNode*> keep = nodesAboveBones(root, boneNames);
+    struct Work { const aiNode* node; int parent; bool real; aiMatrix4x4 combined; };
+    std::vector<Work> stack{{root, rootParent, false, {}}};
+    while (!stack.empty()) {
+        const Work w = stack.back(); stack.pop_back();
+        if (!keep.count(w.node)) continue;
+        const int myIdx = (int)out.size();
+        out.push_back({ w.node->mName.C_Str(), w.parent, w.real ? w.combined : w.node->mTransformation });
+        std::vector<Work> kids;
+        for (unsigned c = 0; c < w.node->mNumChildren; ++c) {
+            const aiNode* child = w.node->mChildren[c];
+            if (!w.real && isAssimpFbxHelper(child->mName.C_Str())) {
+                // Collapse the entire helper chain into one combined transform
+                aiMatrix4x4 combined;  // identity
+                if (const aiNode* realBone = collapseHelperChain(child, combined))
+                    kids.push_back({realBone, myIdx, true, combined});
+                // else: dead-end helper chain, skip entirely
+            } else {
+                // A Real's children are visited as they are: the recursive
+                // version recursed straight into them, helpers included.
+                kids.push_back({child, myIdx, false, {}});
             }
-            // else: dead-end helper chain, skip entirely
-        } else {
-            collectSkeletonNodes(child, myIdx, boneNames, out);
         }
+        for (auto it = kids.rbegin(); it != kids.rend(); ++it) stack.push_back(*it);
     }
 }
 

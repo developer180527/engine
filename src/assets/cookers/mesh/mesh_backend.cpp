@@ -18,6 +18,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace assetlib;
@@ -383,10 +384,11 @@ bool emitSkeletonAndClips(const imp::ImportedScene& s, MeshAsset& asset, std::st
 
 // The bone a rigid mesh on node `ni` follows: the nearest ancestor node (itself
 // included) whose name is a bone's, else the root bone.
-int rigidBoneFor(const imp::ImportedScene& s, size_t ni) {
+// `boneByName` is built once: a per-level scan of every bone, for every rigid
+// mesh, was meshes x depth x bones on a deep file.
+int rigidBoneFor(const imp::ImportedScene& s, size_t ni, const std::unordered_map<std::string, int>& boneByName) {
     for (int32_t n = (int32_t)ni; n >= 0; n = s.nodes[(size_t)n].parent)
-        for (size_t b = 0; b < s.skeleton->bones.size(); ++b)
-            if (s.skeleton->bones[b].name == s.nodes[(size_t)n].name) return (int)b;
+        if (auto it = boneByName.find(s.nodes[(size_t)n].name); it != boneByName.end()) return it->second;
     return 0;
 }
 
@@ -424,16 +426,21 @@ CookResult cookImportedScene(const imp::ImportedScene& s, const CookContext& ctx
     // ── Geometry ────────────────────────────────────────────────────────────
     Emitter e;
     e.skinned = anySkinned;
+    // Every node's world matrix once: per-node worldOf re-walks each ancestor
+    // chain, and a deep file made that quadratic.
+    const std::vector<imp::Float4x4> nodeWorld = imp::worldsOf(s.nodes, &imp::Node::local);
     if (anySkinned) {
         // Skinned meshes once each, in their own space; rigid meshes where their
         // nodes put them, each bound wholly to the bone it hangs from.
         for (const auto& m : s.meshes)
             if (m.skinned()) emitSkinned(e, m);
+        std::unordered_map<std::string, int> boneByName;
+        for (size_t b = s.skeleton->bones.size(); b-- > 0;) boneByName[s.skeleton->bones[b].name] = (int)b;   // first wins
         for (size_t ni = 0; ni < s.nodes.size(); ++ni)
             for (uint32_t mi : s.nodes[ni].meshes)
                 if (!s.meshes[mi].skinned()) {
-                    const int bone = rigidBoneFor(s, ni);
-                    emitBaked(e, s.meshes[mi], imp::worldOf(s.nodes, ni, &imp::Node::local), bone);
+                    const int bone = rigidBoneFor(s, ni, boneByName);
+                    emitBaked(e, s.meshes[mi], nodeWorld[ni], bone);
                     notes.push_back("mesh '" + s.meshes[mi].name + "' has no weights: bound rigidly to bone '" +
                                     s.skeleton->bones[(size_t)bone].name + "'");
                 }
@@ -444,9 +451,8 @@ CookResult cookImportedScene(const imp::ImportedScene& s, const CookContext& ctx
         // (scale and ground offset from bounds) floated him 0.76 m up. Bound
         // what the renderer draws at rest, the same sum the contract suite's
         // "skinned at rest" check uses.
-        std::vector<imp::Float4x4> rest(s.skeleton->bones.size());
-        for (size_t b = 0; b < rest.size(); ++b)
-            rest[b] = imp::mul(imp::worldOf(s.skeleton->bones, b, &imp::Bone::bindLocal), s.skeleton->bones[b].inverseBind);
+        std::vector<imp::Float4x4> rest = imp::worldsOf(s.skeleton->bones, &imp::Bone::bindLocal);
+        for (size_t b = 0; b < rest.size(); ++b) rest[b] = imp::mul(rest[b], s.skeleton->bones[b].inverseBind);
         for (int k = 0; k < 3; ++k) { e.bMin[k] = FLT_MAX; e.bMax[k] = -FLT_MAX; }
         const SkinnedVertex* sv = reinterpret_cast<const SkinnedVertex*>(e.vertexBytes.data());
         for (uint32_t vi = 0; vi < e.vertexBytes.size() / sizeof(SkinnedVertex); ++vi) {
@@ -461,7 +467,7 @@ CookResult cookImportedScene(const imp::ImportedScene& s, const CookContext& ctx
     } else {
         for (size_t ni = 0; ni < s.nodes.size(); ++ni)
             for (uint32_t mi : s.nodes[ni].meshes)
-                emitBaked(e, s.meshes[mi], imp::worldOf(s.nodes, ni, &imp::Node::local), -1);
+                emitBaked(e, s.meshes[mi], nodeWorld[ni], -1);
     }
 
     MeshAsset asset;

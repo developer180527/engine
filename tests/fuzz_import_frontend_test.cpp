@@ -45,7 +45,8 @@ using impcontract::Case;
 
 namespace {
 
-constexpr uint32_t kGeneratorVersion = 2;   // 2: glTF mutations edit the JSON tree (most byte edits never parsed)
+constexpr uint32_t kGeneratorVersion = 3;   // 3: some glTF cases hang under a node chain thousands deep
+                                            // 2: glTF mutations edit the JSON tree (most byte edits never parsed)
 
 // The reference cases a format can write. EmptyFile is written as an empty
 // scene; Unrepresentable is left out, as its point (morphs) is not structure.
@@ -269,8 +270,25 @@ void oneCase(uint64_t masterSeed, fuzz::Report& rep) {
     }
 
     // 2-4. Mutations.
+    // Depth is a resource too: both front ends walked the node tree by
+    // recursion, and a 2,000-deep chain overflowed a 512 KB stack. One glTF
+    // case in ten hangs its scene under a chain up to 20,000 deep, and then
+    // mutates as usual, so the depth reaches the skeleton and the back end too.
+    // Its own stream: the mutations drawn from `mut` are what they were.
+    fuzz::Rng deepRng(fuzz::deriveSeed(masterSeed, "import_depth"));
+    std::string deepClean = clean;
+    if (useGltf && deepRng.chance(10)) {
+        nlohmann::json j = nlohmann::json::parse(clean);
+        auto& nodes = j["nodes"];
+        const nlohmann::json roots = j["scenes"][0]["nodes"];
+        const int first = (int)nodes.size(), depth = (int)deepRng.range(500, 20000);
+        for (int i = 0; i < depth; ++i)
+            nodes.push_back({{"children", i + 1 < depth ? nlohmann::json::array({first + i + 1}) : roots}});
+        j["scenes"][0]["nodes"] = nlohmann::json::array({first});
+        deepClean = j.dump();
+    }
     for (int round = 0; round < 6; ++round) {
-        std::string m = clean;
+        std::string m = deepClean;
         if (useGltf && mut.chance(75)) {
             nlohmann::json j = nlohmann::json::parse(m, nullptr, false);
             const int edits = (int)mut.range(1, 3);

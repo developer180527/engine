@@ -21,6 +21,7 @@
 #include "assets/import/frontend_cgltf.h"
 #include "gltf_writer.h"   // gltfw::write
 #include "import_contract.h"
+#include "core/thread_stack.h"   // engine::threads::runWithStack
 
 static int g_failures = 0;
 #define CHECK(c, ...) do { if (!(c)) { std::printf("  FAIL  " __VA_ARGS__); std::printf("\n"); ++g_failures; } \
@@ -217,6 +218,41 @@ int main() {
                 unit &= std::fabs(n2 - 1.0f) < 1e-4f;
             }
         CHECK(unit && checkScene(n.scene()).empty(), "rotation keys 1%% off unit length are normalised, and the scene is valid");
+    }
+
+    {
+        // A node tree 10,000 deep. Walking it by recursion overflowed a 512 KB
+        // stack (the size of a macOS secondary thread, where cooks run) from
+        // about 2,000 levels: SIGBUS, which no exception boundary catches. The
+        // chain sits ABOVE the scene's own nodes, so it is every bone's ancestor
+        // in the skinned case too, and also exercises the skeleton's ancestor
+        // walk. Run on a stack of known size, so macOS and Linux agree.
+        constexpr int kDepth = 10000;
+        auto deepen = [&](Case c) {
+            nlohmann::json j = nlohmann::json::parse(gltfw::write(impcontract::expected(c)));
+            auto& nodes = j["nodes"];
+            const nlohmann::json roots = j["scenes"][0]["nodes"];
+            const int first = (int)nodes.size();
+            for (int i = 0; i < kDepth; ++i) {
+                nlohmann::json n = {{"name", "chain " + std::to_string(i)}};
+                n["children"] = i + 1 < kDepth ? nlohmann::json::array({first + i + 1}) : roots;
+                nodes.push_back(std::move(n));
+            }
+            j["scenes"][0]["nodes"] = nlohmann::json::array({first});
+            return put(std::string("deep_") + impcontract::name(c) + ".gltf", j.dump());
+        };
+        for (Case c : {Case::UnitTriangle, Case::SkinnedColumn}) {
+            const fs::path p = deepen(c);
+            bool read = false, valid = false; size_t nodes = 0;
+            const bool ran = engine::threads::runWithStack(512 * 1024, [&] {
+                const ImportResult d = fe.importScene(p, {});
+                read = (bool)d;
+                if (d) { nodes = d.scene().nodes.size(); valid = checkScene(d.scene()).empty(); }
+            });
+            CHECK(ran && read && valid && nodes > (size_t)kDepth,
+                  "%s under a %d-deep node chain imports on a 512 KB stack, and the scene is valid (%zu nodes)",
+                  impcontract::name(c), kDepth, nodes);
+        }
     }
 
     fs::remove_all(dir);

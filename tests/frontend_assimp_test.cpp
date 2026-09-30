@@ -20,6 +20,7 @@
 
 #include "assets/import/frontend_assimp.h"
 #include "import_contract.h"
+#include "core/thread_stack.h"   // engine::threads::runWithStack
 
 static int g_failures = 0;
 #define CHECK(c, ...) do { if (!(c)) { std::printf("  FAIL  " __VA_ARGS__); std::printf("\n"); ++g_failures; } \
@@ -328,6 +329,40 @@ int main() {
         CHECK(wood && wood->baseColor.path == "wood.tga",
               "an author's absolute path resolves to the file of that name beside the source (%s)", wood ? wood->baseColor.path.c_str() : "-");
         CHECK(stone && stone->baseColor.empty() && dropped, "and one found nowhere is dropped, naming it");
+    }
+
+    // ── 4. A node tree 10,000 deep ──────────────────────────────────────────
+    // The front end walked Assimp's node tree by recursion, and so did the
+    // skeleton extraction under it; a deep enough file overflowed a 512 KB
+    // stack (a macOS secondary thread, where cooks run) with SIGBUS, which no
+    // exception boundary catches. The chain wraps the whole visual scene, so in
+    // the skinned case it is every joint's ancestor. Built by string surgery on
+    // the written file: dae::write nests by concatenation and is quadratic.
+    std::printf("4. deep node trees\n");
+    {
+        constexpr int kDepth = 10000;
+        for (Case c : {Case::UnitTriangle, Case::SkinnedColumn}) {
+            std::string x = dae::write(impcontract::expected(c));
+            const size_t open = x.find('>', x.find("<visual_scene")) + 1, close = x.find("</visual_scene>");
+            std::string head, tail;
+            head.reserve(kDepth * 48); tail.reserve(kDepth * 8);
+            for (int i = 0; i < kDepth; ++i) {
+                head += "<node id=\"chain" + std::to_string(i) + "\" name=\"chain" + std::to_string(i) + "\" type=\"NODE\">";
+                tail += "</node>";
+            }
+            x = x.substr(0, open) + head + x.substr(open, close - open) + tail + x.substr(close);
+            const fs::path p = put(std::string("deep_") + impcontract::name(c) + ".dae", x);
+            bool read = false, valid = false; size_t nodes = 0; std::string why;
+            const bool ran = engine::threads::runWithStack(512 * 1024, [&] {
+                const ImportResult d = fe.importScene(p, {});
+                read = (bool)d;
+                if (!d) why = d.error().message;
+                else { nodes = d.scene().nodes.size(); valid = checkScene(d.scene()).empty(); }
+            });
+            CHECK(ran && read && valid && nodes > (size_t)kDepth,
+                  "%s under a %d-deep node chain imports on a 512 KB stack, and the scene is valid (%zu nodes%s%s)",
+                  impcontract::name(c), kDepth, nodes, why.empty() ? "" : "; ", why.c_str());
+        }
     }
 
     fs::remove_all(dir);

@@ -12,7 +12,7 @@ with this list instead of compiling and misbehaving. Windows, macOS and
 Linux implement all of it. An OS that really is POSIX-family is one line in
 `src/core/os_family.h`.
 
-**15 item(s)**
+**16 item(s)**
 
 | file | the port must provide |
 |---|---|
@@ -23,6 +23,7 @@ Linux implement all of it. An OS that really is POSIX-family is one line in
 | `src/core/memory/mem.cpp` | core/memory needs page mapping, a page-size query and a trivially destructible mutex |
 | `src/core/memory/mem.cpp` | core/memory needs the OS page size |
 | `src/core/memory/mem.cpp` | core/memory needs to release what mapAligned mapped (unmapRegion) |
+| `src/core/thread_stack.cpp` | core/thread_stack needs a thread whose stack size can be set |
 | `src/runtime/module_loader.h` | module loading needs a dynamic loader, or static module registration (WO-025) |
 | `src/runtime/module_loader.h` | module loading needs libOpen/libSym/libClose/libError and a process id |
 | `src/runtime/platform/glfw_platform.cpp` | GLFW tool windows need native window handle retrieval |

@@ -95,3 +95,13 @@ behind it. The input is fuzzed (`fuzz_import_frontend_test`, under ASan and
 UBSan too); what cgltf's own validator does not check, the front end does:
 inverse-bind matrices one MAT4 per joint, accessors aligned to their
 components, skins with at least one joint.
+
+Depth is input too. An exception boundary cannot catch a stack overflow, so
+nothing a front end runs may recurse once per level of the file's node tree:
+both front ends and the Assimp skeleton extraction walk it with explicit
+stacks, and a 10,000-deep chain imports on a 512 KB stack (a macOS secondary
+thread's size), `frontend_{cgltf,assimp}_test` §4. Assimp's own readers and
+destructors DO recurse per level, and that is not ours to rewrite: the Assimp
+front end runs every import on a thread with a 256 MB reserved stack
+(`core/thread_stack.h`), and a file deeper even than that kills only the
+isolated `engine_cook_worker` it runs in (WO-039).

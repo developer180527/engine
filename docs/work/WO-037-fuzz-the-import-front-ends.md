@@ -37,3 +37,6 @@ Nothing: a file that trips a guard is refused as `Unreadable`, or cooked-and-ref
 ## Not in scope
 - Fuzzing Assimp's own parsers beyond OBJ; Assimp is fuzzed upstream (OSS-Fuzz). OBJ covers the front end's own reading of Assimp's output.
 - A coverage-guided (libFuzzer) lane; the harness is seeded and portable by design (tests/fuzz/fuzz.h).
+
+## Log
+- 2026-09-30 (after closing): a deep node tree still crashed both front ends with a stack overflow, which the exception boundary cannot catch. Fixed in WO-039.

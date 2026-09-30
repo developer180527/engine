@@ -65,6 +65,13 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   and this layer may not include the ECS. The matrix math they call stayed here.
   Passing components in rather than looking them up is worth several ms per
   frame at scene scale — see `src/render/issues.md` R14.
+- **`thread_stack.{h,cpp}`** — run work on a thread whose stack size we
+  chose (`engine::threads::runWithStack`). For code whose recursion depth an
+  input file decides: Assimp's readers recurse per node level, and a caller
+  on a 512 KB macOS secondary thread crashed on a file an 8 MB main thread
+  read. The size is a reservation, committed only as touched. Returns false
+  rather than running on the caller's stack when no thread can be made
+  (WO-039).
 - **`thread_qos.{h,cpp}`** — tell the OS scheduler what a thread is FOR.
   Three classes (`Interactive` / `Initiated` / `Utility`) plus a read-only
   `Unclassified`, applied to the CALLING thread — every platform primitive

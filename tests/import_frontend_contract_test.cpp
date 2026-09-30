@@ -157,6 +157,18 @@ int main() {
                   r.failures.empty() ? "" : (": " + r.failures[0]).c_str());
         }
 
+        // And does NOT fail one that is right to within the tolerance. Corners
+        // used to be ordered and paired by their position ROUNDED to a 1 mm
+        // grid: a vertex 0.6 mm off, across a rounding edge, changed which
+        // corner led its triangle, so the right answer failed. Two front ends
+        // computing the same sum in a different order (or with FMA, as GCC on
+        // Linux does) land a hair apart; that must not decide the verdict.
+        {
+            const impcontract::Report r = brokenOn(Case::UnitTriangle, [](ImportedScene& s) { s.meshes[0].positions[2].x = -0.0006f; });
+            CHECK(!r.failedCase(Case::UnitTriangle), "a vertex 0.6 mm off, across a rounding edge -> still passes%s",
+                  r.failures.empty() ? "" : (": " + r.failures[0]).c_str());
+        }
+
         FakeFrontend emptyScene;
         impcontract::Subject subj = impcontract::fakeSubject(emptyScene);
         emptyScene.set("EmptyFile.fake", ImportedScene{});

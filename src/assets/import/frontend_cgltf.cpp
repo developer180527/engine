@@ -221,15 +221,24 @@ struct Reader {
     // Depth-first, pre-order: the order the old cook path emitted nodes in.
     // Only the tree here; meshes are attached once the skeleton exists, because
     // skin weights are remapped to its bones.
-    void node(const cgltf_node* gn, int32_t parent) {
-        const int32_t self = (int32_t)out.nodes.size();
-        Node nd;
-        nd.name   = gn->name && *gn->name ? gn->name : "node " + std::to_string(gn - data.nodes);
-        nd.parent = parent;
-        cgltf_node_transform_local(gn, nd.local.m);         // column-major, as Float4x4
-        out.nodes.push_back(std::move(nd));
-        gltfOf.push_back(gn);
-        for (cgltf_size c = 0; c < gn->children_count; ++c) node(gn->children[c], self);
+    // An explicit stack, not recursion: the depth is the FILE's, and a 44 KB
+    // chain of 2,000 nodes overflowed a 512 KB thread stack (SIGBUS, which no
+    // exception boundary catches). Children are pushed in reverse, so the
+    // order is the recursive pre-order exactly.
+    void node(const cgltf_node* top, int32_t topParent) {
+        std::vector<std::pair<const cgltf_node*, int32_t>> stack{{top, topParent}};
+        while (!stack.empty()) {
+            const auto [gn, parent] = stack.back();
+            stack.pop_back();
+            const int32_t self = (int32_t)out.nodes.size();
+            Node nd;
+            nd.name   = gn->name && *gn->name ? gn->name : "node " + std::to_string(gn - data.nodes);
+            nd.parent = parent;
+            cgltf_node_transform_local(gn, nd.local.m);     // column-major, as Float4x4
+            out.nodes.push_back(std::move(nd));
+            gltfOf.push_back(gn);
+            for (cgltf_size c = gn->children_count; c-- > 0;) stack.push_back({gn->children[c], self});
+        }
     }
 
     // ── The skeleton (WO-014) ────────────────────────────────────────────────
@@ -241,7 +250,9 @@ struct Reader {
     // skeleton of an animation-only file from the nodes its clips animate.
     void skeleton(bool animatedOnly) {
         std::set<const cgltf_node*> keep;
-        auto withAncestors = [&](const cgltf_node* n) { for (; n; n = n->parent) keep.insert(n); };
+        // Stops at the first ancestor already kept: its own ancestors are too.
+        // Walking every joint to the root was O(joints x depth).
+        auto withAncestors = [&](const cgltf_node* n) { for (; n && keep.insert(n).second; n = n->parent) {} };
         for (cgltf_size si = 0; si < data.skins_count; ++si)
             for (cgltf_size j = 0; j < data.skins[si].joints_count; ++j) withAncestors(data.skins[si].joints[j]);
         if (animatedOnly)
@@ -252,6 +263,7 @@ struct Reader {
 
         Skeleton sk;
         std::set<std::string> names;
+        const std::vector<Float4x4> world = worldsOf(out.nodes, &Node::local);   // once, not per bone
         for (size_t ni = 1; ni < out.nodes.size(); ++ni) {        // node 0 is the synthetic root
             const cgltf_node* gn = gltfOf[ni];
             if (!keep.count(gn)) continue;
@@ -262,7 +274,7 @@ struct Reader {
             for (const cgltf_node* p = gn->parent; p; p = p->parent)
                 if (auto it = boneOf.find(p); it != boneOf.end()) { b.parent = it->second; break; }
             b.bindLocal = out.nodes[ni].local;
-            b.inverseBind = inverse(worldOf(out.nodes, ni, &Node::local));
+            b.inverseBind = inverse(world[ni]);
             boneOf[gn] = (uint16_t)sk.bones.size();
             sk.bones.push_back(std::move(b));
         }

@@ -40,19 +40,39 @@ public:
         history.push_back("");
     }
 
+    // `cd` into `dir`, quoted so the shell reads the path as exactly those
+    // bytes. POSIX: single quotes, inside which nothing expands (double quotes
+    // still expand $, ` and \), and a ' is written '\''. Windows: double
+    // quotes, which cmd.exe does not expand inside for these characters, and a
+    // Windows path cannot contain a " at all.
+    static std::string cdInto(const std::string& dir) {
+#if defined(_WIN32)
+        return "cd /d \"" + dir + "\"";
+#else
+        std::string q = "cd '";
+        for (char c : dir) q += c == '\'' ? std::string("'\\''") : std::string(1, c);
+        return q + "'";
+#endif
+    }
+
     void runCommand(const std::string& cmd) {
         if (cmd.empty()) return;
         cmdHistory.push_back(cmd);
         m_historyIdx = -1;
         history.push_back("$ " + cmd);
 
-        const std::string full = "cd " + projectRoot + " && " + cmd + " 2>&1";
+        // The root is QUOTED (a project folder with a space broke every command,
+        // on every OS), and on Windows `cd /d`: plain `cd` does not change drive,
+        // so with the project on D: and the shell starting on C: the cd failed
+        // and nothing after && ran (editor_tool_panels_test, Windows CI, WO-038).
+        const std::string full = cdInto(projectRoot) + " && " + cmd + " 2>&1";
         FILE* pipe = ENGINE_POPEN(full.c_str(), "r");
         if (!pipe) { history.push_back("[error] popen failed"); return; }
         char buf[256];
         while (fgets(buf, sizeof(buf), pipe)) {
             std::string line = buf;
-            if (!line.empty() && line.back() == '\n') line.pop_back();
+            while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+                line.pop_back();   // Windows pipes deliver \r\n
             history.push_back(line);
         }
         ENGINE_PCLOSE(pipe);
