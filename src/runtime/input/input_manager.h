@@ -129,6 +129,28 @@ public:
     void consumeLook(float* dx, float* dy);
     void lookTotal(double* x, double* y) const;
 
+    // ── Look by TIMESTAMP, for the fixed step's intent (WO-045) ─────────────
+    // The totals above grow at PUMP time, so a consumer diffing them once per
+    // tick gets a whole frame's motion in the first tick of a catch-up frame
+    // and none in the rest. The tick-look queue keeps each accepted motion
+    // event's time and counts until taken: takeTickLook(upTo) hands over the
+    // motion stamped at or before `upTo` and forgets it. Pass kAllLook for
+    // everything pumped (the frame's last step, so an ordinary frame delivers
+    // exactly what diffing the total did, including motion stamped after the
+    // step's boundary: look stays late-latched).
+    //
+    // OFF by default and empty when off. It has ONE consumer (the runtime's
+    // intent sampler, enabled while a local controller is named), since taking
+    // is destructive, and an unread queue would grow for the whole session.
+    static constexpr uint64_t kAllLook = UINT64_MAX;
+    // Turning it on starts from an empty queue: motion from before is not
+    // this consumer's (the editor's mouse before Play, say).
+    void setTickLook(bool on) {
+        if (on == m_tickLookOn) return;
+        m_tickLookOn = on; m_tickLook.clear();
+    }
+    void takeTickLook(uint64_t upToNs, float* dx, float* dy);
+
     void setFocused(bool f) { m_focused = f; }
     void setUICapture(bool keyboard, bool mouse) {
         m_uiKb = keyboard; m_uiMouse = mouse;
@@ -224,6 +246,10 @@ private:
 
     double m_lookTotalX = 0.0, m_lookTotalY = 0.0;   // cumulative, never reset
     double m_lookCursorX = 0.0, m_lookCursorY = 0.0;  // consumeLook's position
+
+    struct TimedLook { uint64_t timeNs; int32_t dx, dy; };
+    bool                   m_tickLookOn = false;   // see takeTickLook
+    std::vector<TimedLook> m_tickLook;             // pump order, not yet taken
 
     std::vector<Context> m_contexts;
     std::vector<size_t>  m_stack;        // indices into m_contexts, top=back

@@ -97,10 +97,9 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     m_physicsCmdsUndeliverable = 0;
     m_intents.clear();
     m_intents.setSubmissionOpen(false);
-    // A fresh session re-bases the look cursor: the totals are cumulative and
-    // never reset, so carrying yesterday's cursor would hand tick one every
-    // count the mouse produced while the editor was open.
-    m_input.lookTotal(&m_lookCursorX, &m_lookCursorY);
+    // A fresh session starts the look queue empty (off between sessions), so
+    // tick one never gets the motion the mouse made while the editor was open.
+    syncTickLook();
     m_authority.reset();
     m_scriptHost->beginSession();   // invalidate entity refs from prior runs
     // Lazily dlopen the project's kits and attach them — they join the registry
@@ -155,6 +154,7 @@ void EngineRuntime::stopSimulation() {
     m_gameWorld.reset();
     m_simSnapshot.clear();
     m_simulating = false;
+    syncTickLook();
     // A take outlives its session (stopTakeRecording returns it after this);
     // recording and replay do not.
     m_takeRecording = false;
@@ -247,8 +247,10 @@ void EngineRuntime::tickSimulation(float dt) {
         // — same point in the step, same buffer, same submission order — and
         // the device is not read at all.
         { ENGINE_PROFILE_SCOPE("Sim.intent");
-          if (m_replaying) injectReplayIntents();
-          else             sampleLocalIntent(); }
+          const bool lastOfFrame = m_simAccumulator < kSimDt;
+          if (m_replaying) { injectReplayIntents();   // the device is not read, and
+                             m_input.takeTickLook(input::InputManager::kAllLook, nullptr, nullptr); }  // not left to pile up
+          else             sampleLocalIntent(lastOfFrame); }
         m_intents.sortForExecution();
 
         m_commands.setSubmissionOpen(true);
@@ -404,27 +406,28 @@ flecs::entity EngineRuntime::resolveStableId(flecs::world& w, uint64_t id) {
 // headless server has no local device, and a host driving intent from the
 // network wants to fill the buffer itself rather than have a device
 // contribute alongside it.
-void EngineRuntime::sampleLocalIntent() {
+void EngineRuntime::sampleLocalIntent(bool lastOfFrame) {
     if (m_localController == 0) return;
 
     simintent::Intent in{};
     in.entity = m_localController;
     in.source = 0;                       // simcmd::Source::Gameplay — the player
 
-    // ── The look delta, diffed against OUR OWN cursor ───────────────────────
-    // NOT consumeLook(). That drains a single shared cursor, so calling it here
-    // would silently starve a kit that also calls it — input_manager.h states
-    // exactly this and prescribes diffing lookTotal for a second consumer.
+    // ── The look delta: this step's slice, by timestamp (WO-045) ────────────
+    // NOT consumeLook(), which drains a cursor shared with kits, and no longer
+    // a per-tick diff of lookTotal either. That was frame-rate independent
+    // across ordinary frames, but the total grows at pump time, so in a
+    // catch-up frame the first step took the whole frame's motion and the
+    // rest took none: a heading that feeds movement turned in one step, not
+    // three. The tick-look queue is this sampler's own (input_manager.h).
     //
-    // Diffing per TICK is what makes this frame-rate-independent: the totals
-    // only ever grow, so whatever the mouse produced between the last tick and
-    // this one lands in this tick, whether that was one pump or four.
-    double lx = 0.0, ly = 0.0;
-    m_input.lookTotal(&lx, &ly);
-    in.lookDx = (float)(lx - m_lookCursorX);
-    in.lookDy = (float)(ly - m_lookCursorY);
-    m_lookCursorX = lx;
-    m_lookCursorY = ly;
+    // A step that is NOT the frame's last takes the motion stamped inside its
+    // window, as keys and buttons already do (WO-043). The LAST step takes all
+    // that was pumped, including motion stamped after its boundary, which is
+    // what diffing the total gave. An ordinary frame (one step) is therefore
+    // unchanged, and look stays as late as it was.
+    m_input.takeTickLook(lastOfFrame ? input::InputManager::kAllLook : m_inputTickEndNs,
+                         &in.lookDx, &in.lookDy);
 
     // Axes and actions through the action map, so intent is in the GAME's terms
     // — a recorded stream survives a re-bind, and an AI can produce the same

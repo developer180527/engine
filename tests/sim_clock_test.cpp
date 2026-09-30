@@ -14,6 +14,11 @@
 //      released and pressed again, one change inside each step's slice of real
 //      time. Each tick sees exactly its own. The old code folded all three into
 //      the first tick.
+//   3. the look delta (WO-045): the same frame shape with mouse motion. Each
+//      step takes the motion stamped in its window, and the frame's last step
+//      also takes what was stamped after its boundary, so an ordinary
+//      one-step frame is unchanged. The old per-tick diff of lookTotal gave the
+//      first tick all of it.
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -104,9 +109,7 @@ int main() {
         // in the first window, released in the second and pressed again in the
         // third, each well inside its window. Button state reaches the intent
         // through the tick's snapshot, which is exactly what the boundary
-        // decides. (The intent's LOOK delta does not: it diffs a total that
-        // grows at pump time, by design, so a frame's motion lands in its first
-        // tick whatever the boundaries are.)
+        // decides. (Look motion is §3.)
         const uint64_t t0 = hid::nowNs();
         raw->addEvent({t0 - 40'000'000, 1, hid::EventType::Button, 0, 0, 1, 0});
         raw->addEvent({t0 - 26'000'000, 1, hid::EventType::Button, 0, 0, 0, 0});
@@ -130,6 +133,74 @@ int main() {
                   "each tick saw only its own slice: pressed, then released, then pressed again "
                   "(reading the clock inside the step folded all three into the first tick)");
         }
+
+        engine.stopSimulation();
+        engine.shutdown();
+    }
+
+    // ── 3. The look delta follows the windows too (WO-045) ──────────────────
+    std::printf("\n-- 3. look motion in a catch-up frame --\n");
+    {
+        EngineConfig cfg;
+        cfg.openAssetDatabase = false;
+        cfg.autoDetectProject = false;
+        cfg.defaultScene      = false;
+        cfg.projectRoot       = std::filesystem::temp_directory_path() / "engine_sim_clock_root";
+        EngineRuntime engine;
+        CHECK(engine.init(cfg, std::make_unique<HeadlessPlatform>()), "a headless runtime");
+        auto src  = std::make_unique<ReplaySource>();
+        auto* raw = src.get();
+        raw->addDevice({1, hid::DeviceClass::Mouse, 0x1234, 0x5678, 42, "mouse"});
+        engine.inputManager().initWithSource(std::move(src));
+        engine.inputManager().loadConfigText(kConfig);
+        engine.attachPlugins();
+        engine.simWorld().entity().set<Transform>({{0,0,0},{0,0,0,1},{1,1,1}})
+                                  .set<Name>({"player"}).set<EntityId>({kPlayer});
+        engine.actionSet().declare("Fire");
+        engine.setLocalController(kPlayer);
+        engine.setCommandRecording(true, 64);
+
+        // Motion made before Play is not the session's.
+        raw->addEvent({hid::nowNs() - 1'000'000, 1, hid::EventType::MouseMotion, 0, 0, 500, 500});
+        engine.inputManager().pump();
+        engine.startSimulation(EngineRuntime::SimMode::InPlace);
+
+        // Windows end near t0 - 34.3, t0 - 17.7 and t0 - 1 ms (see §2). Motion
+        // in each, and one more event 0.5 ms before t0: after the last
+        // boundary, so only "the frame's last step takes everything" puts it
+        // in this frame at all.
+        const uint64_t t0 = hid::nowNs();
+        raw->addEvent({t0 - 40'000'000, 1, hid::EventType::MouseMotion, 0, 0, 10,  1});
+        raw->addEvent({t0 - 26'000'000, 1, hid::EventType::MouseMotion, 0, 0, 20,  2});
+        raw->addEvent({t0 -  9'000'000, 1, hid::EventType::MouseMotion, 0, 0, 30,  3});
+        raw->addEvent({t0 -    500'000, 1, hid::EventType::MouseMotion, 0, 0,  4, -4});
+        engine.tick(3.0f * kSimDt + 0.001f);
+
+        std::vector<simintent::Intent> in;
+        for (int t = 2; t >= 0; --t)
+            for (const simintent::Intent& i : engine.recordedTick((size_t)t).intents) in.push_back(i);
+        CHECK(in.size() == 3, "three ticks ran, one intent each (%zu)", in.size());
+        if (in.size() == 3) {
+            std::printf("        look per tick: (%g,%g) (%g,%g) (%g,%g)\n",
+                        in[0].lookDx, in[0].lookDy, in[1].lookDx, in[1].lookDy,
+                        in[2].lookDx, in[2].lookDy);
+            CHECK(in[0].lookDx == 10 && in[0].lookDy == 1, "tick 1: its own window's motion, not the frame's");
+            CHECK(in[1].lookDx == 20 && in[1].lookDy == 2, "tick 2: its own");
+            CHECK(in[2].lookDx == 34 && in[2].lookDy == -1,
+                  "tick 3 (the frame's last): its own plus what came after its boundary");
+            CHECK(in[0].lookDx != 500, "the pre-Play motion reached no tick");
+        }
+
+        // An ordinary frame: one step, and it takes everything pumped, exactly
+        // what diffing the total gave.
+        const uint64_t t1 = hid::nowNs();
+        raw->addEvent({t1 - 5'000'000, 1, hid::EventType::MouseMotion, 0, 0, 7, 7});
+        raw->addEvent({t1 -   100'000, 1, hid::EventType::MouseMotion, 0, 0, 1, 1});
+        engine.tick(kSimDt);
+        const auto& one = engine.recordedTick(0).intents;
+        CHECK(one.size() == 1 && one[0].lookDx == 8 && one[0].lookDy == 8,
+              "an ordinary frame delivers all its motion in its one step (%g,%g)",
+              one.empty() ? 0.f : one[0].lookDx, one.empty() ? 0.f : one[0].lookDy);
 
         engine.stopSimulation();
         engine.shutdown();

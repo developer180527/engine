@@ -258,7 +258,7 @@ public:
     // Whose intent the engine samples from the local device each tick. 0 (the
     // default) means none — a headless server, or a host feeding intent from
     // the network instead. EntityId::value, not a flecs id.
-    void     setLocalController(uint64_t entityId) { m_localController = entityId; }
+    void     setLocalController(uint64_t entityId) { m_localController = entityId; syncTickLook(); }
     uint64_t localController() const { return m_localController; }
     // Replay capture. Off by default: recording every tick of a long session
     // is only wanted by a test, a replay tool or a netcode client.
@@ -538,11 +538,6 @@ private:
     // scoping keeps both.
     size_t                        m_hostActionCount = 0;
     uint64_t                      m_localController = 0;
-    // The intent sampler's OWN look cursor. consumeLook() drains a single
-    // shared cursor, so using it here would starve a kit that also calls it —
-    // input_manager.h states exactly this and prescribes diffing lookTotal
-    // instead for a second consumer.
-    double                        m_lookCursorX = 0.0, m_lookCursorY = 0.0;
     // Reused across ticks so composing a tick's movement allocates nothing in
     // the steady state — the same reason the PrevTransform queries are cached.
     std::vector<simcmd::ResolvedMove> m_resolvedMoves;
@@ -576,8 +571,12 @@ private:
     // Composes the tick's MoveContributions and drives the physics character
     // service once per entity, in ascending EntityId order.
     void dispatchMoves(flecs::world& w);
-    // Device -> Intent, once per fixed step. See sim_intent.h.
-    void sampleLocalIntent();
+    // Device -> Intent, once per fixed step. See sim_intent.h. `lastOfFrame`:
+    // this step is the frame's last, and takes all the look motion pumped.
+    void sampleLocalIntent(bool lastOfFrame);
+    // The input manager's tick-look queue is read only by sampleLocalIntent,
+    // so it is on exactly while that can run: simulating, with a controller.
+    void syncTickLook() { m_input.setTickLook(m_simulating && m_localController != 0); }
     // Replay: the recorded sampler output for this tick, in the sampler's place.
     void injectReplayIntents();
     // After the step: record, or compare against, this tick's two digests.

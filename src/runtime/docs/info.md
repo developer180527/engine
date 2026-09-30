@@ -669,9 +669,23 @@ controller latched the device in `onFrame` — which runs *after* the fixed step
 saw one frame's accumulation at 1 frame/tick and two at 2. Sampling in the fixed
 step makes a controller reading `intents()` tick-driven by construction;
 presentation may still latch at render rate, which is the presentation split
-applied to input. The sampler diffs `lookTotal` against **its own cursor** rather
-than calling `consumeLook`, because that drains a single shared cursor and would
+applied to input. The sampler reads look from **its own queue** rather than
+calling `consumeLook`, because that drains a single shared cursor and would
 silently starve a kit that also calls it — `input_manager.h` states exactly this.
+
+**Look is sliced by timestamp, like keys (WO-045).** The sampler used to diff
+`lookTotal`, which grows at pump time, so in a catch-up frame the first step
+took the whole frame's motion and the others took none. Now `InputManager`
+keeps a tick-look queue: each accepted motion event with its time, on only
+while a session runs with a local controller named (`syncTickLook`). A step
+that is not the frame's last takes the motion stamped inside its window
+(`takeTickLook(m_inputTickEndNs)`). The frame's last step takes everything
+pumped, including motion after its boundary, which is exactly what diffing the
+total gave. So an ordinary frame, and every cadence where a step ends its
+frame, delivers the same look as before, and look stays late-latched.
+`sim_clock_test` §3 pins it: (10,1) (20,2) (34,-1) across three steps where
+the old code gave (64,2) (0,0) (0,0). During a replay the queue is emptied
+unread each step.
 
 Measured two ways. `tests/sim_intent_test.cpp` drives a real engine at both
 cadences and compares the recorded streams byte for byte; the `input` tier in
@@ -705,7 +719,8 @@ asserts both non-zero; restoring BUG-0060's focus gate reddens both lines.
 Driving the Move axis at all is new with it. The fixture fed only the mouse, so
 `axis2("Move")` and the `actionDown/Pressed/Released` loop in `sampleLocalIntent`
 were linked and never executed — the look channel reaches the sampler through
-`lookTotal` and the action channel through the action map, two paths, and
+the tick-look queue (then `lookTotal`) and the action channel through the
+action map, two paths, and
 BUG-0060 killed both. Keys are driven on the tick's **first frame** only, which
 is correct rather than a shortcut: a key is level-triggered, so unlike motion
 there is no per-tick quantity to split, and both cadences fold the same edge into

@@ -126,6 +126,7 @@ void InputManager::shutdown() {
     m_cur = m_prev = {};
     m_lookTotalX = m_lookTotalY = 0.0;
     m_lookCursorX = m_lookCursorY = 0.0;
+    m_tickLook.clear();
 }
 
 // ── Election ────────────────────────────────────────────────────────────────
@@ -220,6 +221,7 @@ void InputManager::pump() {
                     m_lookTotalX += e.value;    // cumulative — never reset;
                     m_lookTotalY += e.value2;   // consumers diff (see header)
                     m_newestMotionNs = e.timeNs;
+                    if (m_tickLookOn) m_tickLook.push_back({e.timeNs, e.value, e.value2});
                 }
                 { // latency: how long the event sat between device and pump
                     const uint64_t now = hid::nowNs();
@@ -313,6 +315,20 @@ void InputManager::consumeLook(float* dx, float* dy) {
     if (dy) *dy = (float)(m_lookTotalY - m_lookCursorY);
     m_lookCursorX = m_lookTotalX;
     m_lookCursorY = m_lookTotalY;
+}
+
+void InputManager::takeTickLook(uint64_t upToNs, float* dx, float* dy) {
+    // Integer counts summed exactly; order-preserving compaction, since two
+    // sources interleave and the queue is in pump order, not time order.
+    int64_t sx = 0, sy = 0;
+    size_t kept = 0;
+    for (const TimedLook& l : m_tickLook) {
+        if (l.timeNs <= upToNs) { sx += l.dx; sy += l.dy; }
+        else                      m_tickLook[kept++] = l;
+    }
+    m_tickLook.resize(kept);
+    if (dx) *dx = (float)sx;
+    if (dy) *dy = (float)sy;
 }
 
 void InputManager::lookTotal(double* x, double* y) const {
