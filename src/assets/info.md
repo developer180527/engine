@@ -103,14 +103,17 @@ geometry — and says so once per file (`gltf_losses.h`, WO-002). Verified headl
 orchestrator needs the pipeline. See `modules/assetlib/info.md` for how the
 cook layer is split (orchestration / keying / dispatch / store / record
 format / scheduling).
-- `MeshCooker` — imports via Assimp (or cgltf for `.gltf`/`.glb`), writes
-  vertex/index buffers + submeshes + bounds. Skinned meshes cook too: a
-  re-import extracts the skeleton and embedded clips into the same binary —
-  **for Assimp formats only.** The cgltf path reads meshes only, so a skinned
-  glTF (or an animation-only one) is REFUSED with a message naming what would
-  be lost, and node animations on a static glTF are dropped out loud
-  (`importers/gltf_losses.h`, WO-002). It used to cook as a static mesh with
-  `success=true`. Real glTF skins and clips are WO-014.
+- `MeshCooker` — two routes today. **glTF/GLB goes through the import
+  pipeline** (WO-012): `imp::CgltfFrontend` reads it into an `ImportedScene`,
+  and `meshcook::cookImportedScene` cooks it. **Everything else goes through
+  Assimp**, straight to the cooked format, until WO-013 moves it onto the same
+  pipeline. On the glTF route, a skin is dropped as `Wrong`, so a skinned glTF
+  is REFUSED with a message naming what would be lost (WO-002's rule, now in
+  the dropped list, until WO-014). An animation-only glTF is `Empty`. Node
+  animations, morph targets, vertex colours, cameras, lights and textures that
+  do not resolve are each reported and cooked around (`Less`). On the Assimp
+  route, skinned meshes cook with a re-import that extracts the skeleton and
+  clips into the same binary.
   Also emits an **LOD chain** — see below.
 - `TextureCooker` — stb decode → block-compressed texels + mips via
   `texture_encode`, in one of THREE families chosen by `COOK_TEX_TARGET`:

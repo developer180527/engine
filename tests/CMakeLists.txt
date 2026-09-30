@@ -400,6 +400,10 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # layout, baking (incl. mirrored instances), tangents, materials, sibling
     # textures, skeleton, clips (sampled), rigid meshes, refusals, determinism.
     engine_test(mesh_backend_test)
+    # WO-012: the cgltf front end against the import-frontend contract suite,
+    # each case WRITTEN as a real .gltf from its expected scene; plus its dropped
+    # list and the old cook path's silent losses it fixes.
+    engine_test(frontend_cgltf_test)
     # Cook infrastructure (scheduler / DDC / manifest / scanner) — needs only
     # the GPU-free core, no game assets.
     engine_test(cook_infra_test LIB engine_core)
@@ -1024,3 +1028,4 @@ if(ENGINE_WITH_RUST AND NOT ENGINE_SANITIZE AND TARGET engine_module_probe)
                        "gate conformance DISABLED (install rustup to run it)")
     endif()
 endif()
+

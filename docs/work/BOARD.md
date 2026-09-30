@@ -19,8 +19,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-012](WO-012-cgltf-front-end.md) **cgltf front end (static), retiring cookGltf** · P2 · size M — The first real front end. After this, glTF has no cook path of its own.
-2. [WO-013](WO-013-assimp-front-end.md) **Assimp front end (static and skinned), retiring cookStatic/cookSkinned** · P2 · size M — After this, `aiScene` never leaves the front end. The whole cook stack past the front end is Assimp-free.
+1. [WO-013](WO-013-assimp-front-end.md) **Assimp front end (static and skinned), retiring cookStatic/cookSkinned** · P2 · size M — After this, `aiScene` never leaves the front end. The whole cook stack past the front end is Assimp-free.
+2. [WO-014](WO-014-gltf-skins-and-animations.md) **glTF skins and animations, supported for real** · P2 · size M — This closes C2 properly. glTF is the format the engine says it owns, and today it can't carry a character.
 3. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
@@ -34,9 +34,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-012](WO-012-cgltf-front-end.md) | cgltf front end (static), retiring cookGltf | Asset import & cooking | M | **ready** | import-frontend |
 | [WO-013](WO-013-assimp-front-end.md) | Assimp front end (static and skinned), retiring cookStatic/cookSkinned | Asset import & cooking | M | **ready** | import-frontend |
-| [WO-014](WO-014-gltf-skins-and-animations.md) | glTF skins and animations, supported for real | Asset import & cooking | M | blocked by WO-012 | import-frontend |
+| [WO-014](WO-014-gltf-skins-and-animations.md) | glTF skins and animations, supported for real | Asset import & cooking | M | **ready** | import-frontend |
 | [WO-015](WO-015-animation-off-assimp-types.md) | Animation takes engine types, not Assimp types | Asset import & cooking | M | blocked by WO-013 | — |
 | [WO-016](WO-016-offline-clip-cooker.md) | Offline clip cooker — no clip is cooked at runtime | Asset import & cooking | M | blocked by WO-015 | cooker |
 | [WO-017](WO-017-cook-library-split.md) | Cook library split — the runtime never links the cook stack | Asset import & cooking | L | **ready** | — |
@@ -71,6 +70,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 |---|---|---|---|
 | [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) | The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan | 2026-09-30 | pass_states.h (static_assert refuses both bits); tests/cull_mode_test.cpp; the visual check moved to WO-033 |
 | [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | 2026-09-30 | tests/scene_mesh_reference_test.cpp (7 cases) + editor_panel_models_test §8; 4 mutations each red on their own check |
+| [WO-012](WO-012-cgltf-front-end.md) | cgltf front end (static), retiring cookGltf | 2026-09-30 | frontend_cgltf_test (contract suite: 6 pass, 2 skinned skipped for WO-014); old-vs-new comparison on 6 real glTFs (imported-scene.md §7.2); 6 mutations red |
 | [WO-011](WO-011-one-cook-back-end.md) | One cook back end — ImportedScene to cooked assets | 2026-09-30 | src/assets/cookers/mesh/mesh_backend.cpp; tests/mesh_backend_test.cpp (38 checks, reads cooked bytes back); 8 mutations each red |
 | [WO-010](WO-010-imported-scene-type.md) | ImportedScene type, fake front end, and contract test | 2026-09-30 | tests/import_frontend_contract_test.cpp (55 checks); LAYER-05; import-frontend provisional; mutations red |
 | [WO-009](WO-009-imported-scene-design.md) | ImportedScene — design the engine's own import format | 2026-09-30 | docs/plans/imported-scene.md; docs/contracts/import-frontend.md (planned, five sections written) |

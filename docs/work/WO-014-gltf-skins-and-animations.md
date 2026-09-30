@@ -16,7 +16,7 @@ source: review 2026-09-29 C2
 This closes C2 properly. glTF is the format the engine says it owns, and today it can't carry a character.
 
 ## Done when
-- [ ] the cgltf front end fills skeleton, skin weights and clips; the contract suite's skinned cases pass
+- [ ] the cgltf front end fills skeleton, skin weights and clips; the contract suite's skinned cases pass (`frontend_cgltf_test` skips `SkinnedColumn` and `AuthoredCentimetreZUp` today: remove the skip, and they must pass)
 - [ ] a skinned `.glb` cooks as v3 and animates in the editor
 - [ ] the WO-002 refusal is removed, and its test inverts: the same fixture now cooks with bones
 

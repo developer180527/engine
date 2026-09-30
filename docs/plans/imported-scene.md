@@ -3,7 +3,7 @@ status: target
 ---
 # ImportedScene — the engine's own import format
 
-> **Status: design (WO-009), type landed (WO-010), back end built (WO-011).** `src/assets/import/` holds
+> **Status: design (WO-009), type landed (WO-010), back end built (WO-011), glTF switched (WO-012).** `src/assets/import/` holds
 > the type, the contract's shape, its structural checks and its fake, and
 > `tests/import_contract.h` is the suite every front end must pass. Still to
 > build: WO-011 (the one back end), WO-012/013 (the front ends). The contract is
@@ -279,6 +279,38 @@ the normal, with `w` chosen so `cross(N, T) * w` points along increasing v: the
 convention of the Assimp path's `CalcTangentSpace`, so FBX and glTF agree. This
 answers §8 Q2 for now: our own generator, not MikkTSpace. Normal-map seams on
 real content are the signal to revisit, and that needs a visual check.
+
+### 7.2 glTF switched over, and what the comparison showed (WO-012)
+
+`imp::CgltfFrontend` (`src/assets/import/frontend_cgltf.*`) replaced
+`cookGltf`. Before deleting the old path, both paths cooked every glTF in the
+tree, and the results were compared field by field: `Duck`, `robot`,
+`Demon_Mask`, `person` (26 primitives, 1.68 M vertices), `Television_01_4k`
+and `lion_head_4k`.
+
+- **Identical on every file:** vertex positions and UVs, indices, submeshes,
+  bounds, materials (factors, roughness, metallic, flags, texture names), LOD
+  counts, and every sibling texture byte-for-byte. Normals differ in the last
+  bit of a float (5.96e-8), from normalising after the transform.
+- **Tangents differ on every file, as §7.1 intends.** None of these files has a
+  `TANGENT` attribute (checked), so the old path wrote a constant `(1,0,0,1)`
+  and the new one generates real tangents.
+- **`Television_01_4k` has no base-colour texture on either side.** Its glTF
+  names `textures/…jpg`, but the files sit beside it with no `textures/` folder
+  (the download flattened it). The old path lost the texture silently. The new
+  one reports it, and also reports the `COLOR_0` it drops. An asset problem,
+  made visible.
+- `cannon_01_4k` fails identically on both sides: its `.bin` buffer is missing.
+
+What the front end does that the old path did not, each pinned by
+`frontend_cgltf_test`:
+- `cgltf_validate` runs before anything is read (hostile input).
+- a non-indexed primitive is imported, not skipped
+- a primitive with no material gets an appended default, not the file's first
+  material
+- a `data:` URI image is decoded, not skipped
+- a primitive with no normals gets smooth normals (Assimp's behaviour for FBX)
+  rather than a constant +Y
 
 **Not moved into the back end:** vertex cache ordering. Assimp's
 `ImproveCacheLocality` stays in the Assimp front end, so FBX output is
