@@ -28,12 +28,16 @@
 // table-construction path, so a fixture can only differ in the field under test.
 //
 // ── What this deliberately does NOT link ────────────────────────────────────
-// Nothing. Not engine_runtime — linking that into a module duplicates engine
-// state, and the SDK says so. Not flecs either: `ecs_world_t*` appears only as
-// an opaque pointer in the table's signatures and no flecs function is ever
-// called, so no flecs symbol is referenced and the image has no undefined
-// symbols at all. That is what lets these build as plain MODULE libraries on
-// every platform, Windows included, where the hot_reload_game sample cannot.
+// Not engine_runtime — linking that into a module duplicates engine state, and
+// the SDK says so. No flecs function is called: `ecs_world_t*` appears only as
+// an opaque pointer in the table's signatures. But <engine/game_module.h>
+// includes flecs.h, whose C++ API defines namespace-scope constants initialised
+// from flecs's DATA (flecs::U8, flecs::World, ...), so the image does reference
+// flecs symbols. Linux and macOS resolve them against the host at load time; a
+// Windows DLL must resolve them at link time, so there the fixture links a
+// private, never-used copy of flecs (tests/CMakeLists.txt, WO-038). This comment
+// used to say the image had no undefined symbols, and both Windows legs were red
+// on it from 2026-09-07.
 #include <engine/game_module.h>
 #include <engine/contract.h>
 

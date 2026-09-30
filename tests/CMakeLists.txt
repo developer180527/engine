@@ -764,39 +764,9 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 # ── The seam-cost benchmark (perf lane, never a gate) ───────────────────────
-# docs/rhi/swappability.md decides whether "swappable renderer" is compatible
-# with "no performance loss", and §2's five numbers are what turn that from an
-# argument into a measurement. They lived only in the .md until review noted
-# that the document's own §8 rule — no abstraction ships without being measured
-# — cited three precedents that all HAVE committed harnesses, and this one did
-# not. ~130 lines to make the strongest doc in docs/rhi/ reproducible.
-#
-# Deliberately NOT a gate: dispatch cost is a property of the machine and the
-# compiler, not of this repo, so a threshold would fail on somebody's laptop for
-# no defect. `perf` lane, run on purpose:  ctest -L perf
-#
-# BOTH TARGETS ARE FORCED TO -O2, whatever the build type. This is not a
-# preference: the default dev build here is Debug (-g, no -O), and at -O0
-# nothing inlines, so every variant costs the same and the benchmark reports
-# noise. The first run of this harness in a Debug tree said a cross-.dylib call
-# was FASTER than a direct one, which is the shape of a measurement that is
-# measuring the build flags instead of the thing.
-add_library(seam_cost_plugin SHARED perf/seam_cost_plugin.cpp)
-target_compile_options(seam_cost_plugin PRIVATE -O2)
-set_target_properties(seam_cost_plugin PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-add_executable(seam_cost_bench perf/seam_cost_bench.cpp)
-target_compile_options(seam_cost_bench PRIVATE -O2)
-set_target_properties(seam_cost_bench PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-target_compile_definitions(seam_cost_bench PRIVATE
-    ENGINE_SEAM_PLUGIN_PATH="$<TARGET_FILE:seam_cost_plugin>")
-add_dependencies(seam_cost_bench seam_cost_plugin)
-if(UNIX)
-    target_link_libraries(seam_cost_bench PRIVATE ${CMAKE_DL_LIBS})
-endif()
-add_test(NAME seam_cost COMMAND seam_cost_bench 200)
-set_tests_properties(seam_cost PROPERTIES LABELS perf TIMEOUT 300)
+# The targets live in perf/CMakeLists.txt: forcing optimisation needs the
+# Debug flags changed, which CMake 3.20 can only do per DIRECTORY (see there).
+add_subdirectory(perf)
 
 # ── G1c step B: engine_runtime_server LINKS without a graphics API ──────────
 # The exit criterion for G1c, in the only form worth anything: a binary. The
@@ -835,9 +805,26 @@ set_tests_properties(server_link PROPERTIES LABELS unit TIMEOUT 120)
 #
 # bx is on the list on purpose: it is bgfx's MATH library and is explicitly out
 # of G1's scope (docs/rhi/evidence-coupling.md 2.1).
-add_executable(headless_include_probe headless_include_probe.cpp)
-set_target_properties(headless_include_probe PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+#
+# An OBJECT library, not an executable: the property is "compiles", and nothing
+# here is ever run. As an executable it had to LINK, and it links nothing, so
+# on GCC the dynamic initialisers flecs.h's C++ API emits (flecs::U8 and ~100
+# more) were undefined references. Red on Linux GCC from 2026-09-07 (WO-038).
+add_library(headless_include_probe OBJECT headless_include_probe.cpp)
+# bx's per-compiler shims (malloc.h, alloca.h, ...), as bx's own CMake picks
+# them. This used to name compat/osx on every platform, so MSVC failed on
+# <malloc/malloc.h>, a macOS header.
+if(MSVC)
+    set(_bx_compat msvc)
+elseif(MINGW)
+    set(_bx_compat mingw)
+elseif(APPLE)
+    set(_bx_compat osx)
+elseif(CMAKE_SYSTEM_NAME MATCHES "BSD")
+    set(_bx_compat freebsd)
+else()
+    set(_bx_compat linux)
+endif()
 target_compile_definitions(headless_include_probe PRIVATE BX_CONFIG_DEBUG=1)
 target_include_directories(headless_include_probe PRIVATE
     ${CMAKE_SOURCE_DIR}/include
@@ -855,7 +842,7 @@ target_include_directories(headless_include_probe PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/enkiTS/src
     ${CMAKE_SOURCE_DIR}/third_party/ozz-animation/include
     ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bx/include
-    ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bx/include/compat/osx
+    ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bx/include/compat/${_bx_compat}
 )
 add_test(NAME headless_includes
          COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
@@ -1007,13 +994,19 @@ foreach(_i RANGE 0 ${_abi_gate_last} 2)
     set(_t abi_gate_${_name})
     add_library(${_t} MODULE fixtures/abi_gate_module.cpp)
     # engine::headers, never engine_runtime: linking the runtime into a module
-    # duplicates engine state, and the SDK header says so. These fixtures go
-    # further and reference NO host symbol at all — ecs_world_t* appears only as
-    # an opaque pointer and no flecs function is called — so unlike the
-    # hot_reload_game sample they have no undefined symbols and need no
-    # load-time resolution against the host. That is what lets them build on
-    # every platform, Windows included.
+    # duplicates engine state, and the SDK header says so. The fixtures call no
+    # flecs function, but the headers they include still reference flecs DATA
+    # (see the WIN32 branch below), so they are not free of host symbols.
     target_link_libraries(${_t} PRIVATE engine::headers)
+    # Windows only: a DLL must resolve every symbol at link time, and
+    # <engine/game_module.h> includes flecs.h, whose C++ API has namespace-scope
+    # constants (flecs::U8, flecs::World, ...) initialised from flecs's data. The
+    # fixtures never touch a world, so a private copy of flecs is inert here.
+    # A real module on Windows needs the HOST to export flecs instead (WO-025);
+    # on Linux and macOS these resolve against the host at load time.
+    if(WIN32)
+        target_link_libraries(${_t} PRIVATE flecs_static)
+    endif()
     target_compile_definitions(${_t} PRIVATE ABI_GATE_DEFECT=${_defect})
     set_target_properties(${_t} PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/abi_gate

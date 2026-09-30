@@ -5,7 +5,8 @@ title: An unknown OS is a compile error with a to-do list, not silently POSIX
 program: portability
 priority: P1
 size: M
-state: active
+state: parked
+parked-until: WO-038 turns the Linux and Windows CI legs green; the one open item is that confirmation
 touches:
   - src/core/memory/mem.cpp
   - src/core/frame_arena.h

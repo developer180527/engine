@@ -30,6 +30,7 @@
 // later gains a real getter strengthens this test without editing it.
 #include <atomic>
 #include <cstdio>
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -134,7 +135,16 @@ int main() {
         // Far more items than threads, with real work in each range and a
         // grain of 1, so the scheduler has both reason and opportunity to
         // spread across the whole pool.
+        //
+        // Opportunity is not a guarantee. The calling thread works too, and on
+        // a loaded CI machine it finished all 4096 ranges before any worker
+        // woke: "workers > 0" failed with nothing wrong (macOS CI, WO-038). So
+        // a range on the CALLING thread waits, bounded, until some worker has
+        // run one; the workers take the ranges it is not holding. A pool that
+        // never runs anything still fails, 5 s later, which is the defect.
         constexpr uint32_t kItems = 4096;
+        std::atomic<bool> workerRan{false};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         jobs::parallelFor("qos.probe", kItems, 1,
                           [&](uint32_t begin, uint32_t end) {
             const Class c = engine::qos::currentThreadClass();
@@ -142,6 +152,12 @@ int main() {
                 std::lock_guard<std::mutex> lk(mtx);
                 seen[std::this_thread::get_id()] = c;
             }
+            if (std::this_thread::get_id() != mainId)
+                workerRan.store(true, std::memory_order_release);
+            else
+                while (!workerRan.load(std::memory_order_acquire) &&
+                       std::chrono::steady_clock::now() < deadline)
+                    std::this_thread::yield();
             volatile double sink = 0.0;
             for (uint32_t i = begin; i < end; ++i) sink += i * 0.5;
             (void)sink;

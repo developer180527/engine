@@ -12,8 +12,10 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-- [WO-006](WO-006-unknown-os-is-a-compile-error.md) **An unknown OS is a compile error with a to-do list, not silently POSIX** — 3/4 done. Still open:
-  - the macOS, Linux and Windows builds are unchanged. macOS was built locally on 2026-09-30; Linux and Windows are confirmed by the next nightly CI (Linux compiles the new Wayland branch in `GlfwToolWindow` for the first time)
+- [WO-038](WO-038-ci-green-on-every-leg.md) **CI green on every leg, and red is noticed** — 4/7 done. Still open:
+  - Sanitizers: `JPH::CharacterVirtual::Contact` constructed misaligned (16-byte type), found by UBSan. Investigate before fixing: probably the Jolt allocator hook's alignment.
+  - a `workflow_dispatch` run of the full matrix is green on all six legs plus the sanitizer, SDK-only and shipping jobs (Windows may show more once it links)
+  - a failed nightly notifies instead of sitting red for weeks
 - [WO-033](WO-033-the-image-is-mirrored.md) **Every camera renders the world mirrored left-to-right** — 5/6 done. Still open:
   - an asymmetric asset (text on a texture) reads correctly in the editor and the player, checked by eye by the user before closing. **This one check also covers WO-032**: back faces are culled on macOS for the first time, so a single-sided open surface seen from behind now disappears (correct), closed meshes look the same, and the editor gizmo (ImGuizmo, whose own demo uses right-handed matrices) should now rotate and translate the way it points.
 
@@ -23,11 +25,16 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 2. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
 3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
 
+## P0 — broken now — wrong output or lost data. Nothing else starts first.
+
+| order | title | area | size | status | contracts |
+|---|---|---|---|---|---|
+| [WO-038](WO-038-ci-green-on-every-leg.md) | CI green on every leg, and red is noticed | Portability | M | **active** 4/7 | — |
+
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | Portability | M | **active** 3/4 | — |
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
 
 ## P2 — the planned programmes, in dependency order.
@@ -58,6 +65,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | size | until |
 |---|---|---|---|
+| [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | M | WO-038 turns the Linux and Windows CI legs green; the one open item is that confirmation |
 | [WO-025](WO-025-static-module-registration.md) | Static module registration for platforms without dlopen | M | a console or iOS target is real |
 | [WO-026](WO-026-rhi-g0a-spike.md) | RHI G0a spike — answer the specific open questions, then throw it away | M | WO-020 is done (so the spike asks the retained scene's questions), or a free weekend |
 | [WO-027](WO-027-custom-rhi.md) | Custom RHI implementation | XL | WO-019, WO-020 and WO-026 are done, then split into G-phase orders of size L or less |

@@ -324,6 +324,10 @@ else()
     # portable "hide the title bar but keep the window" call to make. Falls
     # back to a normal title bar rather than guessing.
     list(APPEND ENGINE_PLATFORM_SOURCES runtime/platform/title_bar_stub.cpp)
+    # SDR only (see the stub's header). Colour stage C added this to the Apple
+    # and Windows branches and not this one, so every Linux link failed on the
+    # three platwin:: HDR symbols from 2026-09-17 until WO-038.
+    list(APPEND ENGINE_PLATFORM_SOURCES runtime/platform/hdr_surface_stub.cpp)
 endif()
 
 add_library(engine_runtime STATIC
@@ -610,6 +614,12 @@ target_include_directories(engine_headers INTERFACE
     ${CMAKE_SOURCE_DIR}/modules/assetlib/include
 )
 target_compile_definitions(engine_headers INTERFACE
+    # The engine links flecs STATICALLY (flecs_static, whose distr/flecs.h
+    # starts with this define). These headers are flecs/include, which does not,
+    # so on Windows every module compiled against them declared flecs's data as
+    # __declspec(dllimport): __imp_EcsWorld and ~100 more, against a DLL that
+    # does not exist (LNK2019, both Windows legs, WO-038).
+    flecs_STATIC
     BGFX_PLATFORM_SUPPORTS_WGSL=0
     BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>
 )

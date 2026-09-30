@@ -463,12 +463,15 @@ def rule_tests_registered() -> Rule:
              "a test nobody runs is worse than no test: it reads as coverage. "
              "The ctest lane `module_abi_conformance` existed for weeks without "
              "running once for exactly this reason.")
-    cmake = read("tests/CMakeLists.txt")
+    # Every CMakeLists.txt under tests/, not only the top one: a lane may live
+    # in a subdirectory (tests/perf/ does, so MSVC Debug can drop /RTC1 for it).
+    cmake = "\n".join(read(str(p.relative_to(REPO)))
+                      for p in sorted((REPO / "tests").rglob("CMakeLists.txt")))
     for rel in tracked("tests/*.cpp", "tests/*.c"):
         stem = Path(rel).stem
         if not re.search(rf'\b{re.escape(stem)}\b', cmake):
             r.findings.append(Finding(r.id, rel,
-                                      f"{rel} is not named anywhere in tests/CMakeLists.txt"))
+                                      f"{rel} is not named in any CMakeLists.txt under tests/"))
     return r
 
 
