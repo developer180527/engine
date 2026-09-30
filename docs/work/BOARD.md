@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
-2. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
-3. [WO-022](WO-022-decision-records.md) **Decision records — the "why" survives the person** · P2 · size M — Important decisions are buried in the middle of plan paragraphs, and those are the ones that get "fixed" back into bugs.
+1. [WO-046](WO-046-break-the-cheap-layer-back-edges.md) **Four upward includes out of the layer cycle (core, components, render, systems)** · P1 · size S — Every scripted audit rule passes, but the module graph is not a layering. `src/core`, `components`, `render`, `runtime`, `scene`, `systems`, `assets` and `animation` form ONE cycle: any of them can transitively depend on any other, including `core`, the layer everything is meant to stand on. LAYER-03 only stops NEW edges; nothing ever checked that the recorded 52 make a hierarchy.
+2. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
+3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,6 +35,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
+| [WO-046](WO-046-break-the-cheap-layer-back-edges.md) | Four upward includes out of the layer cycle (core, components, render, systems) | Process & context | S | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -48,6 +49,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-022](WO-022-decision-records.md) | Decision records — the "why" survives the person | Process & context | M | **ready** | — |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
+| [WO-047](WO-047-scene-below-runtime-and-an-acyclic-gate.md) | Scene serialization stops reaching into runtime services; the module graph is gated acyclic | Process & context | M | blocked by WO-046 | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
