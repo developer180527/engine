@@ -109,6 +109,42 @@ inline bool buildOzzSkeleton(Skeleton& skel) {
     return true;
 }
 
+// The format-independent half of building a clip: give every joint the clip
+// does not animate one rest-pose key, validate, and build the compressed ozz
+// Animation. `raw.tracks` must already be sized to the ozz skeleton's joints and
+// hold the source keys (seconds; rotations NOT conjugated — ozz uses the source
+// convention). Shared by the Assimp path below and the ImportedScene back end
+// (assets/cookers/mesh/mesh_backend.cpp), so both build clips identically.
+inline AnimClip finishOzzClip(ozz::animation::offline::RawAnimation& raw, const Skeleton& skel,
+                              const std::string& name, int mappedTracks, int totalTracks) {
+    AnimClip clip;
+    clip.mappedTracks = mappedTracks;
+    clip.totalTracks  = totalTracks;
+    for (int i = 0; i < skel.boneCount(); ++i) {
+        auto& track = raw.tracks[(size_t)skel.ozzJointOf[i]];
+        const ozz::math::Transform rest = restTransform(skel.bones[i]);
+        if (track.translations.empty()) track.translations.push_back({ 0.0f, rest.translation });
+        if (track.rotations.empty())    track.rotations.push_back({ 0.0f, rest.rotation });
+        if (track.scales.empty())       track.scales.push_back({ 0.0f, rest.scale });
+    }
+    if (!raw.Validate()) {
+        LOG_ERROR("Anim", "RawAnimation validation failed for '%s'", name.c_str());
+        return clip;
+    }
+    raw.name = name;   // serializes inside the ozz Animation, so cooked archives carry it
+    ozz::animation::offline::AnimationBuilder builder;
+    ozz::unique_ptr<ozz::animation::Animation> built = builder(raw);
+    if (!built) {
+        LOG_ERROR("Anim", "ozz AnimationBuilder failed for '%s'", name.c_str());
+        return clip;
+    }
+    clip.name     = name;
+    clip.duration = raw.duration;
+    clip.ozz = std::shared_ptr<const ozz::animation::Animation>(
+        built.release(), ozz::Deleter<ozz::animation::Animation>());
+    return clip;
+}
+
 #if ENGINE_WITH_SOURCE_IMPORTERS
 // Build a compressed ozz Animation from an Assimp animation, bound to `skel`.
 // Track bone-names resolve through the skeleton; unmapped source channels are
@@ -161,39 +197,13 @@ inline AnimClip buildOzzClip(const aiAnimation* src, const Skeleton& skel,
         ++clip.mappedTracks;
     }
 
-    // Rest-pose key for joints the clip doesn't animate.
-    for (int i = 0; i < skel.boneCount(); ++i) {
-        auto& track = raw.tracks[(size_t)skel.ozzJointOf[i]];
-        const ozz::math::Transform rest = restTransform(skel.bones[i]);
-        if (track.translations.empty()) track.translations.push_back({ 0.0f, rest.translation });
-        if (track.rotations.empty())    track.rotations.push_back({ 0.0f, rest.rotation });
-        if (track.scales.empty())       track.scales.push_back({ 0.0f, rest.scale });
-    }
-
-    if (!raw.Validate()) {
-        LOG_ERROR("Anim", "RawAnimation validation failed for '%s'", fallbackName.c_str());
-        return clip;
-    }
     // Resolve the display name BEFORE building: it serializes inside the
     // ozz Animation, so cooked archives carry it too. Mixamo exports junk
     // take names — fall back to the filename stem.
     std::string clipName = src->mName.length ? src->mName.C_Str() : "";
     if (clipName.empty() || clipName == "mixamo.com" || clipName.rfind("Take", 0) == 0)
         clipName = fallbackName;
-    raw.name = clipName;
-
-    ozz::animation::offline::AnimationBuilder builder;
-    ozz::unique_ptr<ozz::animation::Animation> built = builder(raw);
-    if (!built) {
-        LOG_ERROR("Anim", "ozz AnimationBuilder failed for '%s'", fallbackName.c_str());
-        return clip;
-    }
-
-    clip.name     = clipName;
-    clip.duration = duration;
-    clip.ozz = std::shared_ptr<const ozz::animation::Animation>(
-        built.release(), ozz::Deleter<ozz::animation::Animation>());
-    return clip;
+    return finishOzzClip(raw, skel, clipName, clip.mappedTracks, clip.totalTracks);
 }
 #endif // ENGINE_WITH_SOURCE_IMPORTERS
 

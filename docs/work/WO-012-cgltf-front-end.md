@@ -18,7 +18,7 @@ The first real front end. After this, glTF has no cook path of its own.
 ## Done when
 - [ ] a cgltf front end passes the WO-010 contract suite
 - [ ] `cookGltf` is deleted; `.gltf`/`.glb` go through the front end and the WO-011 back end
-- [ ] cooked output is byte-identical to before for every glTF test asset (or each difference is explained and accepted)
+- [ ] cooked output matches the old `cookGltf` for every glTF test asset **except** the differences expected from `imported-scene.md` §7.1: generated tangents where the file has none, and mirrored instances flipped. Each remaining difference is explained, or it's a bug.
 - [ ] the WO-002 refusal moves into the front end's dropped list: skins and animations are reported, not silently skipped
 
 ## Contract

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-08-30
+verified: 2026-09-30
 parses-external-input: true
 covers:
   - src/animation/
@@ -12,6 +12,17 @@ tests:
   - tests/import_test.cpp
 ---
 # Animation
+
+## Clip building is split in two (WO-011)
+`ozz_bridge.h`'s `finishOzzClip(raw, skel, name, mapped, total)` is the
+format-independent half of building a clip: rest-pose keys for joints the clip
+leaves alone, validation, and the ozz build. `buildOzzClip(aiAnimation*, …)`
+fills the raw tracks from Assimp and calls it. The ImportedScene back end
+(`assets/cookers/mesh/mesh_backend.cpp`) fills them from an `imp::Clip` and calls
+it too, so both build clips identically. Rotation keys are **not** conjugated
+(ozz uses the source convention), and bind rotations **are** (see
+`assimp_skeleton_loader.h`). `mesh_backend_test` samples a cooked clip to pin the
+first, and reads a rotated bone back to pin the second.
 
 ## The untrusted-input boundary, and why this is still `working`
 

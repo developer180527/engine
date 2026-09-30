@@ -19,9 +19,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-011](WO-011-one-cook-back-end.md) **One cook back end — ImportedScene to cooked assets** · P2 · size L — Vertex baking, normal matrices, tangents, materials and texture resolution get written **once**, against `ImportedScene`, instead of once per parser.
-2. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
-3. [WO-022](WO-022-decision-records.md) **Decision records — the "why" survives the person** · P2 · size M — Important decisions are buried in the middle of plan paragraphs, and those are the ones that get "fixed" back into bugs.
+1. [WO-012](WO-012-cgltf-front-end.md) **cgltf front end (static), retiring cookGltf** · P2 · size M — The first real front end. After this, glTF has no cook path of its own.
+2. [WO-013](WO-013-assimp-front-end.md) **Assimp front end (static and skinned), retiring cookStatic/cookSkinned** · P2 · size M — After this, `aiScene` never leaves the front end. The whole cook stack past the front end is Assimp-free.
+3. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
@@ -34,13 +34,12 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-011](WO-011-one-cook-back-end.md) | One cook back end — ImportedScene to cooked assets | Asset import & cooking | L | **ready** | cooker |
-| [WO-012](WO-012-cgltf-front-end.md) | cgltf front end (static), retiring cookGltf | Asset import & cooking | M | blocked by WO-011 | import-frontend |
-| [WO-013](WO-013-assimp-front-end.md) | Assimp front end (static and skinned), retiring cookStatic/cookSkinned | Asset import & cooking | M | blocked by WO-011 | import-frontend |
+| [WO-012](WO-012-cgltf-front-end.md) | cgltf front end (static), retiring cookGltf | Asset import & cooking | M | **ready** | import-frontend |
+| [WO-013](WO-013-assimp-front-end.md) | Assimp front end (static and skinned), retiring cookStatic/cookSkinned | Asset import & cooking | M | **ready** | import-frontend |
 | [WO-014](WO-014-gltf-skins-and-animations.md) | glTF skins and animations, supported for real | Asset import & cooking | M | blocked by WO-012 | import-frontend |
 | [WO-015](WO-015-animation-off-assimp-types.md) | Animation takes engine types, not Assimp types | Asset import & cooking | M | blocked by WO-013 | — |
 | [WO-016](WO-016-offline-clip-cooker.md) | Offline clip cooker — no clip is cooked at runtime | Asset import & cooking | M | blocked by WO-015 | cooker |
-| [WO-017](WO-017-cook-library-split.md) | Cook library split — the runtime never links the cook stack | Asset import & cooking | L | blocked by WO-011 | — |
+| [WO-017](WO-017-cook-library-split.md) | Cook library split — the runtime never links the cook stack | Asset import & cooking | L | **ready** | — |
 | [WO-018](WO-018-runtime-loads-cooked-only.md) | Runtime loads cooked assets only — a missing one is a cook job, not an inline parse | Asset import & cooking | L | blocked by WO-016, WO-017 | asset-service |
 | [WO-019](WO-019-retained-scene-p3a.md) | Retained scene P3a — table, ids, lifetime, rebuild-and-diff | Renderer & RHI | L | blocked by WO-020 | render-scene (new) |
 | [WO-020](WO-020-retained-scene-design-doc.md) | Write the retained-scene design into the renderer programme (§9) | Renderer & RHI | M | **ready** | — |
@@ -72,6 +71,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 |---|---|---|---|
 | [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) | The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan | 2026-09-30 | pass_states.h (static_assert refuses both bits); tests/cull_mode_test.cpp; the visual check moved to WO-033 |
 | [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | 2026-09-30 | tests/scene_mesh_reference_test.cpp (7 cases) + editor_panel_models_test §8; 4 mutations each red on their own check |
+| [WO-011](WO-011-one-cook-back-end.md) | One cook back end — ImportedScene to cooked assets | 2026-09-30 | src/assets/cookers/mesh/mesh_backend.cpp; tests/mesh_backend_test.cpp (38 checks, reads cooked bytes back); 8 mutations each red |
 | [WO-010](WO-010-imported-scene-type.md) | ImportedScene type, fake front end, and contract test | 2026-09-30 | tests/import_frontend_contract_test.cpp (55 checks); LAYER-05; import-frontend provisional; mutations red |
 | [WO-009](WO-009-imported-scene-design.md) | ImportedScene — design the engine's own import format | 2026-09-30 | docs/plans/imported-scene.md; docs/contracts/import-frontend.md (planned, five sections written) |
 | [WO-008](WO-008-game-module-static-claim.md) | game_module.h stops claiming a static-link path that does not exist | 2026-09-30 | include/engine/game_module.h and docs/contracts/kit-abi.md state both shipping paths; checked against engine_player.cpp, engine_build.cpp and samples/minimal_game |

@@ -3,7 +3,7 @@ status: target
 ---
 # ImportedScene — the engine's own import format
 
-> **Status: design (WO-009), type landed (WO-010).** `src/assets/import/` holds
+> **Status: design (WO-009), type landed (WO-010), back end built (WO-011).** `src/assets/import/` holds
 > the type, the contract's shape, its structural checks and its fake, and
 > `tests/import_contract.h` is the suite every front end must pass. Still to
 > build: WO-011 (the one back end), WO-012/013 (the front ends). The contract is
@@ -246,12 +246,51 @@ Written once, against `ImportedScene`:
   order from cache optimisation on glTF, generated tangents), each difference
   is listed and accepted.
 
+### 7.1 What the back end decided, where the old paths disagreed (WO-011)
+
+`src/assets/cookers/mesh/mesh_backend.cpp` is built. Reading all three old cook
+paths in full found that they disagree on more than §1 listed, so "byte-identical
+to today" cannot hold for every format: no single rule reproduces three that
+contradict each other. Each choice below is deliberate, and WO-012/013 compare
+old and new output **except** for these, which they list per test asset.
+
+| | static Assimp | skinned Assimp | cgltf | **back end** |
+|---|---|---|---|---|
+| embedded texture | stored `"*0"` as a basename: **resolves to nothing** | decoded → sibling `.ctex` | decoded → sibling | **decoded → sibling** |
+| external texture | basename only | basename only | decoded → sibling | **decoded → sibling** |
+| missing tangents | computed by Assimp | computed by Assimp | constant `(1,0,0,1)` | **generated** (Lengyel, Assimp's handedness convention) |
+| tangent handedness `w` | computed | **forced to +1** | from the file | **from the source, flipped by a mirroring transform** |
+| mirrored instance (det < 0) | inside-out | n/a | inside-out | **winding flipped back** |
+| mesh with no weights in a skinned file | n/a | **silently dropped** | n/a | **bound rigidly to the nearest ancestor bone**, and reported |
+| clip names | Mixamo junk → file stem | same | n/a | **as given**: junk-name cleanup is the Assimp front end's (WO-013) |
+
+**Why every texture becomes a sibling.** A cooked mesh's texture reference
+resolves in two ways (`AssetService::resolveTexture`): a sibling `.ctex` beside
+the cooked file, or a registry lookup of `<cooked dir>/<name>`. The registry
+step can never match a source texture from there, and a shipped build has no
+registry. So a bare basename resolves only by accident. **Suspected, not yet
+proven:** a cooked static FBX with external textures renders untextured. WO-013
+proves or refutes it with a fixture before it switches that format. The cost of
+the rule is that a texture shared by two meshes is cooked once per mesh. Dedup is
+per asset. Referencing the texture's own cooked record by uuid is the later fix.
+
+**Tangents.** Generated per triangle from UV derivatives, orthogonalised against
+the normal, with `w` chosen so `cross(N, T) * w` points along increasing v: the
+convention of the Assimp path's `CalcTangentSpace`, so FBX and glTF agree. This
+answers §8 Q2 for now: our own generator, not MikkTSpace. Normal-map seams on
+real content are the signal to revisit, and that needs a visual check.
+
+**Not moved into the back end:** vertex cache ordering. Assimp's
+`ImproveCacheLocality` stays in the Assimp front end, so FBX output is
+unchanged. glTF never had it. A back-end optimiser for every format is an
+improvement, not part of this switch.
+
 ## 8. Open questions this design leaves
 
 | # | question | decided in |
 |---|---|---|
 | 1 | FBX units/axes on the skinned path (§4) | the suite's `AuthoredCentimetreZUp` case (landed in WO-010); the Assimp front end must pass it (WO-013), and that run decides the fix |
-| 2 | tangent generator: MikkTSpace or our own | WO-011 |
+| 2 | ~~tangent generator: MikkTSpace or our own~~ **Our own for now (WO-011, §7.1)**; revisit on visible normal-map seams | done, pending a visual check |
 | 3 | ~~morph targets: `Wrong` or `Less`?~~ **Decided (WO-010): `Less`.** A mesh drawn at its base shape is correct, just without its expressions, like a static prop whose node animation is dropped. The `Unrepresentable` case pins it. | done |
 | 4 | vertex colours, extra UV sets: `Less` today; carried when a shader reads them | when a shader needs them |
 | 5 | whether the Assimp front end keeps its memory permit (`AssimpGatePass`) or the cook pipeline owns it | WO-013 |

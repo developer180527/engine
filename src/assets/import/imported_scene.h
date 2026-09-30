@@ -77,6 +77,8 @@ struct TextureRef {
 struct Material {
     std::string name;
     Float4      baseColorFactor {1, 1, 1, 1};
+    float       roughness = 0.7f;        // the defaults every cook path has always used
+    float       metallic  = 0.0f;
     TextureRef  baseColor;               // sRGB by slot, decided by the back end
     TextureRef  normal;                  // linear by slot
 };

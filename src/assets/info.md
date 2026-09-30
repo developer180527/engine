@@ -8,6 +8,7 @@ covers:
 tests:
   - tests/cooker_test.cpp
   - tests/import_frontend_contract_test.cpp  # the import-frontend contract and its suite
+  - tests/mesh_backend_test.cpp              # the one cook back end, ImportedScene -> cooked mesh
   - tests/cook_infra_test.cpp
   - tests/import_test.cpp
   - tests/decimate_test.cpp           # a level must be genuinely cheaper
@@ -53,6 +54,18 @@ the type (`imported_scene.h`), the contract's shape (`import_frontend.h`,
 `IImportFrontend` + `ImportFrontendRegistry`), its structural invariants
 (`imported_scene_check.h`) and its fake (`fake_frontend.h`). No real front end
 is ported yet: WO-012 (cgltf) and WO-013 (Assimp).
+
+**The one cook back end is built** (`cookers/mesh/mesh_backend.cpp`, WO-011):
+`meshcook::cookImportedScene` turns an `ImportedScene` into a cooked mesh plus
+sibling `.ctex` textures. It bakes static meshes (flipping the winding of a
+mirrored instance), keeps skinned ones in bind space, generates missing
+tangents, cooks every texture to a deduplicated sibling, and builds the ozz
+skeleton and clips. It refuses an invalid scene, a `Wrong` loss, or more than
+256 bones. It is additive: `MeshCooker::cook` still dispatches to the
+per-parser paths until WO-012/013 switch each format. Where the old paths
+disagreed, and what it chose: `docs/plans/imported-scene.md` §7.1. The helpers
+all paths share (LODs, sibling textures, the normal-matrix guard) live in
+`cookers/mesh/cook_common.*`.
 
 - **Depends on nothing but the standard library** (audit LAYER-05), so no
   parser's types can reach the back end. Front ends are `frontend_<library>.*`

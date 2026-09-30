@@ -395,6 +395,11 @@ engine_test(providers_test)
 if(ENGINE_WITH_SOURCE_IMPORTERS)
     engine_test(async_loader_test)
     engine_test(cooker_test)
+    # WO-011: the ONE cook back end, ImportedScene -> cooked mesh, through
+    # ImportedScene values only (no file parsed). Reads the cooked bytes back:
+    # layout, baking (incl. mirrored instances), tangents, materials, sibling
+    # textures, skeleton, clips (sampled), rigid meshes, refusals, determinism.
+    engine_test(mesh_backend_test)
     # Cook infrastructure (scheduler / DDC / manifest / scanner) — needs only
     # the GPU-free core, no game assets.
     engine_test(cook_infra_test LIB engine_core)
