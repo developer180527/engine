@@ -71,6 +71,9 @@ int main() {
         // from here on for exactly the same reason.
         { "jobs",     656,    32 }, { "memory",   688,  48 },
         { "drawSubmit", 736,  24 }, { "log",      760,  40 },
+        // These two were frozen without being added here, so nothing at run
+        // time defended where they sit (audit ABI-03's accepted debt, WO-044).
+        { "physics2", 800,    16 }, { "intent",   816,  32 },
     };
     const size_t offs[] = {
         offsetof(EngineApiTableV1, core),   offsetof(EngineApiTableV1, input),
@@ -80,7 +83,10 @@ int main() {
         offsetof(EngineApiTableV1, draw),   offsetof(EngineApiTableV1, jobs),
         offsetof(EngineApiTableV1, memory), offsetof(EngineApiTableV1, drawSubmit),
         offsetof(EngineApiTableV1, log),
+        offsetof(EngineApiTableV1, physics2), offsetof(EngineApiTableV1, intent),
     };
+    static_assert(sizeof(offs) / sizeof(*offs) == sizeof(frozen) / sizeof(*frozen),
+                  "frozen[] and offs[] must list the same groups, in the same order");
     for (size_t i = 0; i < sizeof(frozen)/sizeof(*frozen); ++i)
         CHECK(offs[i] == frozen[i].off,
               "group '%s' still sits at offset %zu (found %zu) — moving it "

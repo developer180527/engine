@@ -1,6 +1,6 @@
 {
-  "generated": "2026-09-30T15:35:30+00:00",
-  "commit": "784efd4515ccf205e8db0018e7fce8f631545abe",
+  "generated": "2026-09-30T16:53:32+00:00",
+  "commit": "b4b754449c52f596afffa053041803c13af0c18e",
   "note": "Accepted architectural debt. The gate fails on findings NOT listed here; shrinking this file is the cleanup, and nothing may be added to it without a reason in the commit.",
   "findings": {
     "LAYER-03": [
@@ -56,10 +56,6 @@
       "LAYER-03|src/tools -> src/render",
       "LAYER-03|src/tools -> src/runtime",
       "LAYER-03|src/tools -> src/scene"
-    ],
-    "ABI-03": [
-      "ABI-03|intent",
-      "ABI-03|physics2"
     ],
     "DET-01": [
       "DET-01|src/runtime/runtime_sim.cpp:wall-clock (hid::nowNs)"
