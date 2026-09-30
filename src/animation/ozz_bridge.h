@@ -1,13 +1,16 @@
 #pragma once
-// ── ozz bridge — Assimp import data -> ozz runtime structures ────────────────
-// The single seam between our Assimp-based import and the ozz animation
-// backbone. Two builders:
+// ── ozz bridge — engine skeletons and keys -> ozz runtime structures ──────────
+// The seam between the engine's animation types and the ozz backbone. It knows
+// no source format (WO-015: it used to take Assimp's aiAnimation):
 //
 //   buildOzzSkeleton(Skeleton&)   engine Skeleton -> ozz runtime skeleton
 //                                 (+ ourBoneIndex -> ozzJointIndex mapping)
-//   buildOzzClip(aiAnimation*, Skeleton, name)
-//                                 Assimp curves -> compressed ozz Animation,
-//                                 bound to that skeleton's joints by name
+//   finishOzzClip(RawAnimation&, Skeleton, name, ...)
+//                                 source keys -> compressed ozz Animation
+//
+// Clips are built from ImportedScene by imp::buildOzzClip
+// (assets/anim_from_scene.h), which fills the RawAnimation and calls
+// finishOzzClip.
 //
 // CONVENTIONS (the hard-won part — see animation/info.md):
 //  • ozz math is column-vector (Assimp/GL-style). Assimp quaternions feed ozz
@@ -22,12 +25,6 @@
 #include "animation/animation_clip.h"
 #include "core/logger.h"
 
-// buildOzzClip consumes aiAnimation — import-side only. Shipping builds
-// (ENGINE_WITH_SOURCE_IMPORTERS=0) keep the assimp-free half of this bridge
-// (restTransform, buildOzzSkeleton) and compile the clip builder out.
-#if ENGINE_WITH_SOURCE_IMPORTERS
-#include <assimp/anim.h>
-#endif
 #include <ozz/animation/offline/animation_builder.h>
 #include <ozz/animation/offline/raw_animation.h>
 #include <ozz/animation/offline/raw_skeleton.h>
@@ -113,8 +110,8 @@ inline bool buildOzzSkeleton(Skeleton& skel) {
 // does not animate one rest-pose key, validate, and build the compressed ozz
 // Animation. `raw.tracks` must already be sized to the ozz skeleton's joints and
 // hold the source keys (seconds; rotations NOT conjugated — ozz uses the source
-// convention). Shared by the Assimp path below and the ImportedScene back end
-// (assets/cookers/mesh/mesh_backend.cpp), so both build clips identically.
+// convention). Every clip builder ends here (imp::buildOzzClip, and the Assimp
+// front end's legacy one), so all of them build clips identically.
 inline AnimClip finishOzzClip(ozz::animation::offline::RawAnimation& raw, const Skeleton& skel,
                               const std::string& name, int mappedTracks, int totalTracks) {
     AnimClip clip;
@@ -144,67 +141,5 @@ inline AnimClip finishOzzClip(ozz::animation::offline::RawAnimation& raw, const 
         built.release(), ozz::Deleter<ozz::animation::Animation>());
     return clip;
 }
-
-#if ENGINE_WITH_SOURCE_IMPORTERS
-// Build a compressed ozz Animation from an Assimp animation, bound to `skel`.
-// Track bone-names resolve through the skeleton; unmapped source channels are
-// skipped (counted in the clip's diagnostics); joints without channels get one
-// rest-pose key.
-inline AnimClip buildOzzClip(const aiAnimation* src, const Skeleton& skel,
-                             const std::string& fallbackName) {
-    AnimClip clip;
-    if (!skel.ozz) { LOG_ERROR("Anim", "buildOzzClip: skeleton has no ozz data"); return clip; }
-
-    const double tps      = src->mTicksPerSecond > 0.0 ? src->mTicksPerSecond : 24.0;
-    const float  duration = std::max((float)(src->mDuration / tps), 1e-4f);
-
-    const ozz::animation::Skeleton& oskel = *skel.ozz;
-    ozz::animation::offline::RawAnimation raw;
-    // Name travels INSIDE the ozz Animation (and so through cooked archives).
-    raw.duration = duration;
-    raw.tracks.resize(oskel.num_joints());
-
-    clip.totalTracks = (int)src->mNumChannels;
-    for (unsigned c = 0; c < src->mNumChannels; ++c) {
-        const aiNodeAnim* na = src->mChannels[c];
-        const int ours = skel.findBone(na->mNodeName.C_Str());
-        if (ours < 0) continue;
-        auto& track = raw.tracks[(size_t)skel.ozzJointOf[ours]];
-
-        track.translations.reserve(na->mNumPositionKeys);
-        for (unsigned k = 0; k < na->mNumPositionKeys; ++k) {
-            const auto& kv = na->mPositionKeys[k];
-            track.translations.push_back({ (float)(kv.mTime / tps),
-                { kv.mValue.x, kv.mValue.y, kv.mValue.z } });
-        }
-        track.rotations.reserve(na->mNumRotationKeys);
-        for (unsigned k = 0; k < na->mNumRotationKeys; ++k) {
-            const auto& kv = na->mRotationKeys[k];   // ozz = Assimp convention: no conjugation
-            track.rotations.push_back({ (float)(kv.mTime / tps),
-                { kv.mValue.x, kv.mValue.y, kv.mValue.z, kv.mValue.w } });
-        }
-        track.scales.reserve(na->mNumScalingKeys);
-        for (unsigned k = 0; k < na->mNumScalingKeys; ++k) {
-            const auto& kv = na->mScalingKeys[k];
-            track.scales.push_back({ (float)(kv.mTime / tps),
-                { kv.mValue.x, kv.mValue.y, kv.mValue.z } });
-        }
-        // Clamp key times into [0, duration] (Assimp keys can exceed by eps).
-        auto clampT = [&](auto& keys) {
-            for (auto& key : keys) key.time = std::clamp(key.time, 0.0f, duration);
-        };
-        clampT(track.translations); clampT(track.rotations); clampT(track.scales);
-        ++clip.mappedTracks;
-    }
-
-    // Resolve the display name BEFORE building: it serializes inside the
-    // ozz Animation, so cooked archives carry it too. Mixamo exports junk
-    // take names — fall back to the filename stem.
-    std::string clipName = src->mName.length ? src->mName.C_Str() : "";
-    if (clipName.empty() || clipName == "mixamo.com" || clipName.rfind("Take", 0) == 0)
-        clipName = fallbackName;
-    return finishOzzClip(raw, skel, clipName, clip.mappedTracks, clip.totalTracks);
-}
-#endif // ENGINE_WITH_SOURCE_IMPORTERS
 
 } // namespace anim

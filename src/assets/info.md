@@ -81,6 +81,18 @@ all paths share (LODs, sibling textures, the normal-matrix guard) live in
   are not. Design: `docs/plans/imported-scene.md`. Contract:
   `docs/contracts/import-frontend.md`.
 
+## Animation from the import format (`anim_from_scene`, `clip_source`, WO-015)
+- **`anim_from_scene.{h,cpp}`**: `imp::toAnimSkeleton` and
+  `imp::buildOzzClip(const imp::Clip&, const Skeleton&)`, the one conversion
+  from ImportedScene to animation's runtime types. The mesh back end cooks
+  skeletons and embedded clips with it. It sits here, not in `import/`
+  (LAYER-05: the format depends on the standard library alone) and not in
+  `src/animation/` (which must not depend on the import stack).
+- **`clip_source.{h,cpp}`**: `imp::readSourceClip`, `ClipLibrary`'s source
+  reader in dev builds. It imports a standalone clip file through its
+  format's front end and binds its first clip by bone name, so a clip reads
+  exactly as the character it animates cooks.
+
 ## Importers (`importers/`)
 `IMeshImporter` implementations behind `ImporterRegistry` (extension →
 importer): `GltfImporter` (cgltf) for glTF/GLB; `AssimpImporter` for FBX,

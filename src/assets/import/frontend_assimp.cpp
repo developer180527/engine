@@ -1,7 +1,7 @@
 // ── AssimpFrontend — see frontend_assimp.h ────────────────────────────────────
 #include "assets/import/frontend_assimp.h"
 #include "core/thread_stack.h"
-#include "animation/assimp_skeleton_loader.h"   // extractSkeleton / extractBoneWeights: the old paths' own
+#include "assets/import/frontend_assimp_skeleton.h"   // extractSkeleton / extractBoneWeights: the old paths' own
 
 #include <assimp/Importer.hpp>
 #include <assimp/config.h>
@@ -47,7 +47,7 @@ struct AssimpGatePass {
 
 Float4x4 toFloat4x4(const aiMatrix4x4& m) {
     Float4x4 out;
-    anim::aiMat4ToFloat16(m, out.m);            // column-major, translation in m[12..14]
+    imp::assimp::aiMat4ToFloat16(m, out.m);            // column-major, translation in m[12..14]
     return out;
 }
 
@@ -150,7 +150,7 @@ struct Converter {
         m.submeshes = {{0, (uint32_t)m.indices.size(), am->mMaterialIndex}};
 
         if (am->mNumBones > 0 && skel) {
-            const auto bw = anim::extractBoneWeights(am, *skel);
+            const auto bw = imp::assimp::extractBoneWeights(am, *skel);
             m.joints.resize(n); m.weights.resize(n);
             for (unsigned v = 0; v < n; ++v) {
                 float w[4]; std::memcpy(w, bw[v].weights, sizeof w);
@@ -300,7 +300,7 @@ ImportResult AssimpFrontend::importOnThisStack(const std::filesystem::path& sour
         for (unsigned i = 0; i < sc->mNumMeshes; ++i) anyBones |= sc->mMeshes[i]->mNumBones > 0;
         ::Skeleton animSkel;
         if (anyBones) {
-            animSkel = anim::extractSkeleton(sc);
+            animSkel = imp::assimp::extractSkeleton(sc);
             if (animSkel.boneCount() > 0) out.skeleton = fromAnim(animSkel);
         } else if (animationOnly) {
             out.skeleton = animatedNodes(*sc);

@@ -13,8 +13,9 @@
 #include <cstring>   // std::memcpy/std::strlen — libc++ pulls these in
                      // transitively, libstdc++ does not, so the Linux legs
                      // are where a missing one surfaces
-#include "animation/assimp_skeleton_loader.h"
+#include "assets/import/frontend_assimp_skeleton.h"
 #include "animation/clip_library.h"
+#include "assets/clip_source.h"
 #include "animation/clip_registry.h"
 #include "animation/ozz_bridge.h"
 #include "animation/pose.h"
@@ -48,13 +49,14 @@ int main(int argc, char** argv) {
         aiProcess_JoinIdenticalVertices | aiProcess_SortByPType);
     if (!scene) { std::fprintf(stderr, "FAIL: %s\n", imp.GetErrorString()); return 1; }
 
-    Skeleton skel = anim::extractSkeleton(scene);
+    Skeleton skel = imp::assimp::extractSkeleton(scene);
     if (!anim::buildOzzSkeleton(skel)) { std::fprintf(stderr, "FAIL: ozz skeleton\n"); return 1; }
     const int n = skel.boneCount();
     std::printf("skeleton: %d bones (ozz joints: %d)\n", n, skel.ozz->num_joints());
 
     AnimClipRegistry clips;
     ClipLibrary lib;
+    lib.setSourceReader(&imp::readSourceClip);   // an uncooked clip is read as the runtime reads it (WO-015)
     AnimClipHandle h = lib.load(argv[2], SkeletonHandle{1}, skel, clips);
     if (!h.valid()) { std::fprintf(stderr, "FAIL: clip bind\n"); return 1; }
     const AnimClip& clip = *clips.get(h);
@@ -118,7 +120,7 @@ int main(int argc, char** argv) {
     for (unsigned mi = 0; mi < scene->mNumMeshes; ++mi) {
         const aiMesh* am = scene->mMeshes[mi];
         if (am->mNumBones == 0) continue;
-        auto bd = anim::extractBoneWeights(am, skel);
+        auto bd = imp::assimp::extractBoneWeights(am, skel);
         for (unsigned v = 0; v < am->mNumVertices; ++v) {
             float acc[3] = {0,0,0};
             for (int j = 0; j < 4; ++j) {

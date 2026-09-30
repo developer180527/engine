@@ -11,30 +11,27 @@
 // A clip bound to two different skeletons is two registry entries — the cache
 // key is (source path | skeleton handle).
 //
-// THE COOKER (cook-on-first-bind): the expensive part of load() is the Assimp
-// FBX parse. After the first successful bind, the built ozz Animation is
+// WHERE A CLIP COMES FROM is not this module's business (WO-015). A cooked clip
+// is read here; an uncooked one comes from the SOURCE READER the host installs
+// (setSourceReader): in dev builds, the runtime installs one that imports the
+// file through the import front ends and binds its first clip
+// (assets/clip_source.h). Without a reader (shipping builds, bare tools) an
+// uncooked clip is an error: "clip not cooked". This header used to parse FBX
+// with Assimp itself, which tied animation to one parser.
+//
+// THE COOKER (cook-on-first-bind): the expensive part of load() is the source
+// parse. After the first successful bind, the built ozz Animation is
 // serialized to <cacheRoot>/<hash(source|skeletonSig)>.ozzclip (ozz archive +
 // a small invalidation header). Every later bind — including every later RUN —
-// deserializes the archive instead (sub-millisecond, no Assimp). Invalidation:
+// deserializes the archive instead (sub-millisecond, no parse). Invalidation:
 // source file size+mtime, skeleton joint-name signature, cache version. Hosts
 // call setCacheRoot at project open; without it (bare tools) cooking is off
-// and the Assimp path stands alone.
+// and the source reader stands alone.
 #include "animation/animation_clip.h"
 #include "animation/clip_registry.h"
 #include "animation/skeleton.h"
-#include "animation/ozz_bridge.h"               // buildOzzClip (name binding)
 #include "core/handle.h"
 #include "core/logger.h"
-
-// Shipping builds (ENGINE_WITH_SOURCE_IMPORTERS=0) keep the cooked fast
-// path (ozz archive deserialize — sub-millisecond, no Assimp) and compile
-// the cook-on-miss Assimp parse out: a cache miss is an ERROR ("clip not
-// cooked"), because shipped runtimes never parse FBX.
-#if ENGINE_WITH_SOURCE_IMPORTERS
-#include <assimp/Importer.hpp>
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
-#endif
 
 #include <ozz/animation/runtime/animation.h>
 #include <ozz/animation/runtime/skeleton.h>
@@ -45,12 +42,22 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <system_error>
 #include <unordered_map>
 
 class ClipLibrary {
 public:
+    // Reads the clip in `sourcePath` and binds it, by bone name, to `target`
+    // (which has its ozz data). An invalid AnimClip if it cannot, having logged
+    // why. mappedTracks of totalTracks says how much of the file's clip bound.
+    using SourceReader = std::function<AnimClip(const std::string& sourcePath, const Skeleton& target)>;
+
+    // Installed by the host where source files may be read (dev builds).
+    // Unset, a clip that is not cooked cannot load.
+    void setSourceReader(SourceReader reader) { m_reader = std::move(reader); }
+
     // Where cooked clips live (host sets <project>/.cache/anim at project
     // open). Empty = cooking disabled.
     void setCacheRoot(const std::filesystem::path& dir) {
@@ -61,9 +68,8 @@ public:
         }
     }
 
-    // Load (or return cached) `sourcePath` bound to `skeleton`. Uses the same
-    // Assimp flags as the mesh importer so node transforms decompose
-    // identically to the skeleton they animate.
+    // Load (or return cached) `sourcePath` bound to `skeleton`: the cooked clip
+    // if there is one, else the source reader's.
     AnimClipHandle load(const std::string& sourcePath,
                         SkeletonHandle skelHandle, const Skeleton& skeleton,
                         AnimClipRegistry& clips) {
@@ -78,71 +84,38 @@ public:
             return h;
         }
 
-#if !ENGINE_WITH_SOURCE_IMPORTERS
-        // Shipping runtime: cooked-only. Landing here means the project was
-        // packaged without cooking this clip — a packaging bug, not a
-        // runtime fallback opportunity.
-        (void)t0;
-        LOG_ERROR("Anim", "clip not cooked: %s — shipping builds never parse "
-                  "FBX; re-run engine_build / cook in the editor", sourcePath.c_str());
-        return {};
-    }
-#else
-        Assimp::Importer imp;
-        // MUST match the skinned-mesh import (async_loader.cpp): pivots baked,
-        // not split into $AssimpFbx$ helper nodes — otherwise rotation tracks
-        // land on synthetic node names that don't exist on the skeleton.
-        imp.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
-        const aiScene* scene = imp.ReadFile(sourcePath,
-            aiProcess_Triangulate | aiProcess_GenSmoothNormals |
-            aiProcess_CalcTangentSpace | aiProcess_FlipUVs |
-            aiProcess_JoinIdenticalVertices | aiProcess_SortByPType);
-        if (!scene || !scene->mRootNode) {
-            LOG_ERROR("Anim", "clip load failed: %s (%s)", sourcePath.c_str(),
-                      imp.GetErrorString());
-            return {};
-        }
-        if (scene->mNumAnimations == 0) {
-            LOG_ERROR("Anim", "no animations in %s", sourcePath.c_str());
+        // ── Not cooked: the host's source reader, if it installed one ────────
+        if (!m_reader) {
+            // A shipping runtime has none: landing here means the project was
+            // packaged without cooking this clip. A packaging bug, not a
+            // runtime fallback opportunity.
+            LOG_ERROR("Anim", "clip not cooked: %s — this build reads no source "
+                      "files; re-run engine_build / cook in the editor", sourcePath.c_str());
             return {};
         }
         if (!skeleton.ozz) {
             LOG_ERROR("Anim", "target skeleton has no ozz runtime data");
             return {};
         }
-
-        // v1: one clip per file (the Mixamo layout). Multi-take files can grow
-        // a takeName parameter later without changing callers.
-        const aiAnimation* src = scene->mAnimations[0];
-        AnimClip clip = anim::buildOzzClip(src, skeleton,
-            std::filesystem::path(sourcePath).stem().string());
-        if (clip.mappedTracks == 0) {
+        AnimClip clip = m_reader(sourcePath, skeleton);
+        if (clip.totalTracks > 0 && clip.mappedTracks == 0) {
             LOG_ERROR("Anim", "'%s': no tracks match the target skeleton "
                       "(%d tracks, %d bones) — wrong rig?",
                       clip.name.c_str(), clip.totalTracks, skeleton.boneCount());
             return {};
         }
-        if (!clip.valid()) return {};   // builder failure (already logged)
-        if (clip.mappedTracks < clip.totalTracks) {
+        if (!clip.valid()) return {};   // reader or builder failure (already logged)
+        if (clip.mappedTracks < clip.totalTracks)
             LOG_WARN("Anim", "'%s': %d/%d tracks unmapped on this skeleton",
                      clip.name.c_str(), clip.totalTracks - clip.mappedTracks,
                      clip.totalTracks);
-            int shown = 0;
-            for (unsigned c = 0; c < src->mNumChannels && shown < 6; ++c) {
-                const char* n = src->mChannels[c]->mNodeName.C_Str();
-                if (skeleton.findBone(n) < 0) {
-                    LOG_WARN("Anim", "  unmapped track: %s", n);
-                    ++shown;
-                }
-            }
-        }
 
         AnimClipHandle h = clips.add(std::move(clip));
         m_cache[key] = h;
         const double ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t0).count();
         LOG_SUCCESS("Anim", "bound clip '%s' (%.2fs, %d/%d tracks) from %s "
-                    "[assimp, %.1f ms]",
+                    "[source, %.1f ms]",
                     clips.get(h)->name.c_str(), clips.get(h)->duration,
                     clips.get(h)->mappedTracks, clips.get(h)->totalTracks,
                     std::filesystem::path(sourcePath).filename().string().c_str(),
@@ -150,7 +123,6 @@ public:
         saveCooked(sourcePath, skeleton, *clips.get(h));
         return h;
     }
-#endif // ENGINE_WITH_SOURCE_IMPORTERS
 
     // Registries reset (project switch / registry clear) — drop stale handles.
     void clear() { m_cache.clear(); }
@@ -292,6 +264,7 @@ private:
                  path.filename().string().c_str());
     }
 
+    SourceReader          m_reader;      // unset = cooked clips only
     std::filesystem::path m_cacheRoot;   // empty = cooking off
     std::unordered_map<std::string, AnimClipHandle> m_cache; // "path|skelId"
 };

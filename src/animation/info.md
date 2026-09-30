@@ -13,16 +13,27 @@ tests:
 ---
 # Animation
 
-## Clip building is split in two (WO-011)
-`ozz_bridge.h`'s `finishOzzClip(raw, skel, name, mapped, total)` is the
-format-independent half of building a clip: rest-pose keys for joints the clip
-leaves alone, validation, and the ozz build. `buildOzzClip(aiAnimation*, …)`
-fills the raw tracks from Assimp and calls it. The ImportedScene back end
-(`assets/cookers/mesh/mesh_backend.cpp`) fills them from an `imp::Clip` and calls
-it too, so both build clips identically. Rotation keys are **not** conjugated
-(ozz uses the source convention), and bind rotations **are** (see
-`assimp_skeleton_loader.h`). `mesh_backend_test` samples a cooked clip to pin the
-first, and reads a rotated bone back to pin the second.
+## This module knows no source format (WO-015)
+Nothing in `src/animation/` includes Assimp or any parser (audit IMP-01, no
+debt). Clips and skeletons reach it as engine types:
+- `ozz_bridge.h`'s `finishOzzClip(raw, skel, name, mapped, total)` is the one
+  place a clip is built: rest-pose keys for joints the clip leaves alone,
+  validation, and the ozz build.
+- `imp::buildOzzClip(const imp::Clip&, const Skeleton&)` and
+  `imp::toAnimSkeleton(const imp::Skeleton&)` (`assets/anim_from_scene.h`)
+  convert the import format and call it. The mesh cook back end and the
+  standalone-clip reader both use them, so every clip is built identically.
+- The Assimp-typed helpers (`extractSkeleton`, `extractBoneWeights`, a legacy
+  `buildOzzClip(aiAnimation*)`) live in the Assimp front end
+  (`assets/import/frontend_assimp_skeleton.h`), for it and for the two runtime
+  importers WO-018 deletes.
+
+Rotation keys are **not** conjugated (ozz uses the source convention), and bind
+rotations **are** (`toAnimSkeleton`). `mesh_backend_test` samples a cooked clip
+to pin the first, and reads a rotated bone back to pin the second. Moving the
+standalone-clip path onto the front end was checked on the 12 Mixamo zombie
+clips: every joint's model matrix, sampled 25 times per clip, is bit-identical
+to the old direct-Assimp path.
 
 ## The untrusted-input boundary, and why this is still `working`
 
@@ -75,8 +86,8 @@ take serialized every worker thread on the one path the pool exists to speed up.
 Sampling/blending machinery is **ozz-animation** (third_party/ozz-animation,
 same philosophy as Jolt/bgfx/flecs — orchestrate, don't reinvent):
 - `ozz_bridge.h` — THE seam: `buildOzzSkeleton` (engine Skeleton -> ozz runtime
-  skeleton + ourBone->ozzJoint map), `buildOzzClip` (Assimp curves -> compressed
-  ozz Animation, name-bound, rest-pose keys for unanimated joints).
+  skeleton + ourBone->ozzJoint map), `finishOzzClip` (source keys -> compressed
+  ozz Animation, rest-pose keys for unanimated joints). Format-free.
 - `AnimClip` wraps `ozz::animation::Animation`; `Skeleton` carries the ozz
   skeleton + joint mapping. The hand-rolled AnimChannel sampler is deleted.
 - AnimatorSystem runs SamplingJob -> LocalToModelJob, remaps ozz joints to OUR
@@ -99,18 +110,18 @@ arrays (parent index always < child index) for cache-friendly evaluation.
   `ozz::animation::Animation` + name/duration + track-mapping diagnostics.
 - **`pose.h`** — the two surviving raw-matrix helpers: bind-pose world
   matrices + IBM multiply (the precision-clean baseline for skinning).
-- **`assimp_skeleton_loader.h`** — walks the aiNode tree, collapses
-  `$AssimpFbx$` helper chains into single bones, extracts per-vertex weights
-  (top-4 influences, normalized). Clip extraction lives in `ozz_bridge.h`.
 - **Registries** (`skeleton_registry.h`, `clip_registry.h`) — `Handle<Tag>`
   dense-vector storage, slot 0 reserved as null.
 - **`ClipLibrary`** (`clip_library.h`) — clips as STANDALONE assets (the Mixamo
-  layout: character FBX + separate clip FBXs). Loads a clip file and BINDS it
-  to a target skeleton by bone name (via `anim::buildOzzClip`). Cache key is
-  (path | skeleton handle); unmapped tracks warn (first few named); zero
-  mapped tracks = wrong rig, refused. MUST import with the same Assimp
-  settings as `async_loader.cpp` (`PRESERVE_PIVOTS=false`) or rotation tracks
-  land on `$AssimpFbx$` helper names that don't exist on the skeleton.
+  layout: character FBX + separate clip FBXs). Loads a clip and BINDS it to a
+  target skeleton by bone name. A cooked clip is read here; an uncooked one
+  comes from the host's SOURCE READER (`setSourceReader`): the runtime installs
+  `imp::readSourceClip` (`assets/clip_source.h`) when it has source importers,
+  which imports the file through its format's front end (so it reads exactly as
+  the character's cook does: same front end, same `PRESERVE_PIVOTS=false`) and
+  binds its first clip. With no reader (shipping, server) an uncooked clip is
+  an error. Cache key is (path | skeleton handle); unmapped tracks warn (first
+  few named); zero mapped tracks = wrong rig, refused.
   `Animator::clipPath` carries the reference (AssetRef uuid+relative on disk);
   the scene-load import callback binds it once the skinned mesh arrives.
   Owned by EngineRuntime (`clipLibrary()`), reachable via RuntimeContext.
@@ -118,8 +129,8 @@ arrays (parent index always < child index) for cache-friendly evaluation.
 
 ## Data Flow
 ```
-FBX → Assimp (PRESERVE_PIVOTS=false) → extractSkeleton → buildOzzSkeleton
-                                     → buildOzzClip (per animation)
+source file → import front end → ImportedScene → imp::toAnimSkeleton → buildOzzSkeleton
+                                               → imp::buildOzzClip (per clip) → finishOzzClip
   → AnimatorSystem.tick: ozz SamplingJob → ozz LocalToModelJob
   → remap ozz joints → our bones; skin[i] = IBM[i] * model[ozzJointOf[i]]
   → anim::skinPalettes()[slot] → vec4 uniform array → vs_skinned.sc (mul(v,M))

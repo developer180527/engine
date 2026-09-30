@@ -1,6 +1,6 @@
 {
-  "generated": "2026-09-30T15:05:28+00:00",
-  "commit": "d1cc5dc2dc511547b77eab9a5637dd392986823b",
+  "generated": "2026-09-30T15:35:30+00:00",
+  "commit": "784efd4515ccf205e8db0018e7fce8f631545abe",
   "note": "Accepted architectural debt. The gate fails on findings NOT listed here; shrinking this file is the cleanup, and nothing may be added to it without a reason in the commit.",
   "findings": {
     "LAYER-03": [
@@ -89,9 +89,6 @@
       "RHI-01|src/runtime/sim_classification.cpp"
     ],
     "IMP-01": [
-      "IMP-01|src/animation/assimp_skeleton_loader.h",
-      "IMP-01|src/animation/clip_library.h",
-      "IMP-01|src/animation/ozz_bridge.h",
       "IMP-01|src/assets/importers/assimp_importer.cpp",
       "IMP-01|src/runtime/services/async_loader/parse.cpp"
     ]

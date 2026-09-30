@@ -13,7 +13,7 @@
 #include "render/skinned_vertex.h"
 #include "render/texture.h"
 #include "render/material.h"
-#include "animation/assimp_skeleton_loader.h"
+#include "assets/import/frontend_assimp_skeleton.h"
 #include "animation/cooked_skin.h"
 #include "animation/ozz_bridge.h"
 #include <ozz/base/io/archive.h>
@@ -451,7 +451,7 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
             if (scene->mMeshes[i]->mNumBones > 0) hasBones = true;
 
         if (hasBones) {
-            out.skeleton    = anim::extractSkeleton(scene);
+            out.skeleton    = imp::assimp::extractSkeleton(scene);
             // Over the GPU palette's limit the animator would refuse it and the
             // skinned mesh would draw in its raw bind pose, never animating.
             // Static geometry, said out loud, is the honest preview (WO-040).
@@ -468,7 +468,7 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                 std::string base = std::filesystem::path(path).stem().string();
                 out.animClips.reserve(scene->mNumAnimations);
                 for (unsigned a = 0; a < scene->mNumAnimations; ++a) {
-                    AnimClip c = anim::buildOzzClip(scene->mAnimations[a],
+                    AnimClip c = imp::assimp::buildOzzClip(scene->mAnimations[a],
                                                     out.skeleton, base);
                     if (c.valid()) out.animClips.push_back(std::move(c));
                 }
@@ -545,7 +545,7 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                 if (!(am->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
                 if (am->mNumBones == 0) continue;
 
-                auto boneData = anim::extractBoneWeights(am, out.skeleton);
+                auto boneData = imp::assimp::extractBoneWeights(am, out.skeleton);
                 int zeroWeightVerts = 0, maxBoneIdx = 0;
                 for (uint32_t v = 0; v < am->mNumVertices; ++v) {
                     SkinnedVertex sv{};

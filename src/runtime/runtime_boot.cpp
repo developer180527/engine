@@ -41,6 +41,7 @@
 #if ENGINE_WITH_SOURCE_IMPORTERS
 #include "assets/importers/gltf_importer.h"
 #include "assets/importers/assimp_importer.h"
+#include "assets/clip_source.h"
 #endif
 #include "animation/clip_library.h"
 #include "components/meta_registry.h"
@@ -218,6 +219,11 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
         m_importers.registerImporter(std::make_unique<GltfImporter>());
         m_importers.registerImporter(std::make_unique<AssimpImporter>());
     }
+    // An uncooked standalone clip is read through the import front ends
+    // (assets/clip_source.h). Headless too: a clip is CPU data, and a headless
+    // run with source importers has always been able to read one. Unset (a
+    // shipping or server build), ClipLibrary loads cooked clips only (WO-015).
+    m_clipLibrary->setSourceReader(&imp::readSourceClip);
 #endif
 
     // AssetService — async mesh/texture loading for scripts + scene streaming.

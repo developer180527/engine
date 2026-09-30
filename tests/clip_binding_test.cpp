@@ -7,8 +7,9 @@
 // clip's bone tracks resolved onto the character's skeleton by name (baked
 // boneIndex channels), the duration is sane, and the cache returns the same
 // handle on a second load. Pure CPU: no window, no bgfx.
-#include "animation/assimp_skeleton_loader.h"
+#include "assets/import/frontend_assimp_skeleton.h"
 #include "animation/clip_library.h"
+#include "assets/clip_source.h"
 #include "animation/ozz_bridge.h"
 #include "animation/clip_registry.h"
 
@@ -36,7 +37,7 @@ int main(int argc, char** argv) {
         aiProcess_JoinIdenticalVertices | aiProcess_SortByPType);
     if (!scene) { std::fprintf(stderr, "FAIL: character load: %s\n", imp.GetErrorString()); return 1; }
 
-    Skeleton skel = anim::extractSkeleton(scene);
+    Skeleton skel = imp::assimp::extractSkeleton(scene);
     if (skel.boneCount() == 0) { std::fprintf(stderr, "FAIL: no bones in character\n"); return 1; }
     if (!anim::buildOzzSkeleton(skel)) { std::fprintf(stderr, "FAIL: ozz skeleton build\n"); return 1; }
     std::printf("character skeleton: %d bones\n", skel.boneCount());
@@ -44,6 +45,7 @@ int main(int argc, char** argv) {
     // Standalone clip bound to that skeleton.
     AnimClipRegistry clips;
     ClipLibrary      lib;
+    lib.setSourceReader(&imp::readSourceClip);   // an uncooked clip is read as the runtime reads it (WO-015)
     SkeletonHandle   sh{1};
     AnimClipHandle h = lib.load(argv[2], sh, skel, clips);
     if (!h.valid()) { std::fprintf(stderr, "FAIL: clip did not bind\n"); return 1; }

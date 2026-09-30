@@ -86,6 +86,8 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         assets/cookers/mesh/mesh_backend.cpp
         assets/import/frontend_cgltf.cpp
         assets/import/frontend_assimp.cpp
+        assets/anim_from_scene.cpp     # ImportedScene skeletons/clips -> anim (WO-015)
+        assets/clip_source.cpp         # ClipLibrary's source reader (WO-015)
         assets/cookers/scene/scene_cooker.cpp
         assets/cookers/texture/texture_cooker.cpp
         assets/cookers/texture/texture_encode.cpp
@@ -273,7 +275,8 @@ elseif(MSVC)
 endif()
 target_compile_definitions(engine_core PUBLIC
     BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>   # bx headers (cooker skeleton types)
-    # Headers gate their Assimp paths on this (clip_library.h cook-on-miss).
+    # Code that reads source files gates on this (runtime_boot installs the
+    # clip source reader and the source importers only when it is on).
     ENGINE_WITH_SOURCE_IMPORTERS=$<BOOL:${ENGINE_WITH_SOURCE_IMPORTERS}>
 )
 

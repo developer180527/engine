@@ -5,7 +5,7 @@
 #include "render/mesh.h"
 #include "render/texture.h"
 #include "render/material.h"
-#include "animation/assimp_skeleton_loader.h"
+#include "assets/import/frontend_assimp_skeleton.h"
 #include "animation/ozz_bridge.h"
 #include "animation/skeleton_registry.h"
 #include "animation/clip_registry.h"
@@ -274,7 +274,7 @@ static void appendStaticVerts(const aiMesh* aiM, std::vector<Vertex>& verts,
 // verts rigidly to bone 0 (weight 1) rather than lose the geometry.
 static void appendSkinnedVerts(const aiMesh* aiM, const Skeleton& skel,
                                std::vector<SkinnedVertex>& verts, Bounds& b) {
-    auto boneData = anim::extractBoneWeights(aiM, skel);
+    auto boneData = imp::assimp::extractBoneWeights(aiM, skel);
     const bool hasBones = aiM->mNumBones > 0;
     for (uint32_t v = 0; v < aiM->mNumVertices; ++v) {
         SkinnedVertex vtx{};
@@ -417,7 +417,7 @@ MeshImportResult AssimpImporter::load(const std::string& path,
     Skeleton skeleton;
     SkeletonHandle skelHandle{};
     if (hasBones) {
-        skeleton = anim::extractSkeleton(scene);
+        skeleton = imp::assimp::extractSkeleton(scene);
         if (!skeleton.bones.empty() && !anim::buildOzzSkeleton(skeleton))
             skeleton = {};   // unusable without ozz data
         if (!skeleton.bones.empty() && storage.skeletons) {
@@ -431,7 +431,7 @@ MeshImportResult AssimpImporter::load(const std::string& path,
     if (hasBones && !skeleton.bones.empty() && storage.clips) {
         const std::string base = baseName;
         for (unsigned a = 0; a < scene->mNumAnimations; ++a) {
-            AnimClip clip = anim::buildOzzClip(scene->mAnimations[a], skeleton, base);
+            AnimClip clip = imp::assimp::buildOzzClip(scene->mAnimations[a], skeleton, base);
             if (!clip.valid()) continue;
             LOG_INFO("Assimp", "Clip: \"%s\" duration=%.2fs tracks=%d/%d",
                      clip.name.c_str(), clip.duration,

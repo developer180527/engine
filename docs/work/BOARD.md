@@ -20,7 +20,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-015](WO-015-animation-off-assimp-types.md) **Animation takes engine types, not Assimp types** · P2 · size M — `buildOzzClip(aiAnimation*)` and `extractSkeleton(aiScene*)` tie the animation module to one parser.
+1. [WO-016](WO-016-offline-clip-cooker.md) **Offline clip cooker — no clip is cooked at runtime** · P2 · size M — A standalone clip, such as a Mixamo FBX, is cooked only the first time the editor binds it.
 2. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
 3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
 
@@ -40,8 +40,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-015](WO-015-animation-off-assimp-types.md) | Animation takes engine types, not Assimp types | Asset import & cooking | M | **ready** | — |
-| [WO-016](WO-016-offline-clip-cooker.md) | Offline clip cooker — no clip is cooked at runtime | Asset import & cooking | M | blocked by WO-015 | cooker |
+| [WO-016](WO-016-offline-clip-cooker.md) | Offline clip cooker — no clip is cooked at runtime | Asset import & cooking | M | **ready** | cooker |
 | [WO-017](WO-017-cook-library-split.md) | Cook library split — the runtime never links the cook stack | Asset import & cooking | L | **ready** | — |
 | [WO-018](WO-018-runtime-loads-cooked-only.md) | Runtime loads cooked assets only — a missing one is a cook job, not an inline parse | Asset import & cooking | L | blocked by WO-016, WO-017 | asset-service |
 | [WO-019](WO-019-retained-scene-p3a.md) | Retained scene P3a — table, ids, lifetime, rebuild-and-diff | Renderer & RHI | L | blocked by WO-020 | render-scene (new) |
@@ -80,6 +79,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-036](WO-036-a-real-skinned-gltf.md) | A real skinned glTF, cooked and animating in the editor | 2026-09-30 | real_gltf_test (spec oracle, cook, bounds); render_pipeline_test skinnedProgramDraws; the user saw CesiumMan walk on the ground in the editor on 2026-09-30 |
 | [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) | The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan | 2026-09-30 | pass_states.h (static_assert refuses both bits); tests/cull_mode_test.cpp; the visual check moved to WO-033 |
 | [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | 2026-09-30 | tests/scene_mesh_reference_test.cpp (7 cases) + editor_panel_models_test §8; 4 mutations each red on their own check |
+| [WO-015](WO-015-animation-off-assimp-types.md) | Animation takes engine types, not Assimp types | 2026-09-30 | audit IMP-01 (no src/animation entries left in the baseline); the 12 Mixamo zombie clips bit-identical through the new path (350,400 joint-matrix floats); clip_binding_test, anim_pose_test, mesh_backend_test, frontend_assimp_test green |
 | [WO-014](WO-014-gltf-skins-and-animations.md) | glTF skins and animations, supported for real | 2026-09-30 | frontend_cgltf_test (contract suite: all 8 cases, none skipped; spline; WO-002 inverted); cooker_test s2c inverted; 6 mutations red. The real-file check moved to WO-036 |
 | [WO-013](WO-013-assimp-front-end.md) | Assimp front end (static and skinned), retiring cookStatic/cookSkinned | 2026-09-30 | frontend_assimp_test (contract suite on COLLADA: 7 pass, 1 skipped with reason); cooked_texture_resolution_test (red on the old path, BUG-0063/0064); old-vs-new on 11 real files (imported-scene.md §7.3); IMP-01; mutations red |
 | [WO-012](WO-012-cgltf-front-end.md) | cgltf front end (static), retiring cookGltf | 2026-09-30 | frontend_cgltf_test (contract suite: 6 pass, 2 skinned skipped for WO-014); old-vs-new comparison on 6 real glTFs (imported-scene.md §7.2); 6 mutations red |
