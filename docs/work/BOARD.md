@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
-2. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
-3. [WO-022](WO-022-decision-records.md) **Decision records — the "why" survives the person** · P2 · size M — Important decisions are buried in the middle of plan paragraphs, and those are the ones that get "fixed" back into bugs.
+1. [WO-048](WO-048-collision-events-without-archetype-churn.md) **Collision events without archetype churn; Sim.post stops growing faster than the world** · P1 · size S — `sim_profile` measured `Sim.post` (the post-physics broadcast) at **9.6 us per tick at scale 1 and 450 us at scale 2**: 47x for twice the world. It is the only phase that grows super-linearly. The `Core` heap's allocations grow the same way, from 329 000 to 2.5 million over the run (7.7x).
+2. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
+3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,6 +35,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
+| [WO-048](WO-048-collision-events-without-archetype-churn.md) | Collision events without archetype churn; Sim.post stops growing faster than the world | Providers & modules | S | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -49,6 +50,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
 | [WO-047](WO-047-scene-below-runtime-and-an-acyclic-gate.md) | Scene serialization stops reaching into runtime services; the module graph is gated acyclic | Process & context | M | **ready** | — |
+| [WO-049](WO-049-contacts-without-a-global-lock.md) | Jolt contacts are collected per thread, not under one mutex | Providers & modules | S | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 

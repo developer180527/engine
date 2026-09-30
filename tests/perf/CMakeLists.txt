@@ -46,3 +46,13 @@ if(UNIX)
 endif()
 add_test(NAME seam_cost COMMAND seam_cost_bench 200)
 set_tests_properties(seam_cost PROPERTIES LABELS perf TIMEOUT 300)
+
+# ── sim_profile: where a simulation tick's time goes, no GPU ────────────────
+# Perf lane, never a gate. Meaningful only in an OPTIMISED build with the
+# profiler compiled in (see the file's header); in a default build it still
+# runs, as a smoke test that the harness itself works.
+add_executable(sim_profile sim_profile.cpp)
+target_link_libraries(sim_profile PRIVATE engine_runtime)
+set_target_properties(sim_profile PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME sim_profile COMMAND sim_profile 1 60)
+set_tests_properties(sim_profile PROPERTIES LABELS perf TIMEOUT 300)
