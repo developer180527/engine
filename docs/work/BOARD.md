@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-048](WO-048-collision-events-without-archetype-churn.md) **Collision events without archetype churn; Sim.post stops growing faster than the world** · P1 · size S — `sim_profile` measured `Sim.post` (the post-physics broadcast) at **9.6 us per tick at scale 1 and 450 us at scale 2**: 47x for twice the world. It is the only phase that grows super-linearly. The `Core` heap's allocations grow the same way, from 329 000 to 2.5 million over the run (7.7x).
-2. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
-3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
+1. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
+2. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
+3. [WO-022](WO-022-decision-records.md) **Decision records — the "why" survives the person** · P2 · size M — Important decisions are buried in the middle of plan paragraphs, and those are the ones that get "fixed" back into bugs.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,7 +35,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
-| [WO-048](WO-048-collision-events-without-archetype-churn.md) | Collision events without archetype churn; Sim.post stops growing faster than the world | Providers & modules | S | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -76,6 +75,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-048](WO-048-collision-events-without-archetype-churn.md) | Collision events without archetype churn; Sim.post stops growing faster than the world | 2026-10-01 | collision_events_test (delivery to scripts; 0 archetype moves after the first contact, 219 with the old removal); sim_profile Sim.post 443 -> 11 us at scale 2; determinism gate 0 divergences; BUG-0071 |
 | [WO-046](WO-046-break-the-cheap-layer-back-edges.md) | Four upward includes out of the layer cycle (core, components, render, systems) | 2026-10-01 | scripts/audit_baseline.json LAYER-03 drops 5 edges and gains none (52 -> 47); the module graph's only remaining cycle is runtime <-> scene (WO-047); 133 tests, audit and doctor clean |
 | [WO-044](WO-044-abi-compat-test-covers-every-group.md) | The ABI compatibility test defends every API group (audit ABI-03) | 2026-09-30 | api_abi_compat_test (physics2 at 800, intent at 816, and a static_assert that frozen[] and offs[] list the same groups); audit ABI-03 ok with no baseline entries |
 | [WO-043](WO-043-fixed-step-reads-no-clock.md) | The fixed step reads no wall clock (audit DET-01) | 2026-09-30 | sim_clock_test (the boundary function; a catch-up frame's press/release/press lands one per tick, and with the clock read put back it is HPR H-- H--); audit DET-01 ok with no baseline entry; determinism_gate_test 0 divergences |

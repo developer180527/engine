@@ -1,0 +1,11 @@
+## BUG-0071 — Stacked bodies overflowed Jolt's caches, and the dropped contacts went unreported
+- found:     2026-10-01
+- status:    fixed
+- class:     logic
+- where:     src/plugins/jolt_plugin.h
+- symptom:   a scene of 2 000 dynamic boxes in piles never settled: sim_profile counted 3 100 to 3 500 contact starts and ends per tick, where 1 000 boxes in the same piles made 21. Nothing was logged. At 1 000 boxes the scene behaved, so it looked like a scaling curiosity of the profile, not a bug.
+- cause:     `PhysicsSystem::Init(4096, 0, 4096, 4096, ...)`: 4 096 bodies, body pairs and contact constraints, a demo-scene size. A box in a pile touches several others, so 2 000 boxes need about 8 000 contact constraints. Jolt drops the contacts that do not fit, so bodies pass into each other and the solver never rests, and reports it only as the return value of `PhysicsSystem::Update`, which the plugin discarded.
+- pinned-by: tests/collision_events_test.cpp
+- lane:      unit
+- proof:     the fix has two halves. REPORTING: `Update`'s result goes to `reportUpdateErrors`, which logs each kind once, naming the constant; with the old 4 096 limits restored, sim_profile at scale 2 prints "manifold cache full" and "body pair cache full" (checked 2026-10-01). CAPACITY: 65 536 bodies and body pairs, 20 480 contact constraints, a 64 MB temp allocator (the constraint array comes from it, and a full one aborts). sim_profile then reports 21, 45 and 90 contact starts and ends per tick at 1 000, 2 000 and 4 000 boxes (linear), with no overflow and no abort. No unit test overflows the new limits: that needs tens of thousands of contacts, which is a benchmark, not a unit test; `collision_events_test` pins the event path the fix runs through. Fixed in WO-048.
+- note:      found only because a profile's phase grew 47x for 2x the world and the WORKLOAD was measured, not just the time.

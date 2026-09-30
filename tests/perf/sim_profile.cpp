@@ -36,6 +36,7 @@
 #include "animation/ozz_bridge.h"
 #include "components/animator.h"
 #include "components/character_controller.h"
+#include "components/collision_events.h"
 #include "components/name.h"
 #include "components/rigid_body.h"
 #include "components/script_component.h"
@@ -167,6 +168,7 @@ int main(int argc, char** argv) {
     std::map<std::string, std::vector<double>> perTick;   // scope -> microseconds per tick (main thread)
     std::map<std::string, double> workerTotal;            // scope -> microseconds summed over worker threads
     std::vector<double> tickUs;
+    double withEvents = 0, events = 0;   // summed over measured ticks
     for (int t = 0; t < ticks; ++t) {
         frame();
         std::map<std::string, double> thisTick;
@@ -182,6 +184,9 @@ int main(int argc, char** argv) {
         }
         for (auto& [k, v] : thisTick) perTick[k].push_back(v);
         tickUs.push_back(top);
+        // The physics workload behind Sim.post: how many bodies carry collision
+        // events, and how many contacts started or ended this tick.
+        w.each([&](const CollisionEvents& ce) { ++withEvents; events += ce.entered.size() + ce.exited.size(); });
     }
     engine.stopSimulation();
 
@@ -189,6 +194,8 @@ int main(int argc, char** argv) {
     double mean = 0; for (double v : tickUs) mean += v; mean /= (double)tickUs.size();
     std::printf("\n  frame (sum of top-level scopes, main thread): mean %.1f us, p50 %.1f, p95 %.1f, max %.1f   (budget at 60 Hz: 16667 us)\n\n",
                 mean, pct(tickUs, 0.5), pct(tickUs, 0.95), pct(tickUs, 1.0));
+    std::printf("  collision workload per tick: %.0f bodies carry CollisionEvents, %.1f contact starts/ends\n\n",
+                withEvents / (double)ticks, events / (double)ticks);
     std::vector<std::pair<double, std::string>> rows;
     for (auto& [k, v] : perTick) { double m = 0; for (double x : v) m += x; rows.push_back({m / (double)ticks, k}); }
     std::sort(rows.rbegin(), rows.rend());

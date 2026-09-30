@@ -27,3 +27,10 @@ The rest of the waiting (about 240 samples) is `JoltJobsAdapter`'s own lock (`Se
 Scripts and kits see the same contact events in the same order.
 
 Nothing: only how the events are gathered changes.
+
+## Log
+- 2026-10-01: **Re-measure before starting.** This order's numbers were taken
+  while BUG-0071 was dropping contacts at scale 2 (3 500 contact starts and
+  ends per tick instead of 45). With that fixed, contacts per tick are far
+  fewer, so the lock's share of physics time is probably smaller. The
+  baseline needs a fresh sampling profile.

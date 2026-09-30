@@ -8,6 +8,7 @@ tests:
   - tests/providers_test.cpp
   - tests/stress_physics.cpp
   - tests/determinism_gate_test.cpp   # the physics tier pins the contact sort
+  - tests/collision_events_test.cpp   # contacts reach scripts; no archetype churn
   - tests/physics_authority_test.cpp  # kinematic movability, character rotation, teleport
 ---
 # Plugins
@@ -39,6 +40,23 @@ Both run through the same `PluginRegistry` broadcasts.
   heap, and Reallocate passes 16 to `mem::realloc(p, n, 16)`: Jolt grows
   arrays of 16-byte types (`CharacterVirtual::Contact`) that way, and at the
   8 bytes realloc used to give, SSE code segfaulted on x86-64 (BUG-0068).
+
+  **Capacity is sized for game scenes, and overflow is reported (WO-048).**
+  `kMaxBodies` and `kMaxBodyPairs` are 65 536, `kMaxContactConstraints` 20 480
+  and the temp allocator 64 MB (the constraint array comes from it, and a full
+  temp allocator is `std::abort()`). They were 4 096 each: 2 000 boxes in piles
+  overflowed, Jolt DROPPED the contacts that did not fit and the piles never
+  settled, silently, because `Update`'s return value was discarded (BUG-0071).
+  `reportUpdateErrors` now logs each kind once, naming the constant to raise;
+  `updateErrorSteps()` counts the steps that dropped contacts.
+
+  **Collision events are published with no structural change per tick.** A
+  body gets `CollisionEvents` at its first contact and keeps it; each tick the
+  lists are cleared in place and refilled. Setting it on bodies with events
+  and removing it from the rest moved each jostling body between archetype
+  tables twice per tick (sim_profile: `Sim.post` 443 us at 2 000 bodies, now
+  11 us). `collision_events_test` pins both delivery to scripts and the
+  absence of churn.
 
   **Contacts are SORTED before they reach scripts.** `OnContactAdded`/`Removed`
   run on Jolt's worker threads and push under a mutex, so arrival order is a

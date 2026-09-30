@@ -369,6 +369,9 @@ engine_test(sim_intent_test)
 # WO-043: a fixed step's input window comes from the frame's pump time, not a
 # clock read inside the step; a catch-up frame shares its input across steps.
 engine_test(sim_clock_test)
+# WO-048: contacts reach scripts (onCollisionEnter/Exit), and publishing them
+# makes no archetype change per tick.
+engine_test(collision_events_test)
 # The physics verbs executed from the command record, in a fixed phase order,
 # and the script surface submitting them rather than calling the backend.
 engine_test(sim_command_exec_test)

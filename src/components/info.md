@@ -77,7 +77,7 @@ the ABI is the plain-data structs listed below, not the helpers beside them.
   `core/lod_limit.h`, so this header includes nothing from render (WO-046).
 - `animator.h` — clip handle, time, speed, playing/looping flags.
 - `camera.h`, `light.h` — render inputs (game view picks the primary camera).
-- `rigid_body.h`, `character_controller.h`, `collision_events.h` — physics
+- `rigid_body.h`, `character_controller.h`, `collision_events.h` — physics. `CollisionEvents` holds THIS tick's contact starts and ends; a body keeps the component once it has had a contact, and a quiet tick is two empty lists, never a missing component (WO-048)
   (consumed by JoltPlugin).
 - `script_component.h` — Lua script path (consumed by LuaScriptPlugin).
 - `spinner.h` — demo component (default scene cubes).

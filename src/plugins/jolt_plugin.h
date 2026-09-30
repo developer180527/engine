@@ -134,15 +134,35 @@ public:
         LOG_INFO("Physics", "Jolt detached");
     }
 
+    // ── Capacity (WO-048) ────────────────────────────────────────────────
+    // These were 4 096 each, a demo-scene size. A box resting in a pile
+    // touches its neighbours and the boxes above and below, several contacts
+    // each: 1 000 boxes needed about 4 000 contact constraints and 2 000 about
+    // 8 000, so the larger scene overflowed. Jolt then DROPS the contacts that
+    // do not fit, bodies pass into each other and piles never settle, which
+    // sim_profile measured as 3 500 contact starts and ends per tick instead
+    // of 20 (reportUpdateErrors now says so).
+    //   * body pairs: Jolt asks for "much higher than the max amount of contact
+    //     points", since many nearby bodies do not actually touch
+    //   * contact constraints: their per-step array comes from the TEMP
+    //     allocator, which std::abort()s when full, so the two grow together.
+    //     Jolt's samples pair 10 240 constraints with 10 MB; 20 480 here gets
+    //     64 MB, reserved address space committed only as a step touches it.
+    // A project that needs more gets the error below, naming the constant.
+    static constexpr uint32_t kMaxBodies             = 65536;
+    static constexpr uint32_t kMaxBodyPairs          = 65536;
+    static constexpr uint32_t kMaxContactConstraints = 20480;
+    static constexpr uint32_t kTempAllocatorBytes    = 64u * 1024 * 1024;
+
     void onSimulationStart(flecs::world& ecs) override {
-        m_tempAllocator = std::make_unique<JPH::TempAllocatorImpl>(16 * 1024 * 1024);
+        m_tempAllocator = std::make_unique<JPH::TempAllocatorImpl>(kTempAllocatorBytes);
         // Physics runs on the ENGINE pool (see jolt_jobs_adapter.h) — Jolt
         // spawns no threads of its own.
         m_jobSystem     = std::make_unique<JoltJobsAdapter>(
             JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers);
 
         m_physics = std::make_unique<JPH::PhysicsSystem>();
-        m_physics->Init(4096, 0, 4096, 4096,
+        m_physics->Init(kMaxBodies, 0, kMaxBodyPairs, kMaxContactConstraints,
             m_bpInterface, m_objVsBP, m_objPairFilter);
         m_physics->SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
         ecs.set<PhysicsServiceRef>({ this });   // publish to the script backend
@@ -239,8 +259,8 @@ public:
             // three: the body would keep the velocity that got it there. Re-
             // targeting each substep drives it to zero on arrival instead.
             pushEcsToPhysics(ecs);
-            m_physics->Update(kFixedDt, 1,
-                m_tempAllocator.get(), m_jobSystem.get());
+            reportUpdateErrors(m_physics->Update(kFixedDt, 1,
+                m_tempAllocator.get(), m_jobSystem.get()));
             updateCharacters(kFixedDt);
             m_accumulator -= kFixedDt;
             ++steps;
@@ -290,6 +310,8 @@ public:
     // ── Stats (UI-free — the editor's Plugins panel reads these) ────────
     bool simulationActive() const { return m_physics != nullptr; }
     int  bodyCount()        const { return (int)m_entityToBody.size(); }
+    // Physics steps whose update reported a full cache (contacts dropped).
+    uint64_t updateErrorSteps() const { return m_updateErrorSteps; }
     static constexpr float fixedTimestep() { return kFixedDt; }
 
     // ── IPhysicsService (scripts reach these through ScriptHost) ────────
@@ -520,6 +542,32 @@ public:
         }
     } m_contactListener;
 
+    // Jolt reports a full cache by RETURN VALUE and then carries on without
+    // the contacts that did not fit: bodies sink into each other and piles
+    // jitter forever. The value used to be discarded, so a scene over the
+    // limits misbehaved in silence (found by sim_profile: 2 000 boxes in piles
+    // made 3 000 contact starts and ends per tick instead of 20). Each kind is
+    // logged once per session, naming the limit to raise; the count stays
+    // readable for tools.
+    void reportUpdateErrors(JPH::EPhysicsUpdateError err) {
+        if (err == JPH::EPhysicsUpdateError::None) return;
+        ++m_updateErrorSteps;
+        struct Kind { JPH::EPhysicsUpdateError bit; const char* what; };
+        static const Kind kKinds[] = {
+            {JPH::EPhysicsUpdateError::ManifoldCacheFull,      "manifold cache full: too many contacts (raise kMaxContactConstraints)"},
+            {JPH::EPhysicsUpdateError::BodyPairCacheFull,      "body pair cache full: too many touching bodies (raise kMaxBodyPairs)"},
+            {JPH::EPhysicsUpdateError::ContactConstraintsFull, "contact constraint buffer full (raise kMaxContactConstraints)"},
+        };
+        for (const Kind& k : kKinds)
+            if (((uint32_t)err & (uint32_t)k.bit) && !((uint32_t)m_reportedErrors & (uint32_t)k.bit)) {
+                m_reportedErrors = m_reportedErrors | k.bit;
+                LOG_ERROR("Physics", "%s; contacts beyond it are DROPPED and bodies pass into each other "
+                          "(%d bodies)", k.what, (int)m_entityToBody.size());
+            }
+    }
+    JPH::EPhysicsUpdateError m_reportedErrors = JPH::EPhysicsUpdateError::None;
+    uint64_t                 m_updateErrorSteps = 0;
+
     void flushCollisionEvents(flecs::world& ecs) {
         std::vector<CollisionPair> local;
         { std::lock_guard lock(m_collisionMutex); local = std::move(m_pendingCollisions); }
@@ -554,39 +602,58 @@ public:
                 return xa < ya;
             });
 
-        // Build per-entity event map. ORDERED: the apply loop below runs inside
-        // a defer scope, so this map's iteration order IS the order of the
-        // flecs command buffer — an unordered_map put a hash-table walk in
-        // charge of the sequence of structural changes.
-        std::map<flecs::entity_t, CollisionEvents> evMap;
+        // ── Publish, with no structural change per tick (WO-048) ────────────
+        // A body keeps its CollisionEvents once it has had a contact, and each
+        // tick its lists are CLEARED IN PLACE and refilled. This used to set a
+        // fresh component on every body with an event and REMOVE it from every
+        // other: in flecs each add and remove moves the entity to another
+        // archetype table (a copy of all its components, plus an allocation for
+        // the vectors), and bodies jostling in a pile gain and lose contacts
+        // tick after tick. sim_profile measured Sim.post at 9 us for 1 000
+        // bodies and 443 us for 2 000: the one phase growing faster than the
+        // world. Scripts never read the component's PRESENCE, only its lists
+        // (LuaScriptPlugin::onPostPhysics; no kit reads it at all), so an empty
+        // list is exactly what "no event this tick" always meant to them.
+        auto collisionQ = ecs.query_builder<CollisionEvents>().build();
+        collisionQ.each([](CollisionEvents& ce) { ce.entered.clear(); ce.exited.clear(); });
+
+        // Resolve every pair to entities, in the sorted order above.
+        struct Hit { flecs::entity_t self, other; bool enter; };
+        std::vector<Hit> hits;
+        hits.reserve(local.size() * 2);
         for (auto& p : local) {
             auto i1 = m_bodyToEntity.find(p.a);
             auto i2 = m_bodyToEntity.find(p.b);
             if (i1==m_bodyToEntity.end()||i2==m_bodyToEntity.end()) continue;
-            if (p.enter) {
-                evMap[i1->second].entered.push_back(i2->second);
-                evMap[i2->second].entered.push_back(i1->second);
-            } else {
-                evMap[i1->second].exited.push_back(i2->second);
-                evMap[i2->second].exited.push_back(i1->second);
-            }
+            hits.push_back({i1->second, i2->second, p.enter});
+            hits.push_back({i2->second, i1->second, p.enter});
         }
 
-        // Defer all structural ECS changes — flecs locks archetype tables
-        // during each(), calling remove/set inside would crash (LOCKED_STORAGE).
-        ecs.defer_begin();
-        // Apply new events
-        for (auto& [eid, ev] : evMap) {
-            flecs::entity e = ecs.entity(eid);
-            if (e.is_alive()) e.set<CollisionEvents>(ev);
+        // A body's FIRST contact gives it the component: the one structural
+        // change, made once per body, in entity-id order so the command
+        // sequence is deterministic. Deferred and flushed before the fill, so
+        // every pointer below is taken after the last table move.
+        std::vector<flecs::entity_t> newcomers;
+        for (const Hit& h : hits) {
+            flecs::entity e = ecs.entity(h.self);
+            if (e.is_alive() && !e.has<CollisionEvents>()) newcomers.push_back(h.self);
         }
-        // Remove stale CollisionEvents from last frame
-        ecs.query_builder<CollisionEvents>().build()
-            .each([&](flecs::entity e, CollisionEvents&) {
-                if (evMap.find(e.id()) == evMap.end())
-                    e.remove<CollisionEvents>();
-            });
-        ecs.defer_end(); // flush deferred structural changes
+        if (!newcomers.empty()) {
+            std::sort(newcomers.begin(), newcomers.end());
+            newcomers.erase(std::unique(newcomers.begin(), newcomers.end()), newcomers.end());
+            ecs.defer_begin();
+            for (flecs::entity_t id : newcomers) ecs.entity(id).add<CollisionEvents>();
+            ecs.defer_end();
+        }
+
+        // Fill: each body's events in the same sorted order the per-entity map
+        // used to produce, so scripts see the same sequence (BUG-0054).
+        for (const Hit& h : hits) {
+            flecs::entity e = ecs.entity(h.self);
+            if (!e.is_alive()) continue;
+            if (CollisionEvents* ce = e.try_get_mut<CollisionEvents>())
+                (h.enter ? ce->entered : ce->exited).push_back(h.other);
+        }
     }
 
     // ── Two spawns that are REFUSED, loudly, rather than half-working ───────

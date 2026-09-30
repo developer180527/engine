@@ -136,6 +136,9 @@ public:
         gw.defer_begin();   // handlers may spawn/destroy
         gw.query_builder<const CollisionEvents>().build()
             .each([&](flecs::entity e, const CollisionEvents& ce) {
+                // A body keeps the component between contacts (WO-048), so most
+                // are empty on most ticks: skip them before the instance lookup.
+                if (ce.entered.empty() && ce.exited.empty()) return;
                 Instance* inst = findInstance(e.id());
                 if (!inst || inst->errored) return;
                 for (auto other : ce.entered) dispatchEntity(*inst, "onCollisionEnter", other);

@@ -23,11 +23,13 @@ struct CollisionEvents {
     std::vector<flecs::entity_t> entered; // bodies that started contact this frame
     std::vector<flecs::entity_t> exited;  // bodies that lost contact this frame
 
-    // Pre-allocate for typical contact counts — avoids heap alloc on first collision.
-    // For entities that already have this component, JoltPlugin updates vectors
-    // in-place (clear + insert) so capacity persists. For newly colliding entities,
-    // a fresh CollisionEvents is set; for entities with no events this frame,
-    // the component is removed (deferred, so archetypes stay lean).
+    // THIS TICK's contacts that started (entered) and ended (exited), in a
+    // deterministic order (sorted at the source, BUG-0054). A body gets the
+    // component at its first contact and KEEPS it: JoltPlugin clears the lists
+    // in place every tick and refills them, so "no event this tick" is two
+    // empty lists, never a missing component, and no tick makes a structural
+    // change (WO-048). Capacity persists across ticks; the reserve below
+    // covers typical contact counts from the first one.
     CollisionEvents() { entered.reserve(8); exited.reserve(8); }
 
     bool hasEnter() const { return !entered.empty(); }
