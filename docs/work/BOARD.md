@@ -17,27 +17,25 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-008](WO-008-game-module-static-claim.md) **game_module.h stops claiming a static-link path that does not exist** · P1 · size S — The header says shipped games "link engine::runtime statically and never dlopen anything". No code does that.
-2. [WO-009](WO-009-imported-scene-design.md) **ImportedScene — design the engine's own import format** · P1 · size M — Nothing the engine owns sits between "a parser read the file" and "write the cooked asset", so every source format is a complete cook path of its own.
-3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
+1. [WO-010](WO-010-imported-scene-type.md) **ImportedScene type, fake front end, and contract test** · P2 · size M — Build the contract before either side of it, so the back end (WO-011) and the real front ends (WO-012, WO-013) can be built in any order, on any day.
+2. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
+3. [WO-022](WO-022-decision-records.md) **Decision records — the "why" survives the person** · P2 · size M — Important decisions are buried in the middle of plan paragraphs, and those are the ones that get "fixed" back into bugs.
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | Portability | M | **active** 3/4 | — |
-| [WO-008](WO-008-game-module-static-claim.md) | game_module.h stops claiming a static-link path that does not exist | Providers & modules | S | **ready** | kit-abi |
-| [WO-009](WO-009-imported-scene-design.md) | ImportedScene — design the engine's own import format | Asset import & cooking | M | **ready** | import-frontend (new) |
 
 ## P2 — the planned programmes, in dependency order.
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-010](WO-010-imported-scene-type.md) | ImportedScene type, fake front end, and contract test | Asset import & cooking | M | blocked by WO-009 | import-frontend (new) |
+| [WO-010](WO-010-imported-scene-type.md) | ImportedScene type, fake front end, and contract test | Asset import & cooking | M | **ready** | import-frontend |
 | [WO-011](WO-011-one-cook-back-end.md) | One cook back end — ImportedScene to cooked assets | Asset import & cooking | L | blocked by WO-010 | cooker |
-| [WO-012](WO-012-cgltf-front-end.md) | cgltf front end (static), retiring cookGltf | Asset import & cooking | M | blocked by WO-011 | import-frontend (new) |
-| [WO-013](WO-013-assimp-front-end.md) | Assimp front end (static and skinned), retiring cookStatic/cookSkinned | Asset import & cooking | M | blocked by WO-011 | import-frontend (new) |
-| [WO-014](WO-014-gltf-skins-and-animations.md) | glTF skins and animations, supported for real | Asset import & cooking | M | blocked by WO-012 | import-frontend (new) |
+| [WO-012](WO-012-cgltf-front-end.md) | cgltf front end (static), retiring cookGltf | Asset import & cooking | M | blocked by WO-011 | import-frontend |
+| [WO-013](WO-013-assimp-front-end.md) | Assimp front end (static and skinned), retiring cookStatic/cookSkinned | Asset import & cooking | M | blocked by WO-011 | import-frontend |
+| [WO-014](WO-014-gltf-skins-and-animations.md) | glTF skins and animations, supported for real | Asset import & cooking | M | blocked by WO-012 | import-frontend |
 | [WO-015](WO-015-animation-off-assimp-types.md) | Animation takes engine types, not Assimp types | Asset import & cooking | M | blocked by WO-013 | — |
 | [WO-016](WO-016-offline-clip-cooker.md) | Offline clip cooker — no clip is cooked at runtime | Asset import & cooking | M | blocked by WO-015 | cooker |
 | [WO-017](WO-017-cook-library-split.md) | Cook library split — the runtime never links the cook stack | Asset import & cooking | L | blocked by WO-011 | — |
@@ -70,6 +68,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | done | evidence |
 |---|---|---|---|
 | [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | 2026-09-30 | tests/scene_mesh_reference_test.cpp (7 cases) + editor_panel_models_test §8; 4 mutations each red on their own check |
+| [WO-009](WO-009-imported-scene-design.md) | ImportedScene — design the engine's own import format | 2026-09-30 | docs/plans/imported-scene.md; docs/contracts/import-frontend.md (planned, five sections written) |
+| [WO-008](WO-008-game-module-static-claim.md) | game_module.h stops claiming a static-link path that does not exist | 2026-09-30 | include/engine/game_module.h and docs/contracts/kit-abi.md state both shipping paths; checked against engine_player.cpp, engine_build.cpp and samples/minimal_game |
 | [WO-005](WO-005-reveal-in-file-manager-per-os.md) | "Reveal in Finder" works per OS instead of running `open` everywhere | 2026-09-30 | tests/asset_browser_model_test.cpp (every OS's command checked on any host); hostile names round-tripped through /bin/sh; 3 mutations red |
 | [WO-004](WO-004-roadmap-stops-lying.md) | The roadmap stops lying about where we are | 2026-09-30 | docs/process/roadmap.md rewritten as status decided; docs/README.md start-here; WO-030 and WO-031 carry its open items |
 | [WO-003](WO-003-brief-reentry-command.md) | One command to regain context — `brief` | 2026-09-30 | tests/work_orders_test.py (brief: parsers, scratch tree, real git repo, 2 s budget on the real repo); 5 mutations each red on their own check |

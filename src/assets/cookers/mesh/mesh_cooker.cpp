@@ -993,14 +993,14 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
                 + (((why && why[0])) ? (std::string(" — ") + why) : std::string()) };
     }
 
-    // Skinned meshes (bones) cook to the v3 skinned payload: SkinnedVertex,
+    // Skinned meshes (bones) cook to the skinned payload (MeshAsset v6): SkinnedVertex,
     // the ozz skeleton and the mesh's clips (cookSkinned). Assimp formats only —
     // glTF never reaches here, and a skinned glTF is refused in cookGltf.
     {
         bool hasBones = false;
         for (unsigned m = 0; m < scene->mNumMeshes && !hasBones; ++m)
             if (scene->mMeshes[m]->mNumBones > 0) hasBones = true;
-        if (hasBones) return cookSkinned(ctx);   // v3 skinned payload
+        if (hasBones) return cookSkinned(ctx);   // skinned payload, MeshAsset v6
     }
 
     MeshAsset asset;

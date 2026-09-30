@@ -7,7 +7,7 @@ priority: P2
 size: M
 state: todo
 depends: [WO-012]
-new-contracts: [import-frontend]
+contracts: [import-frontend]
 touches:
   - src/assets/importers/gltf_importer.cpp
 source: review 2026-09-29 C2

@@ -7,7 +7,7 @@ priority: P2
 size: M
 state: todo
 depends: [WO-009]
-new-contracts: [import-frontend]
+contracts: [import-frontend]
 touches:
   - src/assets
 source: review 2026-09-29 C1

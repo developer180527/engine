@@ -7,7 +7,7 @@ priority: P2
 size: M
 state: todo
 depends: [WO-011]
-new-contracts: [import-frontend]
+contracts: [import-frontend]
 touches:
   - src/assets/cookers/mesh/mesh_cooker.cpp
 source: review 2026-09-29 C1
