@@ -27,6 +27,6 @@
 // src/runtime that does neither.
 #if defined(__APPLE__) || defined(__linux__)
 #  define ENGINE_OS_POSIX 1
-#else
+#else  // any OS: not POSIX-family; each site's #error "port: …" is then its to-do
 #  define ENGINE_OS_POSIX 0
 #endif
