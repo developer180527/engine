@@ -12,6 +12,16 @@
 // Job::Execute is internally guarded by an atomic state transition, so a job
 // being picked up by both a worker and the barrier wait is safe — the loser
 // of the CAS skips.
+//
+// THE REMAINING LOCK IS JOLT'S, measured and left alone (WO-049). What mutex
+// waiting is left in a sampling profile of sim_profile at scale 2 is almost
+// all JPH::Semaphore::Release: 172 to 229 samples in 2.2 s, about 2% of busy
+// thread time. That is the barrier's semaphore in JobSystemWithBarrier, which
+// on every non-Windows platform is a std::mutex plus a condition variable
+// (third_party/JoltPhysics/Jolt/Core/Semaphore.cpp), the same code Jolt's own
+// JobSystemThreadPool uses. Removing it means writing our own barrier
+// in place of JobSystemWithBarrier's, for at most 2%. Not worth it until
+// physics is otherwise cheap enough for 2% to matter.
 
 #include <atomic>
 #include <chrono>
@@ -77,7 +87,8 @@ public:
         // releasing is both safe and correct.
         {
             std::vector<Job*> pending;
-            { std::lock_guard lock(m_deferMtx); pending.swap(m_deferred); }
+            { std::lock_guard lock(m_deferMtx); pending.swap(m_deferred);
+              m_deferredCount.store(0, std::memory_order_relaxed); }
             for (Job* j : pending) j->Release();
         }
         const auto deadline = std::chrono::steady_clock::now()
@@ -200,6 +211,7 @@ protected:
             job->AddRef();
             std::lock_guard lock(m_deferMtx);
             m_deferred.push_back(job);
+            m_deferredCount.store((JPH::uint32)m_deferred.size(), std::memory_order_release);
             return;
         }
         flushDeferred();
@@ -266,13 +278,24 @@ protected:
         ~FlushGuard() { f = false; }
     };
 
+    // ── NO LOCK WHEN NOTHING IS DEFERRED, which is almost always ────────────
+    // This runs after EVERY job, on every worker, and deferral is the rare
+    // contended-pipe case. It used to take m_deferMtx each time only to find
+    // the list empty, so workers finishing jobs together queued on the lock:
+    // 79 samples of mutex wait in a 2.2 s sampling profile of sim_profile at
+    // scale 2 (0.8% of busy thread time), all of it for an empty list (WO-049).
+    // An atomic count is read first. A job deferred just after the read is not
+    // lost: it waits for the next job to finish or for the step barrier, which
+    // is exactly what happened to one deferred just after the swap before.
     void flushDeferred() {
+        if (m_deferredCount.load(std::memory_order_acquire) == 0) return;
         bool& busy = flushing();
         if (busy) return;                  // the outer loop will take these
         FlushGuard guard(busy);
         for (;;) {
             std::vector<Job*> pending;
-            { std::lock_guard lock(m_deferMtx); pending.swap(m_deferred); }
+            { std::lock_guard lock(m_deferMtx); pending.swap(m_deferred);
+              m_deferredCount.store(0, std::memory_order_relaxed); }
             if (pending.empty()) break;
             for (Job* j : pending) { submit(j); j->Release(); }
         }
@@ -298,4 +321,7 @@ private:
     // which is rare, and the list is drained immediately.
     std::mutex        m_deferMtx;
     std::vector<Job*> m_deferred;
+    // m_deferred.size(), readable without the lock; written only under it.
+    // flushDeferred's fast path. See there.
+    std::atomic<JPH::uint32> m_deferredCount{0};
 };

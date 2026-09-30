@@ -518,6 +518,16 @@ public:
     std::unordered_map<flecs::entity_t, CharState>                       m_charState;
 
     // ── Collision events (thread-safe queue) ───────────────────────────
+    // ONE MUTEX, KEPT ON PURPOSE, WITH THE MEASUREMENT (WO-049). Jolt calls
+    // OnContactAdded/Removed from all its workers, but only when a contact
+    // STARTS or ENDS; persisting contacts take no lock. A sampling profile once
+    // blamed ~580 samples of mutex wait on this lock, but that was BUG-0071:
+    // piles that never settled made 3 100 starts and ends per tick. Settled,
+    // sim_profile at scale 2 makes 27 per tick, and a 2.2 s sampling profile
+    // shows 0 samples waiting here (all 284 mutex-wait samples were the job
+    // adapter and Jolt's barrier). Per-thread buffers would buy nothing
+    // measurable and add a merge. Revisit if a profile shows this lock again,
+    // e.g. a game whose every tick is a burst of new contacts.
     std::mutex                   m_collisionMutex;
     std::vector<CollisionPair>   m_pendingCollisions;
 

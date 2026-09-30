@@ -67,6 +67,12 @@ Both run through the same `PluginRegistry` broadcasts.
   gameplay still observed it (BUG-0054). `determinism_gate_test`'s physics tier
   pins it — removing the sort diverges at tick 0 on both comparisons.
 
+  **That mutex is kept, measured (WO-049).** It is taken only when a contact
+  starts or ends. With the piles settling (BUG-0071), `sim_profile` at scale 2
+  makes 27 of those per tick, and a sampling profile finds 0 samples waiting
+  on it. Per-thread buffers were planned when a broken scene made 3 100 per
+  tick. They would buy nothing now.
+
   **`unordered_map` is not the non-determinism people assume it is** (measured
   2026-09-08, correcting the claim `3dc1f47` made when it changed these). libc++'s
   `std::hash<uint64_t>` is unseeded identity, so the same keys inserted in the
@@ -95,6 +101,13 @@ Both run through the same `PluginRegistry` broadcasts.
     measured 68 ns, ~57 jobs/tick, ~3.9 µs/tick — about 0.24% of the physics
     step in a Debug build. Kept at that price; the free alternative covers only
     the jobs our pool runs, which is not where the bug was.
+  - **Locks, measured (WO-049).** `flushDeferred` runs after every job and
+    used to lock just to find the deferred list empty. An atomic count now
+    skips the lock, and its waits fell from 79 to 13 samples in a sampling
+    profile. The mutex waiting that remains (about 2% of busy thread time) is
+    Jolt's own barrier semaphore, a mutex plus a condition variable on
+    non-Windows platforms, in vendored code. It is left alone: replacing it
+    means our own barrier.
   - **Destruction is drain-or-leak, decided by the owner.** `QueueJob` is
     fire-and-forget, so `onSimulationStop` calls `drain()` *before* tearing
     down the `PhysicsSystem`, and on a 30 s stall it leaks the adapter rather
