@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-09
+verified: 2026-09-30
 covers:
   - src/components/camera_look.h
 tests:
@@ -40,7 +40,7 @@ determinism-gate tier drives input, so nothing measures it.
 
 ```cpp
 // AFTER — the aim stops being simulation state
-m_yaw   += dx * kSens;
+m_yaw   -= dx * kSens;   // pointer right -> turn right (see view-handedness-kit-migration.md)
 m_pitch -= dy * kSens;
 m_camQ.each([&](flecs::entity e, Transform&, const Camera& c,
                 const CharacterController&) {
@@ -48,6 +48,11 @@ m_camQ.each([&](flecs::entity e, Transform&, const Camera& c,
     e.set<CameraLook>({ m_yaw, m_pitch });   // SimExempt; composed by the renderer
 });
 ```
+
+> **Sign changed 2026-09-30 (WO-033).** The BEFORE snippet quotes the kit,
+> `m_yaw += dx`. That sign was tuned against a view that was mirrored
+> left-to-right. With the mirror fixed it turns the wrong way, so the AFTER
+> snippet uses `-=`. See `view-handedness-kit-migration.md`.
 
 `PrimaryCameraFinder` composes `CameraLook` into the view when the camera
 carries one, and leaves `Transform.rotation` alone. **Delete `lookBasis` and

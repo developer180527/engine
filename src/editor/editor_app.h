@@ -1,4 +1,5 @@
 #include <filesystem>
+#include "render/view_math.h"
 #include "render/gpu_bgfx.h"   // toBgfx — the editor draws with ImGui/bgfx
 #pragma once
 #include "runtime/platform/window_ops.h"
@@ -265,9 +266,9 @@ private:
             // paths disagreeing was a latent divide by zero.
             const float sceneAspect = m_rt.sceneH() > 0
                 ? float(m_rt.sceneW()) / float(m_rt.sceneH()) : 16.0f / 9.0f;
-            bx::mtxProj(proj, m_rt.fov(), sceneAspect,
-                        0.1f, 1000.0f,
-                        bgfx::getCaps()->homogeneousDepth);
+            viewmath::perspective(proj, m_rt.fov(), sceneAspect,
+                                  0.1f, 1000.0f,
+                                  bgfx::getCaps()->homogeneousDepth);
 
             // ---- Runtime tick (ECS systems + scene render) ----
             // Resize scene FB before rendering — avoids race condition

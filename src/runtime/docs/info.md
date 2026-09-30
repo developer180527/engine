@@ -105,6 +105,11 @@ required.
   reachable from exactly two TUs — its `IPlatform` and its `window_ops` — and
   `engine_runtime` links only the one selected. Verified: `libglfw3.a` is in the
   SDL3 link line before the change and absent after.
+- **Cameras are right-handed** (WO-033). `PrimaryCameraFinder` builds its view
+  and projection through `render/view_math.h`, like every other camera. Before,
+  it used bx's left-handed default and the image was mirrored left-to-right.
+  Kits whose look or strafe signs were tuned by eye may now be backwards:
+  `docs/guides/view-handedness-kit-migration.md`.
 - **Native handles on an unknown OS are a compile error** (WO-006). The
   GLFW, SDL3 and `wsi::` window-handle getters end in `#error "port: …"` rather
   than `return nullptr`, because a null handle means nothing renders and nothing

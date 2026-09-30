@@ -14,22 +14,21 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 - [WO-006](WO-006-unknown-os-is-a-compile-error.md) **An unknown OS is a compile error with a to-do list, not silently POSIX** — 3/4 done. Still open:
   - the macOS, Linux and Windows builds are unchanged. macOS was built locally on 2026-09-30; Linux and Windows are confirmed by the next nightly CI (Linux compiles the new Wayland branch in `GlfwToolWindow` for the first time)
-- [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) **The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan** — 3/4 done. Still open:
-  - **checked by eye on macOS, by the user.** It will NOT render identically, and that is correct. Metal mapped cull mode 3 to "none", so macOS culled **nothing** until now. Closed meshes should look the same. A single-sided open surface (a plane, a card, a mesh with a hole) seen from behind now disappears, as it always should have. Anything that vanishes but should not is a mesh that needs `doubleSided` or has flipped winding.
+- [WO-033](WO-033-the-image-is-mirrored.md) **Every camera renders the world mirrored left-to-right** — 5/6 done. Still open:
+  - an asymmetric asset (text on a texture) reads correctly in the editor and the player, checked by eye by the user before closing. **This one check also covers WO-032**: back faces are culled on macOS for the first time, so a single-sided open surface seen from behind now disappears (correct), closed meshes look the same, and the editor gizmo (ImGuizmo, whose own demo uses right-handed matrices) should now rotate and translate the way it points.
 
 ## Next up
 
-1. [WO-033](WO-033-the-image-is-mirrored.md) **Every camera renders the world mirrored left-to-right** · P1 · size M — The world is right-handed (glTF, the camera looks down local −Z, `ImportedScene`). Every view is built with `bx::mtxLookAt`'s default **left-handed** convention, and every projection with bx's left-handed default. The result is a mirror: **world +X lands on the left of the screen.** `cull_mode_test` prints it from `PrimaryCameraFinder` directly.
-2. [WO-011](WO-011-one-cook-back-end.md) **One cook back end — ImportedScene to cooked assets** · P2 · size L — Vertex baking, normal matrices, tangents, materials and texture resolution get written **once**, against `ImportedScene`, instead of once per parser.
-3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
+1. [WO-011](WO-011-one-cook-back-end.md) **One cook back end — ImportedScene to cooked assets** · P2 · size L — Vertex baking, normal matrices, tangents, materials and texture resolution get written **once**, against `ImportedScene`, instead of once per parser.
+2. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
+3. [WO-022](WO-022-decision-records.md) **Decision records — the "why" survives the person** · P2 · size M — Important decisions are buried in the middle of plan paragraphs, and those are the ones that get "fixed" back into bugs.
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | Portability | M | **active** 3/4 | — |
-| [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) | The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan | Renderer & RHI | S | **active** 3/4 | — |
-| [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **ready** | — |
+| [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -56,6 +55,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-023](WO-023-gpu-resident-materials.md) | Material data GPU-resident — the CPU binds indices, never walks contents | Renderer & RHI | L | blocked by WO-019 | render-pipeline |
 | [WO-028](WO-028-audio-provider-outbound-seam.md) | Finish the audio provider's outbound seam (B) before any physics ABI | Providers & modules | M | **ready** | audio-provider |
 | [WO-031](WO-031-shader-hot-reload.md) | Shader hot-reload — the runtime picks up a re-cooked shader | Renderer & RHI | M | **ready** | render-pipeline |
+| [WO-034](WO-034-frustum-near-plane-homogeneous-depth.md) | Frustum near plane is wrong under homogeneous depth (OpenGL) | Renderer & RHI | S | **ready** | — |
 
 ## Parked — on purpose, with what would unpark it
 
@@ -70,6 +70,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) | The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan | 2026-09-30 | pass_states.h (static_assert refuses both bits); tests/cull_mode_test.cpp; the visual check moved to WO-033 |
 | [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | 2026-09-30 | tests/scene_mesh_reference_test.cpp (7 cases) + editor_panel_models_test §8; 4 mutations each red on their own check |
 | [WO-010](WO-010-imported-scene-type.md) | ImportedScene type, fake front end, and contract test | 2026-09-30 | tests/import_frontend_contract_test.cpp (55 checks); LAYER-05; import-frontend provisional; mutations red |
 | [WO-009](WO-009-imported-scene-design.md) | ImportedScene — design the engine's own import format | 2026-09-30 | docs/plans/imported-scene.md; docs/contracts/import-frontend.md (planned, five sections written) |

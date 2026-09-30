@@ -8,6 +8,7 @@
                      // are where a missing one surfaces
 #include "render/forward_pipeline.h"
 #include "render/pipeline/pass_states.h"
+#include "render/view_math.h"
 #include "render/world/frustum.h"   // extractFrustumPlanes for the LIGHT frustum
 
 void ForwardPipeline::renderShadow(const RenderView& v, RenderContext& ctx,
@@ -34,10 +35,10 @@ void ForwardPipeline::renderShadow(const RenderView& v, RenderContext& ctx,
         const bx::Vec3 eye     = bx::add(center, bx::mul(toLight, SHADOW_EYE_DIST));
         const bx::Vec3 up      = (std::fabs(toLight.y) > 0.99f)
                                    ? bx::Vec3{0.0f, 0.0f, 1.0f} : bx::Vec3{0.0f, 1.0f, 0.0f};
-        bx::mtxLookAt(m_lightView, eye, center, up);
+        viewmath::lookAt(m_lightView, eye, center, up);
         const float r = SHADOW_ORTHO_RADIUS;
-        bx::mtxOrtho(m_lightProj, -r, r, -r, r, SHADOW_NEAR, SHADOW_FAR, 0.0f,
-                     bgfx::getCaps()->homogeneousDepth);
+        viewmath::orthographic(m_lightProj, -r, r, -r, r, SHADOW_NEAR, SHADOW_FAR,
+                               bgfx::getCaps()->homogeneousDepth);
 
         const bgfx::Caps* caps = bgfx::getCaps();
         const float sy = caps->originBottomLeft ? 0.5f : -0.5f;

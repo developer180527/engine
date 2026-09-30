@@ -8,12 +8,14 @@
 // projects. So this test does not hard-code the answer. It runs the engine's
 // real camera path (PrimaryCameraFinder), projects a triangle that faces the
 // camera and one that faces away, and derives the bit that removes the one
-// facing away. passstate::kCullBackFaces must equal it. When the projection
-// changes (WO-033 makes it right-handed), this fails until the bit follows.
+// facing away. passstate::kCullBackFaces must equal it.
+//
+// WO-033 made every view right-handed (render/view_math.h). Before it, the
+// image was mirrored (world +X on the LEFT of the screen) and the bit was
+// CULL_CCW; §2 now also pins the un-mirrored screen, §3 the frustum built from
+// the new matrices, and §4 that the editor camera moves the way it looks.
 #include <cmath>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <string>
 
 #include <flecs.h>
@@ -23,6 +25,8 @@
 #include "core/transform.h"
 #include "render/pipeline/pass_states.h"
 #include "runtime/camera_util.h"
+#include "render/world/frustum.h"
+#include "editor/fly_camera.h"
 
 static int g_failures = 0;
 #define CHECK(c, ...) do { if (!(c)) { std::printf("  FAIL  " __VA_ARGS__); std::printf("\n"); ++g_failures; } \
@@ -40,12 +44,6 @@ static float ndcArea(const float vp[16], bx::Vec3 a, bx::Vec3 b, bx::Vec3 c) {
     float pa[2], pb[2], pc[2];
     project(a, pa); project(b, pb); project(c, pc);
     return (pb[0] - pa[0]) * (pc[1] - pa[1]) - (pb[1] - pa[1]) * (pc[0] - pa[0]);
-}
-
-static std::string slurp(const char* rel) {
-    std::ifstream f(std::string(ENGINE_SOURCE_DIR) + "/" + rel);
-    std::stringstream ss; ss << f.rdbuf();
-    return ss.str();
 }
 
 int main() {
@@ -89,11 +87,20 @@ int main() {
             // A triangle 5 m in front of the camera, counter-clockwise as seen
             // FROM the camera (its front face, in the engine's CCW-front
             // convention), and the same triangle wound the other way (a back face).
-            // The camera's basis, read from the view the finder built (bx::mtxLookAt
-            // stores the look direction in column 2 and up in column 1), so the
-            // triangle is placed by the ENGINE's rotation convention, not the
-            // test's. "Right" is the right-handed world's: forward x up.
-            const bx::Vec3 fwd{view[2], view[6], view[10]}, up{view[1], view[5], view[9]};
+            // The camera's forward, found by UNPROJECTING the centre of the screen
+            // at two depths: it assumes no handedness (reading a column of the
+            // view matrix did, and broke the day the view changed hands). "Right"
+            // is the right-handed WORLD's: forward x up. It is not read from the
+            // screen, so "lands on the right" below is a real check, not a tautology.
+            float inv[16];
+            bx::mtxInverse(inv, vp);
+            auto unproject = [&](float z) {
+                const float in[4] = {0.0f, 0.0f, z, 1.0f};
+                float r[4]; bx::vec4MulMtx(r, in, inv);
+                return bx::Vec3{r[0] / r[3], r[1] / r[3], r[2] / r[3]};
+            };
+            const bx::Vec3 up{0, 1, 0};                                    // no pose has roll or pitch
+            const bx::Vec3 fwd   = bx::normalize(bx::sub(unproject(0.9f), unproject(0.5f)));
             const bx::Vec3 right = bx::cross(fwd, up);
             const bx::Vec3 o = bx::add(ps.pos, bx::mul(fwd, 5.0f));
             const bx::Vec3 a = o, b = bx::add(o, right), d = bx::add(o, up);
@@ -114,32 +121,78 @@ int main() {
                   ps.what, homogeneous ? " (homogeneous depth)" : "",
                   back < 0 ? "clockwise" : "counter-clockwise", back < 0 ? "CW" : "CCW");
 
-            if (ps.yawDeg == 0 && !homogeneous) {
-                const float p[4] = {1, 0, -5, 1};
-                float r[4]; bx::vec4MulMtx(r, p, vp);
-                std::printf("        note: world +X in front of this camera lands on the %s of the screen%s\n",
-                            r[0] > 0 ? "RIGHT" : "LEFT", r[0] > 0 ? "" : " (the image is mirrored: WO-033)");
+            // Not mirrored: the camera's right (forward x up) lands on the RIGHT.
+            {
+                const bx::Vec3 q = bx::add(o, right);
+                const float in[4] = {q.x, q.y, q.z, 1.0f}, oc[4] = {o.x, o.y, o.z, 1.0f};
+                float r[4], ro[4]; bx::vec4MulMtx(r, in, vp); bx::vec4MulMtx(ro, oc, vp);
+                CHECK(r[0] / r[3] > ro[0] / ro[3],
+                      "%s%s: a point to the camera's right lands to the RIGHT on screen (not mirrored)",
+                      ps.what, homogeneous ? " (homogeneous depth)" : "");
             }
         }
 
-    // ── 3. Every camera builds its view with the SAME handedness ────────────
-    // One back-face bit can only be right for every pass if every view has the
-    // same handedness. The shadow pass and the editor's fly camera cannot run
-    // here without a GPU or an editor, so their source is read instead: none of
-    // the three may choose a handedness unless all three do.
-    std::printf("3. one handedness for every camera\n");
-    const char* cameras[] = {"src/runtime/camera_util.h", "src/editor/fly_camera.h",
-                             "src/render/pipeline/shadow_pass.cpp"};
-    int explicitRight = 0, readable = 0;
-    for (const char* f : cameras) {
-        const std::string src = slurp(f);
-        if (src.find("mtxLookAt") == std::string::npos) continue;
-        ++readable;
-        if (src.find("Handedness::Right") != std::string::npos) ++explicitRight;
+    // ── 3. The frustum built from the new matrices still contains what is in view
+    // Culling reads planes extracted from view*proj. Handedness changes the
+    // matrices; this shows the planes still keep what is ahead and drop what
+    // is behind, to the side, and past the far plane.
+    std::printf("3. frustum planes from the right-handed matrices\n");
+    {
+        flecs::world w;
+        Transform t{}; t.rotation = {0, 0, 0, 1}; t.scale = {1, 1, 1};
+        Camera cam{}; cam.farPlane = 100.0f;
+        w.entity().set<Transform>(t).set<Camera>(cam);
+        PrimaryCameraFinder finder;
+        float view[16], proj[16], clear[4], vp[16], planes[6][4];
+        finder.find(w, view, proj, 1.5f, clear, false);
+        bx::mtxMul(vp, view, proj);
+        rworld::extractFrustumPlanes(vp, planes);
+        auto inside = [&](bx::Vec3 p) {
+            for (auto& pl : planes) if (pl[0] * p.x + pl[1] * p.y + pl[2] * p.z + pl[3] < 0) return false;
+            return true;
+        };
+        CHECK(inside({0, 0, -10}),   "a point 10 m ahead is inside");
+        CHECK(inside({2, 1, -10}),   "a point ahead, up and to the right is inside");
+        CHECK(!inside({0, 0, 10}),   "a point behind the camera is outside");
+        CHECK(!inside({50, 0, -10}), "a point far to the side is outside");
+        CHECK(!inside({0, 0, -150}), "a point past the far plane is outside");
     }
-    CHECK(readable == 3, "all three camera sources were read (%d)", readable);
-    CHECK(explicitRight == 0 || explicitRight == 3,
-          "every camera uses the same handedness (%d of 3 explicitly right-handed)", explicitRight);
+
+    // ── 4. The editor camera moves the way it looks ─────────────────────────
+    // Its strafe keys and yaw sign used to be flipped to hide the mirror. Each
+    // is checked on SCREEN: after the move, where did a point ahead go?
+    std::printf("4. the editor fly camera\n");
+    {
+        auto screenX = [](const EditorCamera& c, bx::Vec3 p) {
+            float view[16], proj[16], vp[16];
+            c.getViewMatrix(view);
+            viewmath::perspective(proj, 60.0f, 1.5f, 0.1f, 1000.0f, false);
+            bx::mtxMul(vp, view, proj);
+            const float in[4] = {p.x, p.y, p.z, 1.0f};
+            float r[4]; bx::vec4MulMtx(r, in, vp);
+            return r[0] / r[3];
+        };
+        EditorCamera cam; cam.position = {0, 0, 0};
+        const bx::Vec3 ahead{0, 0, -10};
+
+        EditorCamera moved = cam; FlyInput right; right.right = true;
+        applyFly(moved, right, 0.1f);
+        CHECK(screenX(moved, ahead) < screenX(cam, ahead) - 1e-4f,
+              "the 'right' key moves the camera right: what was ahead slides LEFT on screen");
+        EditorCamera movedL = cam; FlyInput left; left.left = true;
+        applyFly(movedL, left, 0.1f);
+        CHECK(screenX(movedL, ahead) > screenX(cam, ahead) + 1e-4f,
+              "the 'left' key moves it left: what was ahead slides RIGHT");
+
+        EditorCamera turned = cam; FlyInput drag; drag.lookDx = 40.0f;
+        applyFly(turned, drag, 0.016f);
+        CHECK(screenX(turned, ahead) < screenX(cam, ahead) - 1e-4f,
+              "dragging the pointer right turns the view right: what was ahead slides LEFT");
+
+        const bx::Vec3 r = cam.right();
+        CHECK(screenX(cam, bx::add(ahead, r)) > screenX(cam, ahead),
+              "EditorCamera::right() points to the right of the screen");
+    }
 
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;

@@ -660,6 +660,30 @@ def rule_unknown_os_is_an_error() -> Rule:
     return r
 
 
+# ── CAM-01: every view and projection is built in ONE place ─────────────────
+# WO-033: four cameras each called bx::mtxLookAt / mtxProj / mtxOrtho with bx's
+# default LEFT handedness over a right-handed world, and the image was mirrored.
+# render/view_math.h is now the only caller, so they cannot disagree again.
+_BX_CAMERA = re.compile(r"\bbx::mtx(LookAt|Proj|ProjInf|Ortho)\s*\(")
+VIEW_MATH = "src/render/view_math.h"
+
+
+def rule_one_camera_convention() -> Rule:
+    r = Rule("CAM-01", "every view and projection goes through render/view_math.h",
+             "src/render/view_math.h; docs/work/WO-033.",
+             "a camera that builds its own matrix picks its own handedness. Two "
+             "choices is a mirror: the engine rendered every scene flipped "
+             "left-to-right, and grew sign compensations in the editor camera "
+             "and the cull state instead of noticing.")
+    for rel in tracked("src/*", "include/*"):
+        if not rel.endswith(SRC_EXT) or rel == VIEW_MATH or rel.startswith("src/editor/imgui/"):
+            continue
+        if _BX_CAMERA.search(_STRIP.sub("", read(rel))):
+            r.findings.append(Finding(r.id, rel,
+                f"{rel} builds a view/projection with bx directly — use viewmath:: ({VIEW_MATH})"))
+    return r
+
+
 def rule_doc_coverage() -> Rule:
     r = Rule("DOC-01", "every directory of code is covered by some document",
              "docs/process/engineering-standards.md §1 — staleness is checked "
@@ -693,6 +717,7 @@ RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
          rule_abi_compat_coverage, rule_component_hash_membership,
          rule_fuzz_corpus, rule_tests_registered, rule_sim_determinism,
          rule_c_abi_header_purity, rule_bx_creep, rule_unknown_os_is_an_error,
+         rule_one_camera_convention,
          rule_doc_coverage)
 
 # The checks that already exist as their own scripts. The farm wants ONE entry

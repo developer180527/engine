@@ -28,6 +28,7 @@
 
 #include "components/camera.h"
 #include "components/camera_look.h"
+#include "render/view_math.h"
 #include "components/meta_registry.h"
 #include "components/name.h"
 #include "core/transform.h"
@@ -62,14 +63,20 @@ static bool nearv(const bx::Vec3& a, const bx::Vec3& b, float eps = 1e-4f) {
 // rather than trusted from the input — the whole question here is whether the
 // renderer used the aim, so taking it from the aim would prove nothing.
 //
-// NOT negated. bx::mtxLookAt builds a WORLD->VIEW matrix, the inverse of the
-// camera's world pose, so its THIRD COLUMN is already the world-space forward.
-// The first version of this helper negated it, the way one would read a camera
-// pose, and got exactly -forward for every case — which section 3 could not
-// see, because both of its sides went through the same wrong helper. A helper
-// used on both sides of a comparison can be wrong invisibly.
+// The sign depends on handedness, and has been wrong twice. bx::mtxLookAt
+// builds a WORLD->VIEW matrix whose third column is +forward for a LEFT-handed
+// view and -forward for a RIGHT-handed one. The first version of this helper
+// negated it under a left-handed view and got -forward everywhere, which
+// section 3 could not see, because both its sides went through the same wrong
+// helper; the second hard-coded the left-handed reading and broke when WO-033
+// made views right-handed. Now the sign comes from viewmath::kHandedness.
+// The view's look direction. bx::mtxLookAt stores (at - eye) in column 2 for a
+// LEFT-handed view and (eye - at) for a RIGHT-handed one, so the sign comes from
+// the engine's one convention (render/view_math.h). Hard-coding the left-handed
+// reading is what broke this helper when WO-033 un-mirrored the views.
 static bx::Vec3 forwardOf(const float view[16]) {
-    return bx::normalize(bx::Vec3{ view[2], view[6], view[10] });
+    const float s = viewmath::kHandedness == bx::Handedness::Right ? -1.0f : 1.0f;
+    return bx::normalize(bx::Vec3{ s * view[2], s * view[6], s * view[10] });
 }
 
 int main() {

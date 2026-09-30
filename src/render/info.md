@@ -326,22 +326,28 @@ HDR target allocated, and after a re-cook the base colour uploads sRGB and the
 normal map linear. **Not verified: the image itself.** No readback or golden-image
 test exists; a visual check in the editor is the remaining step.
 
-## Culling, and why it is CULL_CCW (WO-032, WO-033)
+## One view convention, and culling that follows it (WO-032, WO-033)
 
-Both passes take their state from `pipeline/pass_states.h`: `passstate::opaque(doubleSided)`
-and `passstate::shadowCaster()`. A cull bit is *replaced* there, never OR'd on,
-and a `static_assert` refuses a state with both bits. The opaque pass used to set
-both (`BGFX_STATE_DEFAULT` already carries `CULL_CW`): that is cull mode 3, which
-Metal treats as "none" (macOS culled nothing), and which D3D11/Vulkan read past the
-end of a three-entry table with.
+**Every view and projection is built in `view_math.h`**: `viewmath::lookAt`,
+`perspective` and `orthographic`, all right-handed, matching the world. Audit
+rule CAM-01 forbids calling `bx::mtxLookAt`/`mtxProj`/`mtxOrtho` anywhere else.
+Until WO-033 every camera used bx's *left-handed* default over a right-handed
+world. That mirrored the image (world +X landed on the left of the screen),
+and the engine grew compensations instead of noticing. The editor camera's
+strafe keys and yaw were flipped, and the pipeline culled CCW.
 
-The back-face bit is `CULL_CCW`, and that follows from the camera, not from the
-meshes. Meshes are CCW-front, but every view is built with bx's default
-left-handed `mtxLookAt` over a right-handed world, which mirrors the image (world
-+X lands on the left of the screen). So back faces reach the screen
-counter-clockwise. `tests/cull_mode_test.cpp` derives the bit from
-`PrimaryCameraFinder` itself, so when WO-033 un-mirrors the view it fails until
-`kCullBackFaces` flips to `CULL_CW`.
+Both passes take their state from `pipeline/pass_states.h`:
+`passstate::opaque(doubleSided)` and `passstate::shadowCaster()`. A cull bit
+is *replaced* there, never OR'd on, and a `static_assert` refuses a state with
+both bits. The opaque pass used to set both (`BGFX_STATE_DEFAULT` already
+carries `CULL_CW`): that is cull mode 3, which Metal treats as "none" (macOS
+culled nothing) and D3D11/Vulkan read past a three-entry table with.
+
+The back-face bit is `CULL_CW`: CCW-front meshes through a right-handed view
+reach the screen counter-clockwise. `tests/cull_mode_test.cpp` derives the bit
+from `PrimaryCameraFinder` itself, pins that the camera's right lands on the
+right, checks the frustum planes from the new matrices, and checks the editor
+camera moves the way it looks.
 
 ## Shadow pass
 Depth-only, one 2048² map, first shadow-casting light. It binds **no material** — the

@@ -5,7 +5,9 @@ title: The opaque pass sets both cull bits, which is undefined on D3D11 and Vulk
 program: renderer
 priority: P1
 size: S
-state: active
+state: done
+done: 2026-09-30
+evidence: pass_states.h (static_assert refuses both bits); tests/cull_mode_test.cpp; the visual check moved to WO-033
 touches:
   - src/render/pipeline/opaque_pass.cpp
   - src/render/pipeline/shadow_pass.cpp
@@ -20,7 +22,7 @@ source: found 2026-09-30 while pinning the import winding convention (WO-010)
 - [x] the opaque state names exactly one cull mode: **`CULL_CCW`**, not the `CULL_CW` this order first assumed. It is derived from the camera path, which mirrors the image (WO-033), so back faces reach the screen counter-clockwise.
 - [x] a test asserts that every render state the pipeline builds has at most one cull bit set, so the combination cannot come back (a `static_assert` in `pass_states.h`, plus `cull_mode_test`)
 - [x] the shadow pass's `CULL_CCW` is checked on purpose rather than assumed. **It is NOT the front-face shadow-acne trick this order guessed**: the light's view has the same mirror, so it removes back faces, and it now uses the same constant.
-- [ ] **checked by eye on macOS, by the user.** It will NOT render identically, and that is correct. Metal mapped cull mode 3 to "none", so macOS culled **nothing** until now. Closed meshes should look the same. A single-sided open surface (a plane, a card, a mesh with a hole) seen from behind now disappears, as it always should have. Anything that vanishes but should not is a mesh that needs `doubleSided` or has flipped winding.
+- [x] ~~checked by eye on macOS~~ **carried into WO-033**, which changed the culling again (right-handed views, `CULL_CW`). One visual check of the final state covers both; checking the intermediate state would be wasted effort.
 
 ## Not in scope
 Double-sided materials. Their state already sets no cull bit.
@@ -50,5 +52,4 @@ Double-sided materials. Their state already sets no cull bit.
 - Mutations: the both-bits state is refused at compile time; the other bit is
   red at 6 poses; a half-done WO-033 (only the game camera right-handed) is
   red on §3.
-- Stays **active**: the visual check on macOS is the user's, and the result is
-  expected to differ (see the last item).
+- Closed 2026-09-30: its one open item, the visual check, moved into WO-033, which changed the culling again.

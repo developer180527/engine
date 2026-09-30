@@ -151,12 +151,12 @@ engine_test(scene_mesh_reference_test)
 # broken the ways real parsers break (winding, units, axes, node transforms,
 # weights, unreported losses). Header-only and GPU-free.
 engine_test(import_frontend_contract_test)
-# WO-032: every pass state carries at most one cull bit, and the back-face bit
-# is DERIVED from the real camera path (PrimaryCameraFinder), so a change of
-# projection handedness (WO-033) fails here until culling follows. Reads the
-# camera sources to check they agree on handedness.
+# WO-032/033: every pass state carries at most one cull bit, and the back-face
+# bit is DERIVED from the real camera path (PrimaryCameraFinder). Pins that the
+# view is not mirrored, that frustum planes from the right-handed matrices hold,
+# and that the editor camera moves the way it looks. One-place camera maths is
+# audit rule CAM-01.
 engine_test(cull_mode_test)
-target_compile_definitions(cull_mode_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # The shared components' LAYOUT, frozen. componentLayoutHash() — the gate that
 # decides whether a kit may touch live ECS memory — hashes sizeof and alignof
 # only, so reordering two same-sized fields leaves it byte-identical and the gate

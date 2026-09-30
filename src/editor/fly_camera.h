@@ -7,6 +7,7 @@
 // its UI events. The movement itself is one function, so both editors fly
 // the same.
 #include <bx/math.h>
+#include "render/view_math.h"
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +30,7 @@ struct EditorCamera {
     bx::Vec3 up()    const { return { 0.0f, 1.0f, 0.0f }; }
 
     void getViewMatrix(float out[16]) const {
-        bx::mtxLookAt(out, position, bx::add(position, forward()), up());
+        viewmath::lookAt(out, position, bx::add(position, forward()), up());
     }
 };
 
@@ -44,7 +45,11 @@ inline void applyFly(EditorCamera& cam, const FlyInput& in, float dt) {
     // Clamp the delta to 200 px — one bad frame (a Bluetooth hiccup, a focus
     // change) must not spin the camera.
     constexpr float kMaxDelta = 200.0f;
-    cam.yaw   -= std::clamp(in.lookDx, -kMaxDelta, kMaxDelta) * kSensitivity;
+    // Dragging right turns right. yaw grows toward +X here (forward() =
+    // (sin yaw, …, −cos yaw)), so it is +=. Until WO-033 this was −=, and the
+    // strafe keys below were swapped: both compensated for a view that was
+    // mirrored left-to-right. Pitch is vertical and was never affected.
+    cam.yaw   += std::clamp(in.lookDx, -kMaxDelta, kMaxDelta) * kSensitivity;
     cam.pitch -= std::clamp(in.lookDy, -kMaxDelta, kMaxDelta) * kSensitivity;
     const float kLimit = bx::kPiHalf - 0.01f;
     cam.pitch = std::clamp(cam.pitch, -kLimit, kLimit);
@@ -55,8 +60,8 @@ inline void applyFly(EditorCamera& cam, const FlyInput& in, float dt) {
     const bx::Vec3 wup = {0.0f, 1.0f, 0.0f};
     if (in.forward) cam.position = bx::add(cam.position, bx::mul(fwd,  step));
     if (in.back)    cam.position = bx::add(cam.position, bx::mul(fwd, -step));
-    if (in.right)   cam.position = bx::add(cam.position, bx::mul(rt,  -step));
-    if (in.left)    cam.position = bx::add(cam.position, bx::mul(rt,   step));
+    if (in.right)   cam.position = bx::add(cam.position, bx::mul(rt,   step));
+    if (in.left)    cam.position = bx::add(cam.position, bx::mul(rt,  -step));
     if (in.up)      cam.position = bx::add(cam.position, bx::mul(wup,  step));
     if (in.down)    cam.position = bx::add(cam.position, bx::mul(wup, -step));
 }

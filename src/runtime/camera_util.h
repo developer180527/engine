@@ -9,6 +9,7 @@
 #include "core/transform.h"
 #include "components/transform_hierarchy.h"
 #include "runtime/world_query_cache.h"
+#include "render/view_math.h"
 
 // ── PrimaryCameraFinder ─────────────────────────────────────────────────────
 // Finds the primary Camera entity in ANY world (game or editor) and produces
@@ -63,14 +64,14 @@ public:
                     bx::Vec3 right = bx::InitZero;
                     cameraLookBasis(*look, fwd, right, up);
                 }
-                bx::mtxLookAt(view, pos, bx::add(pos, fwd), up);
+                viewmath::lookAt(view, pos, bx::add(pos, fwd), up);
                 const bool rhNdc = homogeneousDepth;
                 if (c.projection == ProjectionType::Perspective)
-                    bx::mtxProj(proj, c.fov, aspect, c.nearPlane, c.farPlane, rhNdc);
+                    viewmath::perspective(proj, c.fov, aspect, c.nearPlane, c.farPlane, rhNdc);
                 else {
                     const float h = c.orthoSize, w = h * aspect;
-                    bx::mtxOrtho(proj, -w, w, -h, h,
-                                 c.nearPlane, c.farPlane, 0.0f, rhNdc);
+                    viewmath::orthographic(proj, -w, w, -h, h,
+                                           c.nearPlane, c.farPlane, rhNdc);
                 }
                 std::memcpy(clearColor, c.clearColor, 16);
                 if (grading) *grading = e.try_get<ColourGrading>();

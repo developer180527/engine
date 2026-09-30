@@ -8,21 +8,19 @@
 // table past its end, which is undefined behaviour. A cull bit is now REPLACED,
 // never OR'd onto a state that may already carry one.
 //
-// ── Why the back-face bit is CULL_CCW ───────────────────────────────────────
-// Meshes are counter-clockwise-front (glTF, Assimp, ImportedScene). But every
-// camera in the engine (PrimaryCameraFinder, the editor fly camera, the shadow
-// pass) builds its view with bx::mtxLookAt's DEFAULT, LEFT-handed convention
-// over a right-handed world. That mirrors the image left-to-right: world +X
-// lands on the left of the screen (WO-033). So a front face reaches the screen
-// clockwise, and removing BACK faces means culling counter-clockwise ones.
-// cull_mode_test derives this from the real camera path, so the day WO-033
-// makes the projection right-handed, the test fails until this flips.
+// ── Why the back-face bit is CULL_CW ────────────────────────────────────────
+// Meshes are counter-clockwise-front (glTF, Assimp, ImportedScene), and every
+// camera builds a right-handed view and projection (render/view_math.h), so a
+// front face reaches the screen counter-clockwise and a back face clockwise.
+// Until WO-033 the views were left-handed, which mirrored the image, and this
+// was CULL_CCW. cull_mode_test derives the bit from the real camera path, so
+// the two cannot drift apart again.
 #include <bgfx/defines.h>
 #include <cstdint>
 
 namespace passstate {
 
-inline constexpr uint64_t kCullBackFaces = BGFX_STATE_CULL_CCW;   // see above
+inline constexpr uint64_t kCullBackFaces = BGFX_STATE_CULL_CW;    // see above
 
 // Exactly zero or one cull bit. Both set is cull mode 3 (see above).
 constexpr bool validCull(uint64_t state) {
@@ -38,8 +36,8 @@ constexpr uint64_t opaque(bool doubleSided) {
     return withCull(BGFX_STATE_DEFAULT, doubleSided ? 0 : kCullBackFaces);
 }
 
-// Shadow casters write depth only. The light's view is built with the same
-// left-handed lookAt, so the same bit removes the same (back) faces. This is NOT
+// Shadow casters write depth only. The light's view is built by the same
+// view_math, so the same bit removes the same (back) faces. This is NOT
 // the "cull front faces into the shadow map" acne trick; if that is ever wanted,
 // it is kCullBackFaces's opposite, and it should say so here.
 constexpr uint64_t shadowCaster() {
