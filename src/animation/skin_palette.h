@@ -40,6 +40,8 @@
 // ticks, not just the one it was init()ed with. Component hooks are world
 // state, so registering only on the editor world leaked one palette per
 // animated entity per play session, forever.
+#include "core/bone_limit.h"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -51,7 +53,7 @@ namespace anim {
 
 class SkinPalettePool {
 public:
-    static constexpr int      kMaxBones    = 128;
+    static constexpr int      kMaxBones    = ::kMaxBones;   // core/bone_limit.h
     static constexpr int      kFloats      = kMaxBones * 16;   // mat4[128]
     static constexpr uint32_t kNoSlot      = 0xFFFFFFFFu;
     // Palettes per chunk. Chunked so a growing pool never moves the palettes

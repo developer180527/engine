@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-17
+verified: 2026-09-30
 covers:
   - src/components/
 tests:
@@ -64,7 +64,7 @@ the ABI is the plain-data structs listed below, not the helpers beside them.
 - `name.h` — display/lookup name.
 - `mesh_renderer.h` — `MeshHandle` + material override.
 - `skinned_mesh.h` — skeleton handle + a palette SLOT (`paletteSlot`,
-  `hasSkinMatrices`). The `mat4[128]` palette itself lives in
+  `hasSkinMatrices`). The `mat4[kMaxBones]` palette (128, from `core/bone_limit.h`, WO-040) lives in
   `anim::skinPalettes()`, not the component: inline it made the component
   8 200 bytes, and the renderer's extraction query reads five of those bytes per
   entity while paying the whole thing as stride. Resolve with

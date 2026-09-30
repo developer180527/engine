@@ -9,7 +9,7 @@
 
 namespace ozz::animation { class Skeleton; }   // fwd — the ozz runtime skeleton
 
-static constexpr int kMaxBones = 128;
+#include "core/bone_limit.h"   // kMaxBones
 
 struct Bone {
     std::string    name;

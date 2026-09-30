@@ -3,6 +3,7 @@
 #include "assets/cookers/mesh/cook_common.h"
 #include "assets/cookers/texture/texture_encode.h"   // BC7/BC5 + mips for .ctex
 #include "assets/import/imported_scene_check.h"
+#include "core/bone_limit.h"                    // kMaxBones: what the runtime can skin
 #include "animation/ozz_bridge.h"                     // buildOzzSkeleton, finishOzzClip
 
 #include <assetlib/mesh_asset.h>
@@ -29,7 +30,6 @@ namespace {
 // ── Vertex layouts: the runtime's, byte for byte ────────────────────────────
 constexpr uint32_t kStaticFlags  = VF_POSITION | VF_NORMAL | VF_TANGENT | VF_UV0;
 constexpr uint32_t kSkinnedFlags = kStaticFlags | VF_JOINTS | VF_WEIGHTS;
-constexpr uint32_t kMaxBones     = 256;          // joints are uint8 in a cooked vertex
 
 struct StaticVertex {                            // render/vertex.h, 48 bytes
     float px, py, pz, nx, ny, nz, tx, ty, tz, tw, u, v;
@@ -417,9 +417,12 @@ CookResult cookImportedScene(const imp::ImportedScene& s, const CookContext& ctx
 
     bool anySkinned = false;
     for (const auto& m : s.meshes) anySkinned |= m.skinned();
-    if (anySkinned && s.skeleton->bones.size() > kMaxBones)
-        return refuse(std::to_string(s.skeleton->bones.size()) + " bones: a cooked vertex indexes at most " +
-                      std::to_string(kMaxBones));
+    // The runtime's limit, not the vertex format's: the GPU palette holds
+    // kMaxBones (core/bone_limit.h). This allowed 256, and a rig of 129
+    // to 256 bones cooked and then never animated (WO-040).
+    if (anySkinned && s.skeleton->bones.size() > (size_t)kMaxBones)
+        return refuse(std::to_string(s.skeleton->bones.size()) + " bones: the engine skins at most " +
+                      std::to_string(kMaxBones) + " per mesh (the GPU bone palette)");
     if (!anySkinned && !s.clips.empty())
         notes.push_back(std::to_string(s.clips.size()) + " clip(s) not cooked: no mesh is skinned");
 

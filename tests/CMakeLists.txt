@@ -295,6 +295,9 @@ engine_test(skin_palette_test)
 # the uniform-buffer draw ceiling, the one-palette-per-skinned-item invariant,
 # and the shadow pass's separate light-space cull. It cannot check pixels.
 engine_test(render_pipeline_test)
+# Reads shaders/vs_skinned.sc and vs_shadow_skinned.sc: their bone palette's
+# size is a literal, and must equal core/bone_limit.h's kMaxBones (WO-040).
+target_compile_definitions(render_pipeline_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # The two-query extraction partition (parentless / parented). Its only failure mode
 # is silent — an entity in neither half vanishes from the frame, one in both is
 # drawn twice — so the partition is asserted rather than trusted to flecs' with/

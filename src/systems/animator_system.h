@@ -26,6 +26,8 @@
 #include <cstring>
 #include <flecs.h>
 #include <memory>
+#include <mutex>
+#include <set>
 #include <unordered_map>
 
 #include <ozz/animation/runtime/animation.h>
@@ -46,6 +48,7 @@
 #include "components/skinned_mesh.h"
 #include "runtime/jobs/jobs.h"
 #include "runtime/world_query_cache.h"
+#include "core/logger.h"
 #include <algorithm>
 
 class AnimatorSystem {
@@ -232,7 +235,20 @@ private:
             });
     }
 
-    static constexpr int kMaxBones2 = kMaxBones;   // palette budget (skeleton.h)
+    static constexpr int kMaxBones2 = kMaxBones;   // palette budget (core/bone_limit.h)
+
+    // A skeleton over the palette's limit is not animated, and its mesh draws in
+    // bind pose. That used to happen with no message at all (WO-040). The cook
+    // refuses such a rig now, so one reaching here came some other way (a kit,
+    // the SDK): said once per skeleton, from whichever worker thread met it.
+    void warnOverLimit(uint32_t skeletonId, int bones) {
+        std::lock_guard<std::mutex> lock(m_overLimitMtx);
+        if (m_overLimit.insert(skeletonId).second)
+            LOG_WARN("Animator", "skeleton %u has %d bones; the engine skins at most %d, so it is not animated",
+                     skeletonId, bones, kMaxBones);
+    }
+    std::mutex         m_overLimitMtx;
+    std::set<uint32_t> m_overLimit;
 
     // Per-entity ozz runtime buffers. Sized to the skeleton on first use;
     // resized if the entity's skeleton changes. Crossfade state lives here,
@@ -396,6 +412,7 @@ private:
         }
         if (skel->boneCount() > kMaxBones2) {
             if (phase == Phase::Sample) skin.hasSkinMatrices = false;
+            warnOverLimit(skin.skeleton.id, skel->boneCount());
             return;
         }
 

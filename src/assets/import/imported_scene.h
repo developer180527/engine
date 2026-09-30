@@ -113,6 +113,11 @@ struct Bone {
 };
 
 struct Skeleton { std::vector<Bone> bones; };
+// The most bones a skeleton here can have: Mesh::joints indexes them as
+// uint16. A front end refuses a larger one (Skin/Wrong) rather than let the
+// indices wrap. Not the ENGINE's limit, which is far lower and the cook back
+// end's to enforce (core/bone_limit.h): this is only what the format can say.
+inline constexpr size_t kMaxSceneBones = size_t{0xFFFF} + 1;
 
 struct KeyF3 { float time = 0; Float3 value; };
 struct KeyQ  { float time = 0; Quat   value; };

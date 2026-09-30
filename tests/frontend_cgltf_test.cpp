@@ -255,6 +255,38 @@ int main() {
         }
     }
 
+    // ── 5. Bone counts: the file's, whatever the engine's limit ─────────────
+    std::printf("5. bone counts\n");
+    {
+        // A 300-bone rig is read whole: the limit is the cook's to enforce, by
+        // name, not the reader's to apply by dropping bones (WO-040).
+        const ImportedScene want = impcontract::build::rig(300);
+        const ImportResult t = fe.importScene(put("rig300.gltf", gltfw::write(want)), {});
+        std::vector<std::string> why;
+        if (t) { impcontract::detail::compareGeometry(t.scene(), want, why); impcontract::detail::compareSkeleton(t.scene(), want, why); }
+        CHECK(t && why.empty(), "a 300-bone rig is read whole, the top vertices on 'Bone299'%s%s",
+              why.empty() ? "" : ": ", why.empty() ? "" : why[0].c_str());
+
+        // More bones than ImportedScene's uint16 joints can index. The reader's
+        // bone map was uint16 too, so indices wrapped and weights landed on the
+        // wrong bones. It is a skeleton the format cannot carry: Skin/Wrong, and
+        // the meshes read static, so the cook refuses with the reason.
+        nlohmann::json j = nlohmann::json::parse(gltfw::write(impcontract::expected(Case::SkinnedColumn)));
+        auto& nodes = j["nodes"];
+        nlohmann::json& joints = j["skins"][0]["joints"];
+        j["skins"][0].erase("inverseBindMatrices");         // identity (spec): one per joint would be 4 MB
+        std::vector<int> extra;
+        const int first = (int)nodes.size(), n = (int)kMaxSceneBones + 10;
+        for (int i = 0; i < n; ++i) { nodes.push_back({{"name", "X" + std::to_string(i)}}); joints.push_back(first + i); extra.push_back(first + i); }
+        for (int e : extra) j["scenes"][0]["nodes"].push_back(e);
+        const ImportResult big = fe.importScene(put("huge_skin.gltf", j.dump()), {});
+        bool wrong = false;
+        if (big) for (const auto& d : big.scene().dropped)
+            wrong |= d.kind == Dropped::Kind::Skin && d.effect == Dropped::Effect::Wrong && d.what.find("bones") != std::string::npos;
+        CHECK(big && wrong && !big.scene().skeleton && !big.scene().meshes.empty() && !big.scene().meshes[0].skinned(),
+              "a skin of %d joints, more than a uint16 joint can index: Skin/Wrong, read static, no wrapped indices", n);
+    }
+
     fs::remove_all(dir);
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;

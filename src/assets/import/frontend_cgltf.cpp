@@ -260,6 +260,11 @@ struct Reader {
                 for (cgltf_size c = 0; c < data.animations[a].channels_count; ++c)
                     withAncestors(data.animations[a].channels[c].target_node);
         if (keep.empty()) return;
+        if (keep.size() > kMaxSceneBones) {       // joints (and boneOf) would wrap; skinned meshes read static
+            drop(Dropped::Kind::Skin, Dropped::Effect::Wrong, 1,
+                 std::to_string(keep.size()) + " bones: an imported skeleton holds at most " + std::to_string(kMaxSceneBones));
+            return;
+        }
 
         Skeleton sk;
         std::set<std::string> names;

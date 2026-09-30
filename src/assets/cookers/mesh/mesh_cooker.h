@@ -7,7 +7,9 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 19; // 19: a skinned mesh is bounded skinned at rest,
+    static constexpr uint32_t kVersion = 20; // 20: a rig over kMaxBones (128, the GPU palette) is refused,
+                                             //     not cooked to draw unanimated (WO-040).
+                                             // 19: a skinned mesh is bounded skinned at rest,
                                              //     not in bind space (WO-036).
                                              // 18: every format through ImportedScene and one
                                              // back end (WO-012/013): generated tangents,

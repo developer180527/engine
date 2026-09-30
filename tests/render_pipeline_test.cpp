@@ -41,6 +41,9 @@
 #include "render/texture_registry.h"
 #include "render/world/frustum.h"   // extractFrustumPlanes
 #include "render/world/cull_stream.h" // the cull reads SoA streams, not items
+#include "core/bone_limit.h"     // kMaxBones
+#include <fstream>
+#include <sstream>
 
 namespace { int g_failures = 0; }
 #define CHECK(cond, ...) do {                                       \
@@ -412,6 +415,20 @@ static void testStatsResetPerView(Fixture& fx, ForwardPipeline& pipe) {
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("render_pipeline_test: ForwardPipeline submission, headless\n");
+
+    // ── The shaders' bone palette is the size the engine says ───────────────
+    // The palette is a uniform array whose size is a LITERAL in each skinning
+    // shader, where no C++ constant reaches. kMaxBones (core/bone_limit.h)
+    // is what the cook admits and the animator fills; a shader holding fewer
+    // would read past its array, one holding more wastes uniform space. So the
+    // literal is checked here, against the one constant (WO-040).
+    std::printf("\n-- the skinning shaders hold kMaxBones matrices --\n");
+    for (const char* sh : {"vs_skinned.sc", "vs_shadow_skinned.sc"}) {
+        std::ifstream f(std::string(ENGINE_SOURCE_DIR) + "/shaders/" + sh);
+        std::stringstream ss; ss << f.rdbuf();
+        const std::string want = "uniform vec4 u_boneMatrices[" + std::to_string(kMaxBones * 4) + "];";
+        CHECK(f && ss.str().find(want) != std::string::npos, "%s declares %s", sh, want.c_str());
+    }
 
     if (!initTestDevice()) return 1;
 

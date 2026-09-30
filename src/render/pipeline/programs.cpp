@@ -5,6 +5,7 @@
 // duplicate all of them (see that header).
 #include "render/forward_pipeline.h"
 
+#include "core/bone_limit.h"
 #include "core/logger.h"
 
 #include "runtime/jobs/jobs.h"
@@ -89,7 +90,8 @@ void ForwardPipeline::onAttach(RenderContext& attachCtx) {
             bgfx::createShader(bgfx::makeRef(VS_SHADOW_INST_DATA, VS_SHADOW_INST_SIZE)),
             bgfx::createShader(bgfx::makeRef(FS_SHADOW_DATA, FS_SHADOW_SIZE)),
             true);
-        m_uBoneMatrices = bgfx::createUniform("u_boneMatrices", bgfx::UniformType::Vec4, 512);
+        m_uBoneMatrices = bgfx::createUniform("u_boneMatrices", bgfx::UniformType::Vec4,
+                                             (uint16_t)(kMaxBones * 4));   // mat4 = 4 vec4s; the shaders declare the same
         const uint64_t smFlags = BGFX_TEXTURE_RT
             | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT
             | BGFX_SAMPLER_U_CLAMP   | BGFX_SAMPLER_V_CLAMP;

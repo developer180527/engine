@@ -183,15 +183,12 @@ inline Skeleton extractSkeleton(const aiScene* scene) {
     std::vector<detail::NodeInfo> nodes;
     detail::collectSkeletonNodes(scene->mRootNode, -1, boneNames, nodes);
 
-    // Hard cap: if we still have more nodes than kMaxBones after collapsing
-    // helpers, truncate to keep within the fixed-size palette budget.
-    if ((int)nodes.size() > kMaxBones) {
-        std::fprintf(stderr, "[Skeleton] WARNING: %zu nodes > kMaxBones(%d) "
-                     "after helper collapse — truncating\n",
-                     nodes.size(), kMaxBones);
-        nodes.resize(kMaxBones);
-    }
-
+    // The WHOLE skeleton, however large. This used to keep the first kMaxBones
+    // nodes and drop the rest with a line on stderr: weights naming a dropped
+    // bone lost it, and a large rig (a MetaHuman has 800+ bones) cooked
+    // broken. Whether a rig is too big to SKIN is the consumer's call, made
+    // with the real count: the cook back end refuses it by name, and the
+    // uncooked preview loads it static (WO-040).
     Skeleton skel;
     skel.bones.reserve(nodes.size());
 
@@ -227,7 +224,7 @@ inline Skeleton extractSkeleton(const aiScene* scene) {
 // weights. Output arrays must be sized to mesh->mNumVertices.
 
 struct VertexBoneData {
-    uint8_t joints[4]  = { 0, 0, 0, 0 };
+    uint16_t joints[4] = { 0, 0, 0, 0 };   // any bone of the skeleton; the consumer checks its own limit
     float   weights[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 };
 
@@ -241,7 +238,10 @@ inline std::vector<VertexBoneData> extractBoneWeights(
     for (unsigned b = 0; b < mesh->mNumBones; ++b) {
         const aiBone* bone = mesh->mBones[b];
         int boneIdx = skel.findBone(bone->mName.C_Str());
-        if (boneIdx < 0 || boneIdx > 255) continue;
+        // Not > 255: that silently dropped every influence of a bone past the
+        // 256th. A skeleton ImportedScene cannot index (uint16) is refused
+        // before weights are read.
+        if (boneIdx < 0 || boneIdx > 0xFFFF) continue;
 
         for (unsigned w = 0; w < bone->mNumWeights; ++w) {
             unsigned vid = bone->mWeights[w].mVertexId;
@@ -250,7 +250,7 @@ inline std::vector<VertexBoneData> extractBoneWeights(
 
             int& count = influenceCount[vid];
             if (count < 4) {
-                data[vid].joints[count]  = (uint8_t)boneIdx;
+                data[vid].joints[count]  = (uint16_t)boneIdx;
                 data[vid].weights[count] = weight;
                 ++count;
             } else {
@@ -259,7 +259,7 @@ inline std::vector<VertexBoneData> extractBoneWeights(
                 for (int i = 1; i < 4; ++i)
                     if (data[vid].weights[i] < data[vid].weights[minIdx]) minIdx = i;
                 if (weight > data[vid].weights[minIdx]) {
-                    data[vid].joints[minIdx]  = (uint8_t)boneIdx;
+                    data[vid].joints[minIdx]  = (uint16_t)boneIdx;
                     data[vid].weights[minIdx] = weight;
                 }
             }

@@ -94,7 +94,7 @@ Bones are **not** ECS entities — they live in flat, topologically sorted
 arrays (parent index always < child index) for cache-friendly evaluation.
 
 - **`Skeleton`/`Bone`** (`skeleton.h`) — bind pose as SQT *and* as the raw
-  `localBindMatrix[16]`, plus `inverseBindMatrix[16]` per bone. `kMaxBones=128`.
+  `localBindMatrix[16]`, plus `inverseBindMatrix[16]` per bone. `kMaxBones=128`, defined once in `bone_limit.h` (the GPU palette's size; `render_pipeline_test` checks the shaders' literal against it). A rig over it is refused by the cook, loaded static by the uncooked preview, and not animated, with a warning, by the animator; nothing truncates it (WO-040).
 - **`AnimClip`** (`animation_clip.h`) — wraps a compressed
   `ozz::animation::Animation` + name/duration + track-mapping diagnostics.
 - **`pose.h`** — the two surviving raw-matrix helpers: bind-pose world

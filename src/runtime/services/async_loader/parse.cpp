@@ -452,7 +452,15 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
 
         if (hasBones) {
             out.skeleton    = anim::extractSkeleton(scene);
+            // Over the GPU palette's limit the animator would refuse it and the
+            // skinned mesh would draw in its raw bind pose, never animating.
+            // Static geometry, said out loud, is the honest preview (WO-040).
+            if (out.skeleton.boneCount() > kMaxBones)
+                LOG_WARN("Assimp", "%s — %d bones: the engine skins at most %d per mesh; "
+                         "previewing as static geometry (the cook refuses it)",
+                         name.c_str(), out.skeleton.boneCount(), kMaxBones);
             out.hasSkeleton = out.skeleton.boneCount() > 0
+                           && out.skeleton.boneCount() <= kMaxBones
                            && anim::buildOzzSkeleton(out.skeleton);
             if (out.hasSkeleton && scene->mNumAnimations > 0) {
                 // Embedded clips -> compressed ozz Animations (same bridge the
@@ -542,7 +550,8 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
                 for (uint32_t v = 0; v < am->mNumVertices; ++v) {
                     SkinnedVertex sv{};
                     fillCommon(am, v, sv.position, sv.normal, sv.tangent, sv.uv);
-                    std::memcpy(sv.joints,  boneData[v].joints,  4);
+                    for (int j = 0; j < 4; ++j)   // < kMaxBones (checked above), so fits the GPU's uint8
+                        sv.joints[j] = (uint8_t)boneData[v].joints[j];
                     std::memcpy(sv.weights, boneData[v].weights, sizeof(float)*4);
                     float wsum = sv.weights[0]+sv.weights[1]+sv.weights[2]+sv.weights[3];
                     if (wsum < 1e-6f) ++zeroWeightVerts;

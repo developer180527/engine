@@ -89,6 +89,32 @@ inline Mesh triangle() {
     m.submeshes = {{0, 3, 0}};
     return m;
 }
+// A skinned column on a rig of `bones` bones: "Hips", then a spine chain
+// "Bone1" .. "BoneN-1" (no spaces: COLLADA ids) climbing 1 mm each, bound at rest. The top two
+// vertices are weighted wholly to the LAST bone, so a reader that truncates the
+// skeleton or wraps a joint index moves them, and the comparison says so. Not a
+// contract case: for the bone-limit tests (WO-040).
+inline ImportedScene rig(int bones) {
+    ImportedScene s;
+    Mesh m; m.name = "Column";
+    m.positions = {{-0.1f, 0, 0}, {0.1f, 0, 0}, {-0.1f, 1, 0}, {0.1f, 1, 0}};
+    m.normals.assign(4, {0, 0, 1});
+    m.uv0       = {{0, 1}, {1, 1}, {0, 0}, {1, 0}};
+    const uint16_t last = (uint16_t)(bones - 1);
+    m.joints    = {{0, 0, 0, 0}, {0, 0, 0, 0}, {last, 0, 0, 0}, {last, 0, 0, 0}};
+    m.weights   = {{1, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}};
+    m.indices   = {0, 1, 3,  0, 3, 2};
+    m.submeshes = {{0, 6, 0}};
+    s.meshes    = {m};
+    s.materials = {material("Skin", {1, 1, 1, 1})};
+    s.nodes     = {node("root", -1, {}, {0})};
+    Skeleton sk;
+    sk.bones.push_back({"Hips", -1, {}, {}});
+    for (int b = 1; b < bones; ++b)
+        sk.bones.push_back({"Bone" + std::to_string(b), b - 1, translation(0, 0.001f, 0), translation(0, -0.001f * (float)b, 0)});
+    s.skeleton = sk;
+    return s;
+}
 }  // namespace build
 
 // What importing each case must produce, in engine conventions.

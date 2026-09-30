@@ -365,6 +365,24 @@ int main() {
         }
     }
 
+    // ── 5. A rig over the engine's bone limit is read WHOLE ─────────────────
+    // extractSkeleton kept the first 128 bones and dropped the rest with a line
+    // on stderr, and extractBoneWeights dropped every influence on a bone past
+    // the 256th. So a 300-bone rig imported as a different, smaller rig, and
+    // its top vertices lost their bone. The front end carries the file; the
+    // limit is the cook's to enforce, by name (mesh_backend_test, WO-040).
+    std::printf("5. a 300-bone rig\n");
+    {
+        const ImportedScene want = impcontract::build::rig(300);
+        const ImportResult t = fe.importScene(put("rig300.dae", dae::write(want)), {});
+        std::vector<std::string> why;
+        if (t) { impcontract::detail::compareGeometry(t.scene(), want, why); impcontract::detail::compareSkeleton(t.scene(), want, why); }
+        CHECK(t && t.scene().skeleton && t.scene().skeleton->bones.size() >= 300 && why.empty(),
+              "every bone is read and the top vertices stay on 'Bone299' (%zu bones%s%s)",
+              t && t.scene().skeleton ? t.scene().skeleton->bones.size() : (size_t)0,
+              why.empty() ? "" : "; ", why.empty() ? "" : why[0].c_str());
+    }
+
     fs::remove_all(dir);
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/bone_limit.h"
 #include "core/handle.h"
 #include <cstdint>
 
@@ -28,7 +29,7 @@ struct SkinnedMesh {
     // kNoSlot until the animator first writes this entity; resolve with
     // anim::skinPalettes().at(paletteSlot), which returns null for kNoSlot so
     // an unanimated entity needs no special case.
-    static constexpr int      kMaxBones   = 128;
+    static constexpr int      kMaxBones   = ::kMaxBones;   // core/bone_limit.h
     static constexpr int      kMatrixSize = kMaxBones * 16;
     static constexpr uint32_t kNoSlot     = 0xFFFFFFFFu;
     uint32_t paletteSlot = kNoSlot;

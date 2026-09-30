@@ -305,6 +305,12 @@ ImportResult AssimpFrontend::importOnThisStack(const std::filesystem::path& sour
         } else if (animationOnly) {
             out.skeleton = animatedNodes(*sc);
         }
+        if (out.skeleton && out.skeleton->bones.size() > kMaxSceneBones) {   // joints would wrap
+            out.dropped.push_back({Dropped::Kind::Skin, Dropped::Effect::Wrong, 1,
+                                   std::to_string(out.skeleton->bones.size()) + " bones: an imported skeleton holds at most " +
+                                   std::to_string(kMaxSceneBones)});
+            out.skeleton.reset();
+        }
 
         cv.materials();
         for (unsigned i = 0; i < sc->mNumMeshes; ++i)

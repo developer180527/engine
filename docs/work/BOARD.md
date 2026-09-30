@@ -50,7 +50,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-022](WO-022-decision-records.md) | Decision records — the "why" survives the person | Process & context | M | **ready** | — |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
-| [WO-040](WO-040-assimp-skeleton-truncation.md) | A rig over the bone limit is refused, not silently truncated | Asset import & cooking | S | **ready** | import-frontend |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
@@ -75,6 +74,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-040](WO-040-assimp-skeleton-truncation.md) | A rig over the bone limit is refused, not silently truncated | 2026-09-30 | mesh_backend_test (128 cooks, 129 refused by name); frontend_assimp_test §5 and frontend_cgltf_test §5 (300-bone rig read whole; 65,546-joint skin Skin/Wrong); render_pipeline_test (shader palette literal = kMaxBones*4); four mutations red |
 | [WO-039](WO-039-depth-is-input-too.md) | A deep node tree must not crash an import; depth is input too | 2026-09-30 | frontend_cgltf_test and frontend_assimp_test §4 (10,000-deep chains on a 512 KB stack, each SIGBUS before the fix); fuzz_import_frontend_test generator 3; extractSkeleton identical to the old one on 5 real rigs, helper chains included; import_frontend_contract_test's 0.6 mm case |
 | [WO-037](WO-037-fuzz-the-import-front-ends.md) | Fuzz the import front ends; nothing in them may crash the cook worker | 2026-09-30 | fuzz_import_frontend_test (regress + explore lanes); frontend_cgltf_test §4 (5 cases) and import_frontend_contract_test §7 each red with their fix removed; 20,000 explore iterations clean, and under ASan+UBSan |
 | [WO-036](WO-036-a-real-skinned-gltf.md) | A real skinned glTF, cooked and animating in the editor | 2026-09-30 | real_gltf_test (spec oracle, cook, bounds); render_pipeline_test skinnedProgramDraws; the user saw CesiumMan walk on the ground in the editor on 2026-09-30 |

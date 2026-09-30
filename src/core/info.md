@@ -65,6 +65,12 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   and this layer may not include the ECS. The matrix math they call stayed here.
   Passing components in rather than looking them up is worth several ms per
   frame at scene scale — see `src/render/issues.md` R14.
+- **`bone_limit.h`** — `kMaxBones` (128), the most bones one skinned mesh may
+  have: the GPU palette's size. Stated once for the skeleton, the palette pool,
+  `SkinnedMesh`, the animator, the bone uniform and the cook back end, which
+  refuses a larger rig by name; `render_pipeline_test` checks the shaders'
+  literal against it. Here, not in `animation/`, because `SkinnedMesh` is a
+  component and components depend on core only (WO-040).
 - **`thread_stack.{h,cpp}`** — run work on a thread whose stack size we
   chose (`engine::threads::runWithStack`). For code whose recursion depth an
   input file decides: Assimp's readers recurse per node level, and a caller

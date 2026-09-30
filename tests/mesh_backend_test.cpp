@@ -28,6 +28,7 @@
 #include <ozz/base/span.h>
 
 #include "assets/cookers/mesh/mesh_backend.h"
+#include "core/bone_limit.h"   // kMaxBones
 #include "import_contract.h"
 
 static int g_failures = 0;
@@ -129,6 +130,19 @@ int main() {
         c = cook(many, "too_many_bones");
         CHECK(!c.result.success && c.result.error.find("300 bones") != std::string::npos,
               "more bones than a cooked vertex can index is refused: %s", c.result.error.c_str());
+
+        // The limit is the RUNTIME's, kMaxBones (the GPU palette), not the
+        // vertex format's 256. A rig of 129 to 256 bones used to cook, and the
+        // animator then refused it: drawn in bind pose, never animated, no
+        // message (WO-040). At the limit it cooks; one over, it is refused
+        // with the count and the limit.
+        c = cook(impcontract::build::rig(kMaxBones), "rig_at_limit");
+        CHECK(c.loaded && c.asset.header.boneCount == (uint32_t)kMaxBones,
+              "a rig of exactly %d bones cooks (%u bones; %s)", kMaxBones, c.asset.header.boneCount, c.result.error.c_str());
+        c = cook(impcontract::build::rig(kMaxBones + 1), "rig_over_limit");
+        CHECK(!c.result.success && c.result.error.find(std::to_string(kMaxBones + 1) + " bones") != std::string::npos &&
+              c.result.error.find("at most " + std::to_string(kMaxBones)) != std::string::npos,
+              "a rig of %d bones is refused, naming the count and the limit: %s", kMaxBones + 1, c.result.error.c_str());
     }
 
     // ── 2. A static mesh, field by field ────────────────────────────────────

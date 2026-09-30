@@ -105,3 +105,11 @@ destructors DO recurse per level, and that is not ours to rewrite: the Assimp
 front end runs every import on a thread with a 256 MB reserved stack
 (`core/thread_stack.h`), and a file deeper even than that kills only the
 isolated `engine_cook_worker` it runs in (WO-039).
+
+A skeleton is carried WHOLE. The engine's bone limit (`kMaxBones`, the GPU
+palette) is the cook back end's to enforce, and it refuses a larger rig with
+the count and the limit. A front end that drops bones to fit instead turns a
+refused asset into a silently wrong one (WO-040). The one limit a front end
+applies is the format's own: `Mesh::joints` indexes bones as `uint16`, so a
+skeleton over `kMaxSceneBones` (65,536) is `Skin`/`Wrong` and its meshes read
+static.
