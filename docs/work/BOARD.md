@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
-2. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
-3. [WO-022](WO-022-decision-records.md) **Decision records — the "why" survives the person** · P2 · size M — Important decisions are buried in the middle of plan paragraphs, and those are the ones that get "fixed" back into bugs.
+1. [WO-041](WO-041-ledger-the-bugs-of-2026-09-30.md) **Ledger the four bugs fixed on 2026-09-30 that have no entry** · P1 · size S — The bug ledger is how a class of bug is recognised the second time. Four real defects were found and fixed after BUG-0064, and each is written up only in a work order's log, which nobody searches by symptom:
+2. [WO-042](WO-042-reverify-the-stale-design-docs.md) **Re-verify the stale docs, the asset cook architecture first** · P1 · size S — `docs/architecture/asset-cook-architecture.md` is the design's source of truth for cooking, and it was last verified on 2026-08-03. It does not mention `ImportedScene` at all. WO-010 to WO-016 replaced the whole import side with it: the front ends, the one back end, the clip cooker. A reader of the design doc learns an architecture that no longer exists.
+3. [WO-044](WO-044-abi-compat-test-covers-every-group.md) **The ABI compatibility test defends every API group (audit ABI-03)** · P1 · size S — `api_abi_compat_test`'s `frozen[]` list is a hand-kept copy of the API table's group offsets. Two frozen groups, `intent` and `physics2`, are missing from it, so nothing at run time defends where they sit. A reordered group keeps every size intact and still breaks every kit built against the old table; the frozen ABI is append-only only if a test says so.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,6 +35,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
+| [WO-041](WO-041-ledger-the-bugs-of-2026-09-30.md) | Ledger the four bugs fixed on 2026-09-30 that have no entry | Process & context | S | **ready** | — |
+| [WO-042](WO-042-reverify-the-stale-design-docs.md) | Re-verify the stale docs, the asset cook architecture first | Process & context | S | **ready** | — |
+| [WO-044](WO-044-abi-compat-test-covers-every-group.md) | The ABI compatibility test defends every API group (audit ABI-03) | Providers & modules | S | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -48,6 +51,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-022](WO-022-decision-records.md) | Decision records — the "why" survives the person | Process & context | M | **ready** | — |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
+| [WO-043](WO-043-fixed-step-reads-no-clock.md) | The fixed step reads no wall clock (audit DET-01) | Providers & modules | S | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
