@@ -31,6 +31,68 @@ public:
         return {};
     }
 
+    // ── Geometry, without a GPU ─────────────────────────────────────────────
+    // Front faces are COUNTER-CLOCKWISE seen from outside, in the right-handed
+    // world (render/view_math.h): every triangle's winding agrees with its
+    // vertex normals. tests/cull_mode_test.cpp checks it for all three shapes.
+    // The cube's ±Y faces and the plane used to be wound the other way. Nothing
+    // showed it while macOS culled nothing (WO-032); once back faces were really
+    // culled, the cube lost its top and bottom and the plane vanished from above.
+    static void cubeGeometry(std::vector<Vertex>& v, std::vector<uint32_t>& idx) {
+        // Each face: 4 verts, 2 tris — proper normals + UVs + tangents. The
+        // winding is derived from the normal, so a face listed in either order
+        // still comes out counter-clockwise from outside.
+        auto face = [&](bx::Vec3 n, bx::Vec3 t,
+                        bx::Vec3 p0, bx::Vec3 p1, bx::Vec3 p2, bx::Vec3 p3) {
+            uint32_t b = (uint32_t)v.size();
+            v.push_back(vert(p0,n,t,0,0)); v.push_back(vert(p1,n,t,1,0));
+            v.push_back(vert(p2,n,t,1,1)); v.push_back(vert(p3,n,t,0,1));
+            const bool ccw = bx::dot(bx::cross(bx::sub(p1, p0), bx::sub(p2, p0)), n) > 0.0f;
+            if (ccw) idx.insert(idx.end(), {b,b+1,b+2, b,b+2,b+3});
+            else     idx.insert(idx.end(), {b,b+2,b+1, b,b+3,b+2});
+        };
+        face({1,0,0},{0,0,1},  {1,-1,-1},{1, 1,-1},{1, 1,1},{1,-1,1});  // +X
+        face({-1,0,0},{0,0,-1},{-1,-1,1},{-1,1, 1},{-1,1,-1},{-1,-1,-1}); // -X
+        face({0,1,0},{1,0,0},  {-1,1,-1},{1, 1,-1},{1, 1,1},{-1,1, 1}); // +Y
+        face({0,-1,0},{1,0,0}, {-1,-1,1},{1,-1, 1},{1,-1,-1},{-1,-1,-1}); // -Y
+        face({0,0,1},{1,0,0},  {-1,-1,1},{1,-1, 1},{1, 1,1},{-1,1, 1}); // +Z
+        face({0,0,-1},{-1,0,0},{1,-1,-1},{-1,-1,-1},{-1,1,-1},{1,1,-1}); // -Z
+    }
+
+    // XZ, normal +Y.
+    static void planeGeometry(std::vector<Vertex>& verts, std::vector<uint32_t>& idx) {
+        verts = {
+            vert({-0.5f,0,-0.5f},{0,1,0},{1,0,0}, 0,0),
+            vert({ 0.5f,0,-0.5f},{0,1,0},{1,0,0}, 1,0),
+            vert({ 0.5f,0, 0.5f},{0,1,0},{1,0,0}, 1,1),
+            vert({-0.5f,0, 0.5f},{0,1,0},{1,0,0}, 0,1),
+        };
+        idx = {0,2,1, 0,3,2};   // counter-clockwise seen from +Y
+    }
+
+    // UV sphere, stacks × slices.
+    static void sphereGeometry(std::vector<Vertex>& verts, std::vector<uint32_t>& idx,
+                               int stacks = 16, int slices = 16) {
+        constexpr float PI = 3.14159265358979f;
+        for (int i = 0; i <= stacks; ++i) {
+            float phi = PI * i / stacks;
+            for (int j = 0; j <= slices; ++j) {
+                float theta = 2.f * PI * j / slices;
+                float x = sinf(phi)*cosf(theta);
+                float y = cosf(phi);
+                float z = sinf(phi)*sinf(theta);
+                float tx = -sinf(theta), tz = cosf(theta);
+                verts.push_back(vert({x,y,z},{x,y,z},{tx,0,tz},
+                    (float)j/slices, (float)i/stacks));
+            }
+        }
+        for (int i = 0; i < stacks; ++i)
+            for (int j = 0; j < slices; ++j) {
+                uint32_t a = i*(slices+1)+j, b = a+slices+1;
+                idx.insert(idx.end(),{a,a+1,b, a+1,b+1,b});
+            }
+    }
+
 private:
     MeshHandle m_cube, m_plane, m_sphere;
 
@@ -79,62 +141,19 @@ private:
         return assets.addMesh(std::move(mesh));
     }
 
-    // ── Cube ──────────────────────────────────────────────────────────────
     static MeshHandle buildCube(AssetRegistry& assets) {
-        std::vector<Vertex>   v;
-        std::vector<uint32_t> idx;
-        // Each face: 4 verts, 2 tris — proper normals + UVs + tangents
-        auto face = [&](bx::Vec3 n, bx::Vec3 t,
-                        bx::Vec3 p0, bx::Vec3 p1, bx::Vec3 p2, bx::Vec3 p3) {
-            uint32_t b = (uint32_t)v.size();
-            v.push_back(vert(p0,n,t,0,0)); v.push_back(vert(p1,n,t,1,0));
-            v.push_back(vert(p2,n,t,1,1)); v.push_back(vert(p3,n,t,0,1));
-            idx.insert(idx.end(),{b,b+1,b+2, b,b+2,b+3});
-        };
-        face({1,0,0},{0,0,1},  {1,-1,-1},{1, 1,-1},{1, 1,1},{1,-1,1});  // +X
-        face({-1,0,0},{0,0,-1},{-1,-1,1},{-1,1, 1},{-1,1,-1},{-1,-1,-1}); // -X
-        face({0,1,0},{1,0,0},  {-1,1,-1},{1, 1,-1},{1, 1,1},{-1,1, 1}); // +Y
-        face({0,-1,0},{1,0,0}, {-1,-1,1},{1,-1, 1},{1,-1,-1},{-1,-1,-1}); // -Y
-        face({0,0,1},{1,0,0},  {-1,-1,1},{1,-1, 1},{1, 1,1},{-1,1, 1}); // +Z
-        face({0,0,-1},{-1,0,0},{1,-1,-1},{-1,-1,-1},{-1,1,-1},{1,1,-1}); // -Z
+        std::vector<Vertex> v; std::vector<uint32_t> idx;
+        cubeGeometry(v, idx);
         return upload(assets, v, idx, "cube");
     }
-
-    // ── Plane (XZ, normal +Y) ─────────────────────────────────────────────
     static MeshHandle buildPlane(AssetRegistry& assets) {
-        std::vector<Vertex> verts = {
-            vert({-0.5f,0,-0.5f},{0,1,0},{1,0,0}, 0,0),
-            vert({ 0.5f,0,-0.5f},{0,1,0},{1,0,0}, 1,0),
-            vert({ 0.5f,0, 0.5f},{0,1,0},{1,0,0}, 1,1),
-            vert({-0.5f,0, 0.5f},{0,1,0},{1,0,0}, 0,1),
-        };
-        std::vector<uint32_t> idx = {0,1,2, 0,2,3};
-        return upload(assets, verts, idx, "plane");
+        std::vector<Vertex> v; std::vector<uint32_t> idx;
+        planeGeometry(v, idx);
+        return upload(assets, v, idx, "plane");
     }
-
-    // ── Sphere (UV sphere, stacks × slices) ───────────────────────────────
-    static MeshHandle buildSphere(AssetRegistry& assets,
-                                   int stacks=16, int slices=16) {
-        std::vector<Vertex>   verts;
-        std::vector<uint32_t> idx;
-        constexpr float PI = 3.14159265358979f;
-        for (int i = 0; i <= stacks; ++i) {
-            float phi = PI * i / stacks;
-            for (int j = 0; j <= slices; ++j) {
-                float theta = 2.f * PI * j / slices;
-                float x = sinf(phi)*cosf(theta);
-                float y = cosf(phi);
-                float z = sinf(phi)*sinf(theta);
-                float tx = -sinf(theta), tz = cosf(theta);
-                verts.push_back(vert({x,y,z},{x,y,z},{tx,0,tz},
-                    (float)j/slices, (float)i/stacks));
-            }
-        }
-        for (int i = 0; i < stacks; ++i)
-            for (int j = 0; j < slices; ++j) {
-                uint32_t a = i*(slices+1)+j, b = a+slices+1;
-                idx.insert(idx.end(),{a,a+1,b, a+1,b+1,b});
-            }
-        return upload(assets, verts, idx, "sphere");
+    static MeshHandle buildSphere(AssetRegistry& assets) {
+        std::vector<Vertex> v; std::vector<uint32_t> idx;
+        sphereGeometry(v, idx);
+        return upload(assets, v, idx, "sphere");
     }
 };

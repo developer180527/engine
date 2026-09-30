@@ -27,6 +27,7 @@
 #include "runtime/camera_util.h"
 #include "render/world/frustum.h"
 #include "editor/fly_camera.h"
+#include "render/primitive_library.h"
 
 static int g_failures = 0;
 #define CHECK(c, ...) do { if (!(c)) { std::printf("  FAIL  " __VA_ARGS__); std::printf("\n"); ++g_failures; } \
@@ -192,6 +193,46 @@ int main() {
         const bx::Vec3 r = cam.right();
         CHECK(screenX(cam, bx::add(ahead, r)) > screenX(cam, ahead),
               "EditorCamera::right() points to the right of the screen");
+    }
+
+    // ── 5. The built-in shapes are wound front = counter-clockwise ──────────
+    // The cull bit above is only right if meshes agree on which side is the
+    // front. Imported meshes arrive counter-clockwise (glTF, and Assimp without
+    // FlipWindingOrder); the procedural ones are written by hand, and the cube's
+    // ±Y faces and the plane were wound the other way — invisible while macOS
+    // culled nothing, then culled away once WO-032/033 made culling real.
+    std::printf("5. built-in shapes: winding agrees with the normals\n");
+    {
+        auto countWrong = [](const std::vector<Vertex>& v, const std::vector<uint32_t>& idx,
+                             int& tested) {
+            int wrong = 0; tested = 0;
+            for (size_t i = 0; i + 2 < idx.size(); i += 3) {
+                const Vertex& a = v[idx[i]]; const Vertex& b = v[idx[i+1]]; const Vertex& c = v[idx[i+2]];
+                auto P = [](const Vertex& x) { return bx::Vec3{x.position[0], x.position[1], x.position[2]}; };
+                const bx::Vec3 face = bx::cross(bx::sub(P(b), P(a)), bx::sub(P(c), P(a)));
+                if (bx::length(face) < 1e-6f) continue;   // the sphere's poles are degenerate
+                const bx::Vec3 n = { a.normal[0] + b.normal[0] + c.normal[0],
+                                     a.normal[1] + b.normal[1] + c.normal[1],
+                                     a.normal[2] + b.normal[2] + c.normal[2] };
+                ++tested;
+                if (bx::dot(face, n) <= 0.0f) ++wrong;
+            }
+            return wrong;
+        };
+        struct Shape { const char* name; void (*build)(std::vector<Vertex>&, std::vector<uint32_t>&); };
+        const Shape shapes[] = {
+            {"cube",   [](std::vector<Vertex>& v, std::vector<uint32_t>& i) { PrimitiveLibrary::cubeGeometry(v, i); }},
+            {"plane",  [](std::vector<Vertex>& v, std::vector<uint32_t>& i) { PrimitiveLibrary::planeGeometry(v, i); }},
+            {"sphere", [](std::vector<Vertex>& v, std::vector<uint32_t>& i) { PrimitiveLibrary::sphereGeometry(v, i); }},
+        };
+        for (const Shape& s : shapes) {
+            std::vector<Vertex> v; std::vector<uint32_t> idx;
+            s.build(v, idx);
+            int tested = 0;
+            const int wrong = countWrong(v, idx, tested);
+            CHECK(tested > 0 && wrong == 0, "%s: %d of %d triangles counter-clockwise from outside",
+                  s.name, tested - wrong, tested);
+        }
     }
 
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
