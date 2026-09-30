@@ -18,14 +18,15 @@ Nothing. Start the first order under **Next up**.
 ## Next up
 
 1. [WO-002](WO-002-skinned-gltf-fails-loudly.md) **A skinned glTF fails loudly instead of cooking as a static mesh** · P0 · size S — A skinned `.glb` silently loses its skeleton and animations and cooks as a static mesh.
-2. [WO-003](WO-003-brief-reentry-command.md) **One command to regain context — `brief`** · P1 · size S — Coming back after a week should take one command, not an afternoon of re-reading.
-3. [WO-004](WO-004-roadmap-stops-lying.md) **The roadmap stops lying about where we are** · P1 · size S — `docs/README.md` tells you to read the roadmap second, and its numbers are a month old.
+2. [WO-029](WO-029-save-never-drops-a-mesh-reference.md) **Saving a scene never drops a mesh reference it failed to load** · P0 · size S — A model whose mesh fails to load (or is still loading) gets no `MeshRenderer`, so the next save writes that entity without its mesh reference, and the model is gone for good.
+3. [WO-003](WO-003-brief-reentry-command.md) **One command to regain context — `brief`** · P1 · size S — Coming back after a week should take one command, not an afternoon of re-reading.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-002](WO-002-skinned-gltf-fails-loudly.md) | A skinned glTF fails loudly instead of cooking as a static mesh | Asset import & cooking | S | **ready** | cooker, mesh-importer |
+| [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | Asset import & cooking | S | **ready** | scene-service |
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
