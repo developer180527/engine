@@ -13,15 +13,24 @@
 #   cmake -B build-tsan -DENGINE_SANITIZE=thread            && ctest
 # (option lives in the root CMakeLists; it instruments engine + third_party.)
 
-# engine_test(<name> [LIB engine_core|engine_runtime] [EXPORTS]
+# engine_test(<name> [LIB <lib>...] [EXPORTS]
+#   LIB: engine_core, engine_runtime, engine_cooking (the cook stack) and/or
+#   engine_source_import (a runtime that reads source assets). The last two
+#   exist only in dev trees (WO-017); a test naming one is skipped when it is
+#   absent, since what it tests is not built.
 #             [LABEL unit|stress|asset] [TIMEOUT sec] [ARGS ...])
 #   EXPORTS: test loads real kit .so modules that resolve engine symbols
 #   from the executable (ENABLE_EXPORTS).
 function(engine_test name)
-    cmake_parse_arguments(ET "EXPORTS" "LIB;LABEL;TIMEOUT" "ARGS" ${ARGN})
+    cmake_parse_arguments(ET "EXPORTS" "LABEL;TIMEOUT" "LIB;ARGS" ${ARGN})
     if(NOT ET_LIB)
         set(ET_LIB engine_runtime)
     endif()
+    foreach(_devlib engine_cooking engine_source_import)
+        if(_devlib IN_LIST ET_LIB AND NOT TARGET ${_devlib})
+            return()
+        endif()
+    endforeach()
     if(NOT ET_LABEL)
         set(ET_LABEL unit)
     endif()
@@ -319,14 +328,14 @@ engine_test(prev_snapshot_test)
 # verification and the .cshader container — all pure functions over bytes, so
 # none of it needs shaderc or a GPU. The subprocess path is covered by actually
 # cooking shaders/standard.shader, not here.
-engine_test(shader_cooker_test LIB engine_core)
+engine_test(shader_cooker_test LIB engine_cooking)
 # Materials as data: every parameter name checked against the shader's declared
 # interface, and uniform blocks proven COMPLETE (an unset parameter must read
 # its default, not the previous draw's register).
-engine_test(material_cooker_test LIB engine_core)
+engine_test(material_cooker_test LIB engine_cooking)
 # The half of LOD that was missing: R20 measured selection at zero benefit
 # because nothing could produce a cheaper mesh. This asserts levels ARE cheaper.
-engine_test(decimate_test LIB engine_core)
+engine_test(decimate_test LIB engine_cooking)
 # Which cooked shader variant this machine wants. Guards two silent failures: a
 # package cooked for the wrong backend (no program -> nothing renders) and a
 # feature mask with no cooked variant (the nearest variant is confidently wrong).
@@ -334,7 +343,7 @@ engine_test(shader_select_test)
 # The packaging path. It once shipped a game with every mesh present and every
 # surface untextured, from an ordinary clean-rebuild-against-a-warm-DDC, and
 # nothing caught it because the logic lived inline in engine_build's main flow.
-engine_test(package_closure_test LIB engine_core)
+engine_test(package_closure_test LIB engine_cooking)
 
 # ── Rust FFI seam ────────────────────────────────────────────────────────────
 # Only when the Rust module is actually built. Links engine_net directly rather
@@ -406,34 +415,34 @@ engine_test(providers_test)
 # Importer-dependent tests — dev posture only (the shipping build compiles
 # the source-import stack out; these have nothing to exercise there).
 if(ENGINE_WITH_SOURCE_IMPORTERS)
-    engine_test(async_loader_test)
-    engine_test(cooker_test)
+    engine_test(async_loader_test LIB engine_source_import)
+    engine_test(cooker_test LIB engine_runtime engine_cooking)
     # WO-011: the ONE cook back end, ImportedScene -> cooked mesh, through
     # ImportedScene values only (no file parsed). Reads the cooked bytes back:
     # layout, baking (incl. mirrored instances), tangents, materials, sibling
     # textures, skeleton, clips (sampled), rigid meshes, refusals, determinism.
-    engine_test(mesh_backend_test)
+    engine_test(mesh_backend_test LIB engine_runtime engine_cooking)
     # WO-012: the cgltf front end against the import-frontend contract suite,
     # each case WRITTEN as a real .gltf from its expected scene; plus its dropped
     # list and the old cook path's silent losses it fixes.
-    engine_test(frontend_cgltf_test)
+    engine_test(frontend_cgltf_test LIB engine_runtime engine_cooking)
     # WO-013: does a cooked mesh find its EXTERNAL texture? Real MeshCooker, real
     # AssetService, bgfx Noop. Written first: it was red on the old Assimp static
     # path (a bare basename the runtime cannot resolve) and is the proof the
     # import pipeline fixes it.
-    engine_test(cooked_texture_resolution_test)
+    engine_test(cooked_texture_resolution_test LIB engine_runtime engine_cooking)
     # WO-013: the Assimp front end against the import-frontend contract suite,
     # every case (skinned and centimetre/Z-up included) WRITTEN as a real COLLADA
     # file from its expected scene.
-    engine_test(frontend_assimp_test)
+    engine_test(frontend_assimp_test LIB engine_runtime engine_cooking)
     # WO-036: a skinned, animated glTF from a REAL exporter (Khronos CesiumMan),
     # the one glTF the tests did not write. Read, checked against the spec's own
     # skinning and posing computed with cgltf's helpers, and cooked.
-    engine_test(real_gltf_test)
+    engine_test(real_gltf_test LIB engine_runtime engine_cooking)
     # WO-016: an animation-only source cooks to a skeleton-independent clip in
     # the normal pipeline; the editor binds it through the registry, and a
     # shipped build (no registry, no source reader) through its packaged name.
-    engine_test(clip_cook_test)
+    engine_test(clip_cook_test LIB engine_runtime engine_cooking)
     target_compile_definitions(real_gltf_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     # Cook infrastructure (scheduler / DDC / manifest / scanner) — needs only
     # the GPU-free core, no game assets.
@@ -459,7 +468,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # and the EAC encoder bimg does not provide. Links bimg for its ETC2A
     # DECODER: the alpha encoder is validated against an implementation nobody
     # here wrote, which is the only reason to believe the bit layout.
-    engine_test(texture_format_test LIB engine_core)
+    engine_test(texture_format_test LIB engine_cooking)
     target_link_libraries(texture_format_test PRIVATE bimg)
     target_include_directories(texture_format_test PRIVATE
         ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bimg/include)
@@ -513,7 +522,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         add_dependencies(addon_protocol_test engine_build)
     endif()
     # Enforces that every cooker's DECLARED inputs move its cook key
-    engine_test(cook_deps_test LIB engine_core)
+    engine_test(cook_deps_test LIB engine_cooking)
 
     # ── Fuzz targets — two ctest lanes from one binary ───────────────────────
     # engine_fuzz_target(<name>) registers:
@@ -527,7 +536,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # parsers and must stay linkable without the renderer. A target that reaches
     # into ECS components (the JSON entity path) passes LIB engine_runtime.
     function(engine_fuzz_target name domain)
-        cmake_parse_arguments(EFT "" "LIB" "" ${ARGN})
+        cmake_parse_arguments(EFT "" "" "LIB" ${ARGN})
         if(NOT EFT_LIB)
             set(EFT_LIB engine_core)
         endif()
@@ -570,9 +579,9 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # engine, and the one back end cooks what they return. Mutated glTF and OBJ
     # built from the contract suite's reference scenes: no crash, no escaping
     # exception, nothing invalid cooks, and every cook loads back.
-    engine_fuzz_target(fuzz_import_frontend_test import_frontend LIB engine_runtime)
-    engine_test(import_test)
-    engine_test(residency_test)
+    engine_fuzz_target(fuzz_import_frontend_test import_frontend LIB engine_runtime engine_cooking)
+    engine_test(import_test LIB engine_source_import)
+    engine_test(residency_test LIB engine_runtime engine_cooking)
 # ── The editor's first automated coverage ────────────────────────────────────
 # UndoStack is header-only with no ImGui in its include graph, and it is the
 # editor's most consequential logic: a wrong undo destroys authored work and
@@ -587,7 +596,7 @@ engine_test(editor_undo_test)
 # ImGui panel draws and what the libgui experiment will draw, so both front
 # ends share one definition of what a click does. Fails to BUILD if model.h
 # includes ImGui — which is also why it links no imgui.
-engine_test(asset_browser_model_test)
+engine_test(asset_browser_model_test LIB engine_runtime engine_cooking)
 # Editor commands resolve per keyboard convention: Primary is Cmd on Apple and
 # Ctrl elsewhere. The shortcuts used to be "LeftSuper + key", i.e. dead off
 # macOS. GUI-free, so it links editor_core only.
@@ -612,7 +621,7 @@ target_link_libraries(editor_prefs_test PRIVATE imgui)
 # pool is 4096, so the rest failed with "bgfx buffer creation failed" and nothing
 # crashed. Loads 5 000 times on purpose — past the pool — so the test reproduces the
 # original failure rather than just checking a handle is reused.
-engine_test(mesh_dedup_test)   # cooks its own fixture via MeshCooker
+engine_test(mesh_dedup_test LIB engine_runtime engine_cooking)   # cooks its own fixture via MeshCooker
 endif()
 
 # ── kit lifecycle — loads the project's real combat kit mid-play ─────────────
@@ -649,15 +658,15 @@ set(ZOMBIE_DIR "${CMAKE_SOURCE_DIR}/fps_shooter/assets/Animations/Zombie Anim Pa
 if(NOT ENGINE_WITH_SOURCE_IMPORTERS)
     # FBX-parsing tests can't run in the shipping posture.
 elseif(EXISTS "${ZOMBIE_DIR}/Warzombie F Pedroso.fbx")
-    engine_test(clip_binding_test LABEL asset
+    engine_test(clip_binding_test LIB engine_runtime engine_cooking LABEL asset
         ARGS "${ZOMBIE_DIR}/Warzombie F Pedroso.fbx" "${ZOMBIE_DIR}/zombie walk.fbx")
-    engine_test(anim_pose_test LABEL asset
+    engine_test(anim_pose_test LIB engine_runtime engine_cooking LABEL asset
         ARGS "${ZOMBIE_DIR}/Warzombie F Pedroso.fbx" "${ZOMBIE_DIR}/zombie walk.fbx")
 else()
     add_executable(clip_binding_test clip_binding_test.cpp)
-    target_link_libraries(clip_binding_test PRIVATE engine_runtime)
+    target_link_libraries(clip_binding_test PRIVATE engine_runtime engine_cooking)
     add_executable(anim_pose_test anim_pose_test.cpp)
-    target_link_libraries(anim_pose_test PRIVATE engine_runtime)
+    target_link_libraries(anim_pose_test PRIVATE engine_runtime engine_cooking)
     set_target_properties(clip_binding_test anim_pose_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
@@ -684,7 +693,7 @@ engine_test(stress_jobs      LABEL stress TIMEOUT 600)
 engine_test(stress_skinned   LABEL stress TIMEOUT 600)
 engine_test(stress_physics   LABEL stress TIMEOUT 600)
 if(ENGINE_WITH_SOURCE_IMPORTERS)
-    engine_test(stress_assets LABEL stress TIMEOUT 600)   # importer fuzz
+    engine_test(stress_assets LIB engine_source_import LABEL stress TIMEOUT 600)   # importer fuzz
 endif()
 
 # ── docs lane — the documentation/maturity contract ──────────────────────────
@@ -776,6 +785,19 @@ if(Python3_Interpreter_FOUND)
     # Two labels: `unit` so it gates CI like the other seam checks, `audit` so
     # the home-server farm can run this lane alone — it needs no build, so it
     # is the one lane that is cheap enough to run on every commit.
+    # ── The cook stack stays out of the runtime (WO-017) ─────────────────────
+    # engine_player and the module probe are what a game ships, and
+    # server_link_probe is the dedicated server. They link a runtime only, and engine_cooking (Assimp, the cookers, the
+    # encoders) must not reach them in ANY build — this one included, which is
+    # the point: CI's shipping job proves the build setting, this proves the
+    # library boundary in the default build too.
+    add_test(NAME player_has_no_cook_stack
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/scripts/check_no_cook_stack.py
+                     $<TARGET_FILE:engine_player> $<TARGET_FILE:engine_module_probe>
+                     $<TARGET_FILE:server_link_probe>)
+    set_tests_properties(player_has_no_cook_stack PROPERTIES LABELS unit TIMEOUT 120)
+
     add_test(NAME architecture_audit
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/scripts/engine_audit.py --check)

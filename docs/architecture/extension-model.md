@@ -356,13 +356,17 @@ Verified state of that rule:
 | Sources outside `src/editor/` including ImGui or editor headers | **none** (two comments mention ImGui; no includes) |
 | `editor` target | an **executable**, the only thing linking ImGui, one-way on `engine_runtime` |
 | SDK header install | excludes `src/editor` explicitly |
-| `engine_cook`, `engine_cook_worker`, `engine_build`, `engine_project` | link **only `engine_core`** — no runtime, no window, no ImGui |
-| `engine_core` | genuinely GPU-free: zero `#include` of bgfx/GLFW/SDL (shaderc runs as a child process) |
+| `engine_cook`, `engine_cook_worker`, `engine_build` | link **only `engine_cooking`** (the cook stack, over `engine_core`) — no runtime, no window, no ImGui |
+| `engine_project` | links **only `engine_core`** |
+| `engine_core` | genuinely GPU-free: zero `#include` of bgfx/GLFW/SDL, and since WO-017 no cook stack (no Assimp, no encoders) |
+| `engine_cooking` | GPU-free too (shaderc runs as a child process); dev trees only |
 | `assetlib` | links SQLite + blake3 only; no engine dependency |
 
-So a Qt or Rust editor can link `engine_core` **today** and get cooking, the
-DDC, the material/shader/texture cookers, package closure and project
-scaffolding, with no window system at all.
+So a Qt or Rust editor can link `engine_cooking` **today** and get cooking,
+the DDC, the material/shader/texture cookers and package closure, plus
+`engine_core`'s project scaffolding, with no window system at all. To read
+source assets at runtime as the ImGui editor does, it links
+`engine_source_import` and calls `sourceimport::install` after init.
 
 The window seam (`wsi::`, `runtime/platform/window_ops.h`) moved out of
 `src/editor/` for exactly this reason: it had made multi-window support an
@@ -379,7 +383,7 @@ both already selected by one CMake branch. `libglfw3.a` is in the SDL3 link line
 before the change and absent after.
 
 So the SDK now offers a host three things independently: a **GPU-free** layer
-for tools (`engine_core`), a **runtime** that links one windowing library of its
+for tools (`engine_core`, and `engine_cooking` to cook), a **runtime** that links one windowing library of its
 choosing, and a **per-window seam** for driving more than one window. None of
 them requires ImGui, and none of them requires the editor.
 

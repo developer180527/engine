@@ -13,6 +13,7 @@
 #include "scene/scene_serializer.h"
 #include "runtime/services/async_loader.h"
 #include "runtime/services/scene_assets_host.h"
+#include "runtime/services/source_import.h"
 
 #include <cstdio>
 
@@ -22,6 +23,7 @@ int main(int argc, char** argv) {
 
     EngineRuntime engine;
     if (!engine.init(cfg)) return 1;
+    sourceimport::install(engine);   // legacy scenes name source models (WO-017)
     if (!engine.hasProject()) {
         std::fprintf(stderr, "scene_resave: no project found\n");
         return 2;

@@ -1011,13 +1011,28 @@ trigger that would revisit it:
   resets its own (and renderer/animator) in stopSimulation.
 
 ## Layering
-`engine_core` (alias `engine::core`) is the GPU-free layer underneath:
-cookers, cook service, and the single-header library implementation TUs
-(stb/cgltf). It links only assetlib + assimp — no bgfx, no GLFW, no
-Jolt/Lua. `engine_cook` links engine_core alone; `engine_runtime` links
-engine_core plus the graphics/platform/plugin stack. Keep new sources on
-the right side of this line: if a .cpp references no bgfx/GLFW symbols
-and serves data processing, it belongs in engine_core.
+Four libraries (WO-017):
+- `engine_core` (`engine::core`): the GPU-free layer underneath: memory, the
+  tick command record, project scaffolding, the stb/cgltf decode TUs. Links
+  assetlib and ozz; no bgfx, no GLFW, no Jolt/Lua, **no cook stack**.
+- `engine_cooking` (`engine::cooking`, dev trees only): the cookers, the
+  import front ends, the encoders, package closure. Links `engine_core`,
+  Assimp and bimg's encoders. `engine_cook`, `engine_cook_worker` and
+  `engine_build` link it alone.
+- `engine_runtime`: `engine_core` plus the graphics/platform/plugin stack.
+  It reads cooked content only, in every build: the player and the server
+  link it and nothing below. `player_has_no_cook_stack` checks the binaries.
+- `engine_source_import` (`engine::source_import`, dev trees only): the
+  AsyncLoader and the runtime glTF/Assimp importers, over `engine_runtime`
+  and `engine_cooking`. A host opts in with `sourceimport::install(rt)`
+  after init (`runtime/services/source_import.h`): the editor, `engine_host`,
+  `scene_resave`. Until WO-017 `EngineRuntime::init` registered these in
+  every dev build, which is how `engine_player` carried Assimp and every
+  encoder (33.6 MB; 24.4 MB without).
+
+Keep new sources on the right side: data processing with no bgfx/GLFW goes
+in `engine_core` if a shipped game needs it, `engine_cooking` if only a cook
+does.
 
 ## Kit images: the graveyard, and what a shipped game pays for it
 

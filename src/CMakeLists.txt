@@ -72,10 +72,10 @@ set(ENGINE_SHADER_SOURCES
 )
 
 # ── engine_core — GPU-free layer ─────────────────────────────────────────────
-# Pure-CPU code: asset cooking, single-header library implementations. No
-# bgfx, no GLFW, no window — links into CLI tools (engine_cook) and servers
-# without dragging in graphics or platform libraries.
-# Source-format import stack (Assimp cookers/importers) — compiled only in
+# Pure-CPU code: memory, the tick command record, project scaffolding,
+# single-header decoders. No bgfx, no GLFW, no window, and (WO-017) no cook
+# stack: that is engine_cooking, below.
+# The cook stack's sources (Assimp cookers/importers) — compiled only in
 # dev trees. ENGINE_WITH_SOURCE_IMPORTERS=OFF is the shipping posture: a
 # fully-cooked runtime that never parses FBX and never links Assimp.
 if(ENGINE_WITH_SOURCE_IMPORTERS)
@@ -94,7 +94,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         assets/cookers/texture/texture_encode.cpp
         assets/cookers/cook_service.cpp
         # Shader cooking — one concern per TU (src/assets/cookers/shader/info.md).
-        # No bgfx: shaderc runs as a child process, so engine_core stays GPU-free.
+        # No bgfx: shaderc runs as a child process, so engine_cooking stays GPU-free.
         assets/cookers/shader/shader_manifest.cpp
         assets/cookers/shader/shader_reflect.cpp
         assets/cookers/shader/shader_verify.cpp
@@ -105,7 +105,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         assets/cookers/material/material_manifest.cpp
         assets/cookers/material/material_resolve.cpp
         assets/cookers/material/material_cooker.cpp
-        # Packaging closure — what a dist must contain. In engine_core (not the
+        # Packaging closure — what a dist must contain. In engine_cooking (not the
         # engine_build TU) so it can be tested; see its header for the
         # shipped-untextured bug that motivated extracting it. NOT named
         # "build/": .gitignore's unanchored `build/` matches at any depth and
@@ -125,8 +125,8 @@ else()
 endif()
 
 add_library(engine_core STATIC
-    # Asset cook pipeline (Assimp/stb in, cooked binaries out) — dev only
-    ${ENGINE_COOKER_SOURCES}
+    # NO cook stack here (WO-017): the cookers, import front ends and encoders
+    # are the engine_cooking library below, and engine_core links none of them.
 
     # Project management — scaffolding new projects (canonical v2 layout)
     project/project_scaffold.cpp
@@ -170,94 +170,6 @@ target_link_libraries(engine_core PUBLIC
     assetlib
     ozz_animation ozz_animation_offline   # skinned-mesh cooker (skeleton/clip archives)
 )
-if(ENGINE_WITH_SOURCE_IMPORTERS)
-    target_link_libraries(engine_core PUBLIC assimp)
-    # BC1/3/5/7 texture encoding (texture_encode.cpp) via vendored
-    # rgbcx/bc7enc. Offline-only: shipped runtimes read blocks, never encode.
-    # (Replaced bimg_encode: squish cluster-fit was ~6.5s per 4K BC1 and
-    # nvtt AVPCL BC7 was exhaustive-minutes; rgbcx does the same 4K in ~100s
-    # of ms at equal-or-better quality.)
-    target_include_directories(engine_core PRIVATE
-        ${CMAKE_SOURCE_DIR}/third_party/bc7enc)
-    # ASTC + ETC2 come from bimg, which already vendors ARM's astc-encoder and
-    # an ETC2 encoder for bgfx — so the mobile texture targets needed no new
-    # dependency, only this target. BC stays on rgbcx/bc7enc: bimg's BC path is
-    # squish cluster-fit, which is the ~6.5s-per-4K encoder this engine replaced.
-    # Offline only, and inside the ENGINE_WITH_SOURCE_IMPORTERS branch, so a
-    # shipped player links no encoder of any kind.
-    # bimg (not just bimg_encode): image_encode.cpp calls back into bimg's core
-    # for getBlockInfo/imageConvert/imageAlloc. engine_runtime already linked bimg
-    # so the editor was fine, and engine_cook_worker — the out-of-process cook
-    # path, which links engine_core WITHOUT the runtime — was the target that
-    # failed. Worth remembering that the worker is the build that catches
-    # engine_core's real dependency surface.
-    target_link_libraries(engine_core PRIVATE bimg_encode bimg)
-    target_include_directories(engine_core PRIVATE
-        ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bimg/include)
-    # Where the ShaderCooker finds the compiler. Baked in rather than searched
-    # for at runtime so a cook from any working directory resolves it; the
-    # ENGINE_SHADERC env var overrides, which is how a Windows runner points at
-    # its own build to produce the D3D profiles this host cannot emit.
-    if(TARGET bgfx::shaderc)
-        target_compile_definitions(engine_core PRIVATE
-            ENGINE_SHADERC_PATH="$<TARGET_FILE:bgfx::shaderc>")
-        add_dependencies(engine_core bgfx::shaderc)
-        # Every .sc includes bgfx_shader.sh, which lives in bgfx's own tree.
-        # The build-time shader step gets this via BGFX_SHADER_INCLUDE_PATH;
-        # the cooker needs the same list or every compile fails at the first
-        # #include. ';'-separated (ENGINE_SHADER_INCLUDES overrides).
-        # Emitted as a C initializer list ("a","b",) rather than a separated
-        # string. A semicolon cannot survive the trip: as a literal it splits
-        # target_compile_definitions' LIST argument into two broken -D flags,
-        # and as $<SEMICOLON> it reaches the shell as a command separator.
-        # Commas and quotes have neither problem.
-        set(ENGINE_SHADER_INCLUDE_INIT "")
-        foreach(_dir ${BGFX_SHADER_INCLUDES})
-            string(APPEND ENGINE_SHADER_INCLUDE_INIT "\"${_dir}\",")
-        endforeach()
-        target_compile_definitions(engine_core PRIVATE
-            ENGINE_SHADER_INCLUDE_LIST=${ENGINE_SHADER_INCLUDE_INIT})
-    else()
-        message(STATUS "engine: bgfx::shaderc target absent — shader cooking "
-                       "will need ENGINE_SHADERC at runtime")
-    endif()
-    # The engine's own default assets (shaders today, default materials later).
-    # CookService scans this as a SECOND asset root so engine defaults cook into
-    # each project's .cache — no new packaging concept, and the DDC dedups the
-    # work across projects since the sources are byte-identical. $ENGINE_ASSETS
-    # overrides; absent is normal in a shipped dist, where the cooked output
-    # already travelled inside .cache.
-    target_compile_definitions(engine_core PRIVATE
-        ENGINE_DEFAULT_ASSETS_DIR="${CMAKE_SOURCE_DIR}/shaders")
-    # Block encoders + mip filter are hot inner loops over gigapixels; at
-    # Debug -O0 they dominate cook time 5-10x. They're deterministic vendored
-    # codecs nobody steps through with the engine — always optimize them.
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
-        set_source_files_properties(
-            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
-            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
-            assets/cookers/texture/texture_encode.cpp
-            assets/cookers/texture/texture_eac.cpp
-            PROPERTIES COMPILE_OPTIONS "-O2")
-    elseif(MSVC)
-        # NOT applied in Debug: MSVC's Debug config carries /RTC1, and
-        # `/RTC1 /O2` is a hard command-line error (D8016). These are per-SOURCE
-        # pins inside engine_core, so /RTC1 cannot be stripped for them alone
-        # without disarming Debug checks for the entire library — and silently
-        # weakening checks across the engine is a worse trade than a slower
-        # Windows Debug cook.
-        # Consequence: a Debug cook on Windows is ~8x slower than on
-        # Clang/GNU. The fix, when that bites, is to move these TUs into their
-        # own static library and strip /RTC1 in that scope — exactly what
-        # modules/assetlib/third_party/sqlite3/CMakeLists.txt does.
-        set_source_files_properties(
-            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
-            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
-            assets/cookers/texture/texture_encode.cpp
-            assets/cookers/texture/texture_eac.cpp
-            PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:/O2>")
-    endif()
-endif()
 # Same policy for the single-header decode/parse TUs: stb decodes 4K PNGs,
 # cgltf parses GLB buffers — both byte-at-a-time loops that crawl at -O0,
 # both vendored code with no engine symbols to debug.
@@ -276,12 +188,116 @@ elseif(MSVC)
 endif()
 target_compile_definitions(engine_core PUBLIC
     BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>   # bx headers (cooker skeleton types)
-    # Code that reads source files gates on this (runtime_boot installs the
-    # clip source reader and the source importers only when it is on).
+    # Whether this tree builds the cook stack at all (engine_cooking,
+    # engine_source_import). engine_build reads it; the runtime does not.
     ENGINE_WITH_SOURCE_IMPORTERS=$<BOOL:${ENGINE_WITH_SOURCE_IMPORTERS}>
 )
 
 add_library(engine::core ALIAS engine_core)
+
+# ── engine_cooking — the cook stack, as a library boundary (WO-017) ──────────
+# The cookers, the import front ends (Assimp, cgltf -> ImportedScene), the
+# texture encoders and the packaging closure. GPU-free, so the cook CLI and the
+# out-of-process worker link it without a renderer. Only dev trees build it.
+#
+# It used to be part of engine_core, which linked Assimp and the encoders
+# PUBLIC, so every runtime carried the whole cook stack, engine_player
+# included: the split was a build setting (ENGINE_WITH_SOURCE_IMPORTERS), not
+# a boundary. Now engine_core and engine_runtime link none of it, and the
+# player cannot reach it by construction. `player_has_no_cook_stack` checks
+# the binary.
+#
+# Named engine_cooking because `engine_cook` is already the CLI executable.
+if(ENGINE_WITH_SOURCE_IMPORTERS)
+    add_library(engine_cooking STATIC ${ENGINE_COOKER_SOURCES})
+    target_link_libraries(engine_cooking PUBLIC engine_core assimp)
+    # BC1/3/5/7 texture encoding (texture_encode.cpp) via vendored
+    # rgbcx/bc7enc. Offline-only: shipped runtimes read blocks, never encode.
+    # (Replaced bimg_encode: squish cluster-fit was ~6.5s per 4K BC1 and
+    # nvtt AVPCL BC7 was exhaustive-minutes; rgbcx does the same 4K in ~100s
+    # of ms at equal-or-better quality.)
+    target_include_directories(engine_cooking PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/bc7enc)
+    # ASTC + ETC2 come from bimg, which already vendors ARM's astc-encoder and
+    # an ETC2 encoder for bgfx — so the mobile texture targets needed no new
+    # dependency, only this target. BC stays on rgbcx/bc7enc: bimg's BC path is
+    # squish cluster-fit, which is the ~6.5s-per-4K encoder this engine replaced.
+    # Offline only, and inside the ENGINE_WITH_SOURCE_IMPORTERS branch, so a
+    # shipped player links no encoder of any kind.
+    # bimg (not just bimg_encode): image_encode.cpp calls back into bimg's core
+    # for getBlockInfo/imageConvert/imageAlloc. engine_runtime already linked bimg
+    # so the editor was fine, and engine_cook_worker — the out-of-process cook
+    # path, which links the cook stack WITHOUT the runtime — was the target
+    # that failed. Worth remembering that the worker is the build that catches
+    # engine_cooking's real dependency surface.
+    target_link_libraries(engine_cooking PRIVATE bimg_encode bimg)
+    target_include_directories(engine_cooking PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bimg/include)
+    # Where the ShaderCooker finds the compiler. Baked in rather than searched
+    # for at runtime so a cook from any working directory resolves it; the
+    # ENGINE_SHADERC env var overrides, which is how a Windows runner points at
+    # its own build to produce the D3D profiles this host cannot emit.
+    if(TARGET bgfx::shaderc)
+        target_compile_definitions(engine_cooking PRIVATE
+            ENGINE_SHADERC_PATH="$<TARGET_FILE:bgfx::shaderc>")
+        add_dependencies(engine_cooking bgfx::shaderc)
+        # Every .sc includes bgfx_shader.sh, which lives in bgfx's own tree.
+        # The build-time shader step gets this via BGFX_SHADER_INCLUDE_PATH;
+        # the cooker needs the same list or every compile fails at the first
+        # #include. ';'-separated (ENGINE_SHADER_INCLUDES overrides).
+        # Emitted as a C initializer list ("a","b",) rather than a separated
+        # string. A semicolon cannot survive the trip: as a literal it splits
+        # target_compile_definitions' LIST argument into two broken -D flags,
+        # and as $<SEMICOLON> it reaches the shell as a command separator.
+        # Commas and quotes have neither problem.
+        set(ENGINE_SHADER_INCLUDE_INIT "")
+        foreach(_dir ${BGFX_SHADER_INCLUDES})
+            string(APPEND ENGINE_SHADER_INCLUDE_INIT "\"${_dir}\",")
+        endforeach()
+        target_compile_definitions(engine_cooking PRIVATE
+            ENGINE_SHADER_INCLUDE_LIST=${ENGINE_SHADER_INCLUDE_INIT})
+    else()
+        message(STATUS "engine: bgfx::shaderc target absent — shader cooking "
+                       "will need ENGINE_SHADERC at runtime")
+    endif()
+    # The engine's own default assets (shaders today, default materials later).
+    # CookService scans this as a SECOND asset root so engine defaults cook into
+    # each project's .cache — no new packaging concept, and the DDC dedups the
+    # work across projects since the sources are byte-identical. $ENGINE_ASSETS
+    # overrides; absent is normal in a shipped dist, where the cooked output
+    # already travelled inside .cache.
+    target_compile_definitions(engine_cooking PRIVATE
+        ENGINE_DEFAULT_ASSETS_DIR="${CMAKE_SOURCE_DIR}/shaders")
+    # Block encoders + mip filter are hot inner loops over gigapixels; at
+    # Debug -O0 they dominate cook time 5-10x. They're deterministic vendored
+    # codecs nobody steps through with the engine — always optimize them.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
+            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
+            assets/cookers/texture/texture_encode.cpp
+            assets/cookers/texture/texture_eac.cpp
+            PROPERTIES COMPILE_OPTIONS "-O2")
+    elseif(MSVC)
+        # NOT applied in Debug: MSVC's Debug config carries /RTC1, and
+        # `/RTC1 /O2` is a hard command-line error (D8016). These are per-SOURCE
+        # pins inside engine_cooking, so /RTC1 cannot be stripped for them alone
+        # without disarming Debug checks for the entire library — and silently
+        # weakening checks across the engine is a worse trade than a slower
+        # Windows Debug cook.
+        # Consequence: a Debug cook on Windows is ~8x slower than on
+        # Clang/GNU. The fix, when that bites, is to move these TUs into their
+        # own static library and strip /RTC1 in that scope — exactly what
+        # modules/assetlib/third_party/sqlite3/CMakeLists.txt does.
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/rgbcx.cpp
+            ${CMAKE_SOURCE_DIR}/third_party/bc7enc/bc7enc.cpp
+            assets/cookers/texture/texture_encode.cpp
+            assets/cookers/texture/texture_eac.cpp
+            PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:/O2>")
+    endif()
+    add_library(engine::cooking ALIAS engine_cooking)
+endif()
 
 # ── engine_runtime — the full game SDK ───────────────────────────────────────
 # Public API surface: include/engine/*.h umbrella headers. Everything under
@@ -399,17 +415,8 @@ add_library(engine_runtime STATIC
     ${ENGINE_SHADER_SOURCES}
 )
 
-# Source-format import (dev trees only): the editor's drag-drop AsyncLoader
-# + the glTF/Assimp importers. Shipping builds load cooked binaries only.
-if(ENGINE_WITH_SOURCE_IMPORTERS)
-    target_sources(engine_runtime PRIVATE
-        runtime/services/async_loader/loader.cpp
-        runtime/services/async_loader/parse.cpp
-        runtime/services/async_loader/upload.cpp
-        assets/importers/gltf_importer.cpp
-        assets/importers/assimp_importer.cpp
-    )
-endif()
+# Source-format import (the AsyncLoader, the glTF/Assimp importers) is NOT
+# here: it is engine_source_import, below, which a host links to opt in.
 
 set_source_files_properties(
     ${ENGINE_SHADER_SOURCES}
@@ -449,14 +456,6 @@ set(ENGINE_SERVER_EXCLUDED
     # load libX11. platform_factory.cpp stays and returns a HeadlessPlatform;
     # window_ops_null.cpp below supplies the per-window seam.
     ${ENGINE_PLATFORM_SOURCES}
-    # Source-format import. A server reads cooked binaries only — this is the
-    # same shipping posture ENGINE_WITH_SOURCE_IMPORTERS=OFF describes, applied
-    # to one target instead of the whole tree.
-    runtime/services/async_loader/loader.cpp
-    runtime/services/async_loader/parse.cpp
-    runtime/services/async_loader/upload.cpp
-    assets/importers/gltf_importer.cpp
-    assets/importers/assimp_importer.cpp
     render/gpu.cpp
     render/renderer.cpp
     render/renderer/device.cpp
@@ -600,6 +599,27 @@ endif()
 
 add_library(engine::runtime ALIAS engine_runtime)
 
+# ── engine_source_import — a runtime that reads SOURCE assets (dev only) ─────
+# The editor's drag-drop AsyncLoader and the runtime glTF/Assimp importers.
+# They need both halves: the GPU upload path (engine_runtime) and the import
+# front ends (engine_cooking). A host opts in by linking this and calling
+# sourceimport::install(rt) after init (runtime/services/source_import.h):
+# the editor, engine_host and scene_resave. The player and the server do not,
+# so they load cooked binaries only in every build, not just the shipping one
+# (WO-017). WO-018 removes the runtime importers altogether.
+if(ENGINE_WITH_SOURCE_IMPORTERS)
+    add_library(engine_source_import STATIC
+        runtime/services/source_import.cpp
+        runtime/services/async_loader/loader.cpp
+        runtime/services/async_loader/parse.cpp
+        runtime/services/async_loader/upload.cpp
+        assets/importers/gltf_importer.cpp
+        assets/importers/assimp_importer.cpp
+    )
+    target_link_libraries(engine_source_import PUBLIC engine_runtime engine_cooking)
+    add_library(engine::source_import ALIAS engine_source_import)
+endif()
+
 # ── engine::headers — include dirs + defines, ZERO libraries ─────────────────
 # For hot-reloadable game modules (shared libs loaded by engine_host): they
 # compile against engine headers but resolve every symbol from the host
@@ -673,9 +693,9 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
 # runtime by the editor and by engine_cook alike. So it is built whenever
 # cooking is compiled in, independent of ENGINE_BUILD_TOOLS — otherwise
 # -DENGINE_BUILD_TOOLS=OFF would silently downgrade the editor to in-process
-# cooking (no crash isolation). Links engine_core only, same as engine_cook.
+# cooking (no crash isolation). Links the cook stack only, same as engine_cook.
 add_executable(engine_cook_worker tools/engine_cook_worker.cpp)
-target_link_libraries(engine_cook_worker PRIVATE engine_core)
+target_link_libraries(engine_cook_worker PRIVATE engine_cooking)
 set_target_properties(engine_cook_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
@@ -692,10 +712,10 @@ if(ENGINE_BUILD_TOOLS)
 
 # ── engine_cook — CLI asset cooker ───────────────────────────────────────────
 # Cooks a project's assets without the editor: engine_cook [project-dir].
-# Game build scripts call this as a pre-build step. Links engine_core only —
+# Game build scripts call this as a pre-build step. Links the cook stack only —
 # no bgfx, no GLFW, no Jolt/Lua in the binary.
 add_executable(engine_cook tools/engine_cook.cpp)
-target_link_libraries(engine_cook PRIVATE engine_core)
+target_link_libraries(engine_cook PRIVATE engine_cooking)
 set_target_properties(engine_cook PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
@@ -716,7 +736,7 @@ endif()
 # ── engine_build — package a project into a shippable dist/ ─────────────────
 # Cook -> shipping player (Assimp-free) -> kits rebuilt Release -> assemble.
 add_executable(engine_build tools/engine_build.cpp)
-target_link_libraries(engine_build PRIVATE engine_core)
+target_link_libraries(engine_build PRIVATE engine_cooking)   # the packaging closure
 target_compile_definitions(engine_build PRIVATE
     ENGINE_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 set_target_properties(engine_build PROPERTIES
@@ -737,7 +757,7 @@ set_target_properties(engine_project PROPERTIES
 # reloads it live on change: engine_host <project-dir> <module.so>.
 # ENABLE_EXPORTS: the module resolves engine symbols from this executable.
 add_executable(engine_host tools/engine_host.cpp)
-target_link_libraries(engine_host PRIVATE engine_runtime)
+target_link_libraries(engine_host PRIVATE engine_source_import)   # a dev runner reads sources
 set_target_properties(engine_host PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
     ENABLE_EXPORTS ON
@@ -760,7 +780,7 @@ set_target_properties(profiler_frames PROPERTIES
 # Loads a project's scene (waiting for async imports), saves it back in the
 # current format. Upgrades legacy scenes to AssetRef references.
 add_executable(scene_resave tools/scene_resave.cpp)
-target_link_libraries(scene_resave PRIVATE engine_runtime)
+target_link_libraries(scene_resave PRIVATE engine_source_import)
 set_target_properties(scene_resave PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )

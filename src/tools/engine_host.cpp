@@ -18,6 +18,7 @@
 #include "scene/scene_serializer.h"
 #include "runtime/services/async_loader.h"
 #include "runtime/services/scene_assets_host.h"
+#include "runtime/services/source_import.h"
 #include "runtime/module_loader.h"   // shared dlopen + gauntlet (also used by KitHost)
 #include "core/profiler.h"           // periodic frame-profile dump (dev runner)
 #include "runtime/frame_stats_channel.h"  // frame-time distribution + CSV
@@ -139,6 +140,7 @@ int main(int argc, char** argv) {
     auto* plat     = platform.get();
     EngineRuntime engine;
     if (!engine.init(cfg, std::move(platform))) return 1;
+    sourceimport::install(engine);   // a dev runner reads source assets (WO-017)
     if (!engine.hasProject()) {
         std::fprintf(stderr, "engine_host: no project at %s\n",
                      projectDir.string().c_str());

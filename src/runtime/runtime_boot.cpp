@@ -35,14 +35,6 @@
 #include <cstdio>
 #include <utility>
 
-// Shipping builds (ENGINE_WITH_SOURCE_IMPORTERS=0) compile the source-format
-// import stack out entirely: cooked binaries are the ONLY content path and
-// Assimp is never linked. Dev trees keep drag-drop import.
-#if ENGINE_WITH_SOURCE_IMPORTERS
-#include "assets/importers/gltf_importer.h"
-#include "assets/importers/assimp_importer.h"
-#include "assets/clip_source.h"
-#endif
 #include "animation/clip_library.h"
 #include "components/meta_registry.h"
 #include "components/name.h"
@@ -204,27 +196,13 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     // different questions (runtime/sim_classification.cpp).
     simhash::registerClassification(m_ecs);
     m_clipLibrary = std::make_unique<ClipLibrary>();
-    // Source-format importers exist to produce GPU meshes — headless runs
-    // (dedicated server, CI sim) have no device to feed, so don't stand up
-    // the offline import stack (Assimp is a large, editor-facing parsing
-    // library; audit A.3 — it was registered unconditionally for every
-    // runtime instance including shipped games' headless paths). Shipping
-    // builds compile them out entirely (ENGINE_WITH_SOURCE_IMPORTERS=0).
-// && !ENGINE_SERVER_BUILD: a server loads COOKED BINARIES ONLY. The importer
-// TUs are not in that target (they pull Assimp and the glTF parser), so this
-// registration would be an undefined vtable at link time — and it should be:
-// parsing FBX on a dedicated server is not a feature anyone wants back.
-#if ENGINE_WITH_SOURCE_IMPORTERS && !ENGINE_SERVER_BUILD
-    if (!m_headless) {
-        m_importers.registerImporter(std::make_unique<GltfImporter>());
-        m_importers.registerImporter(std::make_unique<AssimpImporter>());
-    }
-    // An uncooked standalone clip is read through the import front ends
-    // (assets/clip_source.h). Headless too: a clip is CPU data, and a headless
-    // run with source importers has always been able to read one. Unset (a
-    // shipping or server build), ClipLibrary loads cooked clips only (WO-015).
-    m_clipLibrary->setSourceReader(&imp::readSourceClip);
-#endif
+    // No source importers here. Reading a .glb or .fbx directly is a dev
+    // feature that needs the cook stack, and a host opts in to it after init
+    // with sourceimport::install (runtime/services/source_import.h, in the
+    // dev-only engine_source_import library). It used to be registered here
+    // for every dev-build runtime, which is how engine_player came to carry
+    // Assimp and every encoder (WO-017). Without it ClipLibrary loads cooked
+    // clips only, and the ImporterRegistry is empty.
 
     // AssetService — async mesh/texture loading for scripts + scene streaming.
     // Skeleton/clip registries wired so SKINNED cooked meshes stream too

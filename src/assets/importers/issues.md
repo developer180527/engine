@@ -38,7 +38,7 @@ Across assimp_importer.cpp and importer_registry.h, string lowercasing loops uti
 
 ## RESOLUTION (verified against source 2026-07-21)
 
-These are the dev/editor **source-import** path (`ImporterRegistry` in `runtime.h`), gated by `ENGINE_WITH_SOURCE_IMPORTERS` and stripped from the shipping runtime. Each claim re-checked against source.
+These are the dev/editor **source-import** path (`ImporterRegistry` in `runtime.h`), in the dev-only `engine_source_import` library that a host installs explicitly since WO-017; no runtime registers them on its own. Each claim re-checked against source.
 
 | # | Claim | Verdict | Fix |
 |---|-------|---------|-----|

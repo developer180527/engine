@@ -31,12 +31,16 @@ structure mirrors the stages — and the library layering:
 ```
 assets/
 ├── asset_ref.h            identity (engine_core-safe headers)
-├── importers/             source formats → engine data   [engine_runtime*]
-├── cookers/               source → .cache binaries        [engine_core]
+├── import/                source formats → ImportedScene  [engine_cooking]
+├── importers/             source formats → GPU meshes     [engine_source_import*]
+├── cookers/               source → .cache binaries        [engine_cooking]
 └── loaders/               cooked binaries → GPU           [engine_runtime]
 ```
-(*`stb_impl.cpp`/`cgltf_impl.cpp` are CPU-only implementation TUs and belong
-to engine_core; the importer .cpps create GPU resources and are runtime.)
+(*`stb_impl.cpp`/`cgltf_impl.cpp` are CPU-only decode TUs and belong to
+engine_core. The importer .cpps create GPU resources AND need the front
+ends, so they are the dev-only engine_source_import library (WO-017), which
+WO-018 deletes. `anim_from_scene.cpp` and `clip_source.cpp` are
+engine_cooking.)
 
 ## Identity — AssetRef (`asset_ref.h`)
 THE way scenes reference assets on disk:
@@ -308,7 +312,7 @@ The order matters: step 1's deletions drop hardlinks, un-pinning blobs that step
 nothing on the first invocation.
 
 Rules: cookers may use Assimp/stb/assetlib but must never reference bgfx,
-GLFW, or plugin symbols — `engine_cook` links engine_core alone. Failed cooks
+GLFW, or plugin symbols — `engine_cook` links engine_cooking alone. Failed cooks
 must delete stale output; cooked formats carry versioned headers.
 
 ### Derived Data Cache (content-addressed cooking)

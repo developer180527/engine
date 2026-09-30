@@ -23,7 +23,9 @@ set(_engine_libs
     engine_runtime
     engine_core
     assetlib
-    assimp
+    # No assimp: since WO-017 neither engine_runtime nor engine_core links the
+    # cook stack. It used to be required here, which also meant a SHIPPING
+    # install (no assimp archive at all) could not be found by this config.
     bgfx bimg bx
     glfw3
     flecs_static

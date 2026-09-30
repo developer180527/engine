@@ -1,4 +1,5 @@
 #include "runtime/runtime.h"
+#include "runtime/services/source_import.h"
 #include "runtime/platform/platform.h"
 #include "runtime/input/input_system.h"
 #include "editor/editor_app.h"
@@ -42,6 +43,9 @@ int main(int argc, char** argv) {
     EngineRuntime runtime;
     if (!runtime.init(cfg, std::move(platform)))
         return 1;
+    // Drag-drop and source-model scenes: the editor reads source assets.
+    // A runtime does not by default (WO-017).
+    sourceimport::install(runtime);
 
     // ImGui comes up before either the hub or the editor draws.
     imguiInit(plat->backendWindowHandle(), 16.0f);

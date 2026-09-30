@@ -482,8 +482,9 @@ install(TARGETS engine_runtime engine_core assetlib bgfx bimg bx glfw
                 flecs_static Jolt lua
         ARCHIVE DESTINATION lib)
 if(ENGINE_WITH_SOURCE_IMPORTERS)
-    # Dev SDK only — shipping posture has no assimp target and no cooker CLI.
-    install(TARGETS assimp ARCHIVE DESTINATION lib)
+    # Dev SDK only — shipping posture has no cooker CLI. No assimp archive:
+    # the SDK's libraries do not link it (WO-017); the cook binaries below
+    # carry it statically.
     # The worker is part of the cook capability, not the tool group, so it
     # installs whenever cooking is compiled in (see src/CMakeLists.txt).
     install(TARGETS engine_cook_worker RUNTIME DESTINATION bin)
@@ -520,9 +521,6 @@ install(DIRECTORY third_party/lua/src/ DESTINATION include
 # config replays them. Generator expressions resolve for this build's config,
 # which matches the single set of archives we install.
 set(_sdk_def_targets Jolt bx bgfx bimg flecs_static glfw lua assetlib)
-if(ENGINE_WITH_SOURCE_IMPORTERS)
-    list(APPEND _sdk_def_targets assimp)   # dev SDK only — no assimp when shipping
-endif()
 set(_sdk_defs_genex "")
 foreach(_t ${_sdk_def_targets})
     string(APPEND _sdk_defs_genex "$<TARGET_PROPERTY:${_t},INTERFACE_COMPILE_DEFINITIONS>;")
