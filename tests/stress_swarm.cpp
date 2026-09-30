@@ -15,7 +15,7 @@
 
 #include "core/transform.h"
 #include "core/memory/mem.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 
 using Clock = std::chrono::steady_clock;
 static double ms(Clock::time_point a, Clock::time_point b) {

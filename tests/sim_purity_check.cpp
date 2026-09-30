@@ -18,8 +18,8 @@
 #include "runtime/sim_command.h"         // the tick command record
 #include "runtime/sim_hash.h"            // the determinism gate's digest
 #include "runtime/sim_classification.h"  // ...and what it considers simulation
-#include "runtime/world_query_cache.h"
-#include "runtime/jobs/jobs.h"
+#include "components/world_query_cache.h"
+#include "core/jobs/jobs.h"
 #include "runtime/input/input.h"
 #include "runtime/input/input_manager.h"
 #include "runtime/input/hid_keymap.h"

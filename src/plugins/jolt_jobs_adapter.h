@@ -25,7 +25,7 @@
 #include <Jolt/Core/FixedSizeFreeList.h>
 #include <Jolt/Core/JobSystemWithBarrier.h>
 
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 
 class JoltJobsAdapter final : public JPH::JobSystemWithBarrier {
 public:

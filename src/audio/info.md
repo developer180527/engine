@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-29
+verified: 2026-10-01
 covers:
   - src/audio/
 tests:

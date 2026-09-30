@@ -81,7 +81,7 @@ changing it without a contract).
 | `components` | 12 | **ECS data types** | 🟡 data contract | — | 🟡 layout hash for kit-visible ones only | the real inter-system contract (§3.1) |
 | `render` | 11 | **concrete resource types** (`mesh.h`, `texture.h`, `material.h`, `vertex.h`, registries) *and* `IRenderer` | 🟡 split | ✅ renderer only | 🟡 | fan-in is mostly *resource data*, not rendering (§3.4) |
 | `animation` | 8 | concrete registries (`skeleton_registry`, `clip_registry`, `clip_library`) | ❌ | ❌ | ❌ | |
-| `runtime/jobs` | 8 | free functions (`jobs.h`) | 🟡 de facto | ❌ (no inline/serial impl) | ❌ | a serial implementation would be a free fake |
+| `core/jobs` | 8 | free functions (`jobs.h`) | 🟡 de facto | ❌ (no inline/serial impl) | ❌ | a serial implementation would be a free fake |
 | `runtime` | 7 | `EngineRuntime`, `RuntimeContext` | ❌ concrete | — | — | hub: depends on **14** areas (§3.3) |
 | `runtime/platform` | 6 | `IPlatform`, `wsi::` | ✅ | ✅ | ❌ | |
 | `runtime/services` | 6 | **concrete** `AssetService`, `SceneService`, `AnimService`, `NavService`, `LutLibrary`, `AsyncLoader` | ❌ | ❌ | ❌ | the widest concrete surface (§3.2) |

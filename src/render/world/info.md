@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-06
+verified: 2026-10-01
 covers:
   - src/render/world/
 tests:
@@ -101,9 +101,12 @@ same `writeCullEntry`.
 
 The frustum test is the hot loop here (`Render.cull` was the largest phase in the
 render path at 50 000 objects), so it runs on the job pool — but this directory does
-**not** include `runtime/jobs/jobs.h`. Being GPU-free *and* runtime-free is the whole
-reason everything here is unit-testable, and spending that to get threads would be a
-bad trade. `buildVisibleSet` takes an injected `rworld::ParallelForFn` instead;
+**not** include `core/jobs/jobs.h`. Being GPU-free *and* runtime-free is the whole
+reason everything here is unit-testable, and a hard dependency on a live pool would
+spend that. (The job system moved into core on 2026-10-01, WO-046, so including it
+would no longer break runtime-freedom; the injection still earns its keep, because a
+test can run the same code serially, or on a pool it controls.)
+`buildVisibleSet` takes an injected `rworld::ParallelForFn` instead;
 `ForwardPipeline` supplies one backed by `jobs::parallelFor`, and `nullptr` runs
 serially.
 

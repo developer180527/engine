@@ -9,7 +9,7 @@
 #include "runtime/input/input_manager.h"
 #include "runtime/scripting/script_host.h"
 #include "render/renderer.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 #include "core/memory/mem.h"
 #include "core/frame_arena.h"
 #include <cstdarg>

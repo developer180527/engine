@@ -2,7 +2,7 @@
 - found:     2026-08-23
 - status:    fixed
 - class:     threading
-- where:     src/runtime/jobs/jobs_enkits.cpp
+- where:     src/core/jobs/jobs_enkits.cpp
 - symptom:   livelock — workers spin forever in enkiTS's lock-free pipe while the caller blocks in WaitforTask. Reproduced ~1 run in 5 under TSan; stuck at 180s, so starvation rather than slowness.
 - cause:     enkiTS indexes per-thread state by thread number and returns 0 for "the thread that initialised the scheduler AND all unregistered threads". The engine never called RegisterExternalTaskThread and left numExternalTaskThreads at 0, so any kit or provider thread calling jobs::parallelFor drove slot 0 concurrently with the main thread.
 - pinned-by: tests/api_primitives_test.cpp

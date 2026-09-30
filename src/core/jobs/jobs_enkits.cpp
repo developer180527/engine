@@ -3,7 +3,7 @@
 // here maps the facade's counter-style contract (jobs.h) onto enki task sets;
 // a FiberTaskingLib backend would be a sibling .cpp mapping the same contract
 // onto ftl::TaskScheduler + WaitForCounter, selected in src/CMakeLists.txt.
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 
 #include <TaskScheduler.h>
 

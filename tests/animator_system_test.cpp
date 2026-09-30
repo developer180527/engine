@@ -33,7 +33,7 @@
 #include "animation/skeleton_registry.h"
 #include "components/animator.h"
 #include "components/skinned_mesh.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 #include "systems/animator_system.h"
 #include "animation/skin_palette.h"
 #include "test_watchdog.h"

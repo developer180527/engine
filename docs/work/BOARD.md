@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-046](WO-046-break-the-cheap-layer-back-edges.md) **Four upward includes out of the layer cycle (core, components, render, systems)** · P1 · size S — Every scripted audit rule passes, but the module graph is not a layering. `src/core`, `components`, `render`, `runtime`, `scene`, `systems`, `assets` and `animation` form ONE cycle: any of them can transitively depend on any other, including `core`, the layer everything is meant to stand on. LAYER-03 only stops NEW edges; nothing ever checked that the recorded 52 make a hierarchy.
-2. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
-3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
+1. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
+2. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
+3. [WO-022](WO-022-decision-records.md) **Decision records — the "why" survives the person** · P2 · size M — Important decisions are buried in the middle of plan paragraphs, and those are the ones that get "fixed" back into bugs.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,7 +35,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
-| [WO-046](WO-046-break-the-cheap-layer-back-edges.md) | Four upward includes out of the layer cycle (core, components, render, systems) | Process & context | S | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -49,7 +48,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-022](WO-022-decision-records.md) | Decision records — the "why" survives the person | Process & context | M | **ready** | — |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
-| [WO-047](WO-047-scene-below-runtime-and-an-acyclic-gate.md) | Scene serialization stops reaching into runtime services; the module graph is gated acyclic | Process & context | M | blocked by WO-046 | — |
+| [WO-047](WO-047-scene-below-runtime-and-an-acyclic-gate.md) | Scene serialization stops reaching into runtime services; the module graph is gated acyclic | Process & context | M | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
@@ -75,6 +74,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-046](WO-046-break-the-cheap-layer-back-edges.md) | Four upward includes out of the layer cycle (core, components, render, systems) | 2026-10-01 | scripts/audit_baseline.json LAYER-03 drops 5 edges and gains none (52 -> 47); the module graph's only remaining cycle is runtime <-> scene (WO-047); 133 tests, audit and doctor clean |
 | [WO-044](WO-044-abi-compat-test-covers-every-group.md) | The ABI compatibility test defends every API group (audit ABI-03) | 2026-09-30 | api_abi_compat_test (physics2 at 800, intent at 816, and a static_assert that frozen[] and offs[] list the same groups); audit ABI-03 ok with no baseline entries |
 | [WO-043](WO-043-fixed-step-reads-no-clock.md) | The fixed step reads no wall clock (audit DET-01) | 2026-09-30 | sim_clock_test (the boundary function; a catch-up frame's press/release/press lands one per tick, and with the clock read put back it is HPR H-- H--); audit DET-01 ok with no baseline entry; determinism_gate_test 0 divergences |
 | [WO-042](WO-042-reverify-the-stale-design-docs.md) | Re-verify the stale docs, the asset cook architecture first | 2026-09-30 | engine_doctor check 0 warnings (was 13); ENGINE_STATUS.md 0 stale docs |

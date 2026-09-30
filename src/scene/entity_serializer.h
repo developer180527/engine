@@ -345,7 +345,7 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
             if (!lods.levels.empty()) {
                 LodMesh lm;
                 lm.count = (uint8_t)std::min(lods.levels.size(),
-                                             (size_t)(rworld::kMaxLodLevels - 1));
+                                             (size_t)(::kMaxLodLevels - 1));
                 for (uint8_t i = 0; i < lm.count; ++i) lm.mesh[i] = lods.levels[i];
                 e.set<LodMesh>(lm);
             }
@@ -426,7 +426,7 @@ inline bool hasLodMesh(flecs::entity e) { return e.try_get<LodMesh>() != nullptr
 inline void saveLodMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx) {
     const LodMesh* lm = e.try_get<LodMesh>(); if (!lm || lm->count == 0) return;
     nlohmann::json levels = nlohmann::json::array();
-    for (uint8_t i = 0; i < lm->count && i < rworld::kMaxLodLevels - 1; ++i) {
+    for (uint8_t i = 0; i < lm->count && i < ::kMaxLodLevels - 1; ++i) {
         nlohmann::json lj = nlohmann::json::object();
         const Mesh* mesh = ctx.meshLookup ? ctx.meshLookup(lm->mesh[i]) : nullptr;
         if (ctx.mode == SerdeMode::Memory) {
@@ -458,7 +458,7 @@ inline void loadLodMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& 
     const auto& levels = j["levels"];
     const bool  hasBelow = j.contains("coarsenBelow") && j["coarsenBelow"].is_array();
     for (const auto& lj : levels) {
-        if (lm.count >= rworld::kMaxLodLevels - 1) break;
+        if (lm.count >= ::kMaxLodLevels - 1) break;
         MeshHandle h;
         if (ctx.mode == SerdeMode::Memory) {
             h.id = lj.value("handleId", 0u);

@@ -15,7 +15,7 @@
 
 #include "core/transform.h"
 #include "components/rigid_body.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 #include "runtime/runtime_context.h"
 #include "plugins/jolt_plugin.h"
 #include "render/asset_registry.h"

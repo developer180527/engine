@@ -41,7 +41,7 @@
 #include "render/asset_registry.h"
 #include "render/material_registry.h"
 #include "render/texture_registry.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 #include "runtime/runtime_context.h"
 
 static int g_failures = 0;

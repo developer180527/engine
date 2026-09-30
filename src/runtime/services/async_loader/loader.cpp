@@ -7,7 +7,7 @@
 #include "runtime/services/async_loader/loader_internal.h"
 #include "core/logger.h"
 #include "core/memory/mem.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 
 #include <thread>
 

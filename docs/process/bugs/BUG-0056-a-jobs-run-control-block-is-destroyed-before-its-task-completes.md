@@ -2,7 +2,7 @@
 - found:     2026-09-08
 - status:    fixed
 - class:     threading
-- where:     src/runtime/jobs/jobs_enkits.cpp
+- where:     src/core/jobs/jobs_enkits.cpp
 - symptom:   `Assertion failed: (GetIsComplete()), function ~ICompletable, file TaskScheduler.h, line 493` — enkiTS destroying a task set that had not finished. Roughly one run in fourteen of `determinism_gate_test` with four competing `stress_physics` processes saturating the machine; never seen without that contention. With `ENKI_ASSERT` compiled out it is a use-after-free instead: the block is freed while its task sits in the pipe, and enkiTS then increments a running count through a dangling pointer.
 - cause:     enkiTS's `GetIsComplete()` is `m_RunningCount == 0`, and `m_RunningCount` starts at **zero** — so a task that has been constructed but not yet added to the pipe reads as COMPLETE. `jobs::run` registered the block in `g_inflight` BEFORE calling `AddTaskSetToPipe`, which opened a two-statement window: `push to g_inflight` (reads complete) → **`pumpMain()` on the main thread sweeps it out, dropping the registry's reference** → `AddTaskSetToPipe` (now genuinely pending) → `run()` returns and the caller discards the handle → refcount reaches zero → `~RunTask` → `~ICompletable` asserts on a queued task. Every caller that ignores the returned handle is exposed, which is most of them — `JoltJobsAdapter::QueueJob` among them. The registry exists precisely to keep a pending block alive, and it was admitting blocks in a state where the sweep's completion test was meaningless.
 - pinned-by: tests/determinism_gate_test.cpp

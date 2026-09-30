@@ -96,7 +96,7 @@ A real pipeline, not a loader.
 | TLSF with tagged heaps and a per-tag census | `src/core/memory/`, `MemoryChannel` |
 | Vendored libraries audited for their own `malloc` — Recast/Detour routed through the engine allocator | `src/runtime/services/nav_service.cpp`, `mem::Tag::Nav` |
 | A syscall-level metric, not just a byte count | `mem::mapEventCount()` |
-| Job system with slots reserved for threads the engine does not own | `kExternalThreadSlots = 8`, `src/runtime/jobs/` |
+| Job system with slots reserved for threads the engine does not own | `kExternalThreadSlots = 8`, `src/core/jobs/` |
 | Simulation purity enforced by a check, not a convention | `tests/sim_purity_check.cpp` |
 | Endurance lanes that actually exist | `stress_swarm`, `stress_churn`, `soak_engine` |
 

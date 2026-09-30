@@ -1,6 +1,6 @@
 #pragma once
 #include "core/handle.h"
-#include "render/world/lod.h"   // kMaxLodLevels, and the selection contract
+#include "core/lod_limit.h"   // kMaxLodLevels (the selection rules are render/world/lod.h's)
 
 // LodMesh — the COARSER levels of a mesh, and when to switch to them.
 //
@@ -18,8 +18,8 @@
 // heap-allocated level list would put an indirection — and a lifetime question — on
 // the hot path for the sake of a fifth level nobody authors.
 struct LodMesh {
-    MeshHandle mesh[rworld::kMaxLodLevels - 1] = {};
-    float      coarsenBelow[rworld::kMaxLodLevels - 1] = { 0.30f, 0.10f, 0.03f };
+    MeshHandle mesh[::kMaxLodLevels - 1] = {};
+    float      coarsenBelow[::kMaxLodLevels - 1] = { 0.30f, 0.10f, 0.03f };
     // How many entries of `mesh` are real. 0 = inert (renders exactly like no
     // component at all), which is what a freshly added component should do rather
     // than silently swapping in a null mesh.

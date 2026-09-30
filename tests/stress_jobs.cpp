@@ -51,7 +51,7 @@
 #include <thread>
 #include <vector>
 
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 #include "test_watchdog.h"
 
 static int g_failures = 0;

@@ -8,7 +8,7 @@
 #include "core/bone_limit.h"
 #include "core/logger.h"
 
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 #include "render/pipeline/shader_blobs.h"
 
 void ForwardPipeline::onAttach(RenderContext& attachCtx) {

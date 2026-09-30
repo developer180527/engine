@@ -35,7 +35,7 @@ Three conditions, and a subsystem is critical when it meets all three:
 3. **No lane.** No fuzz, soak or stress test would surface it, so time does not
    find it either.
 
-`runtime/jobs` meets all three and is the sharpest example: eight dependents, a
+`core/jobs` meets all three and is the sharpest example: eight dependents, a
 shipped **livelock** that only TSan's timing exposed (BUG-0003, every external
 thread sharing enkiTS slot 0), and no endurance lane of its own.
 
@@ -52,7 +52,7 @@ by" is the blast radius of a defect.
 | `src/core/memory` | hardened | **10** | 0 | ✅ stress ×2 | 1 |
 | `modules/assetlib` | hardened | **10** | 0 | ✅ fuzz ×3 | 0 |
 | `src/animation` | working | **9** | 2 | ❌ | 0 |
-| `src/runtime/jobs` | working ⚠️ | **8** | 2 | ❌ | 1 |
+| `src/core/jobs` | working ⚠️ | **8** | 2 | ❌ | 1 |
 | `src/project` | working ⚠️ | 6 | 0 | ✅ stress_physics | 0 |
 | `src/assets` | hardened | 6 | 3 | ✅ fuzz + stress | — |
 | `src/runtime` | hardened | 6 | 16 | ✅ fuzz ×2 + soak | — |
@@ -174,7 +174,7 @@ trustworthy once they land.
 
 | # | Work | Why |
 |---|---|---|
-| 3 | **`runtime/jobs` → hardened.** A soak or stress lane over the job graph, plus refresh the stale doc | The only subsystem meeting all three criticality conditions (§1). 8 dependents, a shipped livelock only TSan found, no endurance lane. Also a hard prerequisite for the FTL fiber swap (Phase H #34) |
+| 3 | **`core/jobs` → hardened.** A soak or stress lane over the job graph, plus refresh the stale doc | The only subsystem meeting all three criticality conditions (§1). 8 dependents, a shipped livelock only TSan found, no endurance lane. Also a hard prerequisite for the FTL fiber swap (Phase H #34) |
 | 4 | **`src/components` → hardened.** It already has `stress_churn`; this is mostly doc work plus the fuzz question | 10 dependents and the cheapest remaining rung on the ladder |
 | 5 | **`src/animation` → hardened.** Needs an endurance lane it does not have | 9 dependents, and the renderer programme stacks per-frame BLAS refits for skinned meshes on top of it (`rhi-design.md` §4.5) |
 | 6 | **`src/render/world` → hardened.** GPU-free, so a headless lane is possible today | 4 dependents, survives the RHI, and P3/P4 build directly on it |
@@ -217,7 +217,7 @@ what the backlog says.
 | future subsystem | technically depends on | the real prerequisite | trigger |
 |---|---|---|---|
 | **Crash reporting** (`future-plans/crash-reporting.md`) | nothing — a `modules/`-level kit like `assetlib` and `hid`, zero engine deps | **`src/tools/packaging`.** The design note names *"symbol archiving keyed by build id"* as the value, and build ids come out of `engine_build`. Packaging is `working` and **stale** | first shipped build with an external user |
-| **FTL fiber backend** (H #34) | `runtime/jobs` facade (ready) | **`runtime/jobs` hardened** — swapping the scheduler under 8 dependents with no endurance lane is how BUG-0003 happens again | job graphs deep enough that blocking waits dominate |
+| **FTL fiber backend** (H #34) | `core/jobs` facade (ready) | **`core/jobs` hardened** — swapping the scheduler under 8 dependents with no endurance lane is how BUG-0003 happens again | job graphs deep enough that blocking waits dominate |
 | **Dedicated / headless server** (H #31) | multi-instance runtimes | **`renderer-program.md` P1** — de-contaminating the 5 files that mix loading with GPU upload *is* the headless-server refactor. Already scheduled, under another name | PIE, second viewport, or a server target |
 | **Memory budgets + forensics** (H #33) | `core/memory` (hardened ✅) | none — genuinely unblocked | first real memory hunt |
 | **C# scripting / netcode** (H #36) | `runtime/scripting`, `modules/net` | `modules/net` is `prototype` with one test; `runtime/scripting` has no endurance lane and inherits its tier | after the export milestone |

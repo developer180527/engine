@@ -32,7 +32,7 @@
 #include "core/logger.h"
 #include <cstdlib>        // endFrame() is device-free — see below
 #include "core/frame_arena.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 #include "runtime/scripting/engine_api_binding.h"
 
 static int g_failures = 0;

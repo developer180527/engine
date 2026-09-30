@@ -19,7 +19,7 @@
 #include "gpu_test_device.h"
 
 #include "runtime/services/async_loader.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 #include "assets/asset_storage.h"
 #include "assets/cookers/mesh/mesh_cooker.h"
 #include "animation/clip_registry.h"

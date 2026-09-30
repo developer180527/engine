@@ -18,8 +18,6 @@
 #include <cmath>
 #include "core/transform.h"
 #include "core/logger.h"
-// A plain POD struct (bx types only), not an ECS header — core may include it.
-#include "components/prev_transform.h"
 
 // ── quatFromMatrix ─────────────────────────────────────────────────────────
 // Extract quaternion from the upper-left 3x3 of a bgfx row-major matrix.
@@ -82,11 +80,11 @@ inline void decomposeMatrix(const float m[16],
     rot = quatFromMatrix(r);
 }
 
-// ── nlerpQuat / localMatrixLerp ────────────────────────────────────────────
-// The render side of the fixed-timestep loop: each local pose is
-// nlerp(PrevTransform, Transform, alpha). Entities without PrevTransform
-// (editor world, cameras, alpha == 1) use their current transform, so this is
-// safe as the universal extraction path.
+// ── nlerpQuat ──────────────────────────────────────────────────────────────
+// The render side of the fixed-timestep loop interpolates rotations with this.
+// localMatrixLerp, which applies it to a PrevTransform/Transform pair, lives in
+// components/transform_hierarchy.h: it takes a component, and core includes no
+// component header (WO-046: that include made core part of the module cycle).
 inline bx::Quaternion nlerpQuat(const bx::Quaternion& a, const bx::Quaternion& b,
                                 float t) {
     // Shortest arc: flip when the hemispheres disagree.
@@ -96,25 +94,6 @@ inline bx::Quaternion nlerpQuat(const bx::Quaternion& a, const bx::Quaternion& b
         bx::lerp(a.x, s*b.x, t), bx::lerp(a.y, s*b.y, t),
         bx::lerp(a.z, s*b.z, t), bx::lerp(a.w, s*b.w, t) };
     return bx::normalize(q);
-}
-
-// The interpolated LOCAL matrix from components already in hand. `prev` may be
-// null (no PrevTransform, or alpha == 1). Takes both components rather than an
-// entity on purpose: a caller iterating a query has them, and looking either one
-// up again is a per-entity sparse-set probe — see the measurements on
-// getWorldMatrixLerpFrom, in components/transform_hierarchy.h.
-inline void localMatrixLerp(const Transform& t, const PrevTransform* prev,
-                            float alpha, float local[16]) {
-    const PrevTransform* p = alpha < 1.0f ? prev : nullptr;
-    if (!p) {
-        t.getMatrix(local);
-    } else {
-        Transform tmp = t;
-        tmp.position = bx::lerp(p->position, t.position, alpha);
-        tmp.rotation = nlerpQuat(p->rotation, t.rotation, alpha);
-        tmp.scale    = bx::lerp(p->scale, t.scale, alpha);
-        tmp.getMatrix(local);
-    }
 }
 
 // ── safeInvert ─────────────────────────────────────────────────────────────

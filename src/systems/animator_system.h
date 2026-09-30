@@ -46,8 +46,8 @@
 #include "animation/clip_registry.h"
 #include "components/animator.h"
 #include "components/skinned_mesh.h"
-#include "runtime/jobs/jobs.h"
-#include "runtime/world_query_cache.h"
+#include "core/jobs/jobs.h"
+#include "components/world_query_cache.h"
 #include "core/logger.h"
 #include <algorithm>
 

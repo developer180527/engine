@@ -28,7 +28,7 @@
 
 #include "runtime/runtime.h"
 #include "runtime/platform/headless_platform.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 #include "core/memory/mem.h"
 
 namespace { int g_failures = 0; }

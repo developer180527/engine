@@ -88,12 +88,36 @@ inline void getWorldMatrix(flecs::entity e, float out[16], int depth = 0) {
     }
 }
 
+// ── localMatrixLerp ────────────────────────────────────────────────────────
+// Each local pose is nlerp(PrevTransform, Transform, alpha). Entities without
+// PrevTransform (editor world, cameras, alpha == 1) use their current
+// transform, so this is safe as the universal extraction path. Here, not in
+// core/transform_utils.h, because it takes a component (WO-046).
+// The interpolated LOCAL matrix from components already in hand. `prev` may be
+// null (no PrevTransform, or alpha == 1). Takes both components rather than an
+// entity on purpose: a caller iterating a query has them, and looking either one
+// up again is a per-entity sparse-set probe — see the measurements on
+// getWorldMatrixLerpFrom, in components/transform_hierarchy.h.
+inline void localMatrixLerp(const Transform& t, const PrevTransform* prev,
+                            float alpha, float local[16]) {
+    const PrevTransform* p = alpha < 1.0f ? prev : nullptr;
+    if (!p) {
+        t.getMatrix(local);
+    } else {
+        Transform tmp = t;
+        tmp.position = bx::lerp(p->position, t.position, alpha);
+        tmp.rotation = nlerpQuat(p->rotation, t.rotation, alpha);
+        tmp.scale    = bx::lerp(p->scale, t.scale, alpha);
+        tmp.getMatrix(local);
+    }
+}
+
 // ── getWorldMatrixLerp ─────────────────────────────────────────────────────
 // getWorldMatrix, but each local is nlerp(PrevTransform, Transform, alpha) —
 // the render-side of the fixed-timestep loop. Entities without PrevTransform
 // (editor world, cameras, alpha==1) use their current transform, so this is
 // safe as the universal extraction path. The per-local interpolation itself is
-// localMatrixLerp, in core/transform_utils.h.
+// localMatrixLerp, above.
 inline void getWorldMatrixLerp(flecs::entity e, float alpha, float out[16],
                                int depth = 0) {
     float local[16];

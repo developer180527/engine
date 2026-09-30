@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-30
+verified: 2026-10-01
 covers:
   - src/components/
 tests:
@@ -73,7 +73,8 @@ the ABI is the plain-data structs listed below, not the helpers beside them.
 - `lod_mesh.h` — the COARSER levels of a mesh plus their screen-height
   thresholds. Level 0 is `mesh_renderer.h`'s own mesh, so no chain (or
   `count == 0`) means full detail; the renderer selects a level at extraction
-  (`render/world/lod.h`, `render/issues.md` R20).
+  (`render/world/lod.h`, `render/issues.md` R20). Sized by
+  `core/lod_limit.h`, so this header includes nothing from render (WO-046).
 - `animator.h` — clip handle, time, speed, playing/looping flags.
 - `camera.h`, `light.h` — render inputs (game view picks the primary camera).
 - `rigid_body.h`, `character_controller.h`, `collision_events.h` — physics
@@ -91,11 +92,17 @@ the ABI is the plain-data structs listed below, not the helpers beside them.
 - `transform_hierarchy.h` — world poses through the `ChildOf` chain:
   `getWorldMatrix`, `getWorldMatrixLerp` / `...From`, `safeReparent` (refuses
   cycles, and chains deeper than the limit flecs *aborts* the process on),
-  `hierarchyDepth`, `isAncestorOf`. Split from `core/transform_utils.h` on
+  `hierarchyDepth`, `isAncestorOf`, and (since WO-046) `localMatrixLerp`,
+  which takes a `PrevTransform`. Split from `core/transform_utils.h` on
   2026-09-16 for the same reason; the matrix math it calls stayed in core. It
   lives here rather than in `scene/` because every caller — renderer extraction,
   the Jolt plugin, `script_host`, the editor, the serializer — already depends on
   `components/`, so this home adds no new module edge.
+- `world_query_cache.h` — per-world cached flecs queries for systems that
+  run over the editor and play-mode worlds alike (the renderer's extraction,
+  the animator). Moved from `src/runtime/` (WO-046): it is ECS infrastructure,
+  and render and systems including it from runtime made both depend on the
+  orchestration layer.
 - `serde_transient.h` — `SerdeTransient` type tag: runtime state, never saved.
 - `event_component.h` — the EVENT model. `events::declare<T>(world)` marks a
   component type a one-shot message (implies SerdeTransient) that the runtime's

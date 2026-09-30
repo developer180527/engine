@@ -12,7 +12,7 @@
 #include "core/logger.h"
 #include "runtime/scripting/script_host.h"
 #include "runtime/scripting/script_services.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 #include "runtime/input/input_system.h"
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"

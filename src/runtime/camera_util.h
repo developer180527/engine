@@ -8,7 +8,7 @@
 #include "components/colour_grading.h"
 #include "core/transform.h"
 #include "components/transform_hierarchy.h"
-#include "runtime/world_query_cache.h"
+#include "components/world_query_cache.h"
 #include "render/view_math.h"
 
 // ── PrimaryCameraFinder ─────────────────────────────────────────────────────

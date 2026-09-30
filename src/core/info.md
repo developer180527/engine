@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-30
+verified: 2026-10-01
 covers:
   - src/core/
 tests:
@@ -58,11 +58,13 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   `getMatrix`'s standing contract is unchanged and load-bearing: `m[12..14]`
   equals `position` exactly, whatever the scale or rotation, which is how the
   gizmo reads position back out.
-  `localMatrixLerp` takes the components the caller already holds. The walkers
-  that consume it — `getWorldMatrixLerp`, `getWorldMatrixLerpFrom`,
+  The walkers — `getWorldMatrixLerp`, `getWorldMatrixLerpFrom`,
   `getWorldMatrix`, `safeReparent`, `isAncestorOf`, `hierarchyDepth` — moved to
   `components/transform_hierarchy.h` on 2026-09-16: they take a `flecs::entity`,
-  and this layer may not include the ECS. The matrix math they call stayed here.
+  and this layer may not include the ECS. `localMatrixLerp` followed them on
+  2026-10-01 (WO-046): it takes a `PrevTransform`, and core including that
+  component header made core part of the module cycle. The matrix math they all
+  call (`nlerpQuat`, `quatFromMatrix`, `safeInvert`, ...) stayed here.
   Passing components in rather than looking them up is worth several ms per
   frame at scene scale — see `src/render/issues.md` R14.
 - **`bone_limit.h`** — `kMaxBones` (128), the most bones one skinned mesh may
@@ -71,6 +73,14 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   refuses a larger rig by name; `render_pipeline_test` checks the shaders'
   literal against it. Here, not in `animation/`, because `SkinnedMesh` is a
   component and components depend on core only (WO-040).
+- **`jobs/`** — the job system (`jobs.h` facade, enkiTS behind it); see
+  `jobs/info.md`. Moved from `src/runtime/jobs` on 2026-10-01 (WO-046): it
+  depends on core alone, and the renderer, systems and audio including it
+  from `runtime/` made them depend on the orchestration layer. It is still
+  compiled into `engine_runtime`, so the cook tools gain no enkiTS.
+- **`lod_limit.h`** — `kMaxLodLevels` (4), for the `LodMesh` component and the
+  render world's selection alike. Moved from `render/world/lod.h` (WO-046), so
+  components need not include render.
 - **`thread_stack.{h,cpp}`** — run work on a thread whose stack size we
   chose (`engine::threads::runWithStack`). For code whose recursion depth an
   input file decides: Assimp's readers recurse per node level, and a caller

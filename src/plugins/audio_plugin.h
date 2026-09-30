@@ -37,7 +37,7 @@
 #include "runtime/runtime_context.h"
 #include "runtime/scripting/script_services.h"
 #include "audio/audio_host_services.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 
 #include <flecs.h>
 #include <atomic>

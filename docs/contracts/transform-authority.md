@@ -15,7 +15,7 @@ covers:
   - src/runtime/transform_authority.h
   - src/components/rigid_body.h
   - src/components/character_controller.h
-verified: 2026-09-27
+verified: 2026-10-01
 ---
 
 # transform-authority — who may write each Transform field

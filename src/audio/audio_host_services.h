@@ -24,7 +24,7 @@
 
 #include "core/memory/mem.h"
 #include "core/profiler.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 
 namespace audio {
 

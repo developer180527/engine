@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-09-30
+verified: 2026-10-01
 covers:
   - scripts/engine_audit.py
   - scripts/audit_cron.sh
@@ -86,9 +86,19 @@ and a reason in the commit message; nothing else should ever write that file.
 
 ## 4. What it found, and what that means
 
-Current state (2026-09-30): **77 findings, all baselined, 0 new.** 52 are the
+Current state (2026-10-01): **71 findings, all baselined, 0 new.** 47 are the
 module→module edges recorded as the declared dependency graph. The rest, and
 what the rules have caught and closed:
+
+- **The module graph was one cycle (found 2026-09-30, by hand, not by a
+  rule).** Eight of 13 modules, `core` among them, were strongly connected:
+  LAYER-03 stops NEW edges and never checked that the recorded ones form a
+  hierarchy. Five back-edges held it; WO-046 removed four of them (header
+  moves: `runtime/jobs` to `core/jobs`, the query cache to `components/`,
+  `localMatrixLerp` beside the other lerp helpers, the LOD limit to core),
+  and a fifth, `audio -> runtime`, went with the jobs move. What remains is
+  `runtime <-> scene`: WO-047 removes it and adds LAYER-06, which fails on
+  any cycle.
 
 - **`RHI-01` ×22** — files outside the renderer using bx's math types. Recorded
   as evidence for the RHI programme (`docs/rhi/evidence-coupling.md`), not a

@@ -18,7 +18,7 @@
 #include "runtime/scripting/engine_api_binding.h"
 #include "runtime/mem_channel.h"
 #include "runtime/frame_stats_channel.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 #include "runtime/input/input_system.h"
 #include "core/memory/mem.h"
 

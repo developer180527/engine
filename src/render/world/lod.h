@@ -32,15 +32,15 @@
 // mesh is this entity", and removing the chain degrades to full detail instead of
 // to nothing. It also means level 0 needs no threshold, so there is no phantom
 // entry in the array to get wrong.
+#include "core/lod_limit.h"
+
 #include <cstdint>
 
 namespace rworld {
 
-// Four levels TOTAL — level 0 plus three coarser. Not a guess: three is what most
-// kits ship (near, far, billboard) and the fourth leaves room for an impostor
-// without making the component variable-length, which would put an allocation in
-// the extraction path.
-constexpr uint8_t kMaxLodLevels = 4;
+// Four levels TOTAL: the count and why are core/lod_limit.h's (WO-046: the
+// LodMesh component needs it too, and components may not include render).
+inline constexpr uint8_t kMaxLodLevels = ::kMaxLodLevels;
 
 // Fraction of the viewport height this sphere covers.
 //

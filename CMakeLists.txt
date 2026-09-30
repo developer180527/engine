@@ -369,7 +369,7 @@ endif()
 # ── enkiTS — task scheduler backing engine::jobs ──────────────────────────
 # Built directly (imgui-style) — its own CMakeLists declares a minimum too
 # old for CMake 4. The engine never includes enkiTS headers outside
-# src/runtime/jobs/ — the facade contract (jobs.h) is written so the backend
+# src/core/jobs/ — the facade contract (jobs.h) is written so the backend
 # can be swapped for FiberTaskingLib without touching call sites.
 add_library(enkiTS STATIC third_party/enkiTS/src/TaskScheduler.cpp)
 target_include_directories(enkiTS PUBLIC third_party/enkiTS/src)

@@ -381,7 +381,7 @@ add_library(engine_runtime STATIC
     runtime/services/nav_service.cpp
     runtime/scripting/engine_api.cpp
     runtime/scripting/engine_api_table.cpp
-    runtime/jobs/jobs_enkits.cpp
+    core/jobs/jobs_enkits.cpp
     runtime/input/input_manager.cpp
 
     # Cooked-binary loaders

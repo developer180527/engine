@@ -21,7 +21,7 @@ class ShaderLibrary;   // render/shader/shader_library.h
 #include "components/light.h"
 #include "animation/skeleton_registry.h"
 #include "render/world/cull_stream.h"   // CullStreamStore (extraction fills it)
-#include "runtime/world_query_cache.h"
+#include "components/world_query_cache.h"
 
 // Owns the GPU device lifecycle and ALL render-side state: framebuffers,
 // fallback textures, reserved view ids, the swappable pipeline, and per-frame

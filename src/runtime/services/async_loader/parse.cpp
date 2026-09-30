@@ -19,7 +19,7 @@
 #include <ozz/base/io/archive.h>
 #include <ozz/base/io/stream.h>
 #include "core/memory/mem.h"
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>

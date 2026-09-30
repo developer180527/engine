@@ -66,7 +66,7 @@ trivial construct-one-object path.
 
 `MEM_SCOPE(tag)` pushes a thread-local tag; every untagged allocation under
 it (std containers included) is attributed. Scopes must not straddle a
-jobs::wait() (fiber-backend rule — see runtime/jobs/jobs.h).
+jobs::wait() (fiber-backend rule — see core/jobs/jobs.h).
 
 ## The switch
 `ENGINE_MEM_ROUTE=1` (default) routes global new/delete through mem::.

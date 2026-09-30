@@ -1,9 +1,9 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-08
+verified: 2026-10-01
 covers:
-  - src/runtime/jobs/
+  - src/core/jobs/
 tests:
   - tests/jobs_test.cpp
   - tests/stress_jobs.cpp

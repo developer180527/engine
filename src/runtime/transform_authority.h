@@ -63,7 +63,7 @@
 #include "components/rigid_body.h"
 #include "core/logger.h"
 #include "core/transform.h"
-#include "runtime/world_query_cache.h"
+#include "components/world_query_cache.h"
 
 // Compile switch, three levels, matching ENGINE_PROFILE's shape:
 //   2  full — per-entity, per-field, per-phase records (debug default)

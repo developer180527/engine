@@ -11,7 +11,7 @@
 #include <cstdio>
 #include <thread>
 
-#include "runtime/jobs/jobs.h"
+#include "core/jobs/jobs.h"
 
 namespace { int g_failures = 0; }
 #define CHECK(cond, ...) do {                                       \
