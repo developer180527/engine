@@ -7,10 +7,12 @@ owner: src/assets
 header: src/assets/import/import_frontend.h
 implementations:
   - real: src/assets/import/frontend_cgltf.h#CgltfFrontend
+  - real: src/assets/import/frontend_assimp.h#AssimpFrontend
   - fake: src/assets/import/fake_frontend.h#FakeFrontend
 tests:
   - tests/import_frontend_contract_test.cpp
   - tests/frontend_cgltf_test.cpp
+  - tests/frontend_assimp_test.cpp
 covers:
   - src/assets/import/
 verified: 2026-09-30

@@ -19,6 +19,7 @@ When an asset has no cooked version, the runtime parses the source itself with a
 So one asset can look different depending on whether it has been cooked yet. That looks like a rendering bug and is really a pipeline bug. It also means four parsers are kept consistent only by comments.
 
 ## Done when
+- [ ] removes `src/assets/importers/assimp_importer.cpp` and `src/runtime/services/async_loader/parse.cpp` from audit IMP-01's baseline (`scripts/audit_baseline.json`); the rule then holds for it without debt
 - [ ] the source-parsing path in `async_loader/parse.cpp` is deleted, including the disk search for textures by filename
 - [ ] `runtime_boot.cpp` registers no source importers in any runtime
 - [ ] a missing cooked asset in the editor becomes a cook request plus a placeholder, and the asset swaps in when the cook finishes

@@ -210,11 +210,11 @@ int main() {
     std::printf("5. textures\n");
     {
         ImportedScene s = impcontract::expected(Case::TwoMaterialQuad);
-        s.materials[0].baseColor = {"", tga(255, 0, 0), "red"};
-        s.materials[1].baseColor = {"", tga(255, 0, 0), "red again"};      // identical bytes
+        s.materials[0].baseColor = {.embedded = tga(255, 0, 0), .embeddedName = "red"};
+        s.materials[1].baseColor = {.embedded = tga(255, 0, 0), .embeddedName = "red again"};      // identical bytes
         { std::ofstream f(g_dir / "src" / "blue.tga", std::ios::binary); const auto b = tga(0, 0, 255); f.write((const char*)b.data(), (std::streamsize)b.size()); }
-        s.materials[1].normal = {"blue.tga", {}, ""};                        // external, relative to the source
-        s.materials[0].normal = {"missing.tga", {}, ""};
+        s.materials[1].normal = {.path = "blue.tga"};                        // external, relative to the source
+        s.materials[0].normal = {.path = "missing.tga"};
         Cooked c = cook(s, "textured");
         const auto& a = c.asset;
         CHECK(c.loaded && (a.materials[0].flags & assetlib::kMatFlag_HasBaseColor) &&

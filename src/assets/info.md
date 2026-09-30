@@ -9,6 +9,9 @@ tests:
   - tests/cooker_test.cpp
   - tests/import_frontend_contract_test.cpp  # the import-frontend contract and its suite
   - tests/mesh_backend_test.cpp              # the one cook back end, ImportedScene -> cooked mesh
+  - tests/frontend_cgltf_test.cpp            # glTF front end: the contract suite on real .gltf files
+  - tests/frontend_assimp_test.cpp           # Assimp front end: the contract suite on real COLLADA files
+  - tests/cooked_texture_resolution_test.cpp # a cooked mesh finds its external texture (BUG-0063/0064)
   - tests/cook_infra_test.cpp
   - tests/import_test.cpp
   - tests/decimate_test.cpp           # a level must be genuinely cheaper
@@ -103,17 +106,16 @@ geometry — and says so once per file (`gltf_losses.h`, WO-002). Verified headl
 orchestrator needs the pipeline. See `modules/assetlib/info.md` for how the
 cook layer is split (orchestration / keying / dispatch / store / record
 format / scheduling).
-- `MeshCooker` — two routes today. **glTF/GLB goes through the import
-  pipeline** (WO-012): `imp::CgltfFrontend` reads it into an `ImportedScene`,
-  and `meshcook::cookImportedScene` cooks it. **Everything else goes through
-  Assimp**, straight to the cooked format, until WO-013 moves it onto the same
-  pipeline. On the glTF route, a skin is dropped as `Wrong`, so a skinned glTF
-  is REFUSED with a message naming what would be lost (WO-002's rule, now in
-  the dropped list, until WO-014). An animation-only glTF is `Empty`. Node
-  animations, morph targets, vertex colours, cameras, lights and textures that
-  do not resolve are each reported and cooked around (`Less`). On the Assimp
-  route, skinned meshes cook with a re-import that extracts the skeleton and
-  clips into the same binary.
+- `MeshCooker` — every mesh format goes through the import pipeline: the
+  front end that owns the format (`imp::CgltfFrontend` for glTF/GLB, WO-012;
+  `imp::AssimpFrontend` for FBX, OBJ, COLLADA, 3DS, PLY, STL and Blend, WO-013)
+  reads it into an `ImportedScene`, and `meshcook::cookImportedScene` cooks it.
+  `mesh_cooker.cpp` only dispatches, and names no parser (audit IMP-01). Every
+  loss is reported: a `Wrong` one (a glTF skin, until WO-014) refuses the cook,
+  and a `Less` one (morphs, vertex colours, cameras, lights, textures that do
+  not resolve) is logged and cooked around. An animation-only file is skipped
+  for the clip cooker (WO-016). How the output changed, file by file, is in
+  `docs/plans/imported-scene.md` §7.2 (glTF) and §7.3 (Assimp).
   Also emits an **LOD chain** — see below.
 - `TextureCooker` — stb decode → block-compressed texels + mips via
   `texture_encode`, in one of THREE families chosen by `COOK_TEX_TARGET`:

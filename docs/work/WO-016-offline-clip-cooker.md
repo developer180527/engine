@@ -18,6 +18,7 @@ A standalone clip, such as a Mixamo FBX, is cooked only the first time the edito
 A shipped build that uses a clip nobody played in the editor fails with "clip not cooked". Whether it works depends on what someone clicked.
 
 ## Done when
+- [ ] removes `src/animation/clip_library.h` from audit IMP-01's baseline (`scripts/audit_baseline.json`); the rule then holds for it without debt
 - [ ] a clip cooker in the normal cook pipeline, fingerprinted like the others
 - [ ] the cook-on-first-bind path in `clip_library.h` is removed
 - [ ] the "animation-only, skipping cook" branch in the mesh cooker routes to the clip cooker instead

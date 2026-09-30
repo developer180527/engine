@@ -445,8 +445,15 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
         matHandles.push_back(m_materials.addMaterial(std::move(mat)));
     }
 
-    if (!matHandles.empty())
-        mesh.material = matHandles[0];
+    // The mesh's material is its FIRST SUBMESH's, not the file's first material.
+    // It used to be matHandles[0] unconditionally, and a single-submesh mesh
+    // (no ranges are built for it, below) drew with whatever the file listed
+    // first. For an OBJ that is Assimp's untextured default, so every cooked
+    // single-material OBJ rendered white (WO-013, cooked_texture_resolution_test).
+    if (!matHandles.empty()) {
+        const uint32_t first = asset.submeshes.empty() ? 0u : asset.submeshes[0].materialIndex;
+        mesh.material = matHandles[first < matHandles.size() ? first : 0u];
+    }
 
     if (asset.submeshes.size() > 1) {
         for (const auto& sub : asset.submeshes) {
@@ -508,7 +515,12 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
             // level from ONE sphere, so a level must not carry a different one.
             lm.boundsMin  = { hdr.boundsMin[0], hdr.boundsMin[1], hdr.boundsMin[2] };
             lm.boundsMax  = { hdr.boundsMax[0], hdr.boundsMax[1], hdr.boundsMax[2] };
-            lm.material   = matHandles.empty() ? MaterialHandle{} : matHandles[0];
+            // Level 0's material rule (above): the first submesh's, not index 0.
+            {
+                const uint32_t first = lvl.submeshes.empty() ? 0u : lvl.submeshes[0].materialIndex;
+                lm.material = matHandles.empty() ? MaterialHandle{}
+                            : matHandles[first < matHandles.size() ? first : 0u];
+            }
             lm.sourcePath = absPath.string();
             // The level's own material groups, resolved against the SAME
             // material handles as level 0 — the cooker stores an index into the
@@ -1446,8 +1458,10 @@ bool AssetService::drainUploads() {
             matHandles.push_back(m_materials.addMaterial(std::move(mat)));
         }
 
-        if (!matHandles.empty())
-            mesh.material = matHandles[0];
+        if (!matHandles.empty()) {             // the first submesh's material (see loadMesh)
+            const uint32_t first = item.submeshes.empty() ? 0u : item.submeshes[0].materialIndex;
+            mesh.material = matHandles[first < matHandles.size() ? first : 0u];
+        }
 
         for (auto& sub : item.submeshes) {
             SubmeshRange range;

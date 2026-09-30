@@ -404,6 +404,15 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # each case WRITTEN as a real .gltf from its expected scene; plus its dropped
     # list and the old cook path's silent losses it fixes.
     engine_test(frontend_cgltf_test)
+    # WO-013: does a cooked mesh find its EXTERNAL texture? Real MeshCooker, real
+    # AssetService, bgfx Noop. Written first: it was red on the old Assimp static
+    # path (a bare basename the runtime cannot resolve) and is the proof the
+    # import pipeline fixes it.
+    engine_test(cooked_texture_resolution_test)
+    # WO-013: the Assimp front end against the import-frontend contract suite,
+    # every case (skinned and centimetre/Z-up included) WRITTEN as a real COLLADA
+    # file from its expected scene.
+    engine_test(frontend_assimp_test)
     # Cook infrastructure (scheduler / DDC / manifest / scanner) — needs only
     # the GPU-free core, no game assets.
     engine_test(cook_infra_test LIB engine_core)
@@ -1028,4 +1037,5 @@ if(ENGINE_WITH_RUST AND NOT ENGINE_SANITIZE AND TARGET engine_module_probe)
                        "gate conformance DISABLED (install rustup to run it)")
     endif()
 endif()
+
 

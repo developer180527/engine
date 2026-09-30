@@ -3,7 +3,7 @@ status: target
 ---
 # ImportedScene — the engine's own import format
 
-> **Status: design (WO-009), type landed (WO-010), back end built (WO-011), glTF switched (WO-012).** `src/assets/import/` holds
+> **Status: design (WO-009), type landed (WO-010), back end built (WO-011), glTF switched (WO-012), Assimp switched (WO-013): every mesh format cooks through ImportedScene.** `src/assets/import/` holds
 > the type, the contract's shape, its structural checks and its fake, and
 > `tests/import_contract.h` is the suite every front end must pass. Still to
 > build: WO-011 (the one back end), WO-012/013 (the front ends). The contract is
@@ -312,6 +312,60 @@ What the front end does that the old path did not, each pinned by
 - a primitive with no normals gets smooth normals (Assimp's behaviour for FBX)
   rather than a constant +Y
 
+### 7.3 The Assimp formats switched over, and what that showed (WO-013)
+
+`imp::AssimpFrontend` (`src/assets/import/frontend_assimp.*`) replaced the static
+and skinned Assimp cook paths. `mesh_cooker.cpp` is now 76 lines of dispatch,
+and audit IMP-01 keeps Assimp out of everything but the front end.
+
+**Compared before deleting, on eleven real files.** The tracked plants, cottage,
+TV, cannon and two dagger clips, plus fps_shooter's car, a Medieval prop, the
+Warzombie character and a zombie clip. Both plant models are **byte-identical**.
+On every skinned model the skeleton archive, bones, bind rotations, clips and
+weights are identical. Every other difference is explained:
+
+| difference | files | cause |
+|---|---|---|
+| tangent `w` | every skinned model | the old skinned path forced `w = +1`; the source's handedness is kept (§7.1) |
+| weights on 139 vertices | cannon | **vertices with no bone influence** used to keep weight 0 and collapse to the origin under skinning. They now follow the root bone, and the cook says so |
+| 3 tangents | cottage | were **zero-length** `(0,0,0)` in the old output; now a valid fallback |
+| 6 tangent `w` | cottage | triangles whose three corners share one UV point: handedness is undefined there |
+| base-colour texture now found | TV, cannon, car | **BUG-0063**: the old cooked basename could never resolve |
+| normal maps not cooked | TV, cannon, car | EXR, which stb cannot decode; the old path stored a name nothing could load either |
+| no texture on either side | Medieval prop | absolute `C:\Users\…` author paths, and the files are not beside the model: now reported |
+
+**Proven with a fixture before switching** (the order required it):
+`cooked_texture_resolution_test` cooks a textured OBJ, loads it through the real
+`AssetService`, and asserts the texture is bound. It was red on the old path for
+**two stacked bugs**: BUG-0063 (a bare basename that cannot resolve from the
+cooked directory) and BUG-0064 (a single-submesh mesh bound to the file's
+material 0, which for an OBJ is Assimp's untextured default).
+
+**Found by the contract suite**, which runs on COLLADA files written from each
+case:
+- **Assimp invents a mesh for a file that has none**: a "skeleton mesh"
+  drawing the hierarchy. An empty file imported as one mesh, and an
+  animation-only COLLADA would have imported as a stick figure.
+  `AI_CONFIG_IMPORT_NO_SKELETON_MESHES` is now set.
+- **The vendored Assimp cannot read a COLLADA `<morph>`**:
+  `ColladaParser.cpp`'s `<targets>` loop walks the controller's children, so
+  every COLLADA file with a morph target fails to import. The suite skips
+  `Unrepresentable` for Assimp, with that reason, and checks colours and
+  cameras separately. A patch in `third_party/patches/` is future work.
+- **Assimp names a COLLADA clip from the `<animation>` holding its channels**,
+  and misreads `<library_animation_clips>`.
+
+**Two contract rules were wrong for real files, and were corrected rather than
+worked around:**
+- `inverseBind` need only be invertible. Real FBX binds skins in poses other
+  than the rest pose, and only the file's own matrix skins correctly.
+- The suite compares skeletons allowing extra non-deforming ancestor bones
+  (where FBX's unit and axis conversion lives), and compares clips by where
+  they **move points**, not by local keys, which are in the file's frames.
+
+**Units are unchanged.** FBX arrives in the units it was authored in, as it
+always has. Converting to metres would rescale every project's FBX: WO-035.
+
 **Not moved into the back end:** vertex cache ordering. Assimp's
 `ImproveCacheLocality` stays in the Assimp front end, so FBX output is
 unchanged. glTF never had it. A back-end optimiser for every format is an
@@ -321,7 +375,7 @@ improvement, not part of this switch.
 
 | # | question | decided in |
 |---|---|---|
-| 1 | FBX units/axes on the skinned path (§4) | the suite's `AuthoredCentimetreZUp` case (landed in WO-010); the Assimp front end must pass it (WO-013), and that run decides the fix |
+| 1 | FBX units/axes on the skinned path (§4) | **COLLADA passes** `AuthoredCentimetreZUp` (WO-013): the front end carries Assimp's root conversion through skeleton and skin. FBX is in centimetres by Assimp's design, and whether to convert is **WO-035** |
 | 2 | ~~tangent generator: MikkTSpace or our own~~ **Our own for now (WO-011, §7.1)**; revisit on visible normal-map seams | done, pending a visual check |
 | 3 | ~~morph targets: `Wrong` or `Less`?~~ **Decided (WO-010): `Less`.** A mesh drawn at its base shape is correct, just without its expressions, like a static prop whose node animation is dropped. The `Unrepresentable` case pins it. | done |
 | 4 | vertex colours, extra UV sets: `Less` today; carried when a shader reads them | when a shader needs them |

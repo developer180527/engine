@@ -58,6 +58,7 @@ rule nobody agreed to.
 | `DET-01` | the fixed step reads no clock and no RNG | `src/runtime/docs/info.md` |
 | `HDR-01` | the C ABI headers pull in nothing of ours | `extension-model.md` |
 | `RHI-01` | bgfx's math library (`bx/`) spreads no further outside the renderer | `docs/rhi/evidence-coupling.md` |
+| `IMP-01` | Assimp is included only by `src/assets/import/frontend_assimp.*`; the runtime importers, the async loader, `clip_library` and animation's helpers are baselined until WO-015/016/018 | `docs/plans/imported-scene.md` §2 |
 | `CAM-01` | no `bx::mtxLookAt` / `mtxProj` / `mtxOrtho` outside `src/render/view_math.h`: one handedness for every camera | `src/render/view_math.h` |
 | `OS-01` | in `src/core` and `src/runtime`, an `#else` after an OS check is `#error "port: …"` or marked `// any OS: <why>`; `docs/process/porting.md` is current | `src/core/os_family.h` |
 | `DOC-01` | every directory of code is covered by some document | `engineering-standards.md` §1 |

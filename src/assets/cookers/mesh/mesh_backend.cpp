@@ -241,6 +241,14 @@ std::string cookTexture(const imp::TextureRef& ref, bool isNormalMap, int slot,
     int w = 0, h = 0, ch = 0;
     stbi_uc* px = nullptr;
     std::string what;
+    if (!ref.rgba.empty()) {                            // already decoded (Assimp's raw embedded texels)
+        TextureAsset tex;
+        if (!cook::encodeTexture(ref.rgba.data(), ref.width, ref.height, isNormalMap, tex)) {
+            notes.push_back("texture pixels '" + ref.embeddedName + "' could not be encoded; the slot is left empty");
+            return {};
+        }
+        return writeSiblingTexture(tex, ctx, slot, ref.width, ref.height, isNormalMap, "embedded", dedup);
+    }
     if (!ref.embedded.empty()) {
         what = "embedded '" + ref.embeddedName + "'";
         px = stbi_load_from_memory(ref.embedded.data(), (int)ref.embedded.size(), &w, &h, &ch, 4);

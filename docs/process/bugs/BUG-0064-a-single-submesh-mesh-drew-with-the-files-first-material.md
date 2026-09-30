@@ -1,0 +1,11 @@
+## BUG-0064 — A single-submesh mesh drew with the file's first material, not its own
+- found:     2026-09-30
+- status:    fixed
+- class:     logic
+- where:     src/runtime/services/asset_service.cpp
+- symptom:   a cooked mesh with one submesh whose material is not the first in the file rendered with material 0. For every OBJ that is Assimp's untextured default material, so a single-material OBJ rendered white even when its texture resolved.
+- cause:     `mesh.material = matHandles[0]` unconditionally, in `loadMesh`, its LOD levels and the async upload. Per-range materials are built only when a mesh has MORE than one submesh, so a single-submesh mesh drew with `mesh.material`, ignoring the submesh's own `materialIndex`. LOD levels made the same choice. The async path set the same base but was rescued because it always builds ranges.
+- pinned-by: tests/cooked_texture_resolution_test.cpp
+- lane:      unit
+- proof:     the mesh's material is now its first submesh's (bounds-checked, 0 only when there are no submeshes), in all three places. `cooked_texture_resolution_test`'s OBJ has Assimp's default at index 0 and its textured material at index 1. With the texture resolving (BUG-0063 fixed) but this line reverted, it is still red. The WO-013 mutation run reverts it and the test fails on "bound to the texture".
+- note:      found only because BUG-0063's fixture stayed red after BUG-0063 was fixed: the two were stacked, and either alone made a textured OBJ render white.

@@ -85,6 +85,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         assets/cookers/mesh/cook_common.cpp
         assets/cookers/mesh/mesh_backend.cpp
         assets/import/frontend_cgltf.cpp
+        assets/import/frontend_assimp.cpp
         assets/cookers/scene/scene_cooker.cpp
         assets/cookers/texture/texture_cooker.cpp
         assets/cookers/texture/texture_encode.cpp

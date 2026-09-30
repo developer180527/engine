@@ -17,6 +17,7 @@ source: review 2026-09-29 C3
 `buildOzzClip(aiAnimation*)` and `extractSkeleton(aiScene*)` tie the animation module to one parser.
 
 ## Done when
+- [ ] removes `src/animation/assimp_skeleton_loader.h` and `src/animation/ozz_bridge.h` from audit IMP-01's baseline (`scripts/audit_baseline.json`); the rule then holds for it without debt
 - [ ] `buildOzzClip` and `extractSkeleton` take `ImportedScene` clip and skeleton types
 - [ ] `assimp_skeleton_loader.h` is gone, or it lives inside the Assimp front end
 - [ ] no Assimp include in `src/animation/` (audit rule)

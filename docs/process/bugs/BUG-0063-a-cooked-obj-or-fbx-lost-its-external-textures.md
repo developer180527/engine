@@ -1,0 +1,11 @@
+## BUG-0063 — A cooked static OBJ or FBX lost every external texture
+- found:     2026-09-30
+- status:    fixed
+- class:     logic
+- where:     src/assets/cookers/mesh/mesh_cooker.cpp, src/runtime/services/asset_service.cpp
+- symptom:   a static OBJ/FBX whose material names a texture file cooked successfully and rendered with the white fallback. Nothing failed; `[AssetService] Could not resolve texture: crate.tga (from <project>/.cache/meshs)` was the only trace.
+- cause:     the static Assimp cook path in mesh_cooker.cpp (deleted by WO-013) stored the texture's bare BASENAME in the cooked material and never cooked the image. The runtime resolves that name in two ways: a sibling `.ctex` beside the cooked mesh (none was written), or a registry lookup of `<cooked dir>/<name>` relative to the project, which is `.cache/meshs/<name>` and can never match a source asset. A shipped build has no registry at all. On Windows-authored FBX the "basename" was the whole backslashed path. It was hidden because the *uncooked* source-parse path searched the disk for the file, so the editor showed textures until the asset cooked.
+- pinned-by: tests/cooked_texture_resolution_test.cpp
+- lane:      unit
+- proof:     `cooked_texture_resolution_test` cooks a textured OBJ with the real `MeshCooker` and loads it through the real `AssetService` on bgfx Noop, then asserts the base colour is bound. It was written first and was red on the old path, printing the unresolvable name. Fixed by WO-013: every format now cooks through ImportedScene, and the back end cooks every texture, external or embedded, to a content-deduplicated sibling `.ctex`: the one reference form a shipped build resolves. On real assets the texture is now found for `Television_01_4k.fbx`, `cannon_01_4k.fbx` and `covered_car_2k.fbx`. The test also needed BUG-0064's fix to go green; reverting either one reddens it.
+- note:      suspected from reading the code during WO-011 (imported-scene.md §7.1), and deliberately PROVEN with this fixture before the Assimp formats were switched, so that the switch would be known to be a fix rather than just a change.

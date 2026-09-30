@@ -181,10 +181,13 @@ inline std::vector<Violation> checkScene(const ImportedScene& s) {
     // ── materials ───────────────────────────────────────────────────────────
     for (size_t i = 0; i < s.materials.size(); ++i)
         for (const TextureRef* t : {&s.materials[i].baseColor, &s.materials[i].normal}) {
-            if (!t->path.empty() && !t->embedded.empty())
-                bad("textures", fmt("material %zu '%s': a texture is a path OR embedded bytes, not both",
+            if ((!t->path.empty()) + (!t->embedded.empty()) + (!t->rgba.empty()) > 1)
+                bad("textures", fmt("material %zu '%s': a texture is a path, embedded bytes OR pixels, not two",
                                     i, s.materials[i].name.c_str()));
-            if (!t->embedded.empty() && t->embeddedName.empty())
+            if (!t->rgba.empty() && (size_t)t->width * t->height * 4 != t->rgba.size())
+                bad("textures", fmt("material %zu '%s': rgba holds %zu bytes, not %ux%ux4",
+                                    i, s.materials[i].name.c_str(), t->rgba.size(), t->width, t->height));
+            if ((!t->embedded.empty() || !t->rgba.empty()) && t->embeddedName.empty())
                 bad("textures", fmt("material %zu '%s': embedded texture with no name",
                                     i, s.materials[i].name.c_str()));
         }
@@ -201,16 +204,22 @@ inline std::vector<Violation> checkScene(const ImportedScene& s) {
             if (!boneNames.insert(b.name).second)
                 bad("skeleton", fmt("bone name '%s' is used twice (clips bind by name)", b.name.c_str()));
         }
-        // inverseBind must invert the bind WORLD pose, or skinning moves the mesh at rest.
-        bool orderOk = true;
-        for (size_t bi = 0; bi < bones.size(); ++bi)
-            if (bones[bi].parent >= (int32_t)bi) orderOk = false;
-        for (size_t bi = 0; orderOk && bi < bones.size(); ++bi)
-            if (!nearIdentity(mul(bones[bi].inverseBind, worldOf(bones, bi, &Bone::bindLocal)), 1e-3f)) {
-                bad("skeleton", fmt("bone %zu '%s': inverseBind is not the inverse of its bind world matrix",
+        // inverseBind must be finite and invertible. It need NOT be the inverse
+        // of the rest pose: real files bind skins in other poses (Bone's comment).
+        for (size_t bi = 0; bi < bones.size(); ++bi) {
+            const float* m = bones[bi].inverseBind.m;
+            bool finite = true;
+            for (int k = 0; k < 16; ++k) finite &= std::isfinite(m[k]);
+            const float det = m[0] * (m[5] * m[10] - m[9] * m[6]) - m[4] * (m[1] * m[10] - m[9] * m[2])
+                            + m[8] * (m[1] * m[6] - m[5] * m[2]);
+            const float c0 = std::sqrt(m[0]*m[0] + m[1]*m[1] + m[2]*m[2]), c1 = std::sqrt(m[4]*m[4] + m[5]*m[5] + m[6]*m[6]),
+                        c2 = std::sqrt(m[8]*m[8] + m[9]*m[9] + m[10]*m[10]);
+            if (!finite || !(std::fabs(det) > 1e-6f * c0 * c1 * c2)) {   // scale-invariant, like normalMatrix
+                bad("skeleton", fmt("bone %zu '%s': inverseBind is not finite and invertible",
                                     bi, bones[bi].name.c_str()));
                 break;
             }
+        }
     }
 
     // ── clips ───────────────────────────────────────────────────────────────

@@ -1,15 +1,18 @@
 #pragma once
 #include <assetlib/cooker.h>
 #include <assetlib/mesh_asset.h>
-#include <assimp/matrix3x3.h>
-#include <assimp/matrix4x4.h>
 #include <filesystem>
 #include <string>
 #include <vector>
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 17; // 17: v6 blob integrity digests
+    static constexpr uint32_t kVersion = 18; // 18: every format through ImportedScene and one
+                                             // back end (WO-012/013): generated tangents,
+                                             // textures as siblings, mirrored instances.
+                                             // WO-012 changed glTF output without this bump,
+                                             // so glTF cooked in between is re-cooked here.
+                                             // 17: v6 blob integrity digests
                                          // 16: LOD levels keep their submesh
                                              // ranges, so a level draws with the
                                              // same materials as its parent
@@ -40,11 +43,3 @@ public:
     void enumerateOutputs(const std::filesystem::path& primary,
                           std::vector<std::filesystem::path>& out) const override;
 };
-
-// Normal matrix (inverse-transpose of the linear part) with a SCALE-INVARIANT
-// singularity guard. Exposed for tests (cooker audit "Determinant Trap"):
-// the old bare |det| > 1e-12 check collapsed for small uniform scales —
-// 0.0001^3 IS 1e-12, so valid heavily-scaled-down assets got an identity
-// normal matrix and their normals stopped following node rotation (broken
-// shading). Falls back to identity only for GENUINELY singular bases.
-aiMatrix3x3 cookNormalMatrix(const aiMatrix4x4& world);

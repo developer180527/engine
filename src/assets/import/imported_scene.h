@@ -63,15 +63,17 @@ struct Node {
 };
 
 // ── Materials ───────────────────────────────────────────────────────────────
-// Exactly one of `path` / `embedded`, or neither. Resolution is ONE rule (plan
-// §4.1): a relative path is relative to the source file's directory; nothing is
-// searched for. A reference that does not resolve is a Dropped entry instead.
+// Exactly one of `path` / `embedded` / `rgba`, or none. Resolution is ONE rule
+// (plan §4.1): a relative path is relative to the source file's directory. A
+// reference that does not resolve is a Dropped entry instead.
 struct TextureRef {
     std::string          path;
-    std::vector<uint8_t> embedded;       // the encoded image bytes (PNG, JPEG, …)
-    std::string          embeddedName;   // for dedup and messages
+    std::vector<uint8_t> embedded;       // encoded image bytes (PNG, JPEG, …)
+    std::vector<uint8_t> rgba;           // or already-decoded pixels, RGBA8, width*height*4
+    uint32_t             width = 0, height = 0;   // for `rgba`
+    std::string          embeddedName;   // for dedup and messages (embedded or rgba)
 
-    bool empty() const { return path.empty() && embedded.empty(); }
+    bool empty() const { return path.empty() && embedded.empty() && rgba.empty(); }
 };
 
 struct Material {
@@ -87,8 +89,14 @@ struct Material {
 struct Bone {
     std::string name;                    // unique; clips bind by name
     int32_t     parent = -1;             // parents come before children
-    Float4x4    bindLocal;               // bind pose, relative to the parent bone
-    Float4x4    inverseBind;             // inverse of the bone's bind WORLD matrix
+    Float4x4    bindLocal;               // rest pose, relative to the parent bone
+    // Maps the skinned mesh's space into this bone's space AT BIND. For a
+    // skeleton authored at rest it is the inverse of the bone's world matrix,
+    // but real files (FBX especially) often bind the skin in a pose that is not
+    // the node hierarchy's rest pose, and then only the file's own matrix skins
+    // correctly. So it is carried as authored, and required only to be
+    // invertible (WO-013 relaxed the WO-010 rule that demanded the inverse).
+    Float4x4    inverseBind;
 };
 
 struct Skeleton { std::vector<Bone> bones; };

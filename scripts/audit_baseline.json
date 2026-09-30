@@ -1,6 +1,6 @@
 {
-  "generated": "2026-09-30T00:21:13+00:00",
-  "commit": "c046518a46bb5d44eeda5b9aa3c654704aaf5ca1",
+  "generated": "2026-09-30T04:16:39+00:00",
+  "commit": "38d36b00b3eba3ae5021b3dae70ac12ca80c01ad",
   "note": "Accepted architectural debt. The gate fails on findings NOT listed here; shrinking this file is the cleanup, and nothing may be added to it without a reason in the commit.",
   "findings": {
     "LAYER-03": [
@@ -86,6 +86,13 @@
       "RHI-01|src/runtime/camera_util.h",
       "RHI-01|src/runtime/runtime_sim.cpp",
       "RHI-01|src/runtime/sim_classification.cpp"
+    ],
+    "IMP-01": [
+      "IMP-01|src/animation/assimp_skeleton_loader.h",
+      "IMP-01|src/animation/clip_library.h",
+      "IMP-01|src/animation/ozz_bridge.h",
+      "IMP-01|src/assets/importers/assimp_importer.cpp",
+      "IMP-01|src/runtime/services/async_loader/parse.cpp"
     ]
   }
 }

@@ -16,6 +16,7 @@
 #include <fstream>
 
 #include "assets/cookers/mesh/mesh_cooker.h"
+#include "assets/cookers/mesh/cook_common.h"
 #include "assets/cookers/scene/scene_cooker.h"
 #include "assets/cookers/texture/texture_encode.h"
 #include "assets/cookers/texture/texture_cooker.h"
@@ -123,11 +124,6 @@ static aiMatrix4x4 rotXNeg90Scaled(float s) {
     return rot * scl;
 }
 
-static aiVector3D mul(const aiMatrix3x3& m, const aiVector3D& v) {
-    return { m.a1*v.x + m.a2*v.y + m.a3*v.z,
-             m.b1*v.x + m.b2*v.y + m.b3*v.z,
-             m.c1*v.x + m.c2*v.y + m.c3*v.z };
-}
 
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -138,26 +134,34 @@ int main() {
     fs::create_directories(dir);
 
     // ── 1. Determinant trap: rotation must survive a 0.0001 scale ────────
-    // cookNormalMatrix is the exact function emitMesh bakes normals with.
-    // RotationX(-90°) maps +Z into +Y (assimp's convention). Pre-fix,
-    // scale 0.0001 tripped the det<=1e-12 guard (0.0001^3 == 1e-12) ->
-    // identity normal matrix -> the normal STAYED +Z and shading broke.
+    // meshcook::normalMatrix is what the back end bakes normals with, for every
+    // format (it replaced the Assimp path's cookNormalMatrix, WO-013).
+    // RotationX(-90°) maps +Z into +Y. A bare det<=1e-12 guard would trip at
+    // scale 0.0001 (0.0001^3 == 1e-12) -> identity -> the normal STAYS +Z.
+    auto columnMajor = [](const aiMatrix4x4& m, float out[16]) {
+        const float r[4][4] = {{m.a1, m.a2, m.a3, m.a4}, {m.b1, m.b2, m.b3, m.b4},
+                               {m.c1, m.c2, m.c3, m.c4}, {m.d1, m.d2, m.d3, m.d4}};
+        for (int c = 0; c < 4; ++c) for (int rr = 0; rr < 4; ++rr) out[c * 4 + rr] = r[rr][c];
+    };
     for (float scale : {1.0f, 0.01f, 0.0001f}) {
-        const aiMatrix3x3 nm = cookNormalMatrix(rotXNeg90Scaled(scale));
-        aiVector3D n = mul(nm, aiVector3D(0, 0, 1));
-        n.Normalize();
-        CHECK(n.y > 0.9f && std::fabs(n.z) < 0.1f,
-              "scale %g: +Z normal rotated to +Y (n=%.3f,%.3f,%.3f) — the trap",
-              scale, n.x, n.y, n.z);
+        float m[16], nm[9];
+        columnMajor(rotXNeg90Scaled(scale), m);
+        meshcook::normalMatrix(m, nm);
+        float n[3] = {nm[2], nm[5], nm[8]};              // nm * (0,0,1), row-major 3x3
+        const float l = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        for (float& c : n) c /= l;
+        CHECK(n[1] > 0.9f && std::fabs(n[2]) < 0.1f,
+              "scale %g: +Z normal rotated to +Y (n=%.3f,%.3f,%.3f) — the trap", scale, n[0], n[1], n[2]);
     }
     // A GENUINELY singular basis (flattened Z axis) must still fall back.
     {
         aiMatrix4x4 flat;
         aiMatrix4x4::Scaling(aiVector3D(1, 1, 0), flat);
-        const aiMatrix3x3 nm = cookNormalMatrix(flat);
-        const aiMatrix3x3 identity{};
-        CHECK(std::memcmp(&nm, &identity, sizeof nm) == 0,
-              "flattened basis still falls back to identity");
+        float m[16], nm[9];
+        columnMajor(flat, m);
+        meshcook::normalMatrix(m, nm);
+        const float identity[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+        CHECK(std::memcmp(nm, identity, sizeof nm) == 0, "flattened basis still falls back to identity");
     }
 
     // ── 2. Scene string table dedup ───────────────────────────────────────

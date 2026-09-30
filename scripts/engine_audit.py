@@ -684,6 +684,28 @@ def rule_one_camera_convention() -> Rule:
     return r
 
 
+# ── IMP-01: Assimp's types live only in the Assimp front end ────────────────
+# WO-013: every mesh format now cooks through ImportedScene, and the cook stack
+# past src/assets/import/frontend_assimp.* never sees an aiScene. What remains
+# is baselined debt with a known end: the runtime importers and the async
+# loader's source parse (WO-018), clip_library's cook-on-bind (WO-016), and
+# animation's Assimp-typed helpers (WO-015). New Assimp includes anywhere else
+# fail the gate.
+def rule_assimp_only_in_front_end() -> Rule:
+    r = Rule("IMP-01", "Assimp is included only by the Assimp import front end",
+             "docs/plans/imported-scene.md §2; src/assets/import/frontend_assimp.h.",
+             "one parser's types past its front end means that format's quirks "
+             "reach code every format shares, and a new format is a copy of the "
+             "old path again: the problem ImportedScene exists to end.")
+    for rel in tracked("src/*", "include/*"):
+        if not rel.endswith(SRC_EXT) or Path(rel).name.startswith("frontend_assimp"):
+            continue
+        _, angled = includes(rel)
+        if any(inc.startswith("assimp/") for inc in angled):
+            r.findings.append(Finding(r.id, rel, f"{rel} includes Assimp outside the Assimp front end"))
+    return r
+
+
 def rule_doc_coverage() -> Rule:
     r = Rule("DOC-01", "every directory of code is covered by some document",
              "docs/process/engineering-standards.md §1 — staleness is checked "
@@ -717,7 +739,7 @@ RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
          rule_abi_compat_coverage, rule_component_hash_membership,
          rule_fuzz_corpus, rule_tests_registered, rule_sim_determinism,
          rule_c_abi_header_purity, rule_bx_creep, rule_unknown_os_is_an_error,
-         rule_one_camera_convention,
+         rule_one_camera_convention, rule_assimp_only_in_front_end,
          rule_doc_coverage)
 
 # The checks that already exist as their own scripts. The farm wants ONE entry

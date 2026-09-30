@@ -273,21 +273,103 @@ inline void compareGeometry(const ImportedScene& got, const ImportedScene& want,
     }
 }
 
+// The skeleton, by bone name. A front end MAY keep extra bones that nothing is
+// weighted to, typically a skeleton's ancestors (FBX's "Armature" or scene root,
+// where a file's unit and axis conversion lives). The old Assimp path kept them,
+// and dropping them would lose that transform. So: every wanted bone must exist,
+// its nearest WANTED ancestor must match, and its bind world position must match.
+// Extra bones are allowed.
 inline void compareSkeleton(const ImportedScene& got, const ImportedScene& want, std::vector<std::string>& why) {
     if (!want.skeleton) { if (got.skeleton) why.push_back("skeleton: none expected"); return; }
     if (!got.skeleton)  { why.push_back("skeleton: missing"); return; }
     const auto &g = got.skeleton->bones, &w = want.skeleton->bones;
-    if (g.size() != w.size()) { why.push_back("skeleton: " + std::to_string(g.size()) + " bones, want " + std::to_string(w.size())); return; }
-    auto parentName = [](const std::vector<Bone>& bs, const Bone& b) { return b.parent < 0 ? std::string() : bs[(size_t)b.parent].name; };
+    std::set<std::string> wanted;
+    for (const Bone& b : w) wanted.insert(b.name);
+    auto nearestWanted = [&](const std::vector<Bone>& bs, const Bone& b) {
+        for (int32_t p = b.parent; p >= 0; p = bs[(size_t)p].parent)
+            if (wanted.count(bs[(size_t)p].name)) return bs[(size_t)p].name;
+        return std::string();
+    };
     for (size_t wi = 0; wi < w.size(); ++wi) {
         auto it = std::find_if(g.begin(), g.end(), [&](const Bone& b) { return b.name == w[wi].name; });
         if (it == g.end()) { why.push_back("skeleton: no bone '" + w[wi].name + "'"); return; }
         const size_t gi = (size_t)(it - g.begin());
-        if (parentName(g, *it) != parentName(w, w[wi])) { why.push_back("skeleton: '" + w[wi].name + "' parent '" + parentName(g, *it) + "', want '" + parentName(w, w[wi]) + "'"); return; }
+        if (nearestWanted(g, *it) != nearestWanted(w, w[wi])) {
+            why.push_back("skeleton: '" + w[wi].name + "' hangs under '" + nearestWanted(g, *it) + "', want '" + nearestWanted(w, w[wi]) + "'"); return;
+        }
         const Float3 o{0, 0, 0};
         const Float3 gp = transformPoint(worldOf(g, gi, &Bone::bindLocal), o), wp = transformPoint(worldOf(w, wi, &Bone::bindLocal), o);
         if (!near3(gp, wp)) { why.push_back("skeleton: '" + w[wi].name + "' bind position " + str(gp) + ", want " + str(wp)); return; }
     }
+}
+
+// ── Clips, by what they DO ──────────────────────────────────────────────────
+// A clip's local keys are in its skeleton's own frames, and those are the file's:
+// a skeleton that keeps its ancestors (where a file's unit and axis conversion
+// lives) stores "turn 45 degrees about up" about the FILE's up axis. So local keys
+// are not comparable across front ends; what a clip does to the world is. For each
+// animated wanted bone, at the clip's first and last key, the bone's motion in
+// world space, world(t) * inverse(bindWorld), is applied to the bone's bind origin
+// and three points around it, and those positions must match.
+inline Float4x4 inverse4(const Float4x4& a) {                  // general 4x4 inverse (cofactors)
+    const float* m = a.m; float inv[16];
+    inv[0] = m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] + m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
+    inv[4] = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] - m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
+    inv[8] = m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] + m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
+    inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] - m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
+    inv[1] = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] - m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
+    inv[5] = m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] + m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
+    inv[9] = -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] - m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
+    inv[13] = m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] + m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
+    inv[2] = m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15] + m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
+    inv[6] = -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15] - m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
+    inv[10] = m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15] + m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
+    inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14] - m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
+    inv[3] = -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11] - m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
+    inv[7] = m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11] + m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
+    inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11] - m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
+    inv[15] = m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10] + m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
+    const float det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
+    Float4x4 r;
+    for (int i = 0; i < 16; ++i) r.m[i] = det != 0 ? inv[i] / det : 0.0f;
+    return r;
+}
+
+// A bone's local transform at the key nearest `t`: each channel the track has
+// comes from its key, each it lacks from the bind pose.
+inline Float4x4 localAt(const Bone& b, const Track* tr, float t) {
+    const float* m = b.bindLocal.m;
+    Float3 T{m[12], m[13], m[14]};
+    Float3 c0{m[0], m[1], m[2]}, c1{m[4], m[5], m[6]}, c2{m[8], m[9], m[10]};
+    auto len = [](Float3 v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); };
+    Float3 S{len(c0), len(c1), len(c2)};
+    float R[9] = {c0.x / S.x, c0.y / S.x, c0.z / S.x, c1.x / S.y, c1.y / S.y, c1.z / S.y, c2.x / S.z, c2.y / S.z, c2.z / S.z};
+    auto nearest = [t](const auto& keys) { size_t k = 0; for (size_t i = 1; i < keys.size(); ++i) if (std::fabs(keys[i].time - t) < std::fabs(keys[k].time - t)) k = i; return k; };
+    if (tr && !tr->translation.empty()) T = tr->translation[nearest(tr->translation)].value;
+    if (tr && !tr->scale.empty())       S = tr->scale[nearest(tr->scale)].value;
+    if (tr && !tr->rotation.empty()) {
+        const Quat q = tr->rotation[nearest(tr->rotation)].value;
+        const float x = q.x, y = q.y, z = q.z, w = q.w;
+        const float r[9] = {1 - 2*(y*y + z*z), 2*(x*y + z*w), 2*(x*z - y*w), 2*(x*y - z*w), 1 - 2*(x*x + z*z), 2*(y*z + x*w),
+                            2*(x*z + y*w), 2*(y*z - x*w), 1 - 2*(x*x + y*y)};
+        std::copy(r, r + 9, R);
+    }
+    Float4x4 L;
+    for (int k = 0; k < 3; ++k) { L.m[k] = R[k] * S.x; L.m[4 + k] = R[3 + k] * S.y; L.m[8 + k] = R[6 + k] * S.z; }
+    L.m[12] = T.x; L.m[13] = T.y; L.m[14] = T.z;
+    return L;
+}
+
+inline Float4x4 posedWorld(const std::vector<Bone>& bones, const Clip& c, size_t bi, float t) {
+    Float4x4 w;
+    std::vector<size_t> chain;
+    for (int32_t i = (int32_t)bi; i >= 0; i = bones[(size_t)i].parent) chain.push_back((size_t)i);
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        const Track* tr = nullptr;
+        for (const Track& x : c.tracks) if (x.bone == bones[*it].name) tr = &x;
+        w = mul(w, localAt(bones[*it], tr, t));
+    }
+    return w;
 }
 
 inline void compareClips(const ImportedScene& got, const ImportedScene& want, std::vector<std::string>& why) {
@@ -296,15 +378,22 @@ inline void compareClips(const ImportedScene& got, const ImportedScene& want, st
         auto gc = std::find_if(got.clips.begin(), got.clips.end(), [&](const Clip& c) { return c.name == wc.name; });
         if (gc == got.clips.end()) { why.push_back("clips: no clip '" + wc.name + "'"); return; }
         if (!near(gc->duration, wc.duration)) { why.push_back("clips: '" + wc.name + "' lasts " + std::to_string(gc->duration) + " s, want " + std::to_string(wc.duration)); return; }
+        if (!got.skeleton || !want.skeleton) { why.push_back("clips: no skeleton to play '" + wc.name + "' on"); return; }
+        const auto &gb = got.skeleton->bones, &wb = want.skeleton->bones;
         for (const Track& wt : wc.tracks) {
-            auto gt = std::find_if(gc->tracks.begin(), gc->tracks.end(), [&](const Track& t) { return t.bone == wt.bone; });
-            if (gt == gc->tracks.end()) { why.push_back("clips: '" + wc.name + "' does not animate '" + wt.bone + "'"); return; }
-            auto sameRot = [](const Quat& a, const Quat& b) { return std::fabs(std::fabs(a.x*b.x + a.y*b.y + a.z*b.z + a.w*b.w) - 1.0f) < 1e-3f; };
-            if (!wt.rotation.empty()) {
-                if (gt->rotation.empty() || !sameRot(gt->rotation.front().value, wt.rotation.front().value) ||
-                    !sameRot(gt->rotation.back().value, wt.rotation.back().value)) {
-                    why.push_back("clips: '" + wc.name + "' bone '" + wt.bone + "' rotation differs at the first or last key"); return;
-                }
+            size_t wi = 0; while (wi < wb.size() && wb[wi].name != wt.bone) ++wi;
+            size_t gi = 0; while (gi < gb.size() && gb[gi].name != wt.bone) ++gi;
+            if (wi == wb.size() || gi == gb.size()) { why.push_back("clips: '" + wc.name + "' bone '" + wt.bone + "' missing"); return; }
+            const Float4x4 gBind = inverse4(worldOf(gb, gi, &Bone::bindLocal)), wBind = inverse4(worldOf(wb, wi, &Bone::bindLocal));
+            const Float3 o = transformPoint(worldOf(wb, wi, &Bone::bindLocal), {0, 0, 0});
+            for (float t : {0.0f, wc.duration}) {
+                const Float4x4 gm = mul(posedWorld(gb, *gc, gi, t), gBind), wm = mul(posedWorld(wb, wc, wi, t), wBind);
+                for (Float3 p : {o, Float3{o.x + 1, o.y, o.z}, Float3{o.x, o.y + 1, o.z}, Float3{o.x, o.y, o.z + 1}})
+                    if (!near3(transformPoint(gm, p), transformPoint(wm, p))) {
+                        why.push_back("clips: '" + wc.name + "' at " + std::to_string(t) + " s moves a point by '" + wt.bone + "' to " +
+                                      str(transformPoint(gm, p)) + ", want " + str(transformPoint(wm, p)));
+                        return;
+                    }
             }
         }
     }

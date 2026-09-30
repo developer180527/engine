@@ -105,6 +105,11 @@ required.
   reachable from exactly two TUs — its `IPlatform` and its `window_ops` — and
   `engine_runtime` links only the one selected. Verified: `libglfw3.a` is in the
   SDL3 link line before the change and absent after.
+- **A mesh's material is its first submesh's** (BUG-0064). `AssetService` used
+  to bind `matHandles[0]` to every mesh. A single-submesh mesh gets no per-range
+  materials, so it drew with the file's first material, which for an OBJ is
+  Assimp's untextured default. `loadMesh`, its LOD levels and the async upload
+  now take the first submesh's `materialIndex`.
 - **Cameras are right-handed** (WO-033). `PrimaryCameraFinder` builds its view
   and projection through `render/view_math.h`, like every other camera. Before,
   it used bx's left-handed default and the image was mirrored left-to-right.
