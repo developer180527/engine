@@ -10,6 +10,7 @@
 // It also pins that the model is GUI-free: the first check below fails the
 // BUILD if model.h ever pulls ImGui back in.
 #include "editor/panels/asset_browser/model.h"
+#include "editor/panels/asset_browser/actions.h"
 
 #ifdef IMGUI_VERSION
 #error "asset_browser/model.h must not include ImGui: it is shared by every GUI front end"
@@ -198,6 +199,41 @@ int main() {
 
     std::error_code ec;
     fs::remove_all(project, ec);
+    // ── Reveal in the file manager, per OS (WO-005) ─────────────────────────
+    // Pure: every OS's command is checked here, whatever this machine is. It
+    // used to be `open -R` everywhere, which on Linux is a different program.
+    {
+        using ab::RevealOs; using ab::revealCommand;
+        CHECK(revealCommand("/p/a b.png", false, RevealOs::Apple) == "open -R '/p/a b.png'",
+              "macOS selects the file in Finder: %s", revealCommand("/p/a b.png", false, RevealOs::Apple).c_str());
+        CHECK(revealCommand("/p/dir", true, RevealOs::Apple) == "open '/p/dir'", "macOS opens a folder");
+        CHECK(revealCommand("C:\\p\\a b.png", false, RevealOs::Windows) == "explorer /select,\"C:\\p\\a b.png\"",
+              "Windows selects the file in Explorer: %s",
+              revealCommand("C:\\p\\a b.png", false, RevealOs::Windows).c_str());
+        CHECK(revealCommand("C:\\p", true, RevealOs::Windows) == "explorer \"C:\\p\"", "Windows opens a folder");
+        CHECK(revealCommand("/p/models/house.fbx", false, RevealOs::Linux)
+                  == "xdg-open '/p/models' >/dev/null 2>&1 &",
+              "Linux opens the CONTAINING folder with xdg-open, in the background: %s",
+              revealCommand("/p/models/house.fbx", false, RevealOs::Linux).c_str());
+        CHECK(revealCommand("/p/models", true, RevealOs::Linux) == "xdg-open '/p/models' >/dev/null 2>&1 &",
+              "Linux opens a folder itself");
+        CHECK(revealCommand("/p/x", false, RevealOs::Unknown).empty() && !ab::canReveal(RevealOs::Unknown),
+              "an unknown OS gets no command, and the menu item is disabled");
+
+        // Nothing in a filename reaches the shell as syntax.
+        const std::string evil = "/p/it's $(rm -rf ~); `x`.png";
+        CHECK(revealCommand(evil, false, RevealOs::Apple) == "open -R '/p/it'\\''s $(rm -rf ~); `x`.png'",
+              "a quote, $() and backticks stay inside single quotes: %s",
+              revealCommand(evil, false, RevealOs::Apple).c_str());
+        CHECK(revealCommand("C:\\p\\a\"b.png", false, RevealOs::Windows).empty(),
+              "a Windows path with a double quote is refused, not escaped");
+
+        CHECK(std::string(ab::revealLabel(RevealOs::Apple)) == "Reveal in Finder"
+              && std::string(ab::revealLabel(RevealOs::Windows)) == "Show in Explorer"
+              && std::string(ab::revealLabel(RevealOs::Linux)) == "Open Containing Folder",
+              "the menu item is named for the OS");
+    }
+
     if (g_failures) {
         std::printf("\nasset_browser_model_test: %d FAILURE(S)\n", g_failures);
         return 1;

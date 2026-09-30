@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <cstdio>
 #include <cstdlib>
 #include <unordered_set>
 
@@ -96,14 +97,91 @@ inline std::string duplicatePath(const std::filesystem::path& p) {
     return "";
 }
 
-// macOS: reveal in Finder. Single-quotes the path (escaping embedded quotes).
-inline void revealInFinder(const std::filesystem::path& p) {
-    std::string raw = p.string(), q;
-    q.reserve(raw.size() + 2);
-    for (char c : raw) { if (c=='\'') q += "'\\''"; else q += c; }
-    bool isDir = std::filesystem::is_directory(p);
-    std::string cmd = (isDir ? "open '" : "open -R '") + q + "'";
-    std::system(cmd.c_str());
+// ── Reveal in the OS file manager (WO-005) ───────────────────────────────────
+// This used to run `open -R '…'` on EVERY OS. On Linux `open` is a different
+// program (openvt, or nothing), so the menu item did something unrelated or
+// nothing, silently. Now each OS gets its own file manager, and one we do not
+// know says so and greys the menu item out. Moves behind os:: with WO-021.
+//
+// The command is built by a PURE function, with the OS as a parameter, so one
+// test checks all three commands and their quoting on whichever machine it
+// runs on. Only revealInFileManager() depends on the host.
+enum class RevealOs { Apple, Windows, Linux, Unknown };
+
+constexpr RevealOs hostRevealOs() {
+#if defined(__APPLE__)
+    return RevealOs::Apple;
+#elif defined(_WIN32)
+    return RevealOs::Windows;
+#elif defined(__linux__)
+    return RevealOs::Linux;
+#else
+    return RevealOs::Unknown;
+#endif
+}
+
+// What the menu item is called where the user is.
+constexpr const char* revealLabel(RevealOs os = hostRevealOs()) {
+    switch (os) {
+        case RevealOs::Apple:   return "Reveal in Finder";
+        case RevealOs::Windows: return "Show in Explorer";
+        default:                return "Open Containing Folder";
+    }
+}
+
+constexpr bool canReveal(RevealOs os = hostRevealOs()) { return os != RevealOs::Unknown; }
+
+// The shell command, or "" when it cannot be built safely. POSIX shells get the
+// path in single quotes (an embedded ' becomes '\''), so nothing in a filename
+// is interpreted. Windows paths cannot contain `"`, so a path with one is
+// refused rather than escaped. A file is selected in its folder where the file
+// manager can do that (Finder, Explorer); xdg-open cannot select, so Linux opens
+// the containing folder. Linux runs it in the background: xdg-open may block
+// for as long as the file manager stays open, and this is called on the UI thread.
+inline std::string revealCommand(const std::string& path, bool isDir, RevealOs os) {
+    auto shq = [](const std::string& raw) {
+        std::string q = "'";
+        for (char c : raw) { if (c == '\'') q += "'\\''"; else q += c; }
+        return q + "'";
+    };
+    switch (os) {
+        case RevealOs::Apple:
+            return (isDir ? "open " : "open -R ") + shq(path);
+        case RevealOs::Windows:
+            if (path.find('"') != std::string::npos) return "";
+            return (isDir ? "explorer \"" : "explorer /select,\"") + path + "\"";
+        case RevealOs::Linux: {
+            const std::string dir = isDir ? path
+                : std::filesystem::path(path).parent_path().string();
+            return "xdg-open " + shq(dir.empty() ? "." : dir) + " >/dev/null 2>&1 &";
+        }
+        case RevealOs::Unknown: break;
+    }
+    return "";
+}
+
+// true when the command was ISSUED; false when this OS has no known file
+// manager or the command cannot be built (the first such failure is printed
+// once). Not "the window opened": explorer.exe exits 1 even when it succeeds,
+// and a backgrounded xdg-open always returns 0, so the exit code means nothing.
+inline bool revealInFileManager(const std::filesystem::path& p) {
+    std::string cmd;
+    try {
+        cmd = revealCommand(p.string(), std::filesystem::is_directory(p), hostRevealOs());
+    } catch (const std::exception&) {
+        cmd.clear();   // p.string() throws on Windows for a name the code page cannot hold
+    }
+    if (cmd.empty()) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            std::fprintf(stderr, "[AssetBrowser] cannot reveal %s in a file manager on this OS\n",
+                         p.filename().string().c_str());
+        }
+        return false;
+    }
+    (void)std::system(cmd.c_str());
+    return true;
 }
 
 inline bool isViewableText(const std::string& e) {

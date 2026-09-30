@@ -168,7 +168,8 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
         if (!s_model.actionTargetIsDir() && ImGui::MenuItem("Duplicate"))
             s_model.duplicateTarget(cookService);
         if (ImGui::MenuItem("Copy Path")) ImGui::SetClipboardText(s_model.actionTarget().c_str());
-        if (ImGui::MenuItem("Reveal in Finder")) ab::revealInFinder(tp);
+        if (ImGui::MenuItem(ab::revealLabel(), nullptr, false, ab::canReveal()))
+            ab::revealInFileManager(tp);
         ImGui::Separator();
         if (ImGui::MenuItem("Delete")) s_openDelete = true;
         ImGui::EndPopup();
@@ -197,7 +198,8 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Reveal in Finder")) ab::revealInFinder(s_model.currentDir());
+        if (ImGui::MenuItem(ab::revealLabel(), nullptr, false, ab::canReveal()))
+            ab::revealInFileManager(s_model.currentDir());
         if (ImGui::MenuItem("Refresh")) s_model.requestRefresh(cookService);
         ImGui::EndPopup();
     }

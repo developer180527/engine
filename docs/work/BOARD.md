@@ -17,15 +17,14 @@ Nothing. Start the first order under **Next up**.
 
 ## Next up
 
-1. [WO-005](WO-005-reveal-in-file-manager-per-os.md) **"Reveal in Finder" works per OS instead of running `open` everywhere** · P1 · size S — `revealInFinder` runs `std::system("open -R '…'")` unguarded on every OS. On Linux, `open` is a different program altogether.
-2. [WO-006](WO-006-unknown-os-is-a-compile-error.md) **An unknown OS is a compile error with a to-do list, not silently POSIX** · P1 · size M — Core memory, threading and module loading go `#if _WIN32 … #else POSIX`, so a new port compiles, then quietly does the wrong thing.
-3. [WO-008](WO-008-game-module-static-claim.md) **game_module.h stops claiming a static-link path that does not exist** · P1 · size S — The header says shipped games "link engine::runtime statically and never dlopen anything". No code does that.
+1. [WO-006](WO-006-unknown-os-is-a-compile-error.md) **An unknown OS is a compile error with a to-do list, not silently POSIX** · P1 · size M — Core memory, threading and module loading go `#if _WIN32 … #else POSIX`, so a new port compiles, then quietly does the wrong thing.
+2. [WO-008](WO-008-game-module-static-claim.md) **game_module.h stops claiming a static-link path that does not exist** · P1 · size S — The header says shipped games "link engine::runtime statically and never dlopen anything". No code does that.
+3. [WO-009](WO-009-imported-scene-design.md) **ImportedScene — design the engine's own import format** · P1 · size M — Nothing the engine owns sits between "a parser read the file" and "write the cooked asset", so every source format is a complete cook path of its own.
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-005](WO-005-reveal-in-file-manager-per-os.md) | "Reveal in Finder" works per OS instead of running `open` everywhere | Portability | S | **ready** | — |
 | [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | Portability | M | **ready** | — |
 | [WO-008](WO-008-game-module-static-claim.md) | game_module.h stops claiming a static-link path that does not exist | Providers & modules | S | **ready** | kit-abi |
 | [WO-009](WO-009-imported-scene-design.md) | ImportedScene — design the engine's own import format | Asset import & cooking | M | **ready** | import-frontend (new) |
@@ -45,7 +44,7 @@ Nothing. Start the first order under **Next up**.
 | [WO-018](WO-018-runtime-loads-cooked-only.md) | Runtime loads cooked assets only — a missing one is a cook job, not an inline parse | Asset import & cooking | L | blocked by WO-016, WO-017 | asset-service |
 | [WO-019](WO-019-retained-scene-p3a.md) | Retained scene P3a — table, ids, lifetime, rebuild-and-diff | Renderer & RHI | L | blocked by WO-020 | render-scene (new) |
 | [WO-020](WO-020-retained-scene-design-doc.md) | Write the retained-scene design into the renderer programme (§9) | Renderer & RHI | M | **ready** | — |
-| [WO-021](WO-021-os-services-layer.md) | `os::` layer in core — one file per OS family | Portability | L | blocked by WO-006, WO-005 | os-services (new) |
+| [WO-021](WO-021-os-services-layer.md) | `os::` layer in core — one file per OS family | Portability | L | blocked by WO-006 | os-services (new) |
 | [WO-022](WO-022-decision-records.md) | Decision records — the "why" survives the person | Process & context | M | **ready** | — |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 
@@ -71,6 +70,7 @@ Nothing. Start the first order under **Next up**.
 | order | title | done | evidence |
 |---|---|---|---|
 | [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | 2026-09-30 | tests/scene_mesh_reference_test.cpp (7 cases) + editor_panel_models_test §8; 4 mutations each red on their own check |
+| [WO-005](WO-005-reveal-in-file-manager-per-os.md) | "Reveal in Finder" works per OS instead of running `open` everywhere | 2026-09-30 | tests/asset_browser_model_test.cpp (every OS's command checked on any host); hostile names round-tripped through /bin/sh; 3 mutations red |
 | [WO-004](WO-004-roadmap-stops-lying.md) | The roadmap stops lying about where we are | 2026-09-30 | docs/process/roadmap.md rewritten as status decided; docs/README.md start-here; WO-030 and WO-031 carry its open items |
 | [WO-003](WO-003-brief-reentry-command.md) | One command to regain context — `brief` | 2026-09-30 | tests/work_orders_test.py (brief: parsers, scratch tree, real git repo, 2 s budget on the real repo); 5 mutations each red on their own check |
 | [WO-002](WO-002-skinned-gltf-fails-loudly.md) | A skinned glTF fails loudly instead of cooking as a static mesh | 2026-09-30 | tests/cooker_test.cpp §2c (5 valid-glTF cases); 4 mutations each red on their own check |
