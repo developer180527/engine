@@ -245,5 +245,17 @@ typedef void                (*EngineGameModuleDestroyV1Fn)(EngineGameModuleV1*);
 //   • code swaps under live data: the new code may hold assumptions the
 //     old world never satisfied — semantic skew is undetectable in general
 //   • this is a DEV-TIME contract for a cooperative build environment,
-//     not a stable public ABI; shipped games link engine::runtime
-//     statically and never dlopen anything
+//     not a stable public ABI.
+// How game code reaches a SHIPPED game — two paths, and only one of them
+// loads modules (this comment used to claim shipped games never dlopen):
+//   • engine_build → engine_player + kits/  (the default): kits are built as
+//     real shared libraries and loaded IN PLACE through modload::ModuleLibrary
+//     (Reload::Never). That is dlopen/LoadLibrary, and this table is the ABI.
+//   • a game that links engine::runtime itself (samples/minimal_game):
+//     IEnginePlugin classes are registered directly with
+//     engine.plugins().add(...). Nothing is dlopened, and this table and the
+//     ENGINE_GAME_MODULE macro are not involved.
+// What does NOT exist: statically linking modules written with
+// ENGINE_GAME_MODULE. The macro exports fixed C names, so two such modules in
+// one binary collide at link time, and nothing registers the table without
+// dlsym. Platforms with no dynamic loader (consoles, iOS) need that — WO-025.

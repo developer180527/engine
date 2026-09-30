@@ -32,6 +32,13 @@ call and documented at each call — e.g. `frameAlloc` returns null when unbound
 for size 0, or past the arena, and that is a normal outcome to handle, not an
 error to assert on. `engineUiSetBackend(null)` means "no UI": UI calls no-op.
 
+**On a platform with no dynamic loader there is no module path at all.** Game
+code written as a module (`ENGINE_GAME_MODULE`) is found only through
+`dlopen`/`LoadLibrary` (`engine_build` → `engine_player` + `kits/`). The
+alternative that exists today is not a module: a game that links
+`engine::runtime` itself registers `IEnginePlugin` classes directly with
+`engine.plugins().add(...)`. Statically linked *modules* are WO-025.
+
 ## Ownership
 Frame-scoped memory from `frameAlloc` is valid until the end of the current
 frame and is never freed by the caller. Component contracts: the first module
