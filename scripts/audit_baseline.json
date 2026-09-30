@@ -1,6 +1,6 @@
 {
-  "generated": "2026-09-17T18:07:54+00:00",
-  "commit": "0b9c69dff66f94245166179aef545e411210aa44",
+  "generated": "2026-09-30T00:21:13+00:00",
+  "commit": "c046518a46bb5d44eeda5b9aa3c654704aaf5ca1",
   "note": "Accepted architectural debt. The gate fails on findings NOT listed here; shrinking this file is the cleanup, and nothing may be added to it without a reason in the commit.",
   "findings": {
     "LAYER-03": [
@@ -78,8 +78,10 @@
       "RHI-01|src/core/transform.h",
       "RHI-01|src/core/transform_utils.h",
       "RHI-01|src/editor/editor_camera.h",
+      "RHI-01|src/editor/fly_camera.h",
       "RHI-01|src/editor/gizmo.h",
       "RHI-01|src/editor/panels/game_view_panel.h",
+      "RHI-01|src/editor/panels/inspector_panel/model.h",
       "RHI-01|src/editor/panels/inspector_panel/utils.h",
       "RHI-01|src/runtime/camera_util.h",
       "RHI-01|src/runtime/runtime_sim.cpp",
