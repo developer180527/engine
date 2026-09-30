@@ -48,6 +48,7 @@ rule nobody agreed to.
 | `LAYER-02` | nothing outside `src/editor` includes the editor or ImGui | `engineering-standards.md` §7 |
 | `LAYER-03` | no new module→module edge without a decision | `docs/plans/subsystem-audit.md` §2 |
 | `LAYER-04` | `src/render/world` is GPU-free *and* runtime-free | `src/render/world/info.md` |
+| `LAYER-05` | `src/assets/import/` (except `frontend_*`) includes only the standard library and itself | `src/assets/import/imported_scene.h` |
 | `ABI-01` | every API group has a frozen size, a pinned offset, a client guard row and a host row | `extension-model.md` §1.3 |
 | `ABI-02` | group offsets tile with no gap and no overlap | `engine_api_table.h` |
 | `ABI-03` | `api_abi_compat_test`'s frozen list covers every group | `tests/api_abi_compat_test.cpp` §1 |

@@ -145,6 +145,12 @@ engine_test(reflected_pending_test)
 # is kept in UnresolvedMesh and written back unchanged by the next save — disk
 # and memory snapshot alike. Every case saves from a session that could not load.
 engine_test(scene_mesh_reference_test)
+# WO-010: the import-frontend contract. The ImportedScene invariants, each shown
+# failing on a scene broken its way; and the contract suite every front end must
+# pass (tests/import_contract.h), shown passing the fake AND failing front ends
+# broken the ways real parsers break (winding, units, axes, node transforms,
+# weights, unreported losses). Header-only and GPU-free.
+engine_test(import_frontend_contract_test)
 # The shared components' LAYOUT, frozen. componentLayoutHash() — the gate that
 # decides whether a kit may touch live ECS memory — hashes sizeof and alignof
 # only, so reordering two same-sized fields leaves it byte-identical and the gate

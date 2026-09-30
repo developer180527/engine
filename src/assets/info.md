@@ -7,6 +7,7 @@ covers:
   - src/assets/
 tests:
   - tests/cooker_test.cpp
+  - tests/import_frontend_contract_test.cpp  # the import-frontend contract and its suite
   - tests/cook_infra_test.cpp
   - tests/import_test.cpp
   - tests/decimate_test.cpp           # a level must be genuinely cheaper
@@ -42,6 +43,27 @@ The path is project-relative, never absolute. Resolution: uuid → registry →
 current path; then relative path; legacy absolute paths tolerated read-only.
 Session handles (registry slot indices) must NEVER be serialized.
 `tools/scene_resave.cpp` migrates legacy scenes.
+
+## Import format (`import/`, WO-010)
+`ImportedScene` is the engine's own import format: what a source file *means*,
+in engine conventions (right-handed, +Y up, metres, top-left UVs, CCW front
+faces), owned by value. Front ends, one per parsing library, produce it. One
+back end will turn it into cooked assets (WO-011). Today the directory holds
+the type (`imported_scene.h`), the contract's shape (`import_frontend.h`,
+`IImportFrontend` + `ImportFrontendRegistry`), its structural invariants
+(`imported_scene_check.h`) and its fake (`fake_frontend.h`). No real front end
+is ported yet: WO-012 (cgltf) and WO-013 (Assimp).
+
+- **Depends on nothing but the standard library** (audit LAYER-05), so no
+  parser's types can reach the back end. Front ends are `frontend_<library>.*`
+  and are the only files here allowed to include their library.
+- **Every loss is reported**: `ImportedScene::dropped`, with an effect of
+  `Wrong` (the back end refuses) or `Less` (it cooks and logs).
+- **The contract suite** (`tests/import_contract.h`) is what every front end
+  must pass. It compares by meaning, not bytes, so vertex reordering, welding
+  and node flattening are free, but winding, units, axes, weights and losses
+  are not. Design: `docs/plans/imported-scene.md`. Contract:
+  `docs/contracts/import-frontend.md`.
 
 ## Importers (`importers/`)
 `IMeshImporter` implementations behind `ImporterRegistry` (extension →

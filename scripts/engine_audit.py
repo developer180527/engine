@@ -232,6 +232,34 @@ def rule_render_world_purity() -> Rule:
     return r
 
 
+IMPORT_DIR = "src/assets/import/"
+
+
+def rule_import_format_purity() -> Rule:
+    r = Rule("LAYER-05", "the ImportedScene format depends on nothing but the standard library",
+             "src/assets/import/imported_scene.h; docs/plans/imported-scene.md §2.",
+             "the import format has to outlive every parser behind it. The day it "
+             "includes Assimp, cgltf, bx or a GPU type, the back end can see that "
+             "library again, and one source format's quirks leak into every cook — "
+             "the coupling ImportedScene exists to remove.")
+    for rel in tracked(IMPORT_DIR + "*"):
+        # Front ends (frontend_<library>.*) exist to include their library.
+        if not rel.endswith(SRC_EXT) or Path(rel).name.startswith("frontend_"):
+            continue
+        q, a = includes(rel)
+        for inc in q:
+            tgt = resolve(inc) or inc
+            if not tgt.startswith(IMPORT_DIR):
+                r.findings.append(Finding(r.id, f"{rel}:{inc}",
+                                          f"{rel} includes {inc}, outside {IMPORT_DIR}"))
+        for inc in a:
+            # Standard C++ headers are bare names: <vector>, <cstdint>, <optional>.
+            if "/" in inc or "." in inc:
+                r.findings.append(Finding(r.id, f"{rel}:<{inc}>",
+                                          f"{rel} includes <{inc}>, which is not the standard library"))
+    return r
+
+
 def module_edges() -> dict[str, set[str]]:
     edges: dict[str, set[str]] = {}
     for rel in tracked("src/*"):
@@ -661,7 +689,7 @@ def rule_doc_coverage() -> Rule:
 
 
 RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
-         rule_render_world_purity, rule_abi_group_wiring, rule_abi_offsets_tile,
+         rule_render_world_purity, rule_import_format_purity, rule_abi_group_wiring, rule_abi_offsets_tile,
          rule_abi_compat_coverage, rule_component_hash_membership,
          rule_fuzz_corpus, rule_tests_registered, rule_sim_determinism,
          rule_c_abi_header_purity, rule_bx_creep, rule_unknown_os_is_an_error,

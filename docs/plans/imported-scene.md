@@ -3,9 +3,11 @@ status: target
 ---
 # ImportedScene — the engine's own import format
 
-> **Status: design (WO-009).** Nothing here is built yet. WO-010 builds the type
-> and its contract test, WO-011 the one back end, WO-012/013 the front ends.
-> The contract is `import-frontend` in `docs/contracts/`.
+> **Status: design (WO-009), type landed (WO-010).** `src/assets/import/` holds
+> the type, the contract's shape, its structural checks and its fake, and
+> `tests/import_contract.h` is the suite every front end must pass. Still to
+> build: WO-011 (the one back end), WO-012/013 (the front ends). The contract is
+> `import-frontend` in `docs/contracts/`, now `provisional`.
 
 ## 1. The problem, measured
 
@@ -71,6 +73,8 @@ front end.
   That becomes an audit rule (WO-013), in the same style as LAYER-04.
 
 ## 3. The type
+
+**`src/assets/import/imported_scene.h` is the source of truth; this sketch is the design that led to it.** The one difference: the header uses its own small POD math types (`Float3`, `Float4x4`, …) instead of the engine's `Vec3`/`Mat4`, because `Vec3` is `bx::Vec3`, and a format that must outlive every library cannot borrow one (audit LAYER-05). Also added: `Float4x4` is column-major with the translation in `m[12..14]`, and counter-clockwise is the front face.
 
 Values, not views: an `ImportedScene` owns everything in it, so the library's
 own memory (`aiScene`, `cgltf_data`) is freed before the front end returns.
@@ -246,8 +250,8 @@ Written once, against `ImportedScene`:
 
 | # | question | decided in |
 |---|---|---|
-| 1 | FBX units/axes on the skinned path (§4) | WO-010's fixture |
+| 1 | FBX units/axes on the skinned path (§4) | the suite's `AuthoredCentimetreZUp` case (landed in WO-010); the Assimp front end must pass it (WO-013), and that run decides the fix |
 | 2 | tangent generator: MikkTSpace or our own | WO-011 |
-| 3 | morph targets: dropped (`Wrong` or `Less`?) until the renderer can play them | WO-010 |
+| 3 | ~~morph targets: `Wrong` or `Less`?~~ **Decided (WO-010): `Less`.** A mesh drawn at its base shape is correct, just without its expressions, like a static prop whose node animation is dropped. The `Unrepresentable` case pins it. | done |
 | 4 | vertex colours, extra UV sets: `Less` today; carried when a shader reads them | when a shader needs them |
 | 5 | whether the Assimp front end keeps its memory permit (`AssimpGatePass`) or the cook pipeline owns it | WO-013 |

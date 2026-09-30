@@ -1,11 +1,17 @@
 ---
-status: target
+status: as-built
 contract: import-frontend
 kind: interface
-state: planned
+state: provisional
 owner: src/assets
-header:
-implementations: []
+header: src/assets/import/import_frontend.h
+implementations:
+  - fake: src/assets/import/fake_frontend.h#FakeFrontend
+tests:
+  - tests/import_frontend_contract_test.cpp
+covers:
+  - src/assets/import/
+verified: 2026-09-30
 ---
 
 # import-frontend — a source file in, the engine's ImportedScene out
@@ -18,9 +24,23 @@ conventions, plus a list of what it could not represent. One back end
 WO-010 to WO-013.
 
 ```cpp
-ImportResult importScene(const std::filesystem::path& source, const ImportOptions&);
+// src/assets/import/import_frontend.h
+class IImportFrontend {
+    virtual std::vector<std::string> extensions() const = 0;          // {"gltf", "glb"}
+    virtual ImportResult importScene(const std::filesystem::path&, const ImportOptions&) const = 0;
+};
 // ImportResult: an ImportedScene (with its `dropped` list), or an ImportError.
+// ImportFrontendRegistry routes by extension; with no match, it returns Unsupported.
 ```
+
+**The contract test** is one suite every front end must pass, in
+`tests/import_contract.h`. It has seven reference cases in engine conventions,
+each compared by meaning (world-space triangles with winding preserved,
+skeleton by bone name, clips, the dropped list) plus `imp::checkScene`'s
+structural invariants. A front end's test supplies a source file per case; a
+case its format cannot express is reported as skipped, never counted as passed.
+`import_frontend_contract_test` shows the suite passing the fake and failing
+front ends broken the ways real parsers break.
 
 ## Nothing
 - **An extension no front end handles** is a stub answer: `ImportError::Unsupported`
