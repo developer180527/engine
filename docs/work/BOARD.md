@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-041](WO-041-ledger-the-bugs-of-2026-09-30.md) **Ledger the four bugs fixed on 2026-09-30 that have no entry** · P1 · size S — The bug ledger is how a class of bug is recognised the second time. Four real defects were found and fixed after BUG-0064, and each is written up only in a work order's log, which nobody searches by symptom:
-2. [WO-042](WO-042-reverify-the-stale-design-docs.md) **Re-verify the stale docs, the asset cook architecture first** · P1 · size S — `docs/architecture/asset-cook-architecture.md` is the design's source of truth for cooking, and it was last verified on 2026-08-03. It does not mention `ImportedScene` at all. WO-010 to WO-016 replaced the whole import side with it: the front ends, the one back end, the clip cooker. A reader of the design doc learns an architecture that no longer exists.
-3. [WO-044](WO-044-abi-compat-test-covers-every-group.md) **The ABI compatibility test defends every API group (audit ABI-03)** · P1 · size S — `api_abi_compat_test`'s `frozen[]` list is a hand-kept copy of the API table's group offsets. Two frozen groups, `intent` and `physics2`, are missing from it, so nothing at run time defends where they sit. A reordered group keeps every size intact and still breaks every kit built against the old table; the frozen ABI is append-only only if a test says so.
+1. [WO-042](WO-042-reverify-the-stale-design-docs.md) **Re-verify the stale docs, the asset cook architecture first** · P1 · size S — `docs/architecture/asset-cook-architecture.md` is the design's source of truth for cooking, and it was last verified on 2026-08-03. It does not mention `ImportedScene` at all. WO-010 to WO-016 replaced the whole import side with it: the front ends, the one back end, the clip cooker. A reader of the design doc learns an architecture that no longer exists.
+2. [WO-044](WO-044-abi-compat-test-covers-every-group.md) **The ABI compatibility test defends every API group (audit ABI-03)** · P1 · size S — `api_abi_compat_test`'s `frozen[]` list is a hand-kept copy of the API table's group offsets. Two frozen groups, `intent` and `physics2`, are missing from it, so nothing at run time defends where they sit. A reordered group keeps every size intact and still breaks every kit built against the old table; the frozen ABI is append-only only if a test says so.
+3. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,7 +35,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
-| [WO-041](WO-041-ledger-the-bugs-of-2026-09-30.md) | Ledger the four bugs fixed on 2026-09-30 that have no entry | Process & context | S | **ready** | — |
 | [WO-042](WO-042-reverify-the-stale-design-docs.md) | Re-verify the stale docs, the asset cook architecture first | Process & context | S | **ready** | — |
 | [WO-044](WO-044-abi-compat-test-covers-every-group.md) | The ABI compatibility test defends every API group (audit ABI-03) | Providers & modules | S | **ready** | — |
 
@@ -76,6 +75,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-041](WO-041-ledger-the-bugs-of-2026-09-30.md) | Ledger the bugs fixed on 2026-09-30 that have no entry | 2026-09-30 | BUG-0065..0070 in docs/process/bugs/, all passing engine_doctor's ledger checks; each fix re-reverted and seen red (BUG-0066's pin is new: async_loader_test §3) |
 | [WO-040](WO-040-assimp-skeleton-truncation.md) | A rig over the bone limit is refused, not silently truncated | 2026-09-30 | mesh_backend_test (128 cooks, 129 refused by name); frontend_assimp_test §5 and frontend_cgltf_test §5 (300-bone rig read whole; 65,546-joint skin Skin/Wrong); render_pipeline_test (shader palette literal = kMaxBones*4); four mutations red |
 | [WO-039](WO-039-depth-is-input-too.md) | A deep node tree must not crash an import; depth is input too | 2026-09-30 | frontend_cgltf_test and frontend_assimp_test §4 (10,000-deep chains on a 512 KB stack, each SIGBUS before the fix); fuzz_import_frontend_test generator 3; extractSkeleton identical to the old one on 5 real rigs, helper chains included; import_frontend_contract_test's 0.6 mm case |
 | [WO-037](WO-037-fuzz-the-import-front-ends.md) | Fuzz the import front ends; nothing in them may crash the cook worker | 2026-09-30 | fuzz_import_frontend_test (regress + explore lanes); frontend_cgltf_test §4 (5 cases) and import_frontend_contract_test §7 each red with their fix removed; 20,000 explore iterations clean, and under ASan+UBSan |

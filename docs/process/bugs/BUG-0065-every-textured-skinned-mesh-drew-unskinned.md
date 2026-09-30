@@ -1,0 +1,11 @@
+## BUG-0065 — Every textured skinned mesh drew unskinned, in its raw bind pose
+- found:     2026-09-30
+- status:    fixed
+- class:     logic
+- where:     src/render/pipeline/opaque_pass.cpp
+- symptom:   a skinned character never animated and drew in its raw bind-space pose: CesiumMan lay on his back (his bind space is Z up) until rotated by hand, and stood frozen. The animator ran, the bone palette was computed and uploaded every frame, and nothing logged a problem. Every skinned mesh with a material was affected, FBX included.
+- cause:     the opaque pass chose the skinning program for an item with a bone palette, then `bindMaterial` replaced it with the MATERIAL's program (`drawProgram = mp`), which for a material with no named shader is the built-in STATIC program. So the palette was uploaded and ignored, and the vertex shader drew the raw vertices. Introduced by `1f0dff2` (2026-08-01, "materials become data at the draw call"). `render_pipeline_test` already counted skinned draws, but not which program drew them, so it could not see this.
+- pinned-by: tests/render_pipeline_test.cpp
+- lane:      unit
+- proof:     a new counter, `SubmitStats::skinnedProgramDraws`, counts draws submitted with the skinning program, and `render_pipeline_test` requires it to equal `skinnedDraws` for an item that has a material. With the old line put back it reads 0 of 4; fixed, 4 of 4. Fixed in `103c66f` (WO-036): a skinned draw keeps the skinning program; a named shader on a skinned mesh is reported once, since no cooked shader has a skinned variant yet.
+- note:      found only by looking. A headless probe down the editor's exact path (registry, AsyncLoader, the spawn's components, AnimatorSystem) showed the palette moving every frame and the palette-skinned vertices standing up while the raw ones lay down, which pointed at the draw call and not at animation.

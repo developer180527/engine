@@ -16,10 +16,18 @@
 // ── A minimal glTF writer, for tests ────────────────────────────────────────
 namespace gltfw {
 using namespace imp;
-// The engine's animation types share two names with the import format's; in a
-// file that includes both (clip_cook_test), these mean the import format's.
-using imp::Skeleton;
+// The engine's own types share names with the import format's (Skeleton and
+// Bone in animation, Mesh and Material in the renderer). In a test that
+// includes both (clip_cook_test, async_loader_test), these mean the import
+// format's: a using-declaration outranks the using-directive above.
 using imp::Bone;
+using imp::Clip;
+using imp::Material;
+using imp::Mesh;
+using imp::Node;
+using imp::Skeleton;
+using imp::Submesh;
+using imp::Track;
 
 struct Buffer {
     std::vector<uint8_t> data;

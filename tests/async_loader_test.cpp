@@ -21,6 +21,13 @@
 #include "runtime/services/async_loader.h"
 #include "runtime/jobs/jobs.h"
 #include "assets/asset_storage.h"
+#include "assets/cookers/mesh/mesh_cooker.h"
+#include "animation/clip_registry.h"
+#include "animation/skeleton_registry.h"
+#include "gltf_writer.h"
+#include "import_contract.h"
+#include <assetlib/asset_registry.h>
+#include <assetlib/cook_pipeline.h>
 
 namespace fs = std::filesystem;
 namespace { int g_failures = 0; }
@@ -137,6 +144,45 @@ int main() {
 
         fs::remove_all(dir);
     }   // loader + registries die while bgfx is alive
+
+    // ── 3. A cooked skinned glTF loads WITH its skeleton and clips (BUG-0066) ─
+    // The editor spawned every .glb through the runtime glTF importer, which
+    // reads static geometry only: a cooked, skinned character had no skeleton,
+    // no Animator, and could not animate. The fix routes a glTF to this
+    // loader's cooked path when hasCooked() says there is one. This pins both
+    // halves the fix relies on: hasCooked() answers truthfully before and after
+    // the cook, and the cooked path carries the skeleton and the clip.
+    {
+        const fs::path root = fs::temp_directory_path() / "engine_asyncldr_skinned";
+        fs::remove_all(root);
+        fs::create_directories(root / "assets");
+        const fs::path src = root / "assets" / "column.gltf";
+        { std::ofstream(src) << gltfw::write(impcontract::expected(impcontract::Case::SkinnedColumn)); }
+        assetlib::AssetRegistry reg;
+        CHECK(reg.open(root / ".cache" / "registry.db"), "a project registry");
+        reg.scan(root / "assets", root);
+
+        AsyncLoader loader;
+        loader.setRegistry(&reg);
+        loader.setProjectRoot(root);
+        CHECK(!loader.hasCooked(src.string()), "before the cook, hasCooked() is false (the spawn takes the preview)");
+
+        assetlib::CookPipeline pipe(reg, root, root / ".cache");
+        pipe.registerCooker(std::make_unique<MeshCooker>());
+        pipe.cookAll();
+        CHECK(loader.hasCooked(src.string()), "after the cook, hasCooked() is true (the spawn takes the cooked path)");
+
+        AssetRegistry meshes; TextureRegistry textures; MaterialRegistry materials;
+        SkeletonRegistry skeletons; AnimClipRegistry clips;
+        AssetStorage storage{meshes, textures, materials, &skeletons, &clips};
+        AsyncLoadResult got; bool done = false;
+        loader.load(src.string(), "column", [&](const AsyncLoadResult& r, const std::string&) { got = r; done = true; });
+        for (int i = 0; i < 5000 && !done; ++i) { loader.drainOne(storage); std::this_thread::sleep_for(std::chrono::milliseconds(2)); }
+        CHECK(done && got.mesh.valid() && got.skeleton.valid() && got.clips.size() == 1,
+              "the cooked load returns the mesh, its skeleton and its clip (skeleton %d, %zu clip(s))",
+              got.skeleton.valid(), got.clips.size());
+        fs::remove_all(root);
+    }
 
     jobs::shutdown();
     shutdownTestDevice();
