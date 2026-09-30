@@ -7,6 +7,7 @@
                      // transitively, libstdc++ does not, so the Linux legs
                      // are where a missing one surfaces
 #include "render/forward_pipeline.h"
+#include "render/pipeline/pass_states.h"
 #include "render/world/frustum.h"   // extractFrustumPlanes for the LIGHT frustum
 
 void ForwardPipeline::renderShadow(const RenderView& v, RenderContext& ctx,
@@ -87,7 +88,7 @@ void ForwardPipeline::renderShadow(const RenderView& v, RenderContext& ctx,
         bgfx::setViewTransform(sv, m_lightView, m_lightProj);
         bgfx::touch(sv);
 
-        const uint64_t st = BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CCW;
+        const uint64_t st = passstate::shadowCaster();
         const bool shCaps = 0 != (bgfx::getCaps()->supported & BGFX_CAPS_INSTANCING);
         for (std::size_t sdi = 0; sdi < m_shadowVisible.draws.size(); ) {
             const std::size_t runLen = rworld::batchRunLength(m_shadowVisible, sdi);

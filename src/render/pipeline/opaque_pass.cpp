@@ -11,6 +11,7 @@
                      // transitively, libstdc++ does not, so the Linux legs
                      // are where a missing one surfaces
 #include "render/forward_pipeline.h"
+#include "render/pipeline/pass_states.h"
 #include "render/clear_colour.h"
 
 #include "core/profiler.h"
@@ -164,10 +165,7 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
             const rworld::VisibleDraw& d = (*drawList)[di];
             const std::size_t runLen = rworld::batchRunLength(*drawList, di);
             const RenderItem& it = v.items[d.index];
-            const uint64_t state = it.mesh->doubleSided
-                ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
-                   BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA)
-                : (BGFX_STATE_DEFAULT | BGFX_STATE_CULL_CCW);
+            const uint64_t state = passstate::opaque(it.mesh->doubleSided);
 
             // Select skinned or static program
             const bool skinned = it.boneMatrices != nullptr && it.boneCount > 0;
@@ -276,11 +274,7 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                             m_boundMat.id = mh.id;
                         }
                         bgfx::setTexture(2, m_sShadowMap, m_shadowMap);
-                        bgfx::setState(mat->doubleSided
-                            ? (BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
-                               | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS
-                               | BGFX_STATE_MSAA)
-                            : state);
+                        bgfx::setState(mat->doubleSided ? passstate::opaque(true) : state);
                         bgfx::setTransform(it.model.ptr());
                         bgfx::setVertexBuffer(0, gpu::toBgfx(it.mesh->vbh));
                         // Once per material. The difference between "the

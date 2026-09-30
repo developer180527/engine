@@ -14,10 +14,12 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 - [WO-006](WO-006-unknown-os-is-a-compile-error.md) **An unknown OS is a compile error with a to-do list, not silently POSIX** — 3/4 done. Still open:
   - the macOS, Linux and Windows builds are unchanged. macOS was built locally on 2026-09-30; Linux and Windows are confirmed by the next nightly CI (Linux compiles the new Wayland branch in `GlfwToolWindow` for the first time)
+- [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) **The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan** — 3/4 done. Still open:
+  - **checked by eye on macOS, by the user.** It will NOT render identically, and that is correct. Metal mapped cull mode 3 to "none", so macOS culled **nothing** until now. Closed meshes should look the same. A single-sided open surface (a plane, a card, a mesh with a hole) seen from behind now disappears, as it always should have. Anything that vanishes but should not is a mesh that needs `doubleSided` or has flipped winding.
 
 ## Next up
 
-1. [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) **The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan** · P1 · size S — `opaque_pass.cpp` uses `BGFX_STATE_DEFAULT | BGFX_STATE_CULL_CCW`. `DEFAULT` already contains `BGFX_STATE_CULL_CW`, so both cull bits are set and bgfx decodes cull mode **3**.
+1. [WO-033](WO-033-the-image-is-mirrored.md) **Every camera renders the world mirrored left-to-right** · P1 · size M — The world is right-handed (glTF, the camera looks down local −Z, `ImportedScene`). Every view is built with `bx::mtxLookAt`'s default **left-handed** convention, and every projection with bx's left-handed default. The result is a mirror: **world +X lands on the left of the screen.** `cull_mode_test` prints it from `PrimaryCameraFinder` directly.
 2. [WO-011](WO-011-one-cook-back-end.md) **One cook back end — ImportedScene to cooked assets** · P2 · size L — Vertex baking, normal matrices, tangents, materials and texture resolution get written **once**, against `ImportedScene`, instead of once per parser.
 3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
 
@@ -26,7 +28,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | Portability | M | **active** 3/4 | — |
-| [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) | The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan | Renderer & RHI | S | **ready** | — |
+| [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) | The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan | Renderer & RHI | S | **active** 3/4 | — |
+| [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 

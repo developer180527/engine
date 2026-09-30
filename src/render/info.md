@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-17
+verified: 2026-09-30
 covers:
   - src/render/
 tests:
@@ -325,6 +325,23 @@ Verified on Metal with `engine_host fps_shooter --frames 240`: no bgfx asserts, 
 HDR target allocated, and after a re-cook the base colour uploads sRGB and the
 normal map linear. **Not verified: the image itself.** No readback or golden-image
 test exists; a visual check in the editor is the remaining step.
+
+## Culling, and why it is CULL_CCW (WO-032, WO-033)
+
+Both passes take their state from `pipeline/pass_states.h`: `passstate::opaque(doubleSided)`
+and `passstate::shadowCaster()`. A cull bit is *replaced* there, never OR'd on,
+and a `static_assert` refuses a state with both bits. The opaque pass used to set
+both (`BGFX_STATE_DEFAULT` already carries `CULL_CW`): that is cull mode 3, which
+Metal treats as "none" (macOS culled nothing), and which D3D11/Vulkan read past the
+end of a three-entry table with.
+
+The back-face bit is `CULL_CCW`, and that follows from the camera, not from the
+meshes. Meshes are CCW-front, but every view is built with bx's default
+left-handed `mtxLookAt` over a right-handed world, which mirrors the image (world
++X lands on the left of the screen). So back faces reach the screen
+counter-clockwise. `tests/cull_mode_test.cpp` derives the bit from
+`PrimaryCameraFinder` itself, so when WO-033 un-mirrors the view it fails until
+`kCullBackFaces` flips to `CULL_CW`.
 
 ## Shadow pass
 Depth-only, one 2048² map, first shadow-casting light. It binds **no material** — the
