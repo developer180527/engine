@@ -17,15 +17,14 @@ Nothing. Start the first order under **Next up**.
 
 ## Next up
 
-1. [WO-003](WO-003-brief-reentry-command.md) **One command to regain context — `brief`** · P1 · size S — Coming back after a week should take one command, not an afternoon of re-reading.
-2. [WO-004](WO-004-roadmap-stops-lying.md) **The roadmap stops lying about where we are** · P1 · size S — `docs/README.md` tells you to read the roadmap second, and its numbers are a month old.
-3. [WO-005](WO-005-reveal-in-file-manager-per-os.md) **"Reveal in Finder" works per OS instead of running `open` everywhere** · P1 · size S — `revealInFinder` runs `std::system("open -R '…'")` unguarded on every OS. On Linux, `open` is a different program altogether.
+1. [WO-004](WO-004-roadmap-stops-lying.md) **The roadmap stops lying about where we are** · P1 · size S — `docs/README.md` tells you to read the roadmap second, and its numbers are a month old.
+2. [WO-005](WO-005-reveal-in-file-manager-per-os.md) **"Reveal in Finder" works per OS instead of running `open` everywhere** · P1 · size S — `revealInFinder` runs `std::system("open -R '…'")` unguarded on every OS. On Linux, `open` is a different program altogether.
+3. [WO-006](WO-006-unknown-os-is-a-compile-error.md) **An unknown OS is a compile error with a to-do list, not silently POSIX** · P1 · size M — Core memory, threading and module loading go `#if _WIN32 … #else POSIX`, so a new port compiles, then quietly does the wrong thing.
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-003](WO-003-brief-reentry-command.md) | One command to regain context — `brief` | Process & context | S | **ready** | — |
 | [WO-004](WO-004-roadmap-stops-lying.md) | The roadmap stops lying about where we are | Process & context | S | **ready** | — |
 | [WO-005](WO-005-reveal-in-file-manager-per-os.md) | "Reveal in Finder" works per OS instead of running `open` everywhere | Portability | S | **ready** | — |
 | [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | Portability | M | **ready** | — |
@@ -71,5 +70,6 @@ Nothing. Start the first order under **Next up**.
 | order | title | done | evidence |
 |---|---|---|---|
 | [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | 2026-09-30 | tests/scene_mesh_reference_test.cpp (7 cases) + editor_panel_models_test §8; 4 mutations each red on their own check |
+| [WO-003](WO-003-brief-reentry-command.md) | One command to regain context — `brief` | 2026-09-30 | tests/work_orders_test.py (brief: parsers, scratch tree, real git repo, 2 s budget on the real repo); 5 mutations each red on their own check |
 | [WO-002](WO-002-skinned-gltf-fails-loudly.md) | A skinned glTF fails loudly instead of cooking as a static mesh | 2026-09-30 | tests/cooker_test.cpp §2c (5 valid-glTF cases); 4 mutations each red on their own check |
 | [WO-001](WO-001-work-order-board.md) | Work-order board | 2026-09-30 | ctest -L docs runs work_orders_test and work_board_current |

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """work_orders — the engine's work queue, one file per order, checked.
 
-    python3 scripts/work_orders.py next           what to do now (start here)
+    python3 scripts/work_orders.py brief          back after a break? start here
+    python3 scripts/work_orders.py next           what to do now
     python3 scripts/work_orders.py check          validate every order; exit 1 on error
     python3 scripts/work_orders.py board          regenerate docs/work/BOARD.md
     python3 scripts/work_orders.py board --check  fail if BOARD.md is out of date (CI)
@@ -16,7 +17,10 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
+import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -344,6 +348,209 @@ def render(orders: list[Order]) -> str:
     return "\n".join(out)
 
 
+# ── brief ─────────────────────────────────────────────────────────────────────
+# Everything here is READ from git and the tree. It never builds, never runs a
+# test and never touches the network, so it is safe to run first, every time.
+
+def age(seconds: float) -> str:
+    s = max(0, int(seconds))
+    for unit, n in (("day", 86400), ("hour", 3600), ("minute", 60)):
+        if s >= n:
+            v = s // n
+            return f"{v} {unit}{'' if v == 1 else 's'} ago"
+    return "just now"
+
+
+def area_of(path: str) -> str:
+    """Top-level area of a repo path: two levels under src/ and docs/, one elsewhere."""
+    parts = path.strip().strip('"').split("/")
+    if len(parts) > 2 and parts[0] in ("src", "docs", "modules"):
+        return "/".join(parts[:2])
+    return parts[0] if len(parts) > 1 else "(repo root)"
+
+
+def group_status(porcelain: str) -> dict:
+    """`git status --porcelain` -> {area: file count}."""
+    out: dict = {}
+    for line in porcelain.splitlines():
+        if len(line) < 4: continue
+        path = line[3:].split(" -> ")[-1]
+        out[area_of(path)] = out.get(area_of(path), 0) + 1
+    return dict(sorted(out.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def stale_docs(status_md: str) -> tuple[list[str], str]:
+    """The stale list from ENGINE_STATUS.md, and the commit it was generated from."""
+    m = re.search(r"from commit `([0-9a-f]+)`", status_md)
+    items, inside = [], False
+    for line in status_md.splitlines():
+        if line.startswith("## "):
+            inside = "Stale" in line
+            continue
+        if inside and line.startswith("- "):
+            items.append(line[2:].strip())
+    return items, (m.group(1) if m else "")
+
+
+def open_questions(md: str) -> list[dict]:
+    """Top-level bullets of open-questions.md: {title, text, where}."""
+    items, cur = [], None
+    for line in md.splitlines():
+        if line.startswith("- **"):
+            if cur: items.append(cur)
+            m = re.match(r"- \*\*(.+?)\*\*", line)
+            cur = {"title": (m.group(1) if m else line[2:]).rstrip("."), "text": line, "where": []}
+        elif cur is not None:
+            if line.startswith("## ") or line.strip() == "---":
+                items.append(cur); cur = None; continue
+            cur["text"] += "\n" + line
+            w = re.match(r"\s*- \*\*where\*\*\s+(\S+)", line)
+            if w: cur["where"].append(w.group(1))
+    if cur: items.append(cur)
+    return items
+
+
+def overlapping(questions: list[dict], touches: list[str]) -> list[str]:
+    """Open questions that concern a path the order touches: by their `where`
+    trailer, or by naming the path (or a file under it) in their text. Most
+    questions carry no `where`, so the text match is what makes this useful."""
+    def related(a: str, b: str) -> bool:
+        a, b = a.rstrip("/"), b.rstrip("/")
+        return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+    hits = []
+    for q in questions:
+        named = q["where"] + re.findall(r"`([A-Za-z0-9_./-]+/[A-Za-z0-9_./-]+)`", q["text"])
+        if any(related(n, t) for n in named for t in touches):
+            hits.append(q["title"])
+    return hits
+
+
+def git(root: Path, *args: str) -> str | None:
+    try:
+        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True,
+                           text=True, timeout=10)
+        return r.stdout if r.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def last_test_run(root: Path) -> str:
+    """The last LOCAL ctest run, from ctest's own result files — never a run."""
+    tmp = root / "build" / "Testing" / "Temporary"
+    log = tmp / "LastTest.log"
+    if not log.exists():
+        return "no local ctest run found (build/Testing/Temporary/LastTest.log)"
+    when = age(time.time() - log.stat().st_mtime)
+    failed = tmp / "LastTestsFailed.log"
+    names = []
+    if failed.exists() and failed.stat().st_mtime >= log.stat().st_mtime - 5:
+        names = [l.split(":", 1)[-1].strip() for l in failed.read_text().splitlines() if l.strip()]
+    return f"last local ctest run {when}: " + describe_run(log.read_text(errors="replace"), names)
+
+
+def describe_run(log_text: str, failed: list[str]) -> str:
+    """How much of the suite a ctest run covered, and its verdict. A run of five
+    docs tests must not read like a green suite: 'all passed' alone hid three
+    failures from the previous full run the first time this printed."""
+    ran = re.findall(r"^(\d+)/(\d+) Testing: ", log_text, re.M)
+    total = int(ran[0][1]) if ran else 0
+    labels = re.findall(r"^(\w[\w-]*)\s+=\s+[\d.]+ sec\*proc", log_text, re.M)
+    scope = f"{len(ran)} of {total} tests" if total else "unknown scope"
+    if labels:
+        scope += f" (labels: {', '.join(labels)})"
+    if total and len(ran) < total:
+        scope += " — a PARTIAL run"
+    if not failed:
+        return f"{scope}, all passed"
+    return f"{scope}, {len(failed)} failed — {', '.join(failed)}"
+
+
+def print_next(orders: list[Order]) -> None:
+    by_id = {o.id: o for o in orders}
+    act = sorted([o for o in orders if o.state == "active"], key=sort_key)
+    if act:
+        print("IN PROGRESS")
+        for o in act:
+            d, t = o.boxes()
+            print(f"  {o.id}  {o.meta['title']}  ({d}/{t})   {WORK_DIR}/{o.path.name}")
+            for i in o.open_items(): print(f"      [ ] {i}")
+        print()
+    print("NEXT UP")
+    for o in ready(orders, by_id)[:3]:
+        print(f"  {o.id}  {o.priority}  {o.meta['size']}  {o.meta['title']}")
+        print(f"        {first_line(o)}")
+    n_block = sum(1 for o in orders if o.state == "todo" and o not in ready(orders, by_id))
+    n_park = sum(1 for o in orders if o.state == "parked")
+    print(f"\n{len(orders)} orders · {n_block} blocked · {n_park} parked · board: {WORK_DIR}/{BOARD}")
+
+
+def brief(root: Path, orders: list[Order], errs: list[str], since: str | None) -> int:
+    t0 = time.monotonic()
+    print("WHERE YOU ARE")
+    head = git(root, "log", "-1", "--format=%h%x09%ct%x09%s")
+    if head is None:
+        print("  not a git repository — git facts skipped")
+    else:
+        h, ct, subj = (head.strip().split("\t", 2) + ["", "", ""])[:3]
+        print(f"  last commit {h}  {age(time.time() - int(ct or 0))}  {subj}")
+
+        # "Since you last worked": the last commit by YOU before today, unless given.
+        anchor, label = since, since
+        if not anchor:
+            me = (git(root, "config", "user.email") or "").strip() or \
+                 (git(root, "config", "user.name") or "").strip()
+            today = datetime.now().strftime("%Y-%m-%d 00:00")
+            if me:
+                anchor = (git(root, "log", "-1", f"--author={me}", f"--before={today}",
+                              "--format=%h") or "").strip() or None
+                label = f"{anchor} (your last commit before today)" if anchor else None
+        if anchor:
+            log = git(root, "log", "--format=%h  %s", f"{anchor}..HEAD")
+            if log is None:
+                print(f"  since {label}: unknown ref")
+            else:
+                lines = log.strip().splitlines()
+                print(f"  since {label}: {len(lines)} commit(s)")
+                for l in lines[:12]: print(f"    {l}")
+                if len(lines) > 12: print(f"    … {len(lines) - 12} more (git log {anchor}..HEAD)")
+
+        groups = group_status(git(root, "status", "--porcelain") or "")
+        if groups:
+            n = sum(groups.values())
+            print(f"  uncommitted: {n} file(s) — " +
+                  ", ".join(f"{a} {c}" for a, c in groups.items()))
+        else:
+            print("  uncommitted: nothing — the tree is clean")
+    print(f"  {last_test_run(root)}")
+    print()
+
+    status = root / "ENGINE_STATUS.md"
+    if status.exists():
+        items, commit = stale_docs(status.read_text(encoding="utf-8"))
+        if items:
+            print(f"STALE DOCS  (ENGINE_STATUS.md{', generated at ' + commit if commit else ''})")
+            for i in items: print(f"  {i}")
+            print()
+
+    if errs:
+        print(f"WORK ORDERS HAVE {len(errs)} ERROR(S) — fix these first:")
+        for x in errs: print("  " + x)
+        print()
+    else:
+        print_next(orders)
+        by_id = {o.id: o for o in orders}
+        focus = (sorted([o for o in orders if o.state == "active"], key=sort_key)
+                 or ready(orders, by_id))
+        oq = root / "docs" / "process" / "open-questions.md"
+        if focus and oq.exists():
+            hits = overlapping(open_questions(oq.read_text(encoding="utf-8")), focus[0].lst("touches"))
+            if hits:
+                print(f"\nOPEN QUESTIONS TOUCHING {focus[0].id}  (docs/process/open-questions.md)")
+                for t in hits: print(f"  {t}")
+    print(f"\n(brief: {time.monotonic() - t0:.2f}s, read-only)")
+    return 1 if errs else 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--root", type=Path, default=REPO, help=argparse.SUPPRESS)
@@ -351,10 +558,15 @@ def main(argv=None) -> int:
     sub.add_parser("check")
     b = sub.add_parser("board"); b.add_argument("--check", action="store_true")
     sub.add_parser("next")
+    br = sub.add_parser("brief", help="regain context: git, lanes, stale docs, the queue")
+    br.add_argument("--since", help="a git ref to list commits from (default: your "
+                                    "last commit before today)")
     a = ap.parse_args(argv)
 
     orders, errs = load(a.root)
     errs += check(a.root, orders)
+    if a.cmd == "brief":                 # runs even with errors: that is when you need it
+        return brief(a.root, orders, errs, a.since)
     if errs:
         print(f"{len(errs)} work-order error(s):")
         for x in errs: print("  " + x)
@@ -378,23 +590,7 @@ def main(argv=None) -> int:
         print(f"wrote {WORK_DIR}/{BOARD} ({len(orders)} orders)")
         return 0
 
-    # next
-    by_id = {o.id: o for o in orders}
-    act = sorted([o for o in orders if o.state == "active"], key=sort_key)
-    if act:
-        print("IN PROGRESS")
-        for o in act:
-            d, t = o.boxes()
-            print(f"  {o.id}  {o.meta['title']}  ({d}/{t})   {WORK_DIR}/{o.path.name}")
-            for i in o.open_items(): print(f"      [ ] {i}")
-        print()
-    print("NEXT UP")
-    for o in ready(orders, by_id)[:3]:
-        print(f"  {o.id}  {o.priority}  {o.meta['size']}  {o.meta['title']}")
-        print(f"        {first_line(o)}")
-    n_block = sum(1 for o in orders if o.state == "todo" and o not in ready(orders, by_id))
-    n_park = sum(1 for o in orders if o.state == "parked")
-    print(f"\n{len(orders)} orders · {n_block} blocked · {n_park} parked · board: {WORK_DIR}/{BOARD}")
+    print_next(orders)
     return 0
 
 

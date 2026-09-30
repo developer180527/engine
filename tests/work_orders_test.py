@@ -180,6 +180,99 @@ rc, out, _ = run(base(), ("next",))
 check(rc == 0 and "NEXT UP" in out and "WO-002" in out and "WO-003" not in out.split("NEXT UP")[1].split("\n\n")[0],
       "next should list WO-002 and not the blocked WO-003:\n" + out)
 
+# ── brief: each parser, then the command on a scratch tree and a real git repo ─
+check(wo.age(30) == "just now" and wo.age(90) == "1 minute ago" and wo.age(7200) == "2 hours ago"
+      and wo.age(86400 * 3) == "3 days ago", "age() wording")
+check(wo.area_of("src/scene/unresolved_mesh.h") == "src/scene" and wo.area_of("tests/x.cpp") == "tests"
+      and wo.area_of("ENGINE_STATUS.md") == "(repo root)", "area_of: two levels under src/, one elsewhere")
+g = wo.group_status(" M src/scene/a.h\n M src/scene/b.h\n?? tests/t.cpp\nR  src/old.h -> src/render/new.h\n")
+check(g == {"src/scene": 2, "src/render": 1, "tests": 1}, f"group_status counts by area, renames by destination: {g}")
+
+status_md = """# Engine Status
+Generated 2026-09-30 from commit `abc1234`.
+## Summary
+- **Stale docs:** 2
+## ⚠️ Stale — code moved after the doc was last verified
+
+- `src/project` — code 2026-08-25, verified 2026-08-01
+- `src/editor` — code 2026-09-30, verified 2026-08-18
+
+## Unreviewed docs
+- `README.md`
+"""
+items, commit = wo.stale_docs(status_md)
+check(commit == "abc1234" and items == ["`src/project` — code 2026-08-25, verified 2026-08-01",
+      "`src/editor` — code 2026-09-30, verified 2026-08-18"],
+      f"stale_docs reads only the Stale section, not Summary or Unreviewed: {items} @ {commit}")
+
+oq_md = """# Open
+---
+- **Resize redraw on Wayland.** Nothing redraws while dragging.
+  - **where** src/runtime/platform/
+- **Cook determinism.** `src/assets/cookers/mesh/mesh_cooker.cpp` can differ per run.
+- **Unrelated thing.** `src/runtime_extra/x.h` only looks similar.
+## Another section
+- **Not a question.** after a heading, still parsed as a new item
+"""
+qs = wo.open_questions(oq_md)
+check([q["title"] for q in qs] == ["Resize redraw on Wayland", "Cook determinism", "Unrelated thing",
+      "Not a question"], f"open_questions titles: {[q['title'] for q in qs]}")
+check(qs[0]["where"] == ["src/runtime/platform/"], "the where trailer is read")
+check(wo.overlapping(qs, ["src/runtime/platform/glfw_platform.cpp"]) == ["Resize redraw on Wayland"],
+      "a file under a question's `where` directory matches")
+check(wo.overlapping(qs, ["src/assets/cookers/mesh/mesh_cooker.cpp"]) == ["Cook determinism"],
+      "a path named in the question's text matches")
+check(wo.overlapping(qs, ["src/runtime"]) == ["Resize redraw on Wayland"],
+      "a directory touch matches questions under it, and src/runtime is NOT a prefix of src/runtime_extra")
+check(wo.overlapping(qs, ["scripts/work_orders.py"]) == [], "no false matches")
+
+# A partial ctest run must say it is partial.
+partial = "Start testing\n106/120 Testing: docs_contract\n107/120 Testing: docs_status_current\n" \
+          "Label Time Summary:\ndocs =   4.10 sec*proc (2 tests)\n"
+d = wo.describe_run(partial, [])
+check(d == "2 of 120 tests (labels: docs) — a PARTIAL run, all passed", f"partial run described: {d}")
+full = "".join(f"{i}/3 Testing: t{i}\n" for i in (1, 2, 3)) + "unit =   1.0 sec*proc\n"
+d = wo.describe_run(full, ["t2"])
+check(d == "3 of 3 tests (labels: unit), 1 failed — t2", f"full run with a failure described: {d}")
+
+# The command itself, outside a repo: runs, says so, never crashes.
+rc, out, _ = run(base(), ("brief",))
+check(rc == 0 and "not a git repository" in out and "NEXT UP" in out and "read-only" in out,
+      "brief outside a git repo still prints the queue:\n" + out)
+# With a broken order it still runs — that is when you need it — and shows the errors.
+rc, out, _ = run(with_("WO-003-c.md", order("WO-003", size="XXL")), ("brief",))
+check(rc == 1 and "WHERE YOU ARE" in out and "ERROR(S)" in out and "size `XXL`" in out,
+      "brief with a broken order prints the errors instead of the queue:\n" + out)
+
+# In a real git repo: last commit, commits since a ref, uncommitted by area.
+import shutil, subprocess, time as _t
+if shutil.which("git"):
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t)
+        def sh(*a): subprocess.run(["git", "-C", t, *a], check=True, capture_output=True)
+        sh("init", "-q"); sh("config", "user.email", "t@example.invalid"); sh("config", "user.name", "T")
+        (root / "docs/work").mkdir(parents=True); (root / "docs/contracts").mkdir(parents=True)
+        (root / "src").mkdir(); (root / "src/a.cpp").write_text("")
+        (root / "docs/contracts/cooker.md").write_text("---\ncontract: cooker\n---\n")
+        for n, txt in base().items(): (root / "docs/work" / n).write_text(txt)
+        sh("add", "-A"); sh("commit", "-q", "-m", "first")
+        (root / "src/b.cpp").write_text(""); sh("add", "-A"); sh("commit", "-q", "-m", "second change")
+        (root / "src/scene").mkdir(); (root / "src/scene/c.h").write_text("")
+        q = io.StringIO()
+        with redirect_stdout(q):
+            rc = wo.main(["--root", t, "brief", "--since", "HEAD~1"])
+        out = q.getvalue()
+        check(rc == 0 and "second change" in out.split("since HEAD~1")[0], "last commit shown:\n" + out)
+        check("since HEAD~1: 1 commit(s)" in out, "commits since the given ref")
+        check("uncommitted: 1 file(s) — src/scene 1" in out or "uncommitted: 1 file(s) — src 1" in out,
+              "uncommitted grouped by area:\n" + out)
+
+# And the real repo, against the order's budget: under 2 s, read-only.
+q = io.StringIO(); t0 = _t.monotonic()
+with redirect_stdout(q):
+    wo.main(["brief"])
+check(_t.monotonic() - t0 < 2.0, f"brief on the real repo took {_t.monotonic() - t0:.2f}s (budget 2s)")
+
 if failures:
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1)

@@ -6,11 +6,22 @@ status: reference
 **Coming back after a break? Run this first:**
 
 ```bash
-python3 scripts/work_orders.py next
+python3 scripts/work_orders.py brief
 ```
 
-It prints what is in progress, the exact items still open on it, and the next
-three things that are ready. The full picture is [BOARD.md](BOARD.md).
+It prints, in well under a second and without building anything:
+
+- the last commit, and every commit since your last one before today (or
+  `--since <ref>`)
+- what is uncommitted, grouped by area
+- the last local test run: when, and what failed
+- the stale docs from `ENGINE_STATUS.md`
+- what is in progress, the exact items still open on it, and the next three
+  ready orders
+- open questions that touch the files the current order will change
+
+`python3 scripts/work_orders.py next` is the queue part alone. The full
+picture is [BOARD.md](BOARD.md).
 
 ## What this is
 
