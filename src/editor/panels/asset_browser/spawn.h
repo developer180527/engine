@@ -39,10 +39,12 @@ inline float groundOffset(const Mesh* m, float sc) {
 }
 
 // Spawn a file into the scene — routes by extension.
-// glTF/GLB: synchronous via cgltf.
-// Everything else: async via AsyncLoader + Assimp/binary fallback.
+// A cooked asset (any format): async via AsyncLoader's cooked path, which
+// carries skeleton and clips. An uncooked glTF/GLB: synchronous via the runtime
+// cgltf importer, static geometry only until it cooks (gltf_losses.h; WO-018
+// removes this path). Everything else uncooked: AsyncLoader + Assimp.
 inline void spawnFile(const FileEntry& f, EngineContext& ctx, AsyncLoader& loader) {
-    const bool isGltf = (f.ext == ".glb" || f.ext == ".gltf");
+    const bool isGltf = (f.ext == ".glb" || f.ext == ".gltf") && !loader.hasCooked(f.fullPath);
 
     if (isGltf) {
         AssetStorage s{ctx.assets, ctx.textures, ctx.materials,

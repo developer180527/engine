@@ -288,7 +288,21 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                                      mh.id, mat->shaderName.c_str(),
                                      mat->blocks.size(),
                                      mat->textureBinds.size());
-                        drawProgram = mp;
+                        // A skinned draw keeps the skinned program. The material
+                        // decides uniforms and textures, never the vertex stage:
+                        // a material's program (the built-in one for a material
+                        // with no named shader) skins nothing, so taking it drew
+                        // every textured character in its raw bind pose, the
+                        // palette uploaded and ignored. No cooked shader has a
+                        // skinned variant yet; a named one on a skinned mesh is
+                        // reported once and drawn with the built-in skinning.
+                        if (skinned && mat->shaderName.size()
+                            && m_skinnedOwnShader.insert(mat->shaderName).second)
+                            LOG_WARN("Renderer",
+                                     "shader \"%s\" has no skinned variant; skinned "
+                                     "meshes using it draw with the built-in program",
+                                     mat->shaderName.c_str());
+                        drawProgram = skinned ? defaultProg : mp;
                         return;
                     }
                     // programFor() cannot fail any more: it falls back to the
@@ -407,6 +421,7 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                     ++m_submitStats.draws;
                     ++m_submitStats.submeshDraws;
                     if (skinned) ++m_submitStats.skinnedDraws;
+                    if (skinned && drawProgram.idx == m_skinnedProgram.idx) ++m_submitStats.skinnedProgramDraws;
                 }
                 ++di;
                 continue;
@@ -421,6 +436,7 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
             ++m_submitStats.draws;
             if (sub) ++m_submitStats.submeshDraws;
             if (skinned) ++m_submitStats.skinnedDraws;
+            if (skinned && drawProgram.idx == m_skinnedProgram.idx) ++m_submitStats.skinnedProgramDraws;
             ++di;
         }
 

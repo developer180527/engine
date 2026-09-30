@@ -437,6 +437,27 @@ CookResult cookImportedScene(const imp::ImportedScene& s, const CookContext& ctx
                     notes.push_back("mesh '" + s.meshes[mi].name + "' has no weights: bound rigidly to bone '" +
                                     s.skeleton->bones[(size_t)bone].name + "'");
                 }
+        // Bounds, skinned at rest. The vertices are in bind space, which is
+        // not where the mesh draws: the palette (bone rest world × inverse
+        // bind) moves them. CesiumMan's bind space is Z up, so bounds taken
+        // from raw positions laid his box on its side, and the editor's spawn
+        // (scale and ground offset from bounds) floated him 0.76 m up. Bound
+        // what the renderer draws at rest, the same sum the contract suite's
+        // "skinned at rest" check uses.
+        std::vector<imp::Float4x4> rest(s.skeleton->bones.size());
+        for (size_t b = 0; b < rest.size(); ++b)
+            rest[b] = imp::mul(imp::worldOf(s.skeleton->bones, b, &imp::Bone::bindLocal), s.skeleton->bones[b].inverseBind);
+        for (int k = 0; k < 3; ++k) { e.bMin[k] = FLT_MAX; e.bMax[k] = -FLT_MAX; }
+        const SkinnedVertex* sv = reinterpret_cast<const SkinnedVertex*>(e.vertexBytes.data());
+        for (uint32_t vi = 0; vi < e.vertexBytes.size() / sizeof(SkinnedVertex); ++vi) {
+            imp::Float3 r{0, 0, 0};
+            for (int k = 0; k < 4; ++k) {
+                if (sv[vi].weights[k] == 0.0f) continue;
+                const imp::Float3 q = imp::transformPoint(rest[sv[vi].joints[k]], {sv[vi].px, sv[vi].py, sv[vi].pz});
+                r = {r.x + sv[vi].weights[k] * q.x, r.y + sv[vi].weights[k] * q.y, r.z + sv[vi].weights[k] * q.z};
+            }
+            e.bound(r);
+        }
     } else {
         for (size_t ni = 0; ni < s.nodes.size(); ++ni)
             for (uint32_t mi : s.nodes[ni].meshes)

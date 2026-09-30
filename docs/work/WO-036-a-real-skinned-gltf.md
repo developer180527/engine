@@ -9,6 +9,9 @@ state: todo
 depends: [WO-014]
 touches:
   - tests/real_gltf_test.cpp
+  - src/render/pipeline/opaque_pass.cpp
+  - src/assets/cookers/mesh/mesh_backend.cpp
+  - src/editor/panels/asset_browser/spawn.h
   - tests/fixtures/gltf/
 source: WO-014's last item, moved here on 2026-09-30 because no skinned glTF exists in the tree
 ---
@@ -50,3 +53,28 @@ WO-014 reads glTF skins and clips, and it is proven on glTF files the tests writ
   - quaternions conjugated: 36 joints off
 - Left for the user: load `tests/fixtures/gltf/CesiumMan.glb` in the editor
   and watch the clip play.
+- **The editor check found three bugs, none of them in the importer.** CesiumMan
+  spawned lying down and never moved:
+  1. **Spawn used the uncooked preview.** A dropped `.glb` always went through
+     the runtime glTF importer, which reads static geometry only. Now a glTF
+     with a Ready cooked version spawns through the async loader's cooked path,
+     which carries the skeleton and clips (`AsyncLoader::hasCooked`).
+  2. **Every textured skinned mesh drew unskinned** (`opaque_pass.cpp`, since
+     `1f0dff2`, "materials become data"). Binding a material replaced the
+     skinning program with the material's static one, so the palette was
+     uploaded and ignored and the raw bind-space vertices were drawn. His are
+     Z up. This affected every skinned character, FBX included. A skinned draw
+     now keeps the skinning program. A new counter, `skinnedProgramDraws`,
+     must equal `skinnedDraws`, and `render_pipeline_test` checks it: 0 of 4
+     with the old line, 4 of 4 fixed.
+  3. **Skinned bounds were taken in bind space.** The renderer culls with the
+     bounds, and spawn scales and grounds by them, so he floated 0.76 m. The
+     back end now bounds a skinned mesh skinned at rest (cooker v19).
+     `real_gltf_test` checks the cooked box is his rest box with feet at y = 0:
+     −0.569 with the old bounds, 0 fixed.
+
+  A headless probe found the second bug. It went through the editor's own
+  path: the registry, `AsyncLoader`, the spawn's components, and
+  `AnimatorSystem`. The palette moved every frame, and the palette-skinned
+  vertices stood up while the raw ones lay down, which pointed at the draw
+  call. The probe is deleted.

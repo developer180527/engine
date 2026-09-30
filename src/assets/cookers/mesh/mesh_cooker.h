@@ -7,7 +7,9 @@
 
 class MeshCooker : public assetlib::ICooker {
 public:
-    static constexpr uint32_t kVersion = 18; // 18: every format through ImportedScene and one
+    static constexpr uint32_t kVersion = 19; // 19: a skinned mesh is bounded skinned at rest,
+                                             //     not in bind space (WO-036).
+                                             // 18: every format through ImportedScene and one
                                              // back end (WO-012/013): generated tangents,
                                              // textures as siblings, mirrored instances.
                                              // WO-012 changed glTF output without this bump,

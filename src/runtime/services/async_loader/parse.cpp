@@ -209,6 +209,21 @@ static TextureGPUData loadTextureGPU(const aiScene*   scene,
     return out;
 }
 
+// The cooked file for a source path, if the registry has one Ready on disk;
+// empty otherwise. The one lookup behind processFile's fast path and hasCooked.
+std::filesystem::path AsyncLoader::cookedPathFor(const std::string& path) const {
+    if (!m_registry) return {};
+    // Key is relative to project root e.g. "assets/Foo.fbx"
+    const std::string relKey = !m_projectRoot.empty()
+        ? std::filesystem::relative(std::filesystem::path(path), m_projectRoot).generic_string()
+        : std::filesystem::path(path).filename().string();
+    auto rec = m_registry->findBySourcePath(relKey);
+    if (!rec || rec->cookedPath.empty() || rec->state != assetlib::AssetState::Ready) return {};
+    // cooked_path in DB is relative to .cache/ dir
+    std::filesystem::path cookedAbs = m_projectRoot / ".cache" / rec->cookedPath;
+    return std::filesystem::exists(cookedAbs) ? cookedAbs : std::filesystem::path{};
+}
+
 // -----------------------------------------------------------------------
 // processFile — runs entirely on worker thread.
 // Assimp parse + stb_image decode + gpu::copy (big memcpy).
@@ -222,24 +237,8 @@ LoadedAsset AsyncLoader::processFile(const std::string& path,
 
     // ── Binary fast path ───────────────────────────────────────────────
     // If a cooked version exists, read raw bytes directly — no Assimp.
-    if (m_registry) {
-        // Key is relative to project root e.g. "assets/Foo.fbx"
-        std::string relKey;
-        if (!m_projectRoot.empty()) {
-            auto rel = std::filesystem::relative(
-                std::filesystem::path(path), m_projectRoot);
-            relKey = rel.generic_string();
-        } else {
-            relKey = std::filesystem::path(path).filename().string();
-        }
-        auto rec = m_registry->findBySourcePath(relKey);
-        // cooked_path in DB is relative to .cache/ dir
-        std::filesystem::path cookedAbs;
-        if (rec && !rec->cookedPath.empty())
-            cookedAbs = m_projectRoot / ".cache" / rec->cookedPath;
-        if (rec && !rec->cookedPath.empty() &&
-            rec->state == assetlib::AssetState::Ready &&
-            std::filesystem::exists(cookedAbs)) {
+    if (const std::filesystem::path cookedAbs = cookedPathFor(path); !cookedAbs.empty()) {
+        {
             assetlib::MeshAsset asset;
             if (assetlib::loadMesh(asset, cookedAbs)) {
                 const auto& h = asset.header;

@@ -38,6 +38,9 @@ struct SubmitStats {
     uint32_t submeshDraws = 0;   // of those, draws from a submesh range
     uint32_t skinnedItems = 0;   // items with a bone palette
     uint32_t skinnedDraws = 0;   // draws belonging to those items
+    // Of those, draws submitted with the SKINNING program. Must equal
+    // skinnedDraws: a skinned draw on any other program shows the raw bind pose.
+    uint32_t skinnedProgramDraws = 0;
 
     // R4's invariant lives here: one upload per skinned ITEM, not per draw.
     uint32_t bonePaletteUploads = 0;

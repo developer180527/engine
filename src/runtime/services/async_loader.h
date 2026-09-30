@@ -110,6 +110,9 @@ public:
 
     bool isLoading(const std::string& path) const;
     bool isLoaded (const std::string& path) const;
+    // A Ready cooked version of this source exists, so load() takes the cooked
+    // path (skeleton and clips included) rather than parsing the source.
+    bool hasCooked(const std::string& path) const { return !cookedPathFor(path).empty(); }
     // Remove from loaded cache — enables hot-reload by allowing re-queue.
     void unload(const std::string& path);
     int  pendingCount() const;
@@ -118,6 +121,7 @@ private:
     struct LoadRequest   { std::string path, name; OnLoaded cb; };
     struct UploadRequest { LoadedAsset asset;       OnLoaded cb; };
 
+    std::filesystem::path cookedPathFor(const std::string& path) const;
     void        armWorker();          // pop one pending request onto the pool
     void        dispatch(LoadRequest req);   // run one load job, then self-chain
     LoadedAsset processFile(const std::string& path, const std::string& name);

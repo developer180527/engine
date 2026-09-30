@@ -84,6 +84,9 @@ private:
         return ctx.shaders->program(path, mat.featureMask);
     }
 
+    // Named shaders already reported as having no skinned variant (log once).
+    std::set<std::string> m_skinnedOwnShader;
+
     // True when this material draws with a program of its OWN, from the cooked
     // shader cache — which is not the instanced variant, so such a draw cannot
     // join an instanced run. Materials on the built-in program still instance,

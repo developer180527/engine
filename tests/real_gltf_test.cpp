@@ -180,6 +180,15 @@ int main() {
     if (loaded) {
         CHECK(a.header.version == 6 && a.header.boneCount == bones && !a.skeletonBlob.empty(),
               "as MeshAsset v%u with %u bone(s) and a skeleton", a.header.version, a.header.boneCount);
+        // The bounds are what the renderer culls with and what the editor's
+        // spawn scales and grounds by, so they must be where he DRAWS: skinned
+        // at rest, standing up +Y with his feet at 0. Bounds of the raw
+        // bind-space (Z-up) vertices laid the box on its side and floated him.
+        const float* bn = a.header.boundsMin; const float* bx = a.header.boundsMax;
+        std::printf("        cooked bounds: (%.3f, %.3f, %.3f) to (%.3f, %.3f, %.3f)\n", bn[0], bn[1], bn[2], bx[0], bx[1], bx[2]);
+        CHECK(std::fabs(bn[0] - lo.x) < 1e-3f && std::fabs(bn[1] - lo.y) < 1e-3f && std::fabs(bn[2] - lo.z) < 1e-3f &&
+              std::fabs(bx[0] - hi.x) < 1e-3f && std::fabs(bx[1] - hi.y) < 1e-3f && std::fabs(bx[2] - hi.z) < 1e-3f,
+              "the cooked bounds are his skinned-at-rest box, feet at y = %.3f", bn[1]);
         CHECK(a.clips.size() == 1 && a.clips[0].mappedTracks == a.clips[0].totalTracks && a.clips[0].mappedTracks > 0,
               "one clip, all %d track(s) mapped to bones", a.clips.empty() ? 0 : a.clips[0].totalTracks);
     }

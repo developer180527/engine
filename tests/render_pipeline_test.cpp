@@ -329,6 +329,13 @@ static void testBonePalettePerItem(Fixture& fx, ForwardPipeline& pipe) {
     CHECK(s.bonePaletteUploads == 1,
           "but only ONE palette upload (%u) — not one per draw",
           s.bonePaletteUploads);
+    // The item HAS a material, as every textured character does. Binding it
+    // used to replace the skinned program with the material's static one, so
+    // the palette was uploaded and ignored: CesiumMan drew lying in his raw
+    // Z-up bind pose and never moved (WO-036).
+    CHECK(s.skinnedProgramDraws == s.skinnedDraws && s.skinnedDraws == 4,
+          "every skinned draw uses the skinning program (%u of %u)",
+          s.skinnedProgramDraws, s.skinnedDraws);
 }
 
 // ── 7. The shadow pass culls against the LIGHT, and counts separately ───────
