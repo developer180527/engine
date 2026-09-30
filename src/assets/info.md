@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-17
+verified: 2026-09-30
 parses-external-input: true
 covers:
   - src/assets/
@@ -57,7 +57,9 @@ returned only the first submesh, silently dropping the rest — see the resolved
 `importers/issues.md`.) A single-submesh model stays on the simple single-draw
 path (mesh.material set, `submeshes` empty). The whole model is skinned iff it
 has a skeleton (one merged vertex format); a bone-less submesh inside a skinned
-model binds rigidly to bone 0 so it can't collapse. Verified headless by
+model binds rigidly to bone 0 so it can't collapse. **That is Assimp only:**
+`GltfImporter` reads meshes and nothing else, so a skinned glTF loads as static
+geometry — and says so once per file (`gltf_losses.h`, WO-002). Verified headless by
 `tools/import_test.cpp` (bgfx Noop backend).
 
 ## Cookers (`cookers/`)
@@ -68,7 +70,12 @@ cook layer is split (orchestration / keying / dispatch / store / record
 format / scheduling).
 - `MeshCooker` — imports via Assimp (or cgltf for `.gltf`/`.glb`), writes
   vertex/index buffers + submeshes + bounds. Skinned meshes cook too: a
-  re-import extracts the skeleton and embedded clips into the same binary.
+  re-import extracts the skeleton and embedded clips into the same binary —
+  **for Assimp formats only.** The cgltf path reads meshes only, so a skinned
+  glTF (or an animation-only one) is REFUSED with a message naming what would
+  be lost, and node animations on a static glTF are dropped out loud
+  (`importers/gltf_losses.h`, WO-002). It used to cook as a static mesh with
+  `success=true`. Real glTF skins and clips are WO-014.
   Also emits an **LOD chain** — see below.
 - `TextureCooker` — stb decode → block-compressed texels + mips via
   `texture_encode`, in one of THREE families chosen by `COOK_TEX_TARGET`:

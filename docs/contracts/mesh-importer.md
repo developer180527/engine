@@ -35,4 +35,11 @@ Not yet written.
 Not yet written.
 
 ## Errors
-Not yet written.
+`MeshImportResult::fail(reason)` for a file that cannot be loaded at all.
+
+A file that loads *partially* — features in it the importer does not read —
+still loads, and the importer says what it left out, once per file, as a
+warning. Current case: `GltfImporter` reads meshes only, so skins and
+animations are reported and the static geometry loads
+(`src/assets/importers/gltf_losses.h`, WO-002). The cooker refuses the same
+files outright; the importer does not, because a scene should still open.

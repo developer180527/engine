@@ -9,6 +9,7 @@
 #include <assimp/matrix4x4.h>
 #include <assimp/matrix3x3.h>
 #include <cgltf.h>   // glTF/GLB cook path (Assimp is built without glTF)
+#include "assets/importers/gltf_losses.h"   // what a glTF cook cannot carry (WO-002)
 
 #include <cstring>
 #include <cstdio>
@@ -724,6 +725,16 @@ static CookResult cookGltf(const CookContext& ctx) {
     if (cgltf_load_buffers(&options, data, src.c_str()) != cgltf_result_success)
         return {.success = false, .error = "cgltf: buffer load failed"};
 
+    // Skins and animations are not read by this path. A skinned file is refused
+    // rather than cooked as a static mesh with success=true; node animations on
+    // a static mesh are dropped out loud. See gltf_losses.h.
+    const GltfLosses losses = gltfLosses(*data);
+    if (losses.refuseCook())
+        return {.success = false, .error = "cgltf: " + losses.describe()};
+    if (losses.dropsAnything())
+        std::printf("[MeshCooker] %s — %s\n",
+                    ctx.sourcePath.filename().string().c_str(), losses.describe().c_str());
+
     const cgltf_scene* scene = data->scene ? data->scene
                              : (data->scenes_count ? &data->scenes[0] : nullptr);
     if (!scene) return {.success = false, .error = "cgltf: no scene"};
@@ -982,10 +993,9 @@ CookResult MeshCooker::cook(const CookContext& ctx) {
                 + (((why && why[0])) ? (std::string(" — ") + why) : std::string()) };
     }
 
-    // Skinned meshes (bones + animation) cannot be cooked yet — the cook format
-    // doesn't store SkinnedVertex, skeleton, or animation clips. The runtime
-    // Assimp path in async_loader.cpp handles those correctly. Skip cooking so
-    // the binary fast path falls through to Assimp for these files.
+    // Skinned meshes (bones) cook to the v3 skinned payload: SkinnedVertex,
+    // the ozz skeleton and the mesh's clips (cookSkinned). Assimp formats only —
+    // glTF never reaches here, and a skinned glTF is refused in cookGltf.
     {
         bool hasBones = false;
         for (unsigned m = 0; m < scene->mNumMeshes && !hasBones; ++m)

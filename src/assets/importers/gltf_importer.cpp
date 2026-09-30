@@ -1,4 +1,6 @@
 #include "gltf_importer.h"
+#include "gltf_losses.h"
+#include "core/logger.h"
 
 #include <cgltf.h>
 #include <stb_image.h>
@@ -12,6 +14,9 @@
 #include <functional>
 #include <vector>
 #include <filesystem>
+#include <mutex>
+#include <string>
+#include <unordered_set>
 #include <utility>
 
 #include "render/vertex.h"
@@ -144,6 +149,18 @@ MeshImportResult GltfImporter::load(const std::string& path,
 
     if (cgltf_validate(data) != cgltf_result_success)
         return MeshImportResult::fail("glTF validation failed: " + path);
+
+    // The runtime importer reads meshes only, like the cooker. It keeps loading
+    // the static geometry — a scene should still open — but says once per file
+    // what it left out, instead of a character silently standing in bind pose.
+    // (WO-002; the cooker refuses the same files outright.)
+    if (const GltfLosses losses = gltfLosses(*data); losses.dropsAnything()) {
+        static std::mutex                      warnedLock;
+        static std::unordered_set<std::string> warned;
+        std::lock_guard<std::mutex> lk(warnedLock);
+        if (warned.insert(path).second)
+            LOG_WARN("glTF", "%s — %s", path.c_str(), losses.describe().c_str());
+    }
 
     if (data->meshes_count == 0)
         return MeshImportResult::fail("No meshes: " + path);

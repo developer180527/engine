@@ -19,6 +19,8 @@
 #include "assets/cookers/scene/scene_cooker.h"
 #include "assets/cookers/texture/texture_encode.h"
 #include "assets/cookers/texture/texture_cooker.h"
+#include "assets/importers/gltf_losses.h"
+#include <cgltf.h>
 // Assimp's matrix members are inline templates defined in .inl headers this
 // TU must instantiate ITSELF: with assimp built -O0 the archive happened to
 // carry weak out-of-line copies to link against, but an optimized assimp
@@ -42,6 +44,67 @@ namespace { int g_failures = 0; }
                    ++g_failures; }                                  \
     else { std::printf("  ok    " __VA_ARGS__); std::printf("\n"); } \
 } while (0)
+
+// The full result, for tests that need the refusal's message.
+static assetlib::CookResult cookMeshResult(const fs::path& src, const fs::path& out) {
+    MeshCooker cooker;
+    assetlib::CookContext ctx;
+    ctx.sourcePath = src;
+    ctx.outputPath = out;
+    return cooker.cook(ctx);
+}
+
+// A tiny VALID glTF (it passes cgltf_validate): one triangle, plus the two
+// accessors an animation needs, with the skin / animation / mesh switched on
+// per case. Written by the test, so no binary fixture is checked in.
+// Buffer: pos 0..35, nrm 36..71, idx 72..77, pad, time 80..83, xyz 84..95.
+static std::string tinyGltf(bool mesh, bool skin, bool anim) {
+    unsigned char buf[96] = {};
+    const float pos[9] = {0,0,0, 1,0,0, 0,1,0};
+    const float nrm[9] = {0,0,1, 0,0,1, 0,0,1};
+    const uint16_t idx[3] = {0,1,2};
+    const float t = 0.0f, xyz[3] = {0,0,0};
+    std::memcpy(buf, pos, 36); std::memcpy(buf + 36, nrm, 36); std::memcpy(buf + 72, idx, 6);
+    std::memcpy(buf + 80, &t, 4); std::memcpy(buf + 84, xyz, 12);
+    static const char* tab = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string b64;                                   // 96 % 3 == 0: no padding
+    for (int i = 0; i < 96; i += 3) {
+        const unsigned v = buf[i] << 16 | buf[i+1] << 8 | buf[i+2];
+        b64 += tab[(v >> 18) & 63]; b64 += tab[(v >> 12) & 63];
+        b64 += tab[(v >> 6) & 63];  b64 += tab[v & 63];
+    }
+    std::string nodes = mesh ? (skin ? R"([{"mesh":0,"skin":0},{"name":"bone"}])"
+                                     : R"([{"mesh":0},{"name":"bone"}])")
+                             : R"([{"name":"root"},{"name":"bone"}])";
+    std::string j = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1]}],"nodes":)" + nodes;
+    if (mesh) j += R"(,"meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1},"indices":2}]}])";
+    if (skin) j += R"(,"skins":[{"joints":[1]}])";
+    if (anim) j += R"(,"animations":[{"channels":[{"sampler":0,"target":{"node":1,"path":"translation"}}],)"
+                   R"("samplers":[{"input":3,"output":4}]}])";
+    j += R"(,"accessors":[
+ {"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},
+ {"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},
+ {"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"},
+ {"bufferView":3,"componentType":5126,"count":1,"type":"SCALAR","min":[0],"max":[0]},
+ {"bufferView":4,"componentType":5126,"count":1,"type":"VEC3"}],
+"bufferViews":[
+ {"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":36},
+ {"buffer":0,"byteOffset":72,"byteLength":6},{"buffer":0,"byteOffset":80,"byteLength":4},
+ {"buffer":0,"byteOffset":84,"byteLength":12}],
+"buffers":[{"byteLength":96,"uri":"data:application/octet-stream;base64,)" + b64 + R"("}]})";
+    return j;
+}
+
+// What gltf_losses.h concludes about a file, read the same way the paths read it.
+static bool lossesOf(const fs::path& src, GltfLosses& out, bool& valid) {
+    cgltf_options o{}; cgltf_data* d = nullptr;
+    if (cgltf_parse_file(&o, src.string().c_str(), &d) != cgltf_result_success) return false;
+    const bool buffers = cgltf_load_buffers(&o, d, src.string().c_str()) == cgltf_result_success;
+    valid = buffers && cgltf_validate(d) == cgltf_result_success;
+    out = gltfLosses(*d);
+    cgltf_free(d);
+    return buffers;
+}
 
 static bool cookMesh(const fs::path& src, const fs::path& out) {
     MeshCooker cooker;
@@ -128,6 +191,41 @@ int main() {
                     e.meshSourceOffset, e.meshSourceLength) != shared)
                 allResolve = false;
         CHECK(allResolve, "every entity's interned path round-trips");
+    }
+
+    // ── 2c. A skinned glTF is REFUSED, never cooked as a static mesh ─────
+    // WO-002. cookGltf reads meshes only, and Assimp has no glTF importer to
+    // fall back on, so a skinned .glb used to cook "successfully" with its
+    // skeleton and animations silently gone.
+    {
+        struct Case { const char* name; bool mesh, skin, anim, cooks; const char* says; };
+        const Case cases[] = {
+            {"static",            true,  false, false, true,  ""},
+            {"skinned",           true,  true,  false, false, "skinned glTF is not supported yet: 1 skin and 0 animations would be lost"},
+            {"skinned+animated",  true,  true,  true,  false, "1 skin and 1 animation would be lost"},
+            {"animation-only",    false, false, true,  false, "animation-only glTF: 1 animation"},
+            {"static+node anim",  true,  false, true,  true,  "1 node animation is not cooked; the static mesh is"},
+        };
+        for (const Case& c : cases) {
+            const fs::path src = dir / (std::string("wo002_") + c.name + ".gltf");
+            { std::ofstream f(src); f << tinyGltf(c.mesh, c.skin, c.anim); }
+            GltfLosses l; bool valid = false;
+            CHECK(lossesOf(src, l, valid) && valid, "%s: fixture is a valid glTF", c.name);
+
+            const fs::path out = dir / (std::string("wo002_") + c.name + ".cooked");
+            fs::remove(out);
+            const assetlib::CookResult r = cookMeshResult(src, out);
+            CHECK(r.success == c.cooks, "%s: %s (error: %s)", c.name,
+                  c.cooks ? "cooks" : "is refused", r.error.c_str());
+            if (!c.cooks)
+                CHECK(r.error.find(c.says) != std::string::npos && !fs::exists(out),
+                      "%s: the refusal says what would be lost, and writes nothing", c.name);
+            else if (*c.says)
+                CHECK(l.describe().find(c.says) != std::string::npos,
+                      "%s: the dropped animation is reported: %s", c.name, l.describe().c_str());
+            else
+                CHECK(!l.dropsAnything() && l.describe().empty(), "%s: nothing to report", c.name);
+        }
     }
 
     // ── 2b. glTF cook (cgltf path): transforms bake, normals survive ─────
