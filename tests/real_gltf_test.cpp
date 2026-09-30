@@ -23,10 +23,13 @@
 // turning it on would ship a second glTF parser to test the first.)
 // The editor check (it walks, upright, the right way round) is the user's eye.
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -93,14 +96,39 @@ int main() {
 
     // ── 2. Skinned at rest: the spec's sum, against the reader's scene ──────
     auto world = [](const cgltf_node* n) { Float4x4 m; cgltf_node_transform_world(n, m.m); return m; };
-    auto key = [](Float3 v) { auto q = [](float f) { return (long)std::lround(f * 1000.0f); };  // 1 mm
-                              return std::to_string(q(v.x)) + "," + std::to_string(q(v.y)) + "," + std::to_string(q(v.z)); };
+    // Points are matched within 1 mm, not by rounding each to a 1 mm grid and
+    // comparing the grid cells: two sums a hair apart straddle a cell edge, and
+    // the test and the reader compute the same sum with different operation
+    // order (and GCC/Clang on Linux contract multiply-adds into FMAs where
+    // Apple clang does not). The grid version failed 36-46 of 14016 corners on
+    // the Linux legs with nothing wrong (WO-038).
+    constexpr float kTol = 1e-3f;
+    struct PointSet {
+        std::map<std::array<long, 3>, std::vector<Float3>> cells;
+        static std::array<long, 3> cell(Float3 v) {
+            auto c = [](float f) { return (long)std::floor(f / kTol); };
+            return {c(v.x), c(v.y), c(v.z)};
+        }
+        void add(Float3 v) { cells[cell(v)].push_back(v); }
+        bool near(Float3 v) const {   // any point within kTol on every axis
+            const auto c = cell(v);
+            for (long dx = -1; dx <= 1; ++dx) for (long dy = -1; dy <= 1; ++dy) for (long dz = -1; dz <= 1; ++dz) {
+                auto it = cells.find({c[0] + dx, c[1] + dy, c[2] + dz});
+                if (it == cells.end()) continue;
+                for (const Float3& p : it->second)
+                    if (std::fabs(p.x - v.x) <= kTol && std::fabs(p.y - v.y) <= kTol && std::fabs(p.z - v.z) <= kTol)
+                        return true;
+            }
+            return false;
+        }
+    };
     std::vector<Float4x4> jointSkin(skin.joints_count);          // jointWorld × inverseBind
     for (size_t j = 0; j < skin.joints_count; ++j) {
         Float4x4 ibm; cgltf_accessor_read_float(skin.inverse_bind_matrices, j, ibm.m, 16);
         jointSkin[j] = mul(world(skin.joints[j]), ibm);
     }
-    std::set<std::string> fileRest;
+    PointSet fileRest;
+    std::vector<Float3> filePoints;
     Float3 lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
     for (size_t pi = 0; pi < d->meshes[0].primitives_count; ++pi) {
         const cgltf_primitive& prim = d->meshes[0].primitives[pi];
@@ -120,18 +148,22 @@ int main() {
                 const Float3 q = transformPoint(jointSkin[j[k]], p);
                 r = {r.x + w[k] * q.x, r.y + w[k] * q.y, r.z + w[k] * q.z};
             }
-            fileRest.insert(key(r));
+            fileRest.add(r); filePoints.push_back(r);
             lo = {std::min(lo.x, r.x), std::min(lo.y, r.y), std::min(lo.z, r.z)};
             hi = {std::max(hi.x, r.x), std::max(hi.y, r.y), std::max(hi.z, r.z)};
         }
     }
-    size_t corners = 0, strays = 0;
-    std::set<std::string> readRest;
+    // Both directions: every corner the reader produced is at a file vertex, and
+    // every file vertex is reached by some corner (nothing dropped or collapsed).
+    size_t corners = 0, strays = 0, unreached = 0;
+    PointSet readRest;
     for (const auto& t : impcontract::detail::soup(s))
-        for (const auto& c : t.c) { ++corners; readRest.insert(key(c.rest)); strays += !fileRest.count(key(c.rest)); }
-    CHECK(corners > 0 && strays == 0 && readRest.size() == fileRest.size(),
-          "every vertex, skinned at rest, lands where the spec puts it (%zu of %zu corners off; %zu places, want %zu)",
-          strays, corners, readRest.size(), fileRest.size());
+        for (const auto& c : t.c) { ++corners; readRest.add(c.rest); strays += !fileRest.near(c.rest); }
+    for (const Float3& p : filePoints) unreached += !readRest.near(p);
+    CHECK(corners > 0 && strays == 0 && unreached == 0,
+          "every vertex, skinned at rest, lands where the spec puts it, within 1 mm "
+          "(%zu of %zu corners off; %zu of %zu file vertices unreached)",
+          strays, corners, unreached, filePoints.size());
     const float h = hi.y - lo.y;
     std::printf("        skinned at rest: %s to %s\n", impcontract::detail::str(lo).c_str(), impcontract::detail::str(hi).c_str());
     // In a T-pose, so his arm span is close to his height; lying down, or on his

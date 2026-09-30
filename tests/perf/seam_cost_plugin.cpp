@@ -5,6 +5,13 @@
 // the benchmark measures ~0 and the cross-.so row does not.
 #include <cstdint>
 
-extern "C" void seamDraw(uint64_t* acc, const uint32_t* data, uint32_t i) {
+// Windows exports nothing from a DLL unless told to; GetProcAddress needs it.
+#if defined(_WIN32)
+#  define SEAM_EXPORT __declspec(dllexport)
+#else
+#  define SEAM_EXPORT
+#endif
+
+extern "C" SEAM_EXPORT void seamDraw(uint64_t* acc, const uint32_t* data, uint32_t i) {
     *acc += (uint64_t)data[i] * 3u + 1u;
 }

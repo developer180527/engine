@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstddef>
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -106,6 +107,32 @@ int main() {
         char* r = (char*)mem::realloc(q, 32);
         CHECK(r == q, "realloc shrink keeps the block in place");
         mem::free(r);
+    }
+
+    // ── Realloc keeps alignment (WO-038) ───────────────────────────────────
+    // It reallocated at 8. Jolt grows arrays of 16-byte-aligned types through
+    // realloc, so its CharacterVirtual contacts landed on 8-byte boundaries:
+    // tolerated on arm64, a segfault in SSE code on x86-64. Many sizes, because
+    // whether a given TLSF block happens to be 16-aligned depends on placement.
+    {
+        int plain = 0, explicit16 = 0, explicit64 = 0;
+        void* a = mem::alloc(24, 16, mem::Tag::Physics);
+        void* b = mem::alloc(24, 16, mem::Tag::Physics);
+        void* c = mem::alloc(24, 64, mem::Tag::Physics);
+        for (size_t n = 40; n < 20000; n = n * 5 / 4 + 8) {
+            a = mem::realloc(a, n);
+            b = mem::realloc(b, n, 16);
+            c = mem::realloc(c, n, 64);
+            plain      += ((uintptr_t)a % alignof(std::max_align_t)) != 0;
+            explicit16 += ((uintptr_t)b % 16) != 0;
+            explicit64 += ((uintptr_t)c % 64) != 0;
+        }
+        CHECK(plain == 0, "realloc keeps alignof(max_align_t), as std::realloc does (%d misaligned)", plain);
+        CHECK(explicit16 == 0, "realloc(p, n, 16) keeps 16-byte alignment (%d misaligned)", explicit16);
+        CHECK(explicit64 == 0, "realloc(p, n, 64) keeps 64-byte alignment (%d misaligned)", explicit64);
+        c = mem::realloc(c, 16, 64);
+        CHECK(((uintptr_t)c % 64) == 0, "and a shrink keeps it too");
+        mem::free(a); mem::free(b); mem::free(c);
     }
 
     // ── Foreign pointers: the kit / pre-routing safety net ──────────────────

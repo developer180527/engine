@@ -646,10 +646,18 @@ set_target_properties(engine_player PROPERTIES
 # runs when it loads dist/kits/, so the posture that ships is the posture where
 # being able to ask "was this refused, and why" matters most — and it is the
 # posture ENGINE_WITH_SOURCE_IMPORTERS=OFF builds. Costs one small executable.
+#
+# ENABLE_EXPORTS, like every other host: a module resolves engine and flecs
+# symbols from the executable that loads it. macOS exposes an executable's
+# symbols by default and Linux does not, so without this every module (the
+# ABI-gate fixtures, and any user's kit) failed to load on Linux with
+# "undefined symbol: EcsOnLoad", and the probe reported a correct kit as
+# refused (module_abi_conformance, Linux legs, WO-038).
 add_executable(engine_module_probe tools/engine_module_probe.cpp)
 target_link_libraries(engine_module_probe PRIVATE engine_runtime)
 set_target_properties(engine_module_probe PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    ENABLE_EXPORTS ON
 )
 
 # ── Dev-only targets: skipped in the shipping posture ────────────────────────

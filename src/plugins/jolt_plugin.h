@@ -111,8 +111,12 @@ public:
         // All Jolt allocations land in the Physics heap (function pointers,
         // set before the Factory — the first thing Jolt allocates).
         JPH::Allocate   = [](size_t s) { return mem::alloc(s, 16, mem::Tag::Physics); };
+        // 16 on realloc too: Jolt's JPH::Allocate contract is 16-byte
+        // alignment, and it grows arrays of 16-byte types (CharacterVirtual::
+        // Contact) with Reallocate. At 8 those segfaulted in SSE code on x86-64
+        // (determinism_gate, sim_replay on Linux x64; UBSan on macOS, WO-038).
         JPH::Reallocate = [](void* p, size_t, size_t n) {
-            return p ? mem::realloc(p, n) : mem::alloc(n, 16, mem::Tag::Physics);
+            return p ? mem::realloc(p, n, 16) : mem::alloc(n, 16, mem::Tag::Physics);
         };
         JPH::Free            = [](void* p) { mem::free(p); };
         JPH::AlignedAllocate = [](size_t s, size_t a) { return mem::alloc(s, a, mem::Tag::Physics); };

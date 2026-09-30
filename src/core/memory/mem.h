@@ -79,7 +79,13 @@ const char* tagName(Tag t);
 void* alloc(size_t size, size_t align = alignof(max_align_t));
 void* alloc(size_t size, size_t align, Tag tag);
 void  free(void* p);
+// realloc keeps at least alignof(max_align_t), as std::realloc does. With `align`,
+// the grown block keeps that alignment: pass what the block was allocated with
+// when it was more (Jolt's 16-byte types, SIMD data). It used to reallocate at 8,
+// so a grown array of 16-byte-aligned elements landed on 8-byte boundaries:
+// tolerated by ARM, a segfault in SSE code on x86-64 (WO-038).
 void* realloc(void* p, size_t newSize);   // foreign pointers forwarded to std
+void* realloc(void* p, size_t newSize, size_t align);
 bool  owns(void* p);                      // registry hit?
 size_t allocSize(void* p);                // usable size; 0 if foreign/null
 

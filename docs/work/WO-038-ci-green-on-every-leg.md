@@ -25,7 +25,7 @@ A red CI teaches everyone to ignore it. WO-006's "confirmed by the next nightly"
 - [x] Linux GCC: `headless_include_probe` is an OBJECT library. Its property is "compiles", and as an executable linking nothing it failed on flecs.h's C++ constants from 2026-09-07.
 - [x] Windows (both legs): `engine::headers` defines `flecs_STATIC`, so SDK modules stop declaring flecs as a DLL import; the ABI-gate fixtures link a private flecs on Windows (a DLL resolves at link time); the probe takes bx's compat directory per compiler, not `compat/osx`; the seam-cost benchmark sits in its own directory so MSVC Debug can drop `/RTC1`, which `/O2` refuses.
 - [x] macOS: `thread_qos_test` waits, bounded, for a pool worker instead of assuming one wins a race against the calling thread (0 of 48 failed under full CPU contention).
-- [ ] Sanitizers: `JPH::CharacterVirtual::Contact` constructed misaligned (16-byte type), found by UBSan. Investigate before fixing: probably the Jolt allocator hook's alignment.
+- [x] Sanitizers and Linux x64: `mem::realloc` reallocated at 8-byte alignment, and Jolt grows arrays of 16-byte `CharacterVirtual::Contact` through it. UBSan on macOS; a real segfault in SSE code on x86-64 (`determinism_gate`, `sim_replay`). `realloc` now keeps `max_align_t`, with an overload for more, and Jolt's hook passes 16.
 - [ ] a `workflow_dispatch` run of the full matrix is green on all six legs plus the sanitizer, SDK-only and shipping jobs (Windows may show more once it links)
 - [ ] a failed nightly notifies instead of sitting red for weeks
 
@@ -36,3 +36,12 @@ Nothing: until a leg is green, it says nothing about its platform. No platform i
 
 ## Not in scope
 New platforms or architectures. They are worth adding only on top of a green baseline.
+
+## Log
+- 2026-09-30, first full-matrix run after the build fixes: every leg now builds, which it had not since September. It exposed what the build failures had hidden:
+  - the Jolt misalignment (above) is a crash on x86-64, not only a sanitizer report;
+  - `real_gltf_test` rounded positions to a 1 mm grid and compared cells, so sums a hair apart straddled cell edges on Linux (FMA contraction differs from Apple clang). It now matches within 1 mm, both ways; still red when the inverse-bind matrices are skipped.
+  - `engine_module_probe` did not export its symbols (`ENABLE_EXPORTS`), unlike every other host, so on Linux every module, the ABI fixtures and any user's kit, failed with "undefined symbol: EcsOnLoad" and was reported as refused.
+  - `work_orders_test` held `brief` to 2 s of wall clock on a cold CI runner (3.15 s there, 0.1 s locally). `brief` now skips dirty submodules; the budget applies off CI.
+  - `seam_cost_bench` used `<dlfcn.h>` directly (Windows compile error). It has a per-OS loader, its plugin exports `seamDraw` on Windows, and a plugin that fails to load now fails the benchmark instead of reporting success.
+

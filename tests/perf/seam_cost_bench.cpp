@@ -33,9 +33,24 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>   // atoi
-#include <dlfcn.h>
 #include <random>
+#include <string>
 #include <vector>
+
+// The dynamic loader, per OS. Not runtime/module_loader.h: that pulls in flecs
+// and the runtime, and this benchmark links nothing on purpose. It included
+// <dlfcn.h> unconditionally, so both Windows legs failed to compile (WO-038).
+#if defined(_WIN32)
+#  include <windows.h>
+static void* openLib(const char* p)         { return (void*)::LoadLibraryA(p); }
+static void* findSym(void* h, const char* n) { return (void*)::GetProcAddress((HMODULE)h, n); }
+static std::string libError()               { return "LoadLibrary error " + std::to_string(::GetLastError()); }
+#else
+#  include <dlfcn.h>
+static void* openLib(const char* p)         { return ::dlopen(p, RTLD_NOW); }
+static void* findSym(void* h, const char* n) { return ::dlsym(h, n); }
+static std::string libError()               { const char* e = ::dlerror(); return e ? e : ""; }
+#endif
 
 using Clock = std::chrono::steady_clock;
 
@@ -94,11 +109,11 @@ int main(int argc, char** argv) {
     for (uint32_t i = 0; i < kDraws; ++i) poly[i] = (i & 1) ? (IDraw*)&a : (IDraw*)&b;
     DrawFn fp = &tableDraw;
 
-    // The .dylib sits beside this executable; both land in the build root.
-    void* h = dlopen(ENGINE_SEAM_PLUGIN_PATH, RTLD_NOW);
-    if (!h) { std::printf("seam_cost_bench: dlopen failed: %s\n", dlerror()); return 0; }
-    auto sofn = (DrawFn)dlsym(h, "seamDraw");
-    if (!sofn) { std::printf("seam_cost_bench: dlsym failed\n"); return 0; }
+    // The shared library sits beside this executable; both land in the build root.
+    void* h = openLib(ENGINE_SEAM_PLUGIN_PATH);
+    if (!h) { std::printf("seam_cost_bench: loading the plugin failed: %s\n", libError().c_str()); return 1; }
+    auto sofn = (DrawFn)findSym(h, "seamDraw");
+    if (!sofn) { std::printf("seam_cost_bench: seamDraw not found in the plugin\n"); return 1; }
 
     double tD = 0, tM = 0, tP = 0, tF = 0, tS = 0;
     // Three passes; keep the last. The first warms caches and the branch

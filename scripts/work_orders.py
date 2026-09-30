@@ -514,7 +514,10 @@ def brief(root: Path, orders: list[Order], errs: list[str], since: str | None) -
                 for l in lines[:12]: print(f"    {l}")
                 if len(lines) > 12: print(f"    … {len(lines) - 12} more (git log {anchor}..HEAD)")
 
-        groups = group_status(git(root, "status", "--porcelain") or "")
+        # --ignore-submodules=dirty: a submodule's own build output is not
+        # "your uncommitted work", and scanning 14 submodules is what made a
+        # cold CI runner take 3 s here. A submodule at a new commit still shows.
+        groups = group_status(git(root, "status", "--porcelain", "--ignore-submodules=dirty") or "")
         if groups:
             n = sum(groups.values())
             print(f"  uncommitted: {n} file(s) — " +

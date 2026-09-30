@@ -30,7 +30,10 @@
 #  error "port: core/memory needs page mapping, a page-size query and a trivially destructible mutex"
 #endif
 
+#include <algorithm>
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -547,13 +550,19 @@ void free(void* p) {
 }
 
 void* realloc(void* p, size_t newSize) {
-    if (!p) return alloc(newSize, 8, currentTag());
+    return realloc(p, newSize, alignof(std::max_align_t));
+}
+
+void* realloc(void* p, size_t newSize, size_t align) {
+    if (align < alignof(std::max_align_t)) align = alignof(std::max_align_t);
+    if (!p) return alloc(newSize, align, currentTag());
     if (newSize == 0) { free(p); return nullptr; }
     BlockHeader* h = headerOf(p);
     if (!h) return std::realloc(p, newSize);   // foreign provenance stays std
     const Tag tag = (Tag)h->tag;
     const size_t oldSize = h->isLarge ? h->userBytes : h->shard->liveSize(p);
-    if (newSize <= oldSize) {
+    // In place only if the block already satisfies the alignment asked for.
+    if (newSize <= oldSize && (reinterpret_cast<uintptr_t>(p) % align) == 0) {
         // ── A shrink in place still has to be ACCOUNTED for ─────────────────
         // Only for LARGE blocks. A pool block is accounted at
         // tlsf_block_size(p) on both bump and drop, and shrinking inside the
@@ -572,9 +581,9 @@ void* realloc(void* p, size_t newSize) {
         }
         return p;
     }
-    void* np = alloc(newSize, 8, tag);
+    void* np = alloc(newSize, align, tag);
     if (!np) return nullptr;
-    std::memcpy(np, p, oldSize);
+    std::memcpy(np, p, std::min(oldSize, newSize));
     free(p);
     return np;
 }

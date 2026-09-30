@@ -12,8 +12,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-- [WO-038](WO-038-ci-green-on-every-leg.md) **CI green on every leg, and red is noticed** — 4/7 done. Still open:
-  - Sanitizers: `JPH::CharacterVirtual::Contact` constructed misaligned (16-byte type), found by UBSan. Investigate before fixing: probably the Jolt allocator hook's alignment.
+- [WO-038](WO-038-ci-green-on-every-leg.md) **CI green on every leg, and red is noticed** — 5/7 done. Still open:
   - a `workflow_dispatch` run of the full matrix is green on all six legs plus the sanitizer, SDK-only and shipping jobs (Windows may show more once it links)
   - a failed nightly notifies instead of sitting red for weeks
 - [WO-033](WO-033-the-image-is-mirrored.md) **Every camera renders the world mirrored left-to-right** — 5/6 done. Still open:
@@ -29,7 +28,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-038](WO-038-ci-green-on-every-leg.md) | CI green on every leg, and red is noticed | Portability | M | **active** 4/7 | — |
+| [WO-038](WO-038-ci-green-on-every-leg.md) | CI green on every leg, and red is noticed | Portability | M | **active** 5/7 | — |
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
