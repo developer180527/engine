@@ -8,14 +8,45 @@ size: S
 state: todo
 depends: [WO-014]
 touches:
-  - src/assets/import/frontend_cgltf.cpp
+  - tests/real_gltf_test.cpp
+  - tests/fixtures/gltf/
 source: WO-014's last item, moved here on 2026-09-30 because no skinned glTF exists in the tree
 ---
 ## Why
 WO-014 reads glTF skins and clips, and it is proven on glTF files the tests write, which pass the whole contract suite. But no skinned or animated glTF exists anywhere in the repository or in fps_shooter; every `.glb`/`.gltf` checked had zero skins and zero animations. A file written by a real exporter is the check that remains.
 
 ## Done when
-- [ ] a real skinned, animated glTF is in the tree: a Khronos sample such as `CesiumMan.glb` or `Fox.glb` (CC-BY; downloaded with the user's permission), or one exported by the user
-- [ ] it cooks as `MeshAsset` v6 with its bones and clips, and the cook log lists every loss
-- [ ] it animates correctly in the editor, checked by eye by the user
-- [ ] if it is small enough and its licence allows, it becomes a `cooker_test` fixture, so the path stays covered by a real file
+- [x] a real skinned, animated glTF is in the tree: `tests/fixtures/gltf/CesiumMan.glb` (Khronos sample, COLLADA2GLTF, © Cesium, CC-BY 4.0; downloaded with the user's permission on 2026-09-30; credited in `tests/fixtures/gltf/README.md`)
+- [x] it cooks as `MeshAsset` v6 with its bones and clips, and the cook log lists every loss: 21 bones, 1 clip with all 19 tracks mapped, and nothing dropped (its embedded texture cooks too)
+- [ ] it animates correctly in the editor, checked by eye by the user: he walks in place, upright, textured with the Cesium logo the right way round
+- [x] if it is small enough and its licence allows, it becomes a test fixture, so the path stays covered by a real file: `real_gltf_test`, 438 KB
+
+## Log
+- 2026-09-30: `real_gltf_test` reads CesiumMan with the cgltf front end and
+  checks it against a second opinion, computed in the test straight from the
+  spec using cgltf's own helpers (`cgltf_accessor_read_*`,
+  `cgltf_node_transform_world`) and none of the front end's code:
+  - **the file's facts:** 19 joints, 57 channels, and a 2 s clip, all read
+  - **at rest:** every vertex, skinned by Σ weight × jointWorld × inverseBind,
+    is where the reader's scene skins it (2338 places out of 14016 corners, 0
+    off). He is 1.51 m tall along +Y with his feet at y = 0.
+  - **the clip:** every joint's world origin, posed from the file's own
+    samplers at the first and last key, is where the reader's clip puts it
+  - **the cook:** MeshAsset v6, 21 bones (the joints plus the file's `Z_UP` and
+    `Armature` nodes), and one clip with 19 of 19 tracks mapped
+
+  The file has the shape the written fixtures don't: its conversion sits
+  above the armature, and its mesh node is a sibling of the joints. The reader
+  passed on the first run; no reader change was needed.
+- **Why not Assimp as the second opinion.** This build compiles Assimp without
+  its glTF importer (`CMakeLists.txt`, `ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT
+  OFF`). Turning it on would ship a second glTF parser to the editor just to
+  test the first, so the spec computed with cgltf's helpers is the oracle
+  instead.
+- Mutations, each red, with the source restored byte-exact:
+  - inverse binds ignored: every vertex is off
+  - ancestors dropped: 19 bones, all vertices off, 38 joints off
+  - rotation keys dropped: 38 of 57 channels
+  - quaternions conjugated: 36 joints off
+- Left for the user: load `tests/fixtures/gltf/CesiumMan.glb` in the editor
+  and watch the clip play.

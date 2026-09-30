@@ -413,6 +413,11 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # every case (skinned and centimetre/Z-up included) WRITTEN as a real COLLADA
     # file from its expected scene.
     engine_test(frontend_assimp_test)
+    # WO-036: a skinned, animated glTF from a REAL exporter (Khronos CesiumMan),
+    # the one glTF the tests did not write. Read, checked against the spec's own
+    # skinning and posing computed with cgltf's helpers, and cooked.
+    engine_test(real_gltf_test)
+    target_compile_definitions(real_gltf_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
     # Cook infrastructure (scheduler / DDC / manifest / scanner) — needs only
     # the GPU-free core, no game assets.
     engine_test(cook_infra_test LIB engine_core)
