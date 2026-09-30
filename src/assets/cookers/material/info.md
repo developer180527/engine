@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-03
+verified: 2026-09-30
 covers:
   - src/assets/cookers/material/
   - modules/assetlib/src/formats/material_asset.cpp
@@ -102,11 +102,12 @@ counter, so a reloaded scene restored an override pointing at whatever occupied
 that slot — usually nothing, occasionally the wrong material.
 
 ## Known limitations
-- **Mesh-EMBEDDED materials still use the fixed struct.** Authored `.material`
-  assets load and bind data-driven end to end (scene -> cook -> runtime); the
-  `CookedMaterial` records inside cooked geometry do not, and that is what most
-  surfaces still render through. Migrating those is what finally deletes the
-  hardcoded fields — Phase 5 step 4 in `docs/process/roadmap.md`.
+- **~~Mesh-EMBEDDED materials still use the fixed struct.~~ Done (Phase 5
+  step 4).** A cooked mesh's `CookedMaterial` records become the standard
+  shader's declared form when the mesh loads (`AssetService`, the async
+  loader's upload), so every material the renderer sees is block-shaped, and
+  the fixed upload path is deleted. An authored `.material` differs only in
+  naming its own shader.
 - **Texture paths are not resolved to UUIDs.** `CookContext` exposes
   `addDependency(UUID)` but no registry lookup, so the cooked material carries
   the authored path and the runtime resolves it through `AssetService`. This
@@ -115,6 +116,11 @@ that slot — usually nothing, occasionally the wrong material.
   `declaredInputs()`, which takes paths rather than UUIDs. Textures could be
   declared the same way; they are not yet, because a material's cooked bytes do
   not depend on a texture's CONTENT, only on the path it names.)
+  In a DIST there is no registry to resolve those paths, so packaging does it:
+  `pkg::resolveMaterialTextures` (`src/tools/packaging/`) looks each texture up
+  in the dev machine's registry and writes the material into the package with
+  its `cooked` fields filled with cache-relative paths (`84aa16e`: before it,
+  every textured material in a shipped game bound its white fallback).
 - **No material instancing.** Every `.material` is standalone. Unreal's
   Material/Material-Instance split exists to avoid recompiling shaders per
   material — here materials never trigger compilation at all, so the split buys

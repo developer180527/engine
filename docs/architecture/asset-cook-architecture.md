@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-08-03
+verified: 2026-09-30
 covers:
   - modules/assetlib/src/cook/*.cpp
   - modules/assetlib/src/ddc/*.cpp
@@ -15,13 +15,15 @@ tests:
 ---
 # Offline Asset Cook Architecture
 
-> **Status:** Sections 1–5 document the architecture **as built** — content-
+> **Status:** Sections 1–5 and 7 document the architecture **as built** — content-
 > addressed DDC, process-isolated workers, and the cost-weighted task graph are
 > all in the build and exercised by `ctest -L unit`. Section 6 (*cookers as
 > transformation graphs*) is the **target** architecture, not yet started; it is
 > written down here because the rule that governs it (§6.2, stage-boundary
 > economics) is the part most likely to be got wrong by a well-meaning future
 > change. Section 8 records what we deliberately did **not** build, and why.
+> The *import* side (how a source file becomes something a cooker can emit) is
+> §2.1, and in detail in `docs/plans/imported-scene.md`.
 
 ## 0. The whole thing in one picture
 
@@ -46,8 +48,11 @@ runtime the engine hands those binaries to the GPU with no parsing.
                     ┌────────────┼────────────┐
                     ▼            ▼            ▼
               TextureCooker  MeshCooker  ShaderCooker    each in its own
-                    │            │       MaterialCooker  child process
-                    └────────────┼────────────┘          SceneCooker
+                    │     (front end →   MaterialCooker  child process
+                    │  ImportedScene →   SceneCooker
+                    │  back end, or the
+                    │  clip cooker, §2.1)
+                    └────────────┼────────────┘
                                  ▼
                           ┌──────────────┐
                           │     DDC      │  content-addressed blob store
@@ -78,7 +83,8 @@ a BLAKE3 hash of the file's bytes in `<project>/.cache/registry.db`. It is a
 **2 — Is it stale?** The recipe is hashed, not just the file:
 
 ```
-DDC key = BLAKE3( cooker id ⊕ cooker version ⊕ settingsFingerprint ⊕ source hash )
+DDC key = BLAKE3( cooker id ⊕ cooker version ⊕ settingsFingerprint ⊕ source hash
+                  ⊕ declared input files ⊕ dependency source hashes )   // §3.1
 ```
 
 The **cooker id** namespaces the key, which is why bumping `TextureCooker::kVersion`
@@ -135,11 +141,11 @@ Unknown name ⇒ failed cook. Unset parameter ⇒ the shader's default, never a 
 
 See `src/assets/cookers/shader/info.md` and `src/assets/cookers/material/info.md`.
 
-> **State:** `.cshader` is live — a shipped `fps_shooter` dist renders its
-> standard forward program from cooked bytes, resolved by the name inside the
-> file (a dist has no registry). `.cmat` is cooked and tested but still inert:
-> `ForwardPipeline` reads the fixed `Material` struct. See
-> `docs/process/roadmap.md`.
+> **State:** both are live. `.cshader`: a shipped `fps_shooter` dist renders
+> its standard forward program from cooked bytes, resolved by the name inside
+> the file (a dist has no registry). `.cmat`: `AssetService::loadMaterialAsset`
+> loads it, and the draw call binds its shader's program and uploads its blocks
+> as they are (materials became data at the draw call on 2026-08-01).
 
 ## 1. The reframe: cooking is a caching problem
 
@@ -167,14 +173,52 @@ and owns no mechanism.
 | unit | concern |
 |---|---|
 | `assetlib/cooker.h` | The **cooker contract**: `CookContext` / `CookResult` / `ICooker`. No pipeline dependency — cooker implementations and `engine_cook_worker` include only this. |
-| `src/cook/key.{h,cpp}` | **Identity + staleness.** Builds the DDC key; `cookIsStale()` is the entire "is the cooked output already correct?" policy. |
-| `src/cook/dispatch.{h,cpp}`, `src/cook/worker_posix.cpp`, `src/cook/worker_win32.cpp`, `src/cook/result_file.cpp` | **Execution mode.** Isolated child process vs in-process behind an exception net. `dispatchCook()` is the seam every cook passes through — and the hook for remote/farm execution. |
-| `assetlib/ddc.h`, `src/ddc.cpp` | **The store.** Two-tier content-addressed blobs. |
-| `assetlib/ddc_manifest.h`, `src/ddc_manifest.cpp` | **Cached-output record format.** A cook's output set as a manifest of per-member content-hashed blobs. |
+| `modules/assetlib/src/cook/key.{h,cpp}` | **Identity + staleness.** Builds the DDC key; `cookIsStale()` is the entire "is the cooked output already correct?" policy. |
+| `cook/dispatch.{h,cpp}`, `cook/worker_posix.cpp`, `cook/worker_win32.cpp`, `cook/result_file.cpp` (under `modules/assetlib/src/`) | **Execution mode.** Isolated child process vs in-process behind an exception net. `dispatchCook()` is the seam every cook passes through — and the hook for remote/farm execution. |
+| `assetlib/ddc.h`, `ddc/{hash,store,gc,fs_util}.cpp` | **The store.** Two-tier content-addressed blobs; `hash.cpp` is the one function composing a key. |
+| `assetlib/ddc_manifest.h`, `ddc/manifest.cpp` | **Cached-output record format.** A cook's output set as a manifest of per-member content-hashed blobs. |
 | `assetlib/task_graph.{h,cpp}` | **Scheduling.** Cost-weighted DAG, memory-budget admission, thermal governance. |
-| `src/cook_pipeline.cpp` | **Orchestration** only: what to cook, in what order, what the registry records after. |
-| `src/cook_env.h` | The `COOK_*` env-knob reader. |
-| `src/assets/cookers/` (engine) | The concrete cookers (`MeshCooker`, `TextureCooker`, `SceneCooker`) and `CookService`, the editor/CLI driver. |
+| `cook/pipeline.cpp`, `cook/pipeline_batch.cpp` | **Orchestration** only: what to cook, in what order, what the registry records after. |
+| `cook/env.h` | The `COOK_*` env-knob reader. |
+| `src/assets/cookers/` (engine) | The concrete cookers (`MeshCooker`, `TextureCooker`, `ShaderCooker`, `MaterialCooker`, `SceneCooker`, and the clip cooker `MeshCooker` routes to) and `CookService`, the editor/CLI driver. |
+| `src/assets/import/` (engine) | The import format and its front ends: what a model file IS before a cooker emits it. §2.1. |
+
+`modules/assetlib/info.md`'s source-layout table is the file-by-file map.
+
+### 2.1 The import side: every model file becomes an ImportedScene (WO-009..016)
+
+A cooker used to parse its own input, one code path per library: glTF through
+cgltf in one function, static and skinned FBX through two Assimp setups, clips
+through a third inside the running editor. Every format's quirks reached
+cooking code, and a new format meant another copy.
+
+Now a model file is read by exactly one **front end** into the engine's own
+import format, `ImportedScene` (`src/assets/import/imported_scene.h`: nodes,
+meshes, materials, a skeleton, clips, and a `dropped` list), and ONE back end
+cooks it:
+
+```
+  .gltf/.glb ──[CgltfFrontend]──┐                      ┌─[meshcook back end]──> cooked mesh (v2 static, v6 skinned)
+                                ├──> ImportedScene ────┤
+  .fbx/.obj/.dae/… ─[Assimp]───┘    (checkScene)      └─[clip cooker]────────> cooked clip (clips, no triangles)
+```
+
+- **The format depends on the standard library alone** (audit LAYER-05), so no
+  parser's types reach the back end, and Assimp stays inside its front end
+  (IMP-01).
+- **Every loss is reported**, as data: `Dropped` with an effect. `Wrong` (the
+  asset is incorrect without it: a required extension, a skin the format
+  cannot carry) refuses the cook; `Less` (morphs, vertex colours, extra UV
+  sets, cubic-spline tangents) is logged and cooked around.
+- **A contract suite** (`tests/import_contract.h`) holds every front end to
+  the same reference scenes, compared by meaning, not bytes.
+- **Hostile input is fuzzed** (`fuzz_import_frontend_test`), and depth is
+  treated as input: no front end recurses on the node tree (WO-039).
+- **An animation-only file cooks to a clip**, skeleton-independent (keys by
+  bone name), which `ClipLibrary` binds to a character at load (WO-016).
+
+The design, the decisions and what each switch changed in the output are in
+`docs/plans/imported-scene.md`.
 
 ## 3. Identity and the DDC
 
@@ -207,7 +251,8 @@ content key and would be served the stale blob regardless.
 **Per-cooker versions are the point.** A single global `kCurrentCookVersion`
 (what this replaced) meant a texture-encoder change re-cooked every mesh in the
 project. Now bumping `TextureCooker::kVersion` re-keys textures and nothing
-else. Current versions: `MeshCooker` 12, `TextureCooker` 3.
+else. Current versions (2026-09-30): `MeshCooker` 21, `TextureCooker` 4,
+`MaterialCooker` 2, `ShaderCooker` 1.
 
 **`settingsFingerprint` must cover every input that alters output but isn't the
 source bytes.** Today that is `COOK_TEX_HQ` (BC7 final-bake vs fast BC1/BC3)
@@ -238,8 +283,9 @@ variant of this was rejected.
 - stored key ≠ current key → **stale** (inputs changed, or never attempted)
 - same key, `Failed` → **not stale**. These exact inputs already failed; retry
   only when something changes, or via `forceRecook()`.
-- same key, empty `cookedPath` → **not stale** (deliberately skipped, e.g. a
-  skinned mesh the runtime import path handles)
+- same key, empty `cookedPath` → **not stale** (deliberately skipped: the
+  cooker said the asset is not its to cook. Skinned meshes and animation-only
+  files used to land here; both cook now)
 - same key, materialized output missing → **stale**. Someone wiped `.cache/`;
   a DDC hit restores it without recooking.
 
@@ -432,10 +478,12 @@ fetched only when a downstream stage actually has to re-run.
 
 Not speculative — both are observable in current cook logs:
 
-1. **Skinned meshes are parsed twice.** `MeshCooker::cook` notes "both Assimp
-   scenes of this asset count as ONE resident import" — it re-imports the file
-   for the skinned path. A cached parse artifact makes that one parse feeding
-   the mesh, skeleton, and clip outputs.
+1. **~~Skinned meshes are parsed twice.~~ Done, a different way (WO-011..013).**
+   The old skinned path re-imported the file with Assimp. Every format is now
+   parsed once, by its front end, into an `ImportedScene` (§2.1) that feeds
+   the mesh, skeleton and clip outputs. That in-memory scene is the natural
+   `mesh.parse` artifact of Phase 1: serializing it is what would make the
+   parse cacheable.
 2. **Embedded textures encode serially inside one task.** The `pistol` asset
    logs `4096 BC1 188ms`, `4096 BC5 104ms`, `4096 BC1 187ms`, `4096 BC5 98ms` —
    ~580 ms sequential inside a *single* graph node while other cores idle. As
@@ -474,7 +522,9 @@ Incremental, never a big-bang rewrite. Every phase leaves a working cooker.
   byte-identical to today's cook key, or the whole workspace re-cooks. Verify
   with invariant §5.7.
 - **Phase 1 — split `MeshCooker`** into parse / process / emit plus per-texture
-  stages. Kills the double parse, parallelizes the embedded encodes. Meshes
+  stages. The parse / emit seam already exists in memory: front end →
+  `ImportedScene` → back end (§2.1). Making it a stage means giving
+  `ImportedScene` a serialized form. Also parallelizes the embedded encodes. Meshes
   re-cook once (expected — the version bumps anyway); textures don't move.
 - **Phase 2 — new stages as features:** tangents, LOD generation, meshlets.
   Each independently cacheable, so iterating on LODs stops re-parsing FBX.

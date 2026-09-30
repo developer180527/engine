@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-09-06
+verified: 2026-09-30
 covers:
   - src/render/
 ---
@@ -50,7 +50,7 @@ those four. The headroom is unused, not absent.
 | threading | single submission thread | N command-recording threads |
 | shadows | one 2048² map, one caster | cascades, cached static shadows, filtering |
 | transparency | **none** (sort key has the layout, nothing feeds it) | sorted, OIT, or depth-peeled |
-| post | linear `RGBA16F` scene target + sRGB output encode (colour stage A); **no** exposure, tonemap, TAA or bloom | HDR chain, TAA, bloom, tonemap |
+| post | linear `RGBA16F` scene target; exposure, tone mapping and a 3D LUT grade (colour stage B); extended-range output on Apple EDR displays (stage C); sRGB encode once, at the end. **No** TAA or bloom | HDR chain, TAA, bloom, tonemap |
 
 What this renderer has that many do not, and which is worth protecting:
 
@@ -175,8 +175,11 @@ core count).
 
 ## The gap that is not about speed
 
-**None of the rendering is visually verified.** Instancing, the shadow cull and shadow
-instancing are confirmed by counters and timings on bgfx's Noop backend — never by
-pixels. That is what keeps `src/render` at `tier: working` rather than `hardened`, and
+**Almost none of the rendering is verified by pixels.** Instancing, the shadow cull
+and shadow instancing are confirmed by counters and timings on bgfx's Noop backend —
+never by pixels. What has been checked is checked by eye, once, not by a harness:
+skinned animation (2026-09-30, a real skinned glTF walking on the ground in the
+editor, after BUG-0065 had it drawing unskinned for two months with every counter
+green); the handedness fix (WO-033) is still waiting for its check. That is what keeps `src/render` at `tier: working` rather than `hardened`, and
 no amount of further optimisation changes it. A real-device harness (golden image or
 GPU timing) is the only thing that does.

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-13
+verified: 2026-09-30
 covers:
   - src/systems/
 tests:
@@ -105,8 +105,11 @@ one.
 ## Rules
 - Systems run in `EngineRuntime::tickSystems`, before rendering.
 - Animation ticks even while gameplay is paused (editor preview/scrub).
-- Guard against skeletons exceeding `kMaxBones` (128) — set
-  `hasSkinMatrices=false` rather than overflowing the palette.
+- Guard against skeletons exceeding `kMaxBones` (128, `core/bone_limit.h`) — set
+  `hasSkinMatrices=false` rather than overflowing the palette, and say so once
+  per skeleton (`warnOverLimit`, from whichever worker met it). It used to be
+  silent; the cook now refuses such a rig, so one reaching the animator came
+  from a kit or the SDK (WO-040).
 
 ## Future Work
 - More engine systems land here as they're promoted from editor/plugin code

@@ -1,17 +1,18 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-02
+verified: 2026-09-30
 covers:
   - src/tools/packaging/
 tests:
   - tests/package_closure_test.cpp
+  - tests/clip_cook_test.cpp
 ---
 # Packaging closure
 
 ## Purpose
-Answer four questions about what a shipped `dist/` must contain, as pure
-functions that can be tested without running a build:
+Answer what a shipped `dist/` must contain, as functions that can be tested
+without running a build:
 
 | Function | Question |
 |---|---|
@@ -19,6 +20,17 @@ functions that can be tested without running a build:
 | `meshClosure` | What does each mesh need in order to look right? |
 | `shaderFiles` | Will the shading the project authored actually run? |
 | `materialFiles` | Will the looks the project authored be available? |
+| `resolveMaterialTextures` | Will those materials find their textures in a dist with no registry? |
+| `packagedClips` | Will every standalone animation clip be found by a runtime with no registry? |
+
+The last two read the dev machine's asset registry, because a dist has none.
+Both turn a SOURCE path (what a `.material` or a cooked scene names) into a
+cooked file the runtime can find without a registry. `resolveMaterialTextures`
+rewrites each material's `cooked` fields (`84aa16e`: before it, every textured
+material in a shipped game bound its white fallback). `packagedClips` names each
+cooked clip `.cache/anim/<assetlib::packagedClipFileName(source path)>`, the
+name `ClipLibrary` looks up from the path a scene stores (WO-016: before it, a
+dist carried only the clips someone had played in the editor).
 
 ## Why this exists as a module
 The first three lived inline in `engine_build.cpp`'s main flow, reachable only by
@@ -70,6 +82,10 @@ a package that differs run to run makes "did this build change?" unanswerable â€
 the difference would only ever surface as a mysterious diff in shipped bytes.
 
 ## Known limitations
+- **`packagedClips` is tested end to end, not here.** `clip_cook_test` cooks a
+  clip through the real pipeline, packages it with `packagedClips` and loads it
+  in a registry-free `ClipLibrary`; `package_closure_test` has no case of its
+  own for it.
 - **Not everything in `engine_build` is covered.** Kit compilation, the player
   copy and `assets/` whitelisting are still inline and untested. They fail
   loudly (a missing `.so` or player binary is immediately obvious), which is why

@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-042](WO-042-reverify-the-stale-design-docs.md) **Re-verify the stale docs, the asset cook architecture first** · P1 · size S — `docs/architecture/asset-cook-architecture.md` is the design's source of truth for cooking, and it was last verified on 2026-08-03. It does not mention `ImportedScene` at all. WO-010 to WO-016 replaced the whole import side with it: the front ends, the one back end, the clip cooker. A reader of the design doc learns an architecture that no longer exists.
-2. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
-3. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
+1. [WO-017](WO-017-cook-library-split.md) **Cook library split — the runtime never links the cook stack** · P2 · size L — The cookers live in `engine_core`, which links Assimp and the texture encoders `PUBLIC`. So every runtime in the default build, `engine_player` included, carries the whole cook stack. Today the split is a build setting; it should be a library boundary.
+2. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
+3. [WO-022](WO-022-decision-records.md) **Decision records — the "why" survives the person** · P2 · size M — Important decisions are buried in the middle of plan paragraphs, and those are the ones that get "fixed" back into bugs.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,7 +35,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
-| [WO-042](WO-042-reverify-the-stale-design-docs.md) | Re-verify the stale docs, the asset cook architecture first | Process & context | S | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -75,6 +74,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | done | evidence |
 |---|---|---|---|
 | [WO-044](WO-044-abi-compat-test-covers-every-group.md) | The ABI compatibility test defends every API group (audit ABI-03) | 2026-09-30 | api_abi_compat_test (physics2 at 800, intent at 816, and a static_assert that frozen[] and offs[] list the same groups); audit ABI-03 ok with no baseline entries |
+| [WO-042](WO-042-reverify-the-stale-design-docs.md) | Re-verify the stale docs, the asset cook architecture first | 2026-09-30 | engine_doctor check 0 warnings (was 13); ENGINE_STATUS.md 0 stale docs |
 | [WO-041](WO-041-ledger-the-bugs-of-2026-09-30.md) | Ledger the bugs fixed on 2026-09-30 that have no entry | 2026-09-30 | BUG-0065..0070 in docs/process/bugs/, all passing engine_doctor's ledger checks; each fix re-reverted and seen red (BUG-0066's pin is new: async_loader_test §3) |
 | [WO-040](WO-040-assimp-skeleton-truncation.md) | A rig over the bone limit is refused, not silently truncated | 2026-09-30 | mesh_backend_test (128 cooks, 129 refused by name); frontend_assimp_test §5 and frontend_cgltf_test §5 (300-bone rig read whole; 65,546-joint skin Skin/Wrong); render_pipeline_test (shader palette literal = kMaxBones*4); four mutations red |
 | [WO-039](WO-039-depth-is-input-too.md) | A deep node tree must not crash an import; depth is input too | 2026-09-30 | frontend_cgltf_test and frontend_assimp_test §4 (10,000-deep chains on a 512 KB stack, each SIGBUS before the fix); fuzz_import_frontend_test generator 3; extractSkeleton identical to the old one on 5 real rigs, helper chains included; import_frontend_contract_test's 0.6 mm case |

@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-09-16
+verified: 2026-09-30
 covers:
   - scripts/engine_audit.py
   - scripts/audit_cron.sh
@@ -58,7 +58,7 @@ rule nobody agreed to.
 | `DET-01` | the fixed step reads no clock and no RNG | `src/runtime/docs/info.md` |
 | `HDR-01` | the C ABI headers pull in nothing of ours | `extension-model.md` |
 | `RHI-01` | bgfx's math library (`bx/`) spreads no further outside the renderer | `docs/rhi/evidence-coupling.md` |
-| `IMP-01` | Assimp is included only by `src/assets/import/frontend_assimp.*`; the runtime importers, the async loader, `clip_library` and animation's helpers are baselined until WO-015/016/018 | `docs/plans/imported-scene.md` §2 |
+| `IMP-01` | Assimp is included only by the Assimp front end (`src/assets/import/frontend_assimp*`); the two runtime importers WO-018 deletes are baselined | `docs/plans/imported-scene.md` §2 |
 | `CAM-01` | no `bx::mtxLookAt` / `mtxProj` / `mtxOrtho` outside `src/render/view_math.h`: one handedness for every camera | `src/render/view_math.h` |
 | `OS-01` | in `src/core` and `src/runtime`, an `#else` after an OS check is `#error "port: …"` or marked `// any OS: <why>`; `docs/process/porting.md` is current | `src/core/os_family.h` |
 | `DOC-01` | every directory of code is covered by some document | `engineering-standards.md` §1 |
@@ -86,10 +86,25 @@ and a reason in the commit message; nothing else should ever write that file.
 
 ## 4. What it found, and what that means
 
-Current state (2026-09-16): **54 findings, all baselined**, of which 51 are the
-existing module→module edges recorded as the declared dependency graph. What is
-left, and what the first rule already caught and closed:
+Current state (2026-09-30): **77 findings, all baselined, 0 new.** 52 are the
+module→module edges recorded as the declared dependency graph. The rest, and
+what the rules have caught and closed:
 
+- **`RHI-01` ×22** — files outside the renderer using bx's math types. Recorded
+  as evidence for the RHI programme (`docs/rhi/evidence-coupling.md`), not a
+  defect: shrinking it is part of replacing the backend (WO-026/027, parked).
+- **`IMP-01` ×2** — `assets/importers/assimp_importer.cpp` and
+  `runtime/services/async_loader/parse.cpp`, the runtime's source parsers.
+  WO-018 deletes both. It was 5; WO-015 took Assimp out of `src/animation/`
+  (its three entries removed) by moving the Assimp helpers into the front end.
+- **`DET-01` ×1** — `hid::nowNs()` inside the fixed step, which the runtime's own
+  doc lists as an open hazard ("inert while no tier reads input"). Owned by
+  WO-043.
+- **`ABI-03` — found 2, now FIXED (WO-044).** `physics2` and `intent` were
+  absent from `api_abi_compat_test`'s `frozen[]` list. The header's
+  `static_assert`s always pinned them (swapping the two fails the build), so
+  this was a gap in the runtime test's list, not an unprotected ABI; closing it
+  keeps the rule exception-free, so the next appended group must be listed.
 - **`LAYER-01` — found 2, now FIXED.** `src/core/entity_id_util.h` and
   `src/core/transform_utils.h` both included `<flecs.h>` while `src/core/info.md`
   says core may include no ECS header. The code moved rather than the rule being
@@ -98,15 +113,6 @@ left, and what the first rule already caught and closed:
   `flecs::entity` walkers became `components/transform_hierarchy.h`. The
   destination was chosen *by* `LAYER-03`: every caller already depends on
   `components/`, so it adds no module edge, where `scene/` would have added two.
-- **`ABI-03` ×2** — `physics2` and `intent`, the two most recently appended API
-  groups, are absent from `api_abi_compat_test`'s `frozen[]` list. The header's
-  `static_assert`s still pin them, so this is a **gap in the runtime test**, not
-  an unprotected ABI: the test's stated promise ("a v1 kit must run on a v5
-  host") is currently checked for 13 of 15 groups.
-- **`DET-01` ×1** — `hid::nowNs()` inside the fixed step, which the runtime's own
-  doc already lists as an open hazard ("inert while no tier reads input, and the
-  next thing to close if one does").
-
 Everything else is clean, including two things worth stating because they are
 easy to assume otherwise: the editor really is a leaf, and every component
 re-exported to kits really is in the layout hash.

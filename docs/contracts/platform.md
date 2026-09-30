@@ -12,7 +12,7 @@ implementations:
 covers:
   - src/runtime/platform/platform.h
   - src/runtime/platform/ui_input.h
-verified: 2026-09-27
+verified: 2026-09-30
 ---
 
 # platform — the OS window, events, and everything a GUI needs from them

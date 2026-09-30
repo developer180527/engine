@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-13
+verified: 2026-09-30
 covers:
   - src/plugins/
 tests:
@@ -33,6 +33,12 @@ Both run through the same `PluginRegistry` broadcasts.
   `RigidBody`/`CharacterController` components on sim start, steps at fixed
   60 Hz, writes back transforms, queues collision events and flushes them in
   `onPostPhysics`. Also implements `IPhysicsService` (raycasts for scripts).
+
+  **Every Jolt allocation goes through `mem::` at 16-byte alignment, grow
+  included.** `JPH::Allocate` and `JPH::Reallocate` both land in the Physics
+  heap, and Reallocate passes 16 to `mem::realloc(p, n, 16)`: Jolt grows
+  arrays of 16-byte types (`CharacterVirtual::Contact`) that way, and at the
+  8 bytes realloc used to give, SSE code segfaulted on x86-64 (BUG-0068).
 
   **Contacts are SORTED before they reach scripts.** `OnContactAdded`/`Removed`
   run on Jolt's worker threads and push under a mutex, so arrival order is a

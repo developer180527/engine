@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: prototype
-verified: 2026-08-18
+verified: 2026-09-30
 covers:
   - src/editor/
 tests:
@@ -178,6 +178,21 @@ only layer that links ImGui/ImGuizmo — the runtime stays UI-free.
   model runs without an engine context. `asset_browser_model_test` pins the
   behaviour and fails to build if `model.h` includes ImGui. The split exists
   so a second front end (the libgui experiment) drives the same model.
+  - **Spawning a model** (`panels/asset_browser/spawn.h`) takes the async
+    loader's COOKED path whenever the asset has a Ready cooked version
+    (`AsyncLoader::hasCooked`), so a skinned glTF arrives with its skeleton,
+    clips and an auto-playing Animator. Only an uncooked glTF still goes
+    through the runtime glTF importer, which reads static geometry alone
+    (BUG-0066; WO-018 removes that branch).
+  - **Reveal in the file manager** is per OS (`actions.h`, `revealCommand`, a
+    pure function of path and OS): macOS `open -R`, Windows `explorer /select`,
+    Linux `xdg-open` on the containing folder. It ran `open -R` everywhere
+    (WO-005).
+- **Terminal** (`panels/terminal/model.h`) runs each command in the project
+  root through `cdInto`: POSIX single-quotes the path, so a folder named with
+  `$`, a backtick or a quote is entered exactly (double quotes still expand
+  them); Windows uses `cd /d` so a project on another drive is entered at all
+  (WO-038/WO-039). `editor_tool_panels_test` covers both.
 - **`EngineContext`** (`src/engine_context.h`) — `RuntimeContext` +
   `EditorState` + `GizmoState`, built on the stack each frame in `buildCtx()`.
   Never stored.

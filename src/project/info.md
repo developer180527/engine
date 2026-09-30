@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-01
+verified: 2026-09-30
 parses-external-input: true
 covers:
   - src/project/

@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-09-06
+verified: 2026-09-30
 covers:
   - src/render/
 ---
@@ -196,14 +196,17 @@ and is already tested.
 
 ### A5 — Authoring: make it actually customizable (R3)
 
-- **Shader assets**: a `ShaderCooker` feeding the existing cook pipeline, so
-  shaders are cooked content with DDC caching like meshes and textures — not
-  `#include`d arrays.
-- **Material assets + variants**: materials become data with a shader
-  reference and typed parameters, replacing the fixed
-  `baseColor/normal/roughness/metallic` struct.
-- Then a game can define its own look **without rebuilding the engine**, which
-  is the stated goal and is impossible today.
+- ~~**Shader assets**~~ **DONE**: `ShaderCooker` cooks `.shader` manifests to
+  `.cshader` through the pipeline, with DDC caching, verifying each variant's
+  declared interface against the compiled bytecode
+  (`src/assets/cookers/shader/`).
+- ~~**Material assets + variants**~~ **DONE**: `.material` cooks to `.cmat`
+  against its shader's declared interface, and the draw call uploads its blocks
+  as they are; the fixed struct is gone, and mesh-embedded materials take the
+  same declared form (Phase 5 step 4).
+- So a game can now define its own look **without rebuilding the engine**, the
+  stated goal. (Verified 2026-09-30; this section was written when it was
+  impossible.)
 
 ### Two asset paths, and only one of them ships
 
@@ -434,6 +437,10 @@ backend — and each counter states a finding directly:
 
 - **R4 is now machine-checked**, not just fixed: `bonePaletteUploads` must equal
   `skinnedItems`, and the report warns if it ever equals `skinnedDraws` instead.
+  (2026-09-30: and `skinnedProgramDraws` must equal `skinnedDraws`. Counting
+  uploads did not show that binding a material replaced the skinning program
+  with a static one, so every textured skinned mesh drew unskinned for two
+  months: BUG-0065.)
 - **R5 has a number for the first time**: 3 batch runs for 12 draws, so instancing
   would collapse 12 submits to 3. A 75% reduction — of twelve. Still not worth
   building without a scene where 12 is 12,000.
