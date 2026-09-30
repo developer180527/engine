@@ -18,6 +18,8 @@
 #include "editor/engine_context.h"
 #include "editor/undo_stack.h"
 #include "scene/reflected_serde.h"
+#include "scene/unresolved_mesh.h"
+#include "components/mesh_renderer.h"
 
 #include <bx/math.h>
 #include <flecs.h>
@@ -219,6 +221,21 @@ inline std::vector<std::string> pendingComponents(flecs::entity e) {
     if (const auto* p = e.try_get<reflected::ReflectedPending>())
         for (const auto& [path, blob] : p->blobs) out.push_back(path);
     return out;
+}
+
+// A mesh the entity's scene data names but the loader could not resolve
+// (WO-029). Empty `path` = the entity has no such reference. The reference is
+// still saved; this exists so the entity does not look like an empty one.
+struct MissingMesh {
+    std::string path;      // what was authored — "(no path)" if it named none
+    std::string reason;    // "source not found", "import failed", ...
+    bool        loading = false;   // still in flight: not a failure yet
+};
+inline MissingMesh missingMesh(flecs::entity e) {
+    if (e.has<MeshRenderer>()) return {};   // a resolved mesh wins
+    const auto* u = e.try_get<UnresolvedMesh>();
+    if (!u) return {};
+    return {unresolved_mesh::describe(*u), u->reason, u->pending};
 }
 
 }  // namespace inspect

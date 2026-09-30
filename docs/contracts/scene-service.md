@@ -30,4 +30,11 @@ Not yet written.
 Not yet written.
 
 ## Errors
-Not yet written.
+**Loading never deletes authored data.** A reference the loader cannot resolve
+stays in the document and is reported: it is kept on the entity, written back
+unchanged by the next save, and shown in the editor with its reason. A failed
+load is a warning in the log, never a silent drop. (WO-029, pinned by
+`tests/scene_mesh_reference_test.cpp` for the JSON path, `scene_serializer.h`.)
+
+Gap: the cooked binary path, `SceneService::load`, still fails a mesh load
+silently. It is read-only, so nothing is lost, but nothing is reported either.

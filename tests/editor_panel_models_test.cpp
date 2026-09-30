@@ -197,6 +197,22 @@ int main() {
         CHECK(near3(out, in.x, in.y, in.z), "euler round trip: %f %f %f", out.x, out.y, out.z);
     }
 
+    // ── 8. A mesh that did not load says so (WO-029) ────────────────────────
+    {
+        auto e = make(ecs, "House");
+        CHECK(inspect::missingMesh(e).path.empty(), "no mesh reference: nothing to report");
+        e.set<UnresolvedMesh>({R"({"path":"assets/models/house.fbx"})", "source not found", false});
+        const inspect::MissingMesh mm = inspect::missingMesh(e);
+        CHECK(mm.path == "assets/models/house.fbx" && mm.reason == "source not found" && !mm.loading,
+              "an unresolved reference is reported with its path and reason: %s / %s",
+              mm.path.c_str(), mm.reason.c_str());
+        e.get_mut<UnresolvedMesh>().pending = true;
+        CHECK(inspect::missingMesh(e).loading, "an import in flight is 'loading', not 'missing'");
+        MeshHandle h; h.id = 1;
+        e.set<MeshRenderer>({h});
+        CHECK(inspect::missingMesh(e).path.empty(), "a resolved mesh wins: nothing is missing");
+    }
+
     if (g_failures) {
         std::printf("\neditor_panel_models_test: %d FAILURE(S)\n", g_failures);
         return 1;

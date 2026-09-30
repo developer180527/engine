@@ -140,6 +140,11 @@ engine_test(logger_test    LIB engine_core)
 # damage. Hermetic — "the type is not registered" is the whole condition, so this
 # needs no kit and no dlopen.
 engine_test(reflected_pending_test)
+# WO-029: loading never deletes an authored mesh. A reference the loader cannot
+# resolve (missing file, failed or unfinished import, no importer in this build)
+# is kept in UnresolvedMesh and written back unchanged by the next save — disk
+# and memory snapshot alike. Every case saves from a session that could not load.
+engine_test(scene_mesh_reference_test)
 # The shared components' LAYOUT, frozen. componentLayoutHash() — the gate that
 # decides whether a kit may touch live ECS memory — hashes sizeof and alignof
 # only, so reordering two same-sized fields leaves it byte-identical and the gate

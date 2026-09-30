@@ -13,7 +13,20 @@
 namespace inspector_detail {
 
 inline void drawMeshMaterialSection(EngineContext& ctx, flecs::entity e) {
-    if (!e.has<MeshRenderer>()) return;
+    if (!e.has<MeshRenderer>()) {
+        // Authored mesh that did not load: say so, instead of looking empty.
+        const inspect::MissingMesh mm = inspect::missingMesh(e);
+        if (mm.path.empty()) return;
+        sectionHeader("Mesh Renderer");
+        if (mm.loading) {
+            ImGui::TextDisabled("Loading  %s", mm.path.c_str());
+        } else {
+            ImGui::TextColored(ImVec4(1.f, 0.55f, 0.2f, 1.f), "Mesh missing: %s", mm.path.c_str());
+            ImGui::TextDisabled("%s", mm.reason.c_str());
+            ImGui::TextDisabled("The reference is kept and saved unchanged.");
+        }
+        return;
+    }
 
     const MeshRenderer& mr = e.get<MeshRenderer>();
     sectionHeader("Mesh Renderer");

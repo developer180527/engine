@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-17
+verified: 2026-09-30
 parses-external-input: true
 covers:
   - src/scene/
@@ -9,6 +9,7 @@ tests:
   - tests/kit_lifecycle_test.cpp
   - tests/fuzz_entity_serde_test.cpp  # the JSON deserializer, hostile input
   - tests/scene_parents_test.cpp      # the hierarchy post-pass, hostile input
+  - tests/scene_mesh_reference_test.cpp  # a mesh that fails to load is never saved away
 ---
 # Scene
 
@@ -117,6 +118,25 @@ prefabs.
 - Caller runs `assignMissingIds()` before save (set<> is illegal mid-query).
 - Parent links restore in a post-pass (all entities must exist first).
 - Scene saves auto-cook the binary twin (editor keeps both in sync).
+
+## Loading never deletes an authored mesh (WO-029)
+
+A mesh reference the loader cannot resolve — the file is missing, the cooked
+load or glTF import failed, the build has no importer, or an async import has
+not finished — used to leave the entity with no `MeshRenderer`. The save writes
+only what a `MeshRenderer` holds, so the next save dropped the reference for
+good. `fps_shooter` lost three models that way, with nothing in the log.
+
+`unresolved_mesh.h`: the disk loader stores the entity's `meshRenderer` object
+verbatim in `UnresolvedMesh` before it tries anything, and removes it only when
+a `MeshRenderer` is set. `saveMesh` writes it back unchanged (disk) or under
+`"unresolved"` (memory snapshots: undo and Snapshot Play), so stopping Play
+cannot erase it either. A `MeshRenderer` always wins. The Inspector shows
+"Mesh missing: <path>" and the reason instead of an empty-looking entity, and a
+failed async import now logs instead of returning in silence.
+
+Not covered: the cooked binary path (`SceneService`) is read-only and cannot
+lose data, but it still fails a mesh load silently.
 
 ## A scene must outlive the kit that authored it — now tested
 

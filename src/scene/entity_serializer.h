@@ -40,6 +40,7 @@
 #include "render/primitive_library.h"
 #include "runtime/services/asset_service.h"
 #include "scene/reflected_serde.h"
+#include "scene/unresolved_mesh.h"
 #include "core/logger.h"
 #include "core/json_read.h"
 
@@ -227,9 +228,28 @@ inline void loadScript(flecs::entity e, const nlohmann::json& j, SerdeContext&) 
 }
 
 // ── MeshRenderer (mode-aware: the one component that differs disk vs memory) ──
-inline bool hasMesh(flecs::entity e) { return e.try_get<MeshRenderer>() != nullptr; }
+// An entity whose authored mesh did not resolve still HAS a mesh as far as the
+// document is concerned — see scene/unresolved_mesh.h (WO-029).
+inline bool hasMesh(flecs::entity e) {
+    return e.try_get<MeshRenderer>() != nullptr || e.try_get<UnresolvedMesh>() != nullptr;
+}
 inline void saveMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx) {
-    const MeshRenderer* mr = e.try_get<MeshRenderer>(); if (!mr) return;
+    const MeshRenderer* mr = e.try_get<MeshRenderer>();
+    if (!mr) {
+        // Not resolved: write back exactly what was authored. Disk gets the
+        // original object; a memory snapshot keeps it under "unresolved" so a
+        // restore (undo, end of Play) puts the same component back.
+        const UnresolvedMesh* u = e.try_get<UnresolvedMesh>(); if (!u) return;
+        auto authored = nlohmann::json::parse(u->json, nullptr, false);
+        if (authored.is_discarded()) return;   // cannot happen: we wrote it with dump()
+        if (ctx.mode == SerdeMode::Disk) {
+            j = std::move(authored);
+        } else {
+            j["unresolved"]       = std::move(authored);
+            j["unresolvedReason"] = u->reason;
+        }
+        return;
+    }
     const Mesh* mesh = ctx.meshLookup ? ctx.meshLookup(mr->mesh) : nullptr;
     if (ctx.mode == SerdeMode::Memory) {
         j["handleId"] = mr->mesh.id;
@@ -261,6 +281,10 @@ inline void saveMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx
 }
 inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
     if (ctx.mode == SerdeMode::Memory) {
+        if (auto it = j.find("unresolved"); it != j.end() && it->is_object()) {
+            e.set<UnresolvedMesh>({it->dump(), j.value("unresolvedReason", std::string{}), false});
+            return;
+        }
         uint32_t hid = j.value("handleId", 0u);
         if (hid > 0) {
             MeshHandle mh; mh.id = hid; MeshRenderer mr{mh};
@@ -282,6 +306,20 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
     // fell through to the Assimp source importer below, which is why nothing
     // looked broken: scenes still rendered, just via the slow path, and a shipped
     // dist with no source assets would have failed outright.
+    // Keep the authored reference until something resolves it (WO-029). Every
+    // path below that sets a MeshRenderer removes this; every path that does not
+    // leaves it, with the reason, so the next save cannot drop the mesh.
+    e.set<UnresolvedMesh>({j.dump(), "not resolved", false});
+    auto unresolved = [&e](std::string why, bool pending = false) {
+        if (UnresolvedMesh* u = e.try_get_mut<UnresolvedMesh>()) {
+            u->reason = std::move(why); u->pending = pending;
+        }
+    };
+    auto resolved = [&e](MeshRenderer mr) {
+        e.set<MeshRenderer>(mr);
+        e.remove<UnresolvedMesh>();
+    };
+
     // The authored material name, resolved to a handle. Empty is normal — most
     // entities use the material baked into their mesh.
     MaterialHandle matOverride;
@@ -303,7 +341,7 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
         AssetService::MeshLods lods;
         MeshHandle h = ctx.assetService->loadMesh(cookedPath.c_str(), nullptr, &lods);
         if (h.valid()) {
-            e.set<MeshRenderer>({h, matOverride});
+            resolved({h, matOverride});
             if (!lods.levels.empty()) {
                 LodMesh lm;
                 lm.count = (uint8_t)std::min(lods.levels.size(),
@@ -325,9 +363,15 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
     std::string srcPath = assetref::resolve(ref, ctx.projectRoot, ctx.assetLib);
     std::string srcType = j.value("sourceType", std::string{});
     if (srcPath.empty()) {
-        if (!ref.empty())
-            LOG_WARN("Scene", "Mesh reference unresolved (uuid=%s path=%s)",
-                     ref.uuid.c_str(), ref.path.c_str());
+        if (!ref.empty()) {
+            LOG_WARN("Scene", "Mesh reference unresolved (uuid=%s path=%s) — kept, "
+                     "and saved back unchanged", ref.uuid.c_str(), ref.path.c_str());
+            unresolved("source not found");
+        } else if (cookedPath.empty()) {
+            e.remove<UnresolvedMesh>();   // nothing was authored; nothing to keep
+        } else {
+            unresolved("cooked load failed and there is no source reference");
+        }
         return;
     }
 
@@ -335,7 +379,7 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
     if (isPrimitive && ctx.primitives && ctx.primitives->ready()) {
         std::string primName = srcPath.substr(srcPath.rfind('/') + 1);
         MeshHandle h = ctx.primitives->byName(primName);
-        if (h.valid()) { e.set<MeshRenderer>({h, matOverride}); return; }
+        if (h.valid()) { resolved({h, matOverride}); return; }
     }
 
     std::string ext = std::filesystem::path(srcPath).extension().string();
@@ -346,13 +390,21 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
         if (result.success) {
             if (Mesh* m = const_cast<Mesh*>(ctx.storage->meshes.getMesh(result.mesh)))
                 m->sourcePath = srcPath;
-            e.set<MeshRenderer>({result.mesh, matOverride});
+            resolved({result.mesh, matOverride});
         } else {
             LOG_ERROR("Scene", "glTF load failed: %s", result.error.c_str());
+            unresolved("glTF load failed: " + result.error);
         }
         return;
     }
-    if (ctx.pendingAsync) ctx.pendingAsync->push_back({e, srcPath}); // Assimp on a worker
+    if (ctx.pendingAsync) {
+        ctx.pendingAsync->push_back({e, srcPath});   // Assimp on a worker
+        unresolved("loading", /*pending*/ true);    // the callback resolves it
+    } else {
+        LOG_WARN("Scene", "no importer in this build for %s — reference kept",
+                 srcPath.c_str());
+        unresolved("no importer for this file in this build");
+    }
 }
 
 // ── LodMesh (the coarser levels; level 0 is MeshRenderer's own mesh) ──────────

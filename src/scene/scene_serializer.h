@@ -204,10 +204,21 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
         AnimClipRegistry* clipsReg = storage.clips;
         loader.load(pm.assetPath, label,
             [pw, eid, skels, clipsReg, clipLib](const AsyncLoadResult& r, const std::string&) {
-                if (!r.mesh.valid()) return;
                 flecs::entity e = pw->entity(eid);
                 if (e.id() == 0 || !e.is_alive()) return;
+                if (!r.mesh.valid()) {
+                    // Used to return here in silence, leaving an entity that
+                    // rendered nothing and said nothing. The reference stays in
+                    // UnresolvedMesh, so a save still writes it (WO-029).
+                    if (UnresolvedMesh* u = e.try_get_mut<UnresolvedMesh>()) {
+                        LOG_WARN("Scene", "mesh import failed: %s — reference kept",
+                                 unresolved_mesh::describe(*u).c_str());
+                        u->reason = "import failed"; u->pending = false;
+                    }
+                    return;
+                }
                 e.set<MeshRenderer>({r.mesh});
+                e.remove<UnresolvedMesh>();
                 // Restore skeletal animation if the asset has bones.
                 // Handles are session-local — the scene file stores identity
                 // only (Animator::clipPath asset ref, or legacy clipIndex);
