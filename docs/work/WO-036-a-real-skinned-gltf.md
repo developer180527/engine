@@ -5,7 +5,9 @@ title: A real skinned glTF, cooked and animating in the editor
 program: assets
 priority: P2
 size: S
-state: todo
+state: done
+done: 2026-09-30
+evidence: real_gltf_test (spec oracle, cook, bounds); render_pipeline_test skinnedProgramDraws; the user saw CesiumMan walk on the ground in the editor on 2026-09-30
 depends: [WO-014]
 touches:
   - tests/real_gltf_test.cpp
@@ -21,7 +23,7 @@ WO-014 reads glTF skins and clips, and it is proven on glTF files the tests writ
 ## Done when
 - [x] a real skinned, animated glTF is in the tree: `tests/fixtures/gltf/CesiumMan.glb` (Khronos sample, COLLADA2GLTF, © Cesium, CC-BY 4.0; downloaded with the user's permission on 2026-09-30; credited in `tests/fixtures/gltf/README.md`)
 - [x] it cooks as `MeshAsset` v6 with its bones and clips, and the cook log lists every loss: 21 bones, 1 clip with all 19 tracks mapped, and nothing dropped (its embedded texture cooks too)
-- [ ] it animates correctly in the editor, checked by eye by the user: he walks in place, upright, textured with the Cesium logo the right way round
+- [x] it animates correctly in the editor, checked by eye by the user on 2026-09-30: he walks in place, upright, textured with the Cesium logo the right way round
 - [x] if it is small enough and its licence allows, it becomes a test fixture, so the path stays covered by a real file: `real_gltf_test`, 438 KB
 
 ## Log
@@ -78,3 +80,4 @@ WO-014 reads glTF skins and clips, and it is proven on glTF files the tests writ
   `AnimatorSystem`. The palette moved every frame, and the palette-skinned
   vertices stood up while the raw ones lay down, which pointed at the draw
   call. The probe is deleted.
+- 2026-09-30: The user confirmed it in the editor: he walks, upright, feet on the ground. Closed.

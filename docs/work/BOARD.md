@@ -44,7 +44,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-022](WO-022-decision-records.md) | Decision records — the "why" survives the person | Process & context | M | **ready** | — |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
-| [WO-036](WO-036-a-real-skinned-gltf.md) | A real skinned glTF, cooked and animating in the editor | Asset import & cooking | S | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
@@ -68,6 +67,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-036](WO-036-a-real-skinned-gltf.md) | A real skinned glTF, cooked and animating in the editor | 2026-09-30 | real_gltf_test (spec oracle, cook, bounds); render_pipeline_test skinnedProgramDraws; the user saw CesiumMan walk on the ground in the editor on 2026-09-30 |
 | [WO-032](WO-032-opaque-pass-sets-both-cull-bits.md) | The opaque pass sets both cull bits, which is undefined on D3D11 and Vulkan | 2026-09-30 | pass_states.h (static_assert refuses both bits); tests/cull_mode_test.cpp; the visual check moved to WO-033 |
 | [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | 2026-09-30 | tests/scene_mesh_reference_test.cpp (7 cases) + editor_panel_models_test §8; 4 mutations each red on their own check |
 | [WO-014](WO-014-gltf-skins-and-animations.md) | glTF skins and animations, supported for real | 2026-09-30 | frontend_cgltf_test (contract suite: all 8 cases, none skipped; spline; WO-002 inverted); cooker_test s2c inverted; 6 mutations red. The real-file check moved to WO-036 |
