@@ -1,6 +1,7 @@
 #pragma once
 #include <assetlib/asset_registry.h>
 #include <assetlib/cook_pipeline.h>
+#include "assets/cook_requests.h"
 #include <filesystem>
 #include <thread>
 #include <atomic>
@@ -14,7 +15,7 @@
 // CookService — runs the cook pipeline on a background thread so the
 // editor opens immediately. Opens its own DB connection (WAL mode allows
 // concurrent reads from the main thread's registry + writes here).
-class CookService {
+class CookService final : public ICookRequests {
 public:
     struct Stats {
         int  total    = 0;
@@ -70,6 +71,16 @@ public:
     // Re-scan assets/ and cook anything new or stale.
     // Safe to call from any thread (main thread, button handler, etc.)
     void requestRefresh();
+
+    // ── ICookRequests: the "real" provider (WO-018) ──────────────────────────
+    // A runtime asked for this source and found nothing cooked. The asset is
+    // put IN SCOPE (a SceneClosure pass would otherwise skip a model that was
+    // just dropped into the editor and is in no scene yet) and cooked FIRST
+    // on the next pass, which this call triggers. The request stays until the
+    // asset has been cooked or has failed once, so a pass that defers it
+    // (a file mid-write) keeps it.
+    bool canCook() const override { return true; }
+    void requestCook(const std::string& sourcePath) override;
 
     // ── .cache garbage collection ────────────────────────────────────────
     // Cooked output accumulates: a cooker version bump re-cooks under a new
@@ -196,5 +207,8 @@ private:
 
     std::mutex              m_requestMtx;
     std::condition_variable m_requestCV;
+    // requestCook's paths, project-relative and generic, until cooked or
+    // failed. Guarded by m_requestMtx.
+    std::unordered_set<std::string> m_wanted;
     int                     m_pendingRequests{1}; // start with 1 so first pass runs
 };

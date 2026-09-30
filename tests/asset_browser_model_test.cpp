@@ -51,10 +51,10 @@ static fs::path makeProject() {
 int main() {
     const fs::path project = makeProject();
     const fs::path assets  = project / "assets";
-    ImporterRegistry importers;   // empty: nothing is cookable, which is fine here
+    const ab::SpawnableFn spawnable;   // empty: nothing is spawnable, which is fine here
     ab::AssetBrowserModel m;
 
-    auto rescan = [&] { m.update(importers, nullptr, project, nullptr); };
+    auto rescan = [&] { m.update(spawnable, nullptr, project, nullptr); };
 
     // ── 1. Listing: folders first, then by name; OS junk never shows ────────
     m.syncRoot(assets);
@@ -175,7 +175,7 @@ int main() {
 
     // ── 5. Loaded flags refresh without a rescan ────────────────────────────
     {
-        m.update(importers, nullptr, project,
+        m.update(spawnable, nullptr, project,
                  [](const std::string& p) { return p.find("zeta.lua") != std::string::npos; });
         int loaded = 0;
         for (const auto& e : m.files()) loaded += e.loaded;

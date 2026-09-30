@@ -138,8 +138,8 @@ int main() {
         });
         { std::ofstream(scenePath) << scene.dump(2); }
 
-        FakeHost host; flecs::world w; ImporterRegistry importers;
-        CHECK(SceneSerializer::loadAsync(scenePath, w, host.storage, host.hooks(), importers,
+        FakeHost host; flecs::world w;
+        CHECK(SceneSerializer::loadAsync(scenePath, w, host.storage, host.hooks(),
                                          nullptr, root), "loaded");
         flecs::entity c = byName(w, "cooked"), s = byName(w, "streamed");
         const MeshRenderer* cm = c ? c.try_get<MeshRenderer>() : nullptr;
@@ -168,9 +168,9 @@ int main() {
         scene["entities"] = json::array({{{"name", "streamed"}, {"meshRenderer",
             {{"path", "assets/models/house.fbx"}}}}});
         { std::ofstream(scenePath) << scene.dump(2); }
-        FakeHost host; flecs::world w; ImporterRegistry importers;
+        FakeHost host; flecs::world w;
         SceneSerializer::loadAsync(scenePath, w, host.storage,
-                                   host.hooks(true, /*canStream*/ false), importers, nullptr, root);
+                                   host.hooks(true, /*canStream*/ false), nullptr, root);
         flecs::entity s = byName(w, "streamed");
         const UnresolvedMesh* u = s ? s.try_get<UnresolvedMesh>() : nullptr;
         CHECK(u && !u->pending && u->reason == "no loader",

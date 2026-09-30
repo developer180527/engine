@@ -37,7 +37,6 @@
 #include "core/transform.h"
 #include "plugins/jolt_plugin.h"
 #include "project/project_context.h"
-#include "assets/importers/importer_registry.h"
 #include "render/asset_registry.h"
 #include "render/material_registry.h"
 #include "render/texture_registry.h"
@@ -57,8 +56,8 @@ int main() {
 
     flecs::world w;
     AssetRegistry assets; TextureRegistry tex; MaterialRegistry mat;
-    ProjectContext proj; ImporterRegistry imp;
-    RuntimeContext ctx{ w, assets, tex, mat, proj, imp };
+    ProjectContext proj;
+    RuntimeContext ctx{ w, assets, tex, mat, proj };
 
     // Static floor, top at y = 0.
     RigidBody floor{}; floor.bodyType = PhysicsBodyType::Static;

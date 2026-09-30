@@ -1,5 +1,5 @@
 // ── AsyncLoader — QUEUE + LIFECYCLE (main + worker threads) ──────────────────
-// One of AsyncLoader's three TUs (parse.cpp CPU import, upload.cpp GPU
+// One of AsyncLoader's three TUs (parse.cpp cooked read, upload.cpp GPU
 // upload). Owns the request queue, in-flight/waiter/cache maps (normalized
 // keys — audit C.4), the self-chaining worker dispatch (shutdown-safe —
 // audit: m_jobBusy is the destructor's contract), and the public poll API.
@@ -58,6 +58,64 @@ void AsyncLoader::load(const std::string& path, const std::string& name, OnLoade
         m_inFlight.insert(key);
         m_pending.push({path, name, std::move(cb)});   // raw path: fs access
     }
+    m_failed.erase(key);   // a new request is a retry
+    armWorker();
+}
+
+AssetLoadState AsyncLoader::state(const std::string& path) const {
+    const std::string key = normalizeKey(path);
+    {
+        std::lock_guard<std::mutex> lk(m_loadedMtx);
+        if (m_loadedResults.count(key)) return AssetLoadState::Ready;
+    }
+    {
+        std::lock_guard<std::mutex> lk(m_pendingMtx);
+        if (m_inFlight.count(key)) return AssetLoadState::Pending;
+    }
+    return m_failed.count(key) ? AssetLoadState::Failed : AssetLoadState::None;
+}
+
+// ── The job: a NotCooked result becomes a cook request, or a failure ─────────
+void AsyncLoader::park(UploadRequest& req) {
+    if (!m_cook || !m_cook->canCook()) {
+        // The null provider: no cooker in this build. Final, and said once.
+        req.asset.error = "not cooked: " + req.asset.path
+                        + " (this build has no cooker; run engine_cook)";
+        finishFailed(req);
+        return;
+    }
+    for (const std::string& src : req.asset.needsCook)
+        if (m_requested.insert(normalizeKey(src)).second) {
+            LOG_INFO("Loader", "not cooked, cook requested: %s (for %s)",
+                     src.c_str(), req.asset.name.c_str());
+            m_cook->requestCook(src);
+        }
+    m_parked.push_back({LoadRequest{req.asset.path, req.asset.name, std::move(req.cb),
+                                    req.waitForTextures}});
+}
+
+void AsyncLoader::retryParked() {
+    m_drainsSinceRetry = 0;
+    if (m_parked.empty()) return;
+    // A cook that never lands (a source no cooker handles, a cooker that is
+    // never scheduled) must not leave a placeholder Pending forever: after
+    // kMaxRetries (~5 minutes of retries) it is Failed and says why.
+    constexpr int kMaxRetries = 600;
+    std::vector<Parked> parked;
+    parked.swap(m_parked);
+    for (Parked& p : parked) {
+        if (++p.retries > kMaxRetries) {
+            UploadRequest r;
+            r.asset.path  = p.req.path;
+            r.asset.name  = p.req.name;
+            r.asset.error = "cook requested but never finished: " + p.req.path;
+            r.cb = std::move(p.req.cb);
+            finishFailed(r);
+            continue;
+        }
+        std::lock_guard<std::mutex> lk(m_pendingMtx);
+        m_pending.push(std::move(p.req));   // key stays in m_inFlight
+    }
     armWorker();
 }
 
@@ -97,16 +155,10 @@ void AsyncLoader::dispatch(LoadRequest req) {
         // Asset work allocates under the Assets tag (Assimp scenes, vertex
         // staging, ozz scratch) regardless of which pool thread runs it.
         MEM_SCOPE(mem::Tag::Assets);
-        LOG_INFO("Loader", "Worker started: %s", req.name.c_str());
-        LoadedAsset asset = processFile(req.path, req.name);
-        if (asset.success)
-            LOG_SUCCESS("Loader", "Worker done: %s — ready to upload",
-                        req.name.c_str());
-        else
-            LOG_ERROR("Loader", "Worker failed: %s", asset.error.c_str());
+        LoadedAsset asset = processFile(req.path, req.name, req.waitForTextures);
         {
             std::lock_guard<std::mutex> lk(m_readyMtx);
-            m_ready.push({std::move(asset), std::move(req.cb)});
+            m_ready.push({std::move(asset), std::move(req.cb), req.waitForTextures});
         }
         // Intentionally do NOT touch m_loadedHandles or m_inFlight here.
         // drainOne() (main thread) sets the real handle then erases inFlight

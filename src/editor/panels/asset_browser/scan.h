@@ -4,7 +4,7 @@
 // front end (the ImGui panel today; libgui experiments).
 #include "types.h"
 #include "registry.h"
-#include "assets/importers/importer_registry.h"
+#include <functional>
 #include <assetlib/asset_registry.h>
 #include <algorithm>
 #include <filesystem>
@@ -27,9 +27,14 @@ inline bool isOsJunk(const std::string& name) {
     return false;
 }
 
+// Whether a file (by lower-case extension, with the dot) is a model the
+// editor can spawn: one the cook stack turns into a mesh. The editor answers
+// from MeshCooker's own list; empty means nothing is spawnable.
+using SpawnableFn = std::function<bool(const std::string& ext)>;
+
 // Scan one directory level and return sorted FileEntry list.
 inline std::vector<FileEntry> scanDir(const std::filesystem::path& dir,
-                                      const ImporterRegistry&      importers,
+                                      const SpawnableFn&           spawnable,
                                       assetlib::AssetRegistry*     reg,
                                       const std::filesystem::path& projectRoot,
                                       const std::filesystem::path& cacheRoot) {
@@ -44,7 +49,7 @@ inline std::vector<FileEntry> scanDir(const std::filesystem::path& dir,
         if (!e.isDir) {
             if (!de.is_regular_file()) continue;
             e.ext       = lowerExt(de.path());
-            e.supported = importers.supportsFile(de.path());
+            e.supported = spawnable && spawnable(e.ext);
             try { e.sizeBytes = de.file_size(); } catch (...) {}
             e.reg = queryRegistry(reg, e.fullPath, projectRoot, cacheRoot);
         }

@@ -295,8 +295,8 @@ int main() {
         std::printf("\n-- 5. refused spawns --\n");
         flecs::world w;
         AssetRegistry assets; TextureRegistry tex; MaterialRegistry mat;
-        ProjectContext proj; ImporterRegistry imp;
-        RuntimeContext ctx{ w, assets, tex, mat, proj, imp };
+        ProjectContext proj;
+        RuntimeContext ctx{ w, assets, tex, mat, proj };
 
         RigidBody floor{}; floor.bodyType = PhysicsBodyType::Static;
         floor.halfExtent = {50.f,0.5f,50.f};

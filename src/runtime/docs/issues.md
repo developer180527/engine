@@ -65,11 +65,10 @@ const bool rhNdc = bgfx::getCaps()->homogeneousDepth;
 
 ### A.3 — Assimp is registered unconditionally for every `EngineRuntime`, including shipped games
 
-> **RESOLVED 2026-10-01 (WO-017).** No runtime registers a source importer any
-> more. The importers and the AsyncLoader are the dev-only
-> `engine_source_import` library, which a host links and installs explicitly
-> (`sourceimport::install`), and the cook stack is `engine_cooking`, which
-> `engine_runtime` does not link. `player_has_no_cook_stack` reads the player,
+> **RESOLVED 2026-10-01 (WO-017, WO-018).** No runtime has a source importer
+> any more: WO-017 made them a dev-only library a host had to opt in to, and
+> WO-018 deleted them (a missing cook is now a cook request). The cook stack
+> is `engine_cooking`, which `engine_runtime` does not link. `player_has_no_cook_stack` reads the player,
 > module probe and server binaries and fails on any cook-stack symbol. The
 > text below is the original finding.
 

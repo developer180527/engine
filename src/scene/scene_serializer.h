@@ -21,7 +21,6 @@
 #include "render/texture_registry.h"
 #include "render/material_registry.h"
 #include "assets/asset_storage.h"
-#include "assets/importers/importer_registry.h"
 #include "scene/scene_assets.h"
 #include "animation/clip_library.h"
 #include "render/primitive_library.h"
@@ -155,7 +154,6 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
                       flecs::world&     ecs,
                       AssetStorage&     storage,
                       const SceneAssets& sceneAssets,
-                      ImporterRegistry& importers,
                       PrimitiveLibrary* primitives = nullptr,
                       const std::filesystem::path& projectRoot = {},
                       assetlib::AssetRegistry*     assetLib = nullptr,
@@ -177,7 +175,6 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
     SerdeContext ctx;
     ctx.mode         = SerdeMode::Disk;
     ctx.sceneAssets  = &sceneAssets;
-    ctx.importers    = &importers;
     ctx.storage      = &storage;
     ctx.primitives   = primitives;
     ctx.pendingAsync = &pending;
@@ -218,18 +215,21 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
                 flecs::entity e = pw->entity(eid);
                 if (e.id() == 0 || !e.is_alive()) return;
                 if (!r.mesh.valid()) {
-                    // Used to return here in silence, leaving an entity that
-                    // rendered nothing and said nothing. The reference stays in
-                    // UnresolvedMesh, so a save still writes it (WO-029).
+                    // Failed (not cooked in a build with no cooker, or the
+                    // cook failed). The reference stays in UnresolvedMesh, so
+                    // a save still writes it (WO-029), and the placeholder
+                    // stays on screen (WO-018).
                     if (UnresolvedMesh* u = e.try_get_mut<UnresolvedMesh>()) {
-                        LOG_WARN("Scene", "mesh import failed: %s — reference kept",
-                                 unresolved_mesh::describe(*u).c_str());
-                        u->reason = "import failed"; u->pending = false;
+                        LOG_WARN("Scene", "mesh not loaded: %s — reference kept (%s)",
+                                 unresolved_mesh::describe(*u).c_str(), r.error.c_str());
+                        u->reason = r.error.empty() ? "load failed" : r.error;
+                        u->pending = false;
                     }
                     return;
                 }
                 e.set<MeshRenderer>({r.mesh, mat});
                 e.remove<UnresolvedMesh>();
+                e.remove<MeshPlaceholder>();
                 // Restore skeletal animation if the asset has bones.
                 // Handles are session-local — the scene file stores identity
                 // only (Animator::clipPath asset ref, or legacy clipIndex);

@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-09-30
+verified: 2026-10-01
 covers:
   - modules/assetlib/src/cook/*.cpp
   - modules/assetlib/src/ddc/*.cpp
@@ -326,6 +326,18 @@ machine, so they are validated by allowlist — a bare filename, nothing else. A
 blocklist of `/ \ ..` still lets `C:evil` escape on Windows.
 
 ## 4. Execution and scheduling
+
+### 4.0 Cooks that someone is waiting for (WO-018)
+
+The runtime parses no source format, so an asset the editor needs that has no
+Ready cook is a **request** to the cook service
+(`CookService::requestCook`, the real `ICookRequests`,
+`src/assets/cook_requests.h`). A requested asset is put in scope even under
+`SceneClosure` (a model just dropped into the editor is in no scene yet),
+goes to the front of the next pass, and wakes the cook thread. The request
+is dropped once a pass has answered it (cooked, failed, up to date, or not
+cookable), unless the file was still mid-write. The loader that asked shows
+a placeholder and watches the registry record for Ready or Failed.
 
 ### 4.1 Process isolation
 

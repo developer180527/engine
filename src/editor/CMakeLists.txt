@@ -37,7 +37,8 @@ target_include_directories(editor PRIVATE
 )
 
 target_link_libraries(editor PRIVATE
-    engine_source_import   # engine_runtime + the cook stack (WO-017)
+    engine_runtime
+    engine_cooking         # the CookService: the editor is the cook provider (WO-017, WO-018)
     editor_core
     imgui
 )

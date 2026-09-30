@@ -410,7 +410,6 @@ private:
     SkeletonRegistry m_skeletons;
     AnimClipRegistry m_clips;
     ProjectContext   m_project;
-    ImporterRegistry m_importers;
     // Asset database (SQLite, WAL) — read connection for the main thread.
     // CookService and other writers open their own connections.
     assetlib::AssetRegistry m_assetLib;

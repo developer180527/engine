@@ -18,7 +18,35 @@
 
 using asyncldr::normalizeKey;
 
+// A final failure: every callback waiting on this path hears it, with the
+// reason, and the path is Failed. Logged once per path, not once per retry.
+void AsyncLoader::finishFailed(UploadRequest& req) {
+    const std::string key = normalizeKey(req.asset.path);
+    { std::lock_guard<std::mutex> lk(m_pendingMtx);
+      m_inFlight.erase(key); }
+    if (m_failed.insert(key).second)
+        LOG_ERROR("Loader", "%s", req.asset.error.c_str());
+    AsyncLoadResult failResult{};
+    failResult.error = req.asset.error;
+    if (req.cb) req.cb(failResult, req.asset.name);
+    // Drain waiters with the same result so they don't block forever
+    std::vector<OnLoaded> failWaiters;
+    {
+        std::lock_guard<std::mutex> lk(m_pendingMtx);
+        auto it = m_waiters.find(key);
+        if (it != m_waiters.end()) {
+            failWaiters = std::move(it->second);
+            m_waiters.erase(it);
+        }
+    }
+    for (auto& w : failWaiters) if (w) w(failResult, req.asset.name);
+}
+
 bool AsyncLoader::drainOne(AssetStorage& storage) {
+    // Parked (not-yet-cooked) requests go back to the worker every
+    // kRetryDrains calls; it is the only thread that reads the registry.
+    if (++m_drainsSinceRetry >= kRetryDrains) retryParked();
+
     UploadRequest req;
     {
         std::lock_guard<std::mutex> lk(m_readyMtx);
@@ -29,27 +57,8 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
 
     const std::string key = normalizeKey(req.asset.path);
 
-    if (!req.asset.success) {
-        // Erase from inFlight so the path can be retried or waited on cleanly
-        { std::lock_guard<std::mutex> lk(m_pendingMtx);
-          m_inFlight.erase(key); }
-        LOG_ERROR("Loader", "Upload skipped (parse failed): %s",
-                  req.asset.name.c_str());
-        AsyncLoadResult failResult{};
-        if (req.cb) req.cb(failResult, req.asset.name);
-        // Drain waiters with invalid result so they don't block forever
-        std::vector<OnLoaded> failWaiters;
-        {
-            std::lock_guard<std::mutex> lk(m_pendingMtx);
-            auto it = m_waiters.find(key);
-            if (it != m_waiters.end()) {
-                failWaiters = std::move(it->second);
-                m_waiters.erase(it);
-            }
-        }
-        for (auto& w : failWaiters) if (w) w(failResult, req.asset.name);
-        return true;
-    }
+    if (req.asset.outcome == LoadedAsset::Outcome::NotCooked) { park(req); return true; }
+    if (!req.asset.success) { finishFailed(req); return true; }
 
     // Upload materials (handle creation only — data already staged)
     std::vector<MaterialHandle> matHandles(req.asset.materials.size());
@@ -75,13 +84,10 @@ bool AsyncLoader::drainOne(AssetStorage& storage) {
                 norm = storage.textures.addTexture(std::move(tex));
             }
         }
-        // Phase 5 step 4 — the SOURCE-format import path lands in the same
-        // declared form as the cooked one. Otherwise a scene mixing .fbx and
-        // .cooked meshes would still have had two material shapes alive at once.
         // mg.roughness / mg.metallic are carried here but were NEVER APPLIED:
         // this path only ever memcpy'd baseColorFactor, so the material kept the
-        // struct defaults. Applying them now would change how every
-        // source-imported mesh shades, which this migration must not do.
+        // struct defaults. (It was the source-import path's upload until WO-018;
+        // it now uploads only cooked content, and still drops these.)
         //
         // That the cooked values are dropped on this path looks like a real
         // defect and is recorded as one (BUG-0013) rather than fixed in passing

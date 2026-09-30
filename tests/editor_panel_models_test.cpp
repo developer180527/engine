@@ -16,7 +16,6 @@
 #error "the panel models must not include ImGui: every GUI front end shares them"
 #endif
 
-#include "assets/importers/importer_registry.h"
 #include "project/project_context.h"
 #include "render/asset_registry.h"
 #include "render/material_registry.h"
@@ -57,9 +56,9 @@ struct Health { float hp; int32_t lives; Vec3f spawn; bool alive; };
 int main() {
     flecs::world ecs;
     AssetRegistry assets; TextureRegistry textures; MaterialRegistry materials;
-    ProjectContext project; ImporterRegistry importers;
+    ProjectContext project;
     EditorState editor; GizmoState gizmo;
-    EngineContext ctx{ecs, assets, textures, materials, project, importers, editor, gizmo};
+    EngineContext ctx{ecs, assets, textures, materials, project, editor, gizmo};
 
     hier::HierarchyModel h;
 

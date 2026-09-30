@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-30
+verified: 2026-10-01
 parses-external-input: true
 covers:
   - src/assets/
@@ -13,11 +13,10 @@ tests:
   - tests/frontend_assimp_test.cpp           # Assimp front end: the contract suite on real COLLADA files
   - tests/cooked_texture_resolution_test.cpp # a cooked mesh finds its external texture (BUG-0063/0064)
   - tests/cook_infra_test.cpp
-  - tests/import_test.cpp
+  - tests/asset_cook_request_test.cpp  # a missing cook is a job: placeholder, cook, swap (WO-018)
   - tests/decimate_test.cpp           # a level must be genuinely cheaper
   - tests/residency_test.cpp
   - tests/fuzz_mesh_loader_test.cpp   # cooked-binary parse the loaders depend on
-  - tests/stress_assets.cpp           # garbage-in importer fuzz
   - tests/cook_hardening_test.cpp     # worker IPC framing + DDC GC
   - tests/cook_deps_test.cpp          # declared inputs must move the cook key
 ---
@@ -31,16 +30,16 @@ structure mirrors the stages — and the library layering:
 ```
 assets/
 ├── asset_ref.h            identity (engine_core-safe headers)
+├── cook_requests.h        a missing cook is a JOB (WO-018)  [header only]
 ├── import/                source formats → ImportedScene  [engine_cooking]
-├── importers/             source formats → GPU meshes     [engine_source_import*]
+├── importers/             stb/cgltf implementation TUs     [engine_cooking]
 ├── cookers/               source → .cache binaries        [engine_cooking]
 └── loaders/               cooked binaries → GPU           [engine_runtime]
 ```
-(*`stb_impl.cpp`/`cgltf_impl.cpp` are CPU-only decode TUs and belong to
-engine_core. The importer .cpps create GPU resources AND need the front
-ends, so they are the dev-only engine_source_import library (WO-017), which
-WO-018 deletes. `anim_from_scene.cpp` and `clip_source.cpp` are
-engine_cooking.)
+The runtime parses NO source format (WO-018): the glTF and Assimp runtime
+importers, `ImporterRegistry` and `MeshImporter` are deleted, and
+`importers/` keeps only the single-header decoders, which only the cook
+stack uses. `anim_from_scene.cpp` and `clip_source.cpp` are engine_cooking.
 
 ## Identity — AssetRef (`asset_ref.h`)
 THE way scenes reference assets on disk:
@@ -97,24 +96,26 @@ all paths share (LODs, sibling textures, the normal-matrix guard) live in
   format's front end and binds its first clip by bone name, so a clip reads
   exactly as the character it animates cooks.
 
-## Importers (`importers/`)
-`IMeshImporter` implementations behind `ImporterRegistry` (extension →
-importer): `GltfImporter` (cgltf) for glTF/GLB; `AssimpImporter` for FBX,
-OBJ, COLLADA, 3DS, PLY, STL, Blend. FBX uses `PRESERVE_PIVOTS=false`
-(see `src/animation/info.md` for the precision consequences).
+## A missing cooked asset is a job (`cook_requests.h`, WO-018)
+The runtime loads cooked content only. Asked for an asset by its SOURCE path
+(`AsyncLoader`, which the editor's spawn and scene loading use) with no Ready
+cook, it asks an `ICookRequests`:
+- **real**: the editor's `CookService` puts the asset in scope, cooks it
+  first, and the loader swaps it in when the registry says Ready;
+- **null**: no cooker in this build (player, server, `engine_host`,
+  `scene_resave`), so it is Failed at once, "not cooked: <path>";
+- **fake**: `tests/asset_cook_request_test.cpp`.
 
-Both importers MERGE every submesh/primitive of a source file into ONE `Mesh`
-— a shared VB/IB (base-vertex-offset indices) with a `SubmeshRange` per source
-part carrying its own material — the representation the cooker + renderer
-already use. (Historically glTF read only `meshes[0].primitives[0]` and Assimp
-returned only the first submesh, silently dropping the rest — see the resolved
-`importers/issues.md`.) A single-submesh model stays on the simple single-draw
-path (mesh.material set, `submeshes` empty). The whole model is skinned iff it
-has a skeleton (one merged vertex format); a bone-less submesh inside a skinned
-model binds rigidly to bone 0 so it can't collapse. **That is Assimp only:**
-`GltfImporter` reads meshes and nothing else, so a skinned glTF loads as static
-geometry — and says so once per file (`gltf_losses.h`, WO-002). Verified headless by
-`tools/import_test.cpp` (bgfx Noop backend).
+While Pending (and after a failure) a scene entity shows the primitive cube,
+recorded in `MeshPlaceholder`, so a save still writes the authored
+reference. A cooked mesh whose materials name uncooked textures waits for
+those cooks too, so it never appears untextured and then changes.
+Contract: `docs/contracts/cook-request.md`.
+
+Until WO-018 there were three paths instead: the runtime glTF importer
+(static geometry only), the AsyncLoader's Assimp parse, and the cooked
+load, plus a search of the model's folder for textures named like it. The
+same model looked different depending on whether it had been cooked yet.
 
 ## Cookers (`cookers/`)
 `assetlib::ICooker` implementations + `CookService`. Cooker headers include
@@ -348,16 +349,17 @@ the bytes under suspicion).
 ## Loaders (`loaders/`)
 `mesh_loader` — reads a `.cooked` mesh and creates GPU buffers **through
 `render/gpu.h`, never through a graphics API directly** (G1a): it parses and
-validates with no device present, and only the upload needs one. The fast
-path that skips importers entirely. Validate the header version; mismatch
-means "treat as missing" and fall back to import.
+validates with no device present, and only the upload needs one. It is the
+only path: nothing falls back to parsing a source. Validate the header
+version; a mismatch is a stale cook, reported as a failure that says to
+re-cook.
 
 ## Data Flow
 ```
 source asset ── scan → registry.db (UUID, hash, state)
       │                      │ CookService (stale check)
       ▼                      ▼
-  importers/  ←fallback─  cookers/ → .cache/*.cooked → loaders/ → GPU
+  cook request ──────────▶ cookers/ → .cache/*.cooked → loaders/ → GPU
 ```
 
 ## Future Work

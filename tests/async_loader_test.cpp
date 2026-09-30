@@ -10,6 +10,11 @@
 // named "tri\angle.obj" gives us a raw path that works for fs access while
 // normalizeKey() maps it to a different string — exactly the Windows split.
 // Runs headless on bgfx Noop (drainOne creates real buffer handles).
+//
+// Since WO-018 the loader reads COOKED content only, so §2 cooks its fixture
+// with the real MeshCooker first (this test links the cook stack for that;
+// the loader itself does not). §1's missing file is "not cooked", and with no
+// cooker set that is a failure, which is still the waiter path under test.
 #include <cstdio>
 #include <chrono>
 #include <filesystem>
@@ -64,6 +69,7 @@ int main() {
         AsyncLoader loader;
 
         // ── 1. Failure path: waiter under a backslash-bearing path ────────
+        // (No registry, no cooker: the answer is Failed, "not cooked".)
         // Two callers request the same (missing) asset; the second lands in
         // m_waiters under the normalized key. Pre-fix, completion looked the
         // waiters up under the raw key → cb2 never fired.
@@ -82,40 +88,46 @@ int main() {
         CHECK(!loader.isLoading(missing), "in-flight cleared after failure");
 
         // ── 2. Success path: cache round-trip across separators ──────────
-        const fs::path dir = fs::temp_directory_path() / "engine_asyncldr_test";
+        const fs::path proj = fs::temp_directory_path() / "engine_asyncldr_test";
+        fs::remove_all(proj);
+        const fs::path dir = proj / "assets";
         fs::create_directories(dir);
 
-        // ── Getting a '\' into the path, on both kinds of platform ───────────
-        // The point of this section is that the RAW path contains a backslash
-        // and the normalized twin does not, so normalizeKey's round-trip is
-        // actually exercised. How you obtain that backslash is platform-specific:
+        // ── Getting a '\' into the path ─────────────────────────────────────
+        // The RAW path must contain a backslash and its normalized twin must
+        // not, so normalizeKey's round-trip is exercised. Since WO-018 the
+        // loader never opens the SOURCE file (it reads the cooked file the
+        // registry names), so the raw path only has to reach the registry:
+        // "<root>/assets\tri.obj" is what a Windows caller hands over, and the
+        // registry normalizes what it is asked.
         //
-        //   POSIX   '\' is an ordinary filename CHARACTER, so a single file
-        //           literally named "tri\angle.obj" is the only way to get one
-        //           into a path at all.
-        //   Windows '\' IS the separator, so a nested directory produces one
-        //           natively — and the literal-name trick silently means
-        //           something else entirely.
-        //
-        // The original code used the POSIX trick unconditionally. On Windows
-        // `dir / "tri\angle.obj"` is `dir\tri\angle.obj` — a file inside a
-        // subdirectory that was never created — so the ofstream failed silently,
-        // no file existed, and Assimp reported "Unable to open file". The three
-        // failures that followed (isLoaded false, cache miss) were the loader
-        // CORRECTLY reporting that a failed parse cached nothing. The fixture was
-        // broken, not the code under test, which is the most expensive kind of
-        // test bug: it accuses the wrong component.
-#if defined(_WIN32)
-        fs::create_directories(dir / "tri");
-        const fs::path triFile = dir / "tri" / "angle.obj";  // separator IS '\'
-#else
-        const fs::path triFile = dir / "tri\\angle.obj";     // literal '\' in name
-#endif
+        // This used to create a POSIX file literally NAMED "tri\angle.obj" so
+        // the source parse could open it. The registry cannot find such a file
+        // by any spelling (it stores the '\', and normalizes a query's '\' to
+        // '/'), so with a cook in between that fixture could never load.
+        const fs::path triFile = dir / "tri.obj";
         {
             std::ofstream f(triFile);
             f << "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
         }
-        const std::string raw = triFile.string();          // contains '\'
+#if defined(_WIN32)
+        const std::string raw = triFile.string();                 // native '\'
+#else
+        const std::string raw = proj.string() + "/assets\\tri.obj";
+#endif
+
+        // Cook it, as the editor's CookService would have (WO-018).
+        assetlib::AssetRegistry reg;
+        CHECK(reg.open(proj / ".cache" / "registry.db"), "a project registry");
+        reg.scan(dir, proj);
+        {
+            assetlib::CookPipeline pipe(reg, proj, proj / ".cache");
+            pipe.registerCooker(std::make_unique<MeshCooker>());
+            pipe.cookAll();
+        }
+        loader.setRegistry(&reg);
+        loader.setProjectRoot(proj);
+        CHECK(loader.hasCooked(raw), "the fixture cooked (and the registry finds it by the raw path)");
 
         int okCount = 0;
         loader.load(raw, "tri",
@@ -142,7 +154,8 @@ int main() {
         loader.unload(fwd);                                 // normalized twin
         CHECK(!loader.isLoaded(raw), "unload(normalized) evicts the raw key too");
 
-        fs::remove_all(dir);
+        reg.close();
+        fs::remove_all(proj);
     }   // loader + registries die while bgfx is alive
 
     // ── 3. A cooked skinned glTF loads WITH its skeleton and clips (BUG-0066) ─
@@ -165,12 +178,12 @@ int main() {
         AsyncLoader loader;
         loader.setRegistry(&reg);
         loader.setProjectRoot(root);
-        CHECK(!loader.hasCooked(src.string()), "before the cook, hasCooked() is false (the spawn takes the preview)");
+        CHECK(!loader.hasCooked(src.string()), "before the cook, hasCooked() is false");
 
         assetlib::CookPipeline pipe(reg, root, root / ".cache");
         pipe.registerCooker(std::make_unique<MeshCooker>());
         pipe.cookAll();
-        CHECK(loader.hasCooked(src.string()), "after the cook, hasCooked() is true (the spawn takes the cooked path)");
+        CHECK(loader.hasCooked(src.string()), "after the cook, hasCooked() is true");
 
         AssetRegistry meshes; TextureRegistry textures; MaterialRegistry materials;
         SkeletonRegistry skeletons; AnimClipRegistry clips;

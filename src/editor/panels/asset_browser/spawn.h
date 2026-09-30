@@ -10,6 +10,12 @@
 #include "components/skinned_mesh.h"
 #include "components/animator.h"
 #include "render/mesh.h"
+#include "render/primitive_library.h"
+#include "assets/asset_ref.h"
+#include "components/mesh_placeholder.h"
+#include "scene/unresolved_mesh.h"
+#include <nlohmann/json.hpp>
+#include <cstring>
 #include <flecs.h>
 #include <string>
 
@@ -38,77 +44,79 @@ inline float groundOffset(const Mesh* m, float sc) {
     return (!m || !m->hasBounds()) ? 0.0f : -m->boundsMin.y * sc;
 }
 
-// Spawn a file into the scene — routes by extension.
-// A cooked asset (any format): async via AsyncLoader's cooked path, which
-// carries skeleton and clips. An uncooked glTF/GLB: synchronous via the runtime
-// cgltf importer, static geometry only until it cooks (gltf_losses.h; WO-018
-// removes this path). Everything else uncooked: AsyncLoader + Assimp.
-inline void spawnFile(const FileEntry& f, EngineContext& ctx, AsyncLoader& loader) {
-    const bool isGltf = (f.ext == ".glb" || f.ext == ".gltf") && !loader.hasCooked(f.fullPath);
+// Where a spawned entity starts: an identity transform, so the load callback
+// can tell whether anyone has moved it since.
+inline const Transform kSpawnTransform{};
 
-    if (isGltf) {
-        AssetStorage s{ctx.assets, ctx.textures, ctx.materials,
-                       ctx.skeletons, ctx.clips};
-        auto r = ctx.importers.loadCached(f.fullPath, s);
-        if (r.success) {
-            if (Mesh* m = const_cast<Mesh*>(ctx.assets.getMesh(r.mesh)))
-                m->sourcePath = f.fullPath;
-            const Mesh* mesh = ctx.assets.getMesh(r.mesh);
-            float sc = autoScale(mesh), yo = groundOffset(mesh, sc);
-            Transform t; t.position = {0,yo,0}; t.scale = {sc,sc,sc};
-            std::string en = uniqueEntityName(ctx.ecs, baseName(f.name));
-            auto ent = ctx.ecs.entity(en.c_str())
-                .set<Transform>(t).set<MeshRenderer>({r.mesh}).set<Name>({en});
+// Spawn a model into the scene, from its COOKED version (WO-018).
+//
+// The entity exists at once. If the model is cooked it fills in within a
+// frame or two; if not, the loader asks the editor's CookService for it and
+// the entity shows the placeholder cube until the cook lands, then swaps in.
+// A failed cook leaves the placeholder, with the reason in the Inspector.
+//
+// The entity carries its AUTHORED reference (UnresolvedMesh) the whole time,
+// so saving the scene mid-cook writes the model, not the cube. There used to
+// be a second route for uncooked glTF (the runtime cgltf importer, static
+// geometry only) and a third for everything else (Assimp in the loader); both
+// parsed the source in-process, so a model looked different until it cooked.
+inline void spawnFile(const FileEntry& f, EngineContext& ctx, AsyncLoader& loader) {
+    auto& ecs = ctx.ecs;
+    const std::string en = uniqueEntityName(ecs, baseName(f.name));
+
+    nlohmann::json authored;
+    assetref::toJson(assetref::make(f.fullPath, ctx.project.projectRoot, ctx.assetLib), authored);
+    flecs::entity ent = ecs.entity(en.c_str())
+        .set<Transform>(Transform{}).set<Name>({en})
+        .set<UnresolvedMesh>({authored.dump(), "loading", true});
+    if (ctx.primitives && ctx.primitives->ready()) {
+        const MeshHandle cube = ctx.primitives->cube();
+        ent.set<MeshRenderer>({cube}).set<MeshPlaceholder>({cube});
+    }
+    ctx.editor.selected = ent;
+
+    auto& assets = ctx.assets;
+    const flecs::entity_t id = ent.id();
+    loader.load(f.fullPath, en,
+        [&ecs, &assets, id, en](const AsyncLoadResult& r, const std::string&) {
+            flecs::entity e = ecs.entity(id);
+            if (e.id() == 0 || !e.is_alive()) return;   // deleted while cooking
+            if (!r.mesh.valid()) {
+                if (UnresolvedMesh* u = e.try_get_mut<UnresolvedMesh>()) {
+                    u->reason = r.error.empty() ? "load failed" : r.error;
+                    u->pending = false;
+                }
+                LOG_ERROR("Loader", "'%s': %s — placeholder kept", en.c_str(), r.error.c_str());
+                return;
+            }
+            const Mesh* mesh = assets.getMesh(r.mesh);
+            // Fit it to ~2 units on the ground, unless someone moved it while
+            // it cooked: their placement wins.
+            if (const Transform* cur = e.try_get<Transform>();
+                cur && std::memcmp(cur, &kSpawnTransform, sizeof(Transform)) == 0) {
+                const float sc = autoScale(mesh), yo = groundOffset(mesh, sc);
+                Transform t; t.position = {0,yo,0}; t.scale = {sc,sc,sc};
+                e.set<Transform>(t);
+            }
+            e.set<MeshRenderer>({r.mesh});
+            e.remove<UnresolvedMesh>();
+            e.remove<MeshPlaceholder>();
 
             // Attach skeletal animation components when bones are present
             if (r.skeleton.valid()) {
                 SkinnedMesh sm;
                 sm.skeleton = r.skeleton;
-                ent.set<SkinnedMesh>(sm);
+                e.set<SkinnedMesh>(sm);
                 Animator anim;
                 if (!r.clips.empty()) {
                     anim.clip    = r.clips[0];
                     anim.playing = true;  // auto-play first clip on import
                 }
-                ent.set<Animator>(anim);
+                e.set<Animator>(anim);
             }
-
-            ctx.editor.selected = ent;
-            LOG_SUCCESS("Loader", "Spawned '%s' (glTF)%s", en.c_str(),
+            LOG_SUCCESS("Loader", "Spawned '%s'%s", en.c_str(),
                         r.skeleton.valid() ? " [skinned]" : "");
-        } else {
-            LOG_ERROR("Loader", "glTF load failed: %s", r.error.c_str());
-        }
-    } else {
-        auto& ecs = ctx.ecs; auto& assets = ctx.assets; auto& ed = ctx.editor;
-        std::string en = uniqueEntityName(ctx.ecs, baseName(f.name));
-        loader.load(f.fullPath, en,
-            [&ecs, &assets, &ed, en](const AsyncLoadResult& r, const std::string&) {
-                if (!r.mesh.valid()) return;
-                const Mesh* mesh = assets.getMesh(r.mesh);
-                float sc = autoScale(mesh), yo = groundOffset(mesh, sc);
-                Transform t; t.position = {0,yo,0}; t.scale = {sc,sc,sc};
-                auto ent = ecs.entity(en.c_str())
-                    .set<Transform>(t).set<MeshRenderer>({r.mesh}).set<Name>({en});
-
-                // Attach skeletal animation components when bones are present
-                if (r.skeleton.valid()) {
-                    SkinnedMesh sm;
-                    sm.skeleton = r.skeleton;
-                    ent.set<SkinnedMesh>(sm);
-                    Animator anim;
-                    if (!r.clips.empty()) {
-                        anim.clip    = r.clips[0];
-                        anim.playing = true;  // auto-play first clip on import
-                    }
-                    ent.set<Animator>(anim);
-                }
-
-                ed.selected = ent;
-                LOG_SUCCESS("Loader", "Spawned '%s'%s", en.c_str(),
-                            r.skeleton.valid() ? " [skinned]" : "");
-            });
-    }
+        });
 }
 
 } // namespace ab

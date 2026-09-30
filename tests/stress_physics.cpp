@@ -22,7 +22,6 @@
 #include "render/texture_registry.h"
 #include "render/material_registry.h"
 #include "project/project_context.h"
-#include "assets/importers/importer_registry.h"
 
 using Clock = std::chrono::steady_clock;
 static double ms(Clock::time_point a, Clock::time_point b) {
@@ -42,8 +41,8 @@ int main() {
     flecs::world w;
     // JoltPlugin::onAttach ignores the context — build a minimal one for it.
     AssetRegistry assets; TextureRegistry tex; MaterialRegistry mat;
-    ProjectContext proj; ImporterRegistry imp;
-    RuntimeContext ctx{ w, assets, tex, mat, proj, imp };
+    ProjectContext proj;
+    RuntimeContext ctx{ w, assets, tex, mat, proj };
 
     // Static floor (top at y=0).
     RigidBody floor; floor.bodyType = PhysicsBodyType::Static;

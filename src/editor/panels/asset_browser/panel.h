@@ -17,6 +17,8 @@
 #include "editor/engine_context.h"
 #include "runtime/services/async_loader.h"
 #include "assets/cookers/cook_service.h"
+#include "assets/cookers/mesh/mesh_cooker.h"
+#include <algorithm>
 #include "components/spinner.h"
 #include "components/mesh_renderer.h"
 #include "editor/panels/script_viewer.h"
@@ -61,10 +63,14 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
     ImGui::Separator();
 
     // ── File list refresh ─────────────────────────────────────────────────────
-    s_model.update(ctx.importers, ctx.assetLib, ctx.project.projectRoot,
-                   [&](const std::string& p) {
-                       return ctx.importers.isLoaded(p) || loader.isLoaded(p);
-                   });
+    // Spawnable = a model the mesh cooker takes; spawning loads its cooked
+    // version, cooking it first if needed (WO-018).
+    static const SpawnableFn s_spawnable = [](const std::string& ext) {
+        static const std::vector<std::string> kExt = MeshCooker().extensions();
+        return std::find(kExt.begin(), kExt.end(), ext) != kExt.end();
+    };
+    s_model.update(s_spawnable, ctx.assetLib, ctx.project.projectRoot,
+                   [&](const std::string& p) { return loader.isLoaded(p); });
     const std::vector<FileEntry>& files = s_model.files();
 
     // What opening an entry resolved to, carried out here: spawning needs the

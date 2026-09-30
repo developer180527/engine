@@ -196,13 +196,11 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
     // different questions (runtime/sim_classification.cpp).
     simhash::registerClassification(m_ecs);
     m_clipLibrary = std::make_unique<ClipLibrary>();
-    // No source importers here. Reading a .glb or .fbx directly is a dev
-    // feature that needs the cook stack, and a host opts in to it after init
-    // with sourceimport::install (runtime/services/source_import.h, in the
-    // dev-only engine_source_import library). It used to be registered here
-    // for every dev-build runtime, which is how engine_player came to carry
-    // Assimp and every encoder (WO-017). Without it ClipLibrary loads cooked
-    // clips only, and the ImporterRegistry is empty.
+    // No source importers, in any runtime. The runtime reads cooked content
+    // only (WO-018): a missing cook is a cook REQUEST (assets/cook_requests.h)
+    // that the editor answers and a player or server reports as "not cooked".
+    // Until WO-017 this registered glTF and Assimp importers in every dev
+    // build; until WO-018 a dev host could still opt in to them.
 
     // AssetService — async mesh/texture loading for scripts + scene streaming.
     // Skeleton/clip registries wired so SKINNED cooked meshes stream too
@@ -260,7 +258,7 @@ bool EngineRuntime::initSystems(const EngineConfig& cfg) {
 
     m_ctx = std::make_unique<RuntimeContext>(RuntimeContext{
         m_ecs, m_assets, m_textures,
-        m_materials, m_project, m_importers});
+        m_materials, m_project});
     // Primitive meshes are GPU buffers — skipped headless. This guard is a
     // WORK-SKIP, not a safety guard, and the distinction changed in G1a: it used
     // to say "touching bgfx null-derefs the allocator", which is no longer true

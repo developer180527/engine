@@ -1,223 +1,70 @@
-// ── AsyncLoader — CPU PARSE (worker thread) ──────────────────────────────────
-// One of AsyncLoader's three TUs (loader.cpp queue/lifecycle, parse.cpp CPU
-// import, upload.cpp GPU handle creation). Everything here runs on the job
-// pool: Assimp/glTF parsing, skeleton + clip extraction (ozz), texture
-// decode (stb/cooked), and the gpu::copy staging memcpys (thread-safe —
-// the backend's pool allocator wraps malloc). No GPU HANDLES are created here;
-// that is upload.cpp's main-thread job.
+// ── AsyncLoader — COOKED READ (worker thread) ────────────────────────────────
+// One of AsyncLoader's three TUs (loader.cpp queue/lifecycle, upload.cpp GPU
+// handle creation). Everything here runs on the job pool: reading a cooked
+// mesh and the cooked textures its materials name, decoding its skeleton and
+// clips (ozz), and the gpu::copy staging memcpys (thread-safe — the backend's
+// pool allocator wraps malloc). No GPU HANDLES are created here.
+//
+// COOKED CONTENT ONLY (WO-018). This file used to fall back to parsing the
+// SOURCE with Assimp when nothing was cooked, and to find textures by
+// searching the model's folder for files named like it ("_Albedo",
+// "textures/"). That was a second parser beside the cook's, so an asset could
+// look different depending on whether it had been cooked yet. Now an uncooked
+// mesh, or an uncooked texture a cooked material names, is reported back as
+// NotCooked, and loader.cpp turns that into a cook request (ICookRequests) or,
+// in a build with no cooker, a failure.
 #include "runtime/services/async_loader.h"
 #include "runtime/services/texture_colour.h"
 #include "core/logger.h"
-#include "render/mesh.h"
 #include "render/vertex.h"
 #include "render/skinned_vertex.h"
-#include "render/texture.h"
-#include "render/material.h"
-#include "assets/import/frontend_assimp_skeleton.h"
 #include "animation/cooked_skin.h"
-#include "animation/ozz_bridge.h"
-#include <ozz/base/io/archive.h>
-#include <ozz/base/io/stream.h>
-#include "core/memory/mem.h"
-#include "core/jobs/jobs.h"
 
-#include <assimp/Importer.hpp>
-#include <assimp/scene.h>
-#include <assimp/postprocess.h>
-#include <assimp/config.h>
-#include "assetlib/mesh_asset.h"
-#include <assimp/material.h>
 #include <assetlib/mesh_asset.h>
 #include <assetlib/texture_asset.h>
-#include <filesystem>
 
-#include <stb_image.h>
-#include <filesystem>
-#include <algorithm>
-#include <cfloat>
 #include <cstring>
-#include <cstdio>
-#include "runtime/services/async_loader/loader_internal.h"
-#include <cstdlib>
+#include <filesystem>
+#include <string>
+#include <vector>
 
-// -----------------------------------------------------------------------
-// Worker thread helpers — zero main-thread calls, gpu::copy() IS
-// thread-safe (uses the backend's internal allocator, which wraps malloc).
-// All memcpy happens here, so drainOne() on the main thread is instant.
-// -----------------------------------------------------------------------
+namespace {
 
-// Try to load a texture from its cooked binary. Returns empty TextureGPUData on miss.
-static TextureGPUData tryLoadCookedTexture(
-    const std::filesystem::path& absTexPath,
-    assetlib::AssetRegistry*     registry,
-    const std::filesystem::path& projectRoot,
-    const std::filesystem::path& cacheRoot)
-{
-    if (!registry || projectRoot.empty()) return {};
-    std::error_code ec;
-    auto rel = std::filesystem::relative(absTexPath, projectRoot, ec);
-    if (ec) return {};
-    auto rec = registry->findBySourcePath(rel.generic_string());
-    if (!rec || rec->state != assetlib::AssetState::Ready || rec->cookedPath.empty()) return {};
-    auto cookedAbs = cacheRoot / rec->cookedPath;
-    if (!std::filesystem::exists(cookedAbs)) return {};
-    assetlib::TextureAsset asset;
-    if (!assetlib::loadTexture(asset, cookedAbs)) return {};
-    // BEFORE staging. gpu::createTexture2D can refuse this format, and a refusal
-    // there strands the staged payload for the life of the process (render/gpu.h).
-    // On content cooked for the wrong target EVERY texture refuses, so checking
-    // first is the difference between one skipped texture and leaking the whole
-    // texture set — and it keeps the memcpy off a path whose answer is known.
-    // The colour space is the COOK's decision (texture_colour.h), not this
-    // loader's — the same rule every other cooked upload uses.
-    const std::string texName = absTexPath.filename().string();
-    const gpu::ColourSpace cs = cookedColourSpace(asset.header, texName.c_str());
-    if (!gpu::textureFormatSupported(asset.header.format, cs)) return {};
-    TextureGPUData out;
-    out.mem    = gpu::copy(asset.pixels.data(), (uint32_t)asset.pixels.size());
-    out.w      = (uint16_t)asset.header.width;
-    out.h      = (uint16_t)asset.header.height;
-    out.format = asset.header.format;   // BC blocks upload as-is
-    out.mips   = asset.header.mipCount ? asset.header.mipCount : 1;
-    out.cs     = cs;
-    return out;
+// A cooked texture, staged for upload. Empty on a miss.
+TextureGPUData stageTexture(const assetlib::TextureAsset& t, const std::string& name) {
+    const gpu::ColourSpace cs = cookedColourSpace(t.header, name.c_str());
+    // BEFORE staging. gpu::createTexture2D can refuse this format, and a
+    // refusal there strands the staged payload for the life of the process
+    // (render/gpu.h). On content cooked for the wrong target EVERY texture
+    // refuses, so checking first is the difference between one skipped
+    // texture and leaking the whole set.
+    if (t.header.width == 0 || !gpu::textureFormatSupported(t.header.format, cs)) return {};
+    TextureGPUData g;
+    g.cs     = cs;
+    g.mem    = gpu::copy(t.pixels.data(), (uint32_t)t.pixels.size());
+    g.w      = (uint16_t)t.header.width;
+    g.h      = (uint16_t)t.header.height;
+    g.format = t.header.format;   // BC blocks upload as-is
+    g.mips   = t.header.mipCount ? t.header.mipCount : 1;
+    return g;
 }
 
-// `cs` is the MATERIAL SLOT's colour space, and it is required: this function
-// decodes source images for both the base-colour slot (sRGB) and the normal-map
-// slot (linear), and a raw PNG carries no record of which it is. A cooked file it
-// resolves to instead uses the cook's own recorded colour space.
-static TextureGPUData loadTextureGPU(const aiScene*   scene,
-                                      const char*      rawPath,
-                                      const std::filesystem::path& dir,
-                                      const std::string& baseName,
-                                      gpu::ColourSpace cs,
-                                      assetlib::AssetRegistry* registry = nullptr,
-                                      const std::filesystem::path& projectRoot = {},
-                                      const std::filesystem::path& cacheRoot = {}) {
-    TextureGPUData out;
-    int w = 0, h = 0, ch = 0;
-    stbi_uc* px = nullptr;
+}  // namespace
 
-    auto tryLoad = [&](const std::string& p) {
-        if (!px) px = stbi_load(p.c_str(), &w, &h, &ch, 4);
-    };
-
-    if (rawPath && rawPath[0] == '*') {
-        // Embedded texture (FBX)
-        int idx = std::atoi(rawPath + 1);
-        if (idx >= 0 && (uint32_t)idx < scene->mNumTextures) {
-            const aiTexture* t = scene->mTextures[idx];
-            if (t->mHeight == 0) {
-                px = stbi_load_from_memory(
-                    reinterpret_cast<const stbi_uc*>(t->pcData),
-                    (int)t->mWidth, &w, &h, &ch, 4);
-            } else {
-                w = (int)t->mWidth; h = (int)t->mHeight;
-                px = (stbi_uc*)malloc((size_t)(w * h * 4));
-                for (int p = 0; p < w * h; ++p) {
-                    px[p*4+0] = t->pcData[p].r; px[p*4+1] = t->pcData[p].g;
-                    px[p*4+2] = t->pcData[p].b; px[p*4+3] = t->pcData[p].a;
-                }
-            }
-        }
-    } else if (rawPath && rawPath[0] != '\0') {
-        tryLoad((dir / rawPath).string());
-        if (!px) {
-            std::string fname = std::filesystem::path(rawPath).filename().string();
-            for (auto sub : {"", "textures/", "Textures/", "tex/"})
-                tryLoad((dir / sub / fname).string());
-        }
-        // Fallback: Assimp may reference embedded textures by filename instead
-        // of "*N" index.  Search the scene's embedded texture list by matching
-        // the filename portion of the reference path.
-        if (!px && scene && scene->mNumTextures > 0) {
-            std::string refName = std::filesystem::path(rawPath).filename().string();
-            std::string refLower = refName;
-            for (auto& c : refLower) c = (char)std::tolower(c);
-            for (uint32_t ti = 0; ti < scene->mNumTextures; ++ti) {
-                const aiTexture* t = scene->mTextures[ti];
-                std::string embName = t->mFilename.C_Str();
-                std::string embLower = std::filesystem::path(embName).filename().string();
-                for (auto& c : embLower) c = (char)std::tolower(c);
-                if (embLower == refLower) {
-                    if (t->mHeight == 0) {
-                        px = stbi_load_from_memory(
-                            reinterpret_cast<const stbi_uc*>(t->pcData),
-                            (int)t->mWidth, &w, &h, &ch, 4);
-                    } else {
-                        w = (int)t->mWidth; h = (int)t->mHeight;
-                        px = (stbi_uc*)malloc((size_t)(w * h * 4));
-                        for (int p = 0; p < w * h; ++p) {
-                            px[p*4+0] = t->pcData[p].r; px[p*4+1] = t->pcData[p].g;
-                            px[p*4+2] = t->pcData[p].b; px[p*4+3] = t->pcData[p].a;
-                        }
-                    }
-                    if (px) {
-                        LOG_SUCCESS("Assimp","Embedded texture matched: %s", refName.c_str());
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // Naming-convention discovery (_COL, _Albedo, _BaseColor, _Diffuse)
-    if (!px && !baseName.empty()) {
-        static const char* kSuf[] = {"_COL","_Albedo","_BaseColor","_Diffuse","_D",nullptr};
-        static const char* kExt[] = {".jpg",".png",".jpeg",".tga",nullptr};
-        std::string lb = baseName;
-        for (auto& c : lb) c = (char)std::tolower(c);
-        try {
-            for (const auto& de : std::filesystem::directory_iterator(dir)) {
-                if (!de.is_regular_file()) continue;
-                std::string fn = de.path().filename().string();
-                std::string lf = fn; for (auto& c : lf) c=(char)std::tolower(c);
-                if (lf.find(lb) != 0) continue;
-                bool goodExt = false;
-                for (int i = 0; kExt[i]; ++i)
-                    if (de.path().extension()==kExt[i]) { goodExt=true; break; }
-                if (!goodExt) continue;
-                for (int i = 0; kSuf[i]; ++i) {
-                    std::string ls=kSuf[i]; for(auto& c:ls) c=(char)std::tolower(c);
-                    if (lf.find(ls) != std::string::npos) {
-                        // Prefer cooked binary — no stb_image decode needed
-                        auto cooked = tryLoadCookedTexture(
-                            de.path(), registry, projectRoot, cacheRoot);
-                        if (cooked.mem) {
-                            LOG_INFO("BinaryLoader","Texture: %s", fn.c_str());
-                            return cooked;
-                        }
-                        tryLoad(de.path().string());
-                        if (px) { LOG_SUCCESS("Assimp","Texture discovered: %s",fn.c_str()); break; }
-                    }
-                }
-                if (px) break;
-            }
-        } catch (...) {}
-    }
-
-    if (!px || w == 0 || h == 0) return out;
-
-    // gpu::copy() on the worker thread — this is the 64MB+ memcpy.
-    // Keeps the main thread completely free during texture upload prep.
-    out.mem = gpu::copy(px, (uint32_t)(w * h * 4));
-    out.w   = (uint16_t)w;
-    out.h   = (uint16_t)h;
-    out.cs  = cs;
-    stbi_image_free(px);
-    return out;
-}
-
-// The cooked file for a source path, if the registry has one Ready on disk;
-// empty otherwise. The one lookup behind processFile's fast path and hasCooked.
-std::filesystem::path AsyncLoader::cookedPathFor(const std::string& path) const {
-    if (!m_registry) return {};
-    // Key is relative to project root e.g. "assets/Foo.fbx"
+// The registry record for a source path, keyed the way the registry keys it
+// (project-relative, generic separators).
+std::optional<assetlib::AssetRecord> AsyncLoader::recordFor(const std::string& path) const {
+    if (!m_registry) return std::nullopt;
     const std::string relKey = !m_projectRoot.empty()
         ? std::filesystem::relative(std::filesystem::path(path), m_projectRoot).generic_string()
         : std::filesystem::path(path).filename().string();
-    auto rec = m_registry->findBySourcePath(relKey);
+    return m_registry->findBySourcePath(relKey);
+}
+
+// The cooked file for a source path, if the registry has one Ready on disk;
+// empty otherwise. The one lookup behind processFile and hasCooked.
+std::filesystem::path AsyncLoader::cookedPathFor(const std::string& path) const {
+    auto rec = recordFor(path);
     if (!rec || rec->cookedPath.empty() || rec->state != assetlib::AssetState::Ready) return {};
     // cooked_path in DB is relative to .cache/ dir
     std::filesystem::path cookedAbs = m_projectRoot / ".cache" / rec->cookedPath;
@@ -225,460 +72,152 @@ std::filesystem::path AsyncLoader::cookedPathFor(const std::string& path) const 
 }
 
 // -----------------------------------------------------------------------
-// processFile — runs entirely on worker thread.
-// Assimp parse + stb_image decode + gpu::copy (big memcpy).
-// By the time LoadedAsset reaches the main thread, all data is in
-// the backend's internal pool — handle creation is the only main-thread work.
+// processFile — runs entirely on the worker.
+// By the time a Loaded asset reaches the main thread, all data is staged;
+// handle creation is the only main-thread work.
 // -----------------------------------------------------------------------
-LoadedAsset AsyncLoader::processFile(const std::string& path,
-                                      const std::string& name) {
+LoadedAsset AsyncLoader::processFile(const std::string& path, const std::string& name,
+                                     bool waitForTextures) {
     LoadedAsset out;
     out.path = path; out.name = name;
 
-    // ── Binary fast path ───────────────────────────────────────────────
-    // If a cooked version exists, read raw bytes directly — no Assimp.
-    if (const std::filesystem::path cookedAbs = cookedPathFor(path); !cookedAbs.empty()) {
-        {
-            assetlib::MeshAsset asset;
-            if (assetlib::loadMesh(asset, cookedAbs)) {
-                const auto& h = asset.header;
-                // Guard: cooked stride must match runtime Vertex exactly.
-                // If not, fall through to Assimp (stale .cooked file).
-                const bool cookedSkinned = h.version >= 3 && h.boneCount > 0
-                                        && h.vertexStride == sizeof(SkinnedVertex);
-                if (h.vertexStride != sizeof(Vertex) && !cookedSkinned) {
-                    LOG_WARN("BinaryLoader",
-                        "Stride mismatch cooked=%u runtime=%zu — falling back to Assimp",
-                        h.vertexStride, sizeof(Vertex));
-                } else {
-                MeshGPUData gd;
-                gd.vertexMem  = gpu::copy(asset.vertexData.data(),
-                                           (uint32_t)asset.vertexData.size());
-                gd.indexMem   = gpu::copy(asset.indexData.data(),
-                                           (uint32_t)asset.indexData.size());
-                gd.indexCount  = h.indexCount;
-                gd.use32       = (h.indexStride == 4);
-                gd.doubleSided = false;
-                gd.skinned     = cookedSkinned;
-                gd.hasBounds   = true;
-                std::memcpy(gd.boundsMin, h.boundsMin, sizeof(gd.boundsMin));
-                std::memcpy(gd.boundsMax, h.boundsMax, sizeof(gd.boundsMax));
-                // Submesh ranges — populated BEFORE move into out.meshes
-                if (asset.submeshes.size() > 1) {
-                    for (const auto& sub : asset.submeshes) {
-                        SubRange sr;
-                        sr.indexOffset = sub.indexOffset;
-                        sr.indexCount  = sub.indexCount;
-                        sr.matIndex    = 0; // MaterialCooker wires per-submesh mats
-                        gd.subRanges.push_back(sr);
-                    }
-                }
-                out.meshes.push_back(std::move(gd));
-
-                // ── v3 skinned payload: skeleton + embedded clips, NO Assimp ─
-                // (shared decode with AssetService's cooked streaming path —
-                // animation/cooked_skin.h)
-                if (cookedSkinned) {
-                    Skeleton skel = anim::decodeCookedSkeleton(asset);
-                    if (skel.ozz) {
-                        out.skeleton    = std::move(skel);
-                        out.hasSkeleton = true;
-                        out.animClips   = anim::decodeCookedClips(asset);
-                        LOG_SUCCESS("BinaryLoader",
-                            "%s — COOKED skinned: %d bones, %zu clip(s), no Assimp",
-                            name.c_str(), out.skeleton.boneCount(),
-                            out.animClips.size());
-                    } else {
-                        LOG_WARN("BinaryLoader",
-                            "cooked skeleton blob unreadable — bind pose only");
-                    }
-                }
-                // Use cooked material section if present;
-                // otherwise fall back to auto-discovery by asset stem name.
-                const std::filesystem::path srcDir =
-                    std::filesystem::path(path).parent_path();
-                const std::string            stem =
-                    std::filesystem::path(path).stem().string();
-                if (!asset.materials.empty()) {
-                    for (uint32_t m = 0; m < (uint32_t)asset.materials.size(); ++m) {
-                    const auto& cm = asset.materials[m];
-                        MaterialGPUData mg;
-                        std::memcpy(mg.baseColorFactor, cm.baseColorFactor, 16);
-                        mg.roughness = cm.roughness;
-                        mg.metallic  = cm.metallic;
-                        // .ctex = embedded texture the cooker extracted;
-                        // lives NEXT TO the cooked mesh, loads with no decode.
-                        auto loadCtexOr = [&](const char* p,
-                                              gpu::ColourSpace slotCs) -> TextureGPUData {
-                            const std::string sp = p;
-                            if (sp.size() > 5 &&
-                                sp.compare(sp.size() - 5, 5, ".ctex") == 0) {
-                                assetlib::TextureAsset t;
-                                const gpu::ColourSpace ccs =
-                                    assetlib::loadTexture(
-                                        t, cookedAbs.parent_path() / sp)
-                                    ? cookedColourSpace(t.header, sp.c_str())
-                                    : gpu::ColourSpace::Linear;
-                                if (t.header.width != 0
-                                    && gpu::textureFormatSupported(
-                                        t.header.format, ccs)) {  // before staging
-                                    TextureGPUData g;
-                                    g.cs = ccs;
-                                    g.mem = gpu::copy(t.pixels.data(),
-                                        (uint32_t)t.pixels.size());
-                                    g.w = (uint16_t)t.header.width;
-                                    g.h = (uint16_t)t.header.height;
-                                    g.format = t.header.format;   // BC as-is
-                                    g.mips = t.header.mipCount
-                                           ? t.header.mipCount : 1;
-                                    return g;
-                                }
-                                return {};
-                            }
-                            return loadTextureGPU(nullptr, p, srcDir, stem, slotCs,
-                                m_registry, m_projectRoot,
-                                m_projectRoot / ".cache");
-                        };
-                        if (cm.flags & assetlib::kMatFlag_HasBaseColor)
-                            mg.baseColorTexture = loadCtexOr(cm.baseColorPath,
-                                                             gpu::ColourSpace::Srgb);
-                        if (cm.flags & assetlib::kMatFlag_HasNormalMap)
-                            mg.normalMapTexture = loadCtexOr(cm.normalMapPath,
-                                                             gpu::ColourSpace::Linear);
-                        mg.baseColorName = (cm.flags & assetlib::kMatFlag_HasBaseColor) ? cm.baseColorPath : "";
-                        mg.normalMapName = (cm.flags & assetlib::kMatFlag_HasNormalMap) ? cm.normalMapPath : "";
-                        LOG_INFO("BinaryLoader", "Mat[%u] base=%s nm=%s",
-                            m,
-                            mg.baseColorTexture.mem ? "ok" : "none",
-                            mg.normalMapTexture.mem ? "ok" : "none");
-                        if (!mg.baseColorTexture.mem)  // fallback: auto-discover
-                            mg.baseColorTexture = loadTextureGPU(
-                                nullptr, nullptr, srcDir, stem, gpu::ColourSpace::Srgb,
-                                m_registry, m_projectRoot, m_projectRoot / ".cache");
-                        out.materials.push_back(std::move(mg));
-                    }
-                } else {
-                    // Legacy / geometry-only cook: auto-discover one texture
-                    MaterialGPUData mg;
-                    mg.baseColorTexture = loadTextureGPU(
-                        nullptr, nullptr, srcDir, stem, gpu::ColourSpace::Srgb,
-                        m_registry, m_projectRoot, m_projectRoot / ".cache");
-                    out.materials.push_back(std::move(mg));
-                }
-                out.success = true;
-                LOG_INFO("BinaryLoader", "%-30s verts=%u idx=%u tex=%s submeshes=%zu",
-                       name.c_str(), h.vertexCount, h.indexCount,
-                       out.materials.empty() || !out.materials[0].baseColorTexture.mem ? "none" : "ok",
-                       out.meshes.empty() ? 0 : out.meshes[0].subRanges.size());
-                return out;
-                } // stride check
-            }
+    const std::filesystem::path cookedAbs = cookedPathFor(path);
+    if (cookedAbs.empty()) {
+        // The cook either has not run for this source yet, or ran and failed.
+        // Only the second is final.
+        if (auto rec = recordFor(path); rec && rec->state == assetlib::AssetState::Failed) {
+            out.outcome = LoadedAsset::Outcome::Failed;
+            out.error   = "cook failed: " + path
+                        + (rec->errorMessage.empty() ? "" : " — " + rec->errorMessage);
+            return out;
         }
-    }
-    // ── Assimp fallback (uncooked assets) ─────────────────────────────
-    // Wrapped in try-catch: a crash inside Assimp or skeleton extraction
-    // must not bring down the engine — report it as a load error.
-    try {
-    Assimp::Importer imp;
-    // Tell Assimp NOT to decompose FBX pre-rotation/translation/scaling into
-    // separate $AssimpFbx$ intermediate nodes. Without this, a typical 68-bone
-    // Mixamo skeleton explodes to 184+ nodes, overflowing kMaxBones (128).
-    // With this flag false, Assimp bakes pivots into each bone's local
-    // transform and remaps animation channels accordingly.
-    imp.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
-    const aiScene* scene = imp.ReadFile(path,
-        aiProcess_Triangulate        |
-        aiProcess_GenSmoothNormals   |
-        aiProcess_CalcTangentSpace   |
-        aiProcess_FlipUVs            |
-        aiProcess_JoinIdenticalVertices |
-        aiProcess_SortByPType);
-
-    if (!scene || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) || !scene->mRootNode) {
-        out.error = std::string("Assimp: ") + imp.GetErrorString();
-        LOG_ERROR("Assimp", "Failed: %s", out.error.c_str());
+        out.outcome = LoadedAsset::Outcome::NotCooked;
+        out.needsCook.push_back(path);
+        out.error = "not cooked: " + path;
         return out;
     }
 
-    LOG_INFO("Assimp", "Parsed %s — %u mesh(es) %u mat(s)",
-             name.c_str(), scene->mNumMeshes, scene->mNumMaterials);
-
-    const auto dir = std::filesystem::path(path).parent_path();
-    const std::string bn = std::filesystem::path(path).stem().string();
-
-    // Materials + textures (stb_image + gpu::copy on worker)
-    out.materials.resize(scene->mNumMaterials);
-    for (uint32_t i = 0; i < scene->mNumMaterials; ++i) {
-        const aiMaterial* ai = scene->mMaterials[i];
-        MaterialGPUData& mg = out.materials[i];
-        aiColor4D col;
-        if (AI_SUCCESS == aiGetMaterialColor(ai, AI_MATKEY_COLOR_DIFFUSE, &col)) {
-            mg.baseColorFactor[0]=col.r; mg.baseColorFactor[1]=col.g;
-            mg.baseColorFactor[2]=col.b; mg.baseColorFactor[3]=col.a;
-        }
-        aiString tp;
-        if (AI_SUCCESS == ai->GetTexture(aiTextureType_DIFFUSE,    0, &tp) ||
-            AI_SUCCESS == ai->GetTexture(aiTextureType_BASE_COLOR, 0, &tp)) {
-            LOG_INFO("Assimp", "Mat[%u] texPath=\"%s\" embeddedCount=%u",
-                     i, tp.C_Str(), scene->mNumTextures);
-            mg.baseColorTexture = loadTextureGPU(scene, tp.C_Str(), dir, bn, gpu::ColourSpace::Srgb,
-                m_registry, m_projectRoot, m_projectRoot / ".cache");
-        }
-        if (!mg.baseColorTexture.mem)
-            mg.baseColorTexture = loadTextureGPU(scene, nullptr, dir, bn, gpu::ColourSpace::Srgb,
-                m_registry, m_projectRoot, m_projectRoot / ".cache");
-        // Normal map
-        aiString nmPath;
-        if (AI_SUCCESS == ai->GetTexture(aiTextureType_NORMALS, 0, &nmPath) ||
-            AI_SUCCESS == ai->GetTexture(aiTextureType_HEIGHT,  0, &nmPath)) {
-            mg.normalMapTexture = loadTextureGPU(scene, nmPath.C_Str(), dir, bn, gpu::ColourSpace::Linear,
-                m_registry, m_projectRoot, m_projectRoot / ".cache");
-            mg.normalMapName = std::filesystem::path(nmPath.C_Str()).filename().string();
-            LOG_INFO("NormalMap", "Found: %s -> %s",
-                     bn.c_str(), nmPath.C_Str());
-        }
-        // Base color display name
-        aiString bcp; mg.baseColorName = "";
-        if (AI_SUCCESS == ai->GetTexture(aiTextureType_DIFFUSE,    0, &bcp) ||
-            AI_SUCCESS == ai->GetTexture(aiTextureType_BASE_COLOR, 0, &bcp))
-            mg.baseColorName = std::filesystem::path(bcp.C_Str()).filename().string();
+    assetlib::MeshAsset asset;
+    if (!assetlib::loadMesh(asset, cookedAbs)) {
+        out.outcome = LoadedAsset::Outcome::Failed;
+        out.error   = "unreadable cooked mesh: " + cookedAbs.string();
+        return out;
+    }
+    const auto& h = asset.header;
+    const bool cookedSkinned = h.version >= 3 && h.boneCount > 0
+                            && h.vertexStride == sizeof(SkinnedVertex);
+    if (h.vertexStride != sizeof(Vertex) && !cookedSkinned) {
+        // A stale cook (an older vertex layout). It used to fall through to
+        // Assimp; a stale cook is the cooker's to redo, so it is a failure
+        // here, and the message says which.
+        out.outcome = LoadedAsset::Outcome::Failed;
+        out.error   = "cooked vertex stride " + std::to_string(h.vertexStride)
+                    + " does not match the runtime's " + std::to_string(sizeof(Vertex))
+                    + " (re-cook): " + path;
+        return out;
     }
 
-    // ── Skeleton + animation extraction (worker-safe — pure CPU) ────────
-    {
-        bool hasBones = false;
-        for (uint32_t i = 0; i < scene->mNumMeshes && !hasBones; ++i)
-            if (scene->mMeshes[i]->mNumBones > 0) hasBones = true;
-
-        if (hasBones) {
-            out.skeleton    = imp::assimp::extractSkeleton(scene);
-            // Over the GPU palette's limit the animator would refuse it and the
-            // skinned mesh would draw in its raw bind pose, never animating.
-            // Static geometry, said out loud, is the honest preview (WO-040).
-            if (out.skeleton.boneCount() > kMaxBones)
-                LOG_WARN("Assimp", "%s — %d bones: the engine skins at most %d per mesh; "
-                         "previewing as static geometry (the cook refuses it)",
-                         name.c_str(), out.skeleton.boneCount(), kMaxBones);
-            out.hasSkeleton = out.skeleton.boneCount() > 0
-                           && out.skeleton.boneCount() <= kMaxBones
-                           && anim::buildOzzSkeleton(out.skeleton);
-            if (out.hasSkeleton && scene->mNumAnimations > 0) {
-                // Embedded clips -> compressed ozz Animations (same bridge the
-                // standalone-clip ClipLibrary uses).
-                std::string base = std::filesystem::path(path).stem().string();
-                out.animClips.reserve(scene->mNumAnimations);
-                for (unsigned a = 0; a < scene->mNumAnimations; ++a) {
-                    AnimClip c = imp::assimp::buildOzzClip(scene->mAnimations[a],
-                                                    out.skeleton, base);
-                    if (c.valid()) out.animClips.push_back(std::move(c));
-                }
-            }
-            LOG_INFO("Assimp", "%s — %d bones, %u clip(s)",
-                     name.c_str(), out.skeleton.boneCount(), (uint32_t)out.animClips.size());
+    // ── Textures first, BEFORE any staging ────────────────────────────────
+    // A cooked material names its textures either as a `.ctex` the cooker
+    // extracted next to the mesh, or as a source path the registry cooks on
+    // its own. Resolve every one now: a texture that is not cooked yet makes
+    // the whole asset wait (when there is a cooker to wait for), so it never
+    // appears untextured and then changes. Nothing is staged until we know.
+    const std::filesystem::path srcDir = std::filesystem::path(path).parent_path();
+    struct TexRef { std::filesystem::path cooked; std::string name; };
+    auto resolveTex = [&](const char* p) -> TexRef {
+        const std::string sp = p;
+        if (sp.size() > 5 && sp.compare(sp.size() - 5, 5, ".ctex") == 0)
+            return {cookedAbs.parent_path() / sp, sp};
+        const std::string srcTex = (srcDir / sp).lexically_normal().string();
+        const auto c = cookedPathFor(srcTex);
+        if (c.empty()) {
+            auto rec = recordFor(srcTex);
+            if (!(rec && rec->state == assetlib::AssetState::Failed))
+                out.needsCook.push_back(srcTex);
+            else
+                LOG_WARN("Loader", "%s: texture %s failed to cook — drawn without it",
+                         name.c_str(), sp.c_str());
         }
-    }
-
-    // Lambda: fill common vertex attributes shared by Vertex and SkinnedVertex
-    auto fillCommon = [](const aiMesh* am, uint32_t v, float pos[3], float nrm[3],
-                         float tan[4], float uv[2]) {
-        pos[0] = am->mVertices[v].x;
-        pos[1] = am->mVertices[v].y;
-        pos[2] = am->mVertices[v].z;
-        if (am->HasNormals()) {
-            nrm[0] = am->mNormals[v].x;
-            nrm[1] = am->mNormals[v].y;
-            nrm[2] = am->mNormals[v].z;
-        } else { nrm[0]=0; nrm[1]=1; nrm[2]=0; }
-        if (am->HasTangentsAndBitangents()) {
-            const auto& t  = am->mTangents[v];
-            const auto& bt = am->mBitangents[v];
-            const auto& n  = am->mNormals[v];
-            float cx = n.y*t.z-n.z*t.y, cy = n.z*t.x-n.x*t.z, cz = n.x*t.y-n.y*t.x;
-            float sign = (cx*bt.x+cy*bt.y+cz*bt.z) < 0.0f ? -1.0f : 1.0f;
-            tan[0]=t.x; tan[1]=t.y; tan[2]=t.z; tan[3]=sign;
-        } else {
-            tan[0]=1; tan[1]=0; tan[2]=0; tan[3]=1;
-        }
-        if (am->mTextureCoords[0]) {
-            uv[0] = am->mTextureCoords[0][v].x;
-            uv[1] = am->mTextureCoords[0][v].y;
-        } else { uv[0]=0; uv[1]=0; }
+        return {c, sp};
     };
+    std::vector<TexRef> baseTex(asset.materials.size()), normTex(asset.materials.size());
+    for (size_t m = 0; m < asset.materials.size(); ++m) {
+        const auto& cm = asset.materials[m];
+        if (cm.flags & assetlib::kMatFlag_HasBaseColor) baseTex[m] = resolveTex(cm.baseColorPath);
+        if (cm.flags & assetlib::kMatFlag_HasNormalMap) normTex[m] = resolveTex(cm.normalMapPath);
+    }
+    if (!out.needsCook.empty() && waitForTextures) {
+        out.outcome = LoadedAsset::Outcome::NotCooked;
+        out.error   = "textures not cooked: " + path;
+        return out;
+    }
+    for (const std::string& t : out.needsCook)   // not waiting: say what is missing
+        LOG_WARN("Loader", "%s: texture not cooked, drawn without it: %s",
+                 name.c_str(), t.c_str());
+    out.needsCook.clear();
 
-    // ── Skinned FBX: combine all body-part meshes into ONE mesh ───────────
-    // Mixamo FBX files often split the character into many meshes (jacket,
-    // head, shoes…). They all share the same skeleton but become separate
-    // vertex buffers if loaded individually — and only the first handle
-    // is returned. Combine them here into a single VB/IB with submesh ranges
-    // so the whole character renders as one entity.
-    if (out.hasSkeleton) {
-        // Count totals
-        uint32_t totalVerts = 0, totalIndices = 0;
-        for (uint32_t i = 0; i < scene->mNumMeshes; ++i) {
-            const aiMesh* am = scene->mMeshes[i];
-            if (!(am->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
-            if (am->mNumBones == 0) continue;
-            totalVerts   += am->mNumVertices;
-            totalIndices += am->mNumFaces * 3;
-        }
-
-        if (totalVerts > 0) {
-            const bool use32 = totalVerts > 65535;
-            std::vector<SkinnedVertex> allVerts;
-            allVerts.reserve(totalVerts);
-            std::vector<uint32_t> allIdx32;
-            std::vector<uint16_t> allIdx16;
-            if (use32) allIdx32.reserve(totalIndices);
-            else       allIdx16.reserve(totalIndices);
-
-            MeshGPUData mg;
-            mg.skinned   = true;
-            mg.use32     = use32;
-            mg.hasBounds = true;
-            float bMin[3] = {  FLT_MAX,  FLT_MAX,  FLT_MAX };
-            float bMax[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
-
-            uint32_t vertBase = 0;
-            uint32_t idxBase  = 0;
-            for (uint32_t i = 0; i < scene->mNumMeshes; ++i) {
-                const aiMesh* am = scene->mMeshes[i];
-                if (!(am->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
-                if (am->mNumBones == 0) continue;
-
-                auto boneData = imp::assimp::extractBoneWeights(am, out.skeleton);
-                int zeroWeightVerts = 0, maxBoneIdx = 0;
-                for (uint32_t v = 0; v < am->mNumVertices; ++v) {
-                    SkinnedVertex sv{};
-                    fillCommon(am, v, sv.position, sv.normal, sv.tangent, sv.uv);
-                    for (int j = 0; j < 4; ++j)   // < kMaxBones (checked above), so fits the GPU's uint8
-                        sv.joints[j] = (uint8_t)boneData[v].joints[j];
-                    std::memcpy(sv.weights, boneData[v].weights, sizeof(float)*4);
-                    float wsum = sv.weights[0]+sv.weights[1]+sv.weights[2]+sv.weights[3];
-                    if (wsum < 1e-6f) ++zeroWeightVerts;
-                    for (int j = 0; j < 4; ++j)
-                        if (sv.joints[j] > maxBoneIdx) maxBoneIdx = sv.joints[j];
-                    allVerts.push_back(sv);
-                    for (int k = 0; k < 3; ++k) {
-                        bMin[k] = std::min(bMin[k], sv.position[k]);
-                        bMax[k] = std::max(bMax[k], sv.position[k]);
-                    }
-                }
-                LOG_INFO("Assimp", "  sub[%u] verts=%u zeroWeight=%d maxBoneIdx=%d skelBones=%d",
-                    i, am->mNumVertices, zeroWeightVerts, maxBoneIdx, out.skeleton.boneCount());
-
-                // Submesh for this body part
-                SubRange sr;
-                sr.indexOffset = idxBase;
-                sr.indexCount  = am->mNumFaces * 3;
-                sr.matIndex    = am->mMaterialIndex;
-                mg.subRanges.push_back(sr);
-
-                for (uint32_t f = 0; f < am->mNumFaces; ++f) {
-                    for (uint32_t k = 0; k < am->mFaces[f].mNumIndices; ++k) {
-                        uint32_t idx = am->mFaces[f].mIndices[k] + vertBase;
-                        if (use32) allIdx32.push_back(idx);
-                        else       allIdx16.push_back((uint16_t)idx);
-                    }
-                }
-                idxBase  += am->mNumFaces * 3;
-                vertBase += am->mNumVertices;
-            }
-
-            mg.vertexMem = gpu::copy(allVerts.data(),
-                (uint32_t)(allVerts.size() * sizeof(SkinnedVertex)));
-            if (use32) {
-                mg.indexCount = (uint32_t)allIdx32.size();
-                mg.indexMem   = gpu::copy(allIdx32.data(), mg.indexCount * 4);
-            } else {
-                mg.indexCount = (uint32_t)allIdx16.size();
-                mg.indexMem   = gpu::copy(allIdx16.data(), mg.indexCount * 2);
-            }
-            std::memcpy(mg.boundsMin, bMin, sizeof(bMin));
-            std::memcpy(mg.boundsMax, bMax, sizeof(bMax));
-            out.meshes.push_back(std::move(mg));
-
-            LOG_INFO("Assimp", "%s — combined %u skinned sub-meshes: %u verts, %u indices",
-                     name.c_str(), (uint32_t)out.meshes.back().subRanges.size(),
-                     totalVerts, totalIndices);
+    MeshGPUData gd;
+    gd.vertexMem   = gpu::copy(asset.vertexData.data(), (uint32_t)asset.vertexData.size());
+    gd.indexMem    = gpu::copy(asset.indexData.data(),  (uint32_t)asset.indexData.size());
+    gd.indexCount  = h.indexCount;
+    gd.use32       = (h.indexStride == 4);
+    gd.doubleSided = false;
+    gd.skinned     = cookedSkinned;
+    gd.hasBounds   = true;
+    std::memcpy(gd.boundsMin, h.boundsMin, sizeof(gd.boundsMin));
+    std::memcpy(gd.boundsMax, h.boundsMax, sizeof(gd.boundsMax));
+    if (asset.submeshes.size() > 1) {
+        for (const auto& sub : asset.submeshes) {
+            SubRange sr;
+            sr.indexOffset = sub.indexOffset;
+            sr.indexCount  = sub.indexCount;
+            sr.matIndex    = 0;   // MaterialCooker wires per-submesh mats
+            gd.subRanges.push_back(sr);
         }
     }
+    out.meshes.push_back(std::move(gd));
 
-    // ── Static meshes (non-skinned) ──────────────────────────────────────
-    for (uint32_t i = 0; i < scene->mNumMeshes; ++i) {
-        const aiMesh* am = scene->mMeshes[i];
-        if (!(am->mPrimitiveTypes & aiPrimitiveType_TRIANGLE)) continue;
-        // Skip skinned meshes — already combined above
-        if (am->mNumBones > 0 && out.hasSkeleton) continue;
-
-        MeshGPUData mg;
-        mg.matIndex = am->mMaterialIndex;
-
-        uint32_t vertCount = am->mNumVertices;
-        std::vector<Vertex> verts(vertCount);
-        for (uint32_t v = 0; v < vertCount; ++v)
-            fillCommon(am, v, verts[v].position, verts[v].normal,
-                       verts[v].tangent, verts[v].uv);
-        mg.vertexMem = gpu::copy(verts.data(),
-                                   (uint32_t)(verts.size() * sizeof(Vertex)));
-
-        // Build index array + gpu::copy on worker
-        mg.use32 = vertCount > 65535;
-        if (mg.use32) {
-            std::vector<uint32_t> idx;
-            idx.reserve(am->mNumFaces * 3);
-            for (uint32_t f = 0; f < am->mNumFaces; ++f)
-                for (uint32_t k = 0; k < am->mFaces[f].mNumIndices; ++k)
-                    idx.push_back(am->mFaces[f].mIndices[k]);
-            mg.indexCount = (uint32_t)idx.size();
-            mg.indexMem   = gpu::copy(idx.data(), mg.indexCount * 4);
+    // ── v3 skinned payload: skeleton + embedded clips ─────────────────────
+    // (shared decode with AssetService's cooked streaming path —
+    // animation/cooked_skin.h)
+    if (cookedSkinned) {
+        Skeleton skel = anim::decodeCookedSkeleton(asset);
+        if (skel.ozz) {
+            out.skeleton    = std::move(skel);
+            out.hasSkeleton = true;
+            out.animClips   = anim::decodeCookedClips(asset);
         } else {
-            std::vector<uint16_t> idx;
-            idx.reserve(am->mNumFaces * 3);
-            for (uint32_t f = 0; f < am->mNumFaces; ++f)
-                for (uint32_t k = 0; k < am->mFaces[f].mNumIndices; ++k)
-                    idx.push_back((uint16_t)am->mFaces[f].mIndices[k]);
-            mg.indexCount = (uint32_t)idx.size();
-            mg.indexMem   = gpu::copy(idx.data(), mg.indexCount * 2);
+            LOG_WARN("Loader", "%s: cooked skeleton blob unreadable — bind pose only",
+                     name.c_str());
         }
-
-        // AABB
-        if (am->mNumVertices > 0) {
-            mg.hasBounds = true;
-            mg.boundsMin[0] = mg.boundsMax[0] = am->mVertices[0].x;
-            mg.boundsMin[1] = mg.boundsMax[1] = am->mVertices[0].y;
-            mg.boundsMin[2] = mg.boundsMax[2] = am->mVertices[0].z;
-            for (uint32_t v = 1; v < am->mNumVertices; ++v) {
-                for (int k = 0; k < 3; ++k) {
-                    float val = (&am->mVertices[v].x)[k];
-                    mg.boundsMin[k] = std::min(mg.boundsMin[k], val);
-                    mg.boundsMax[k] = std::max(mg.boundsMax[k], val);
-                }
-            }
-        }
-
-        out.meshes.push_back(std::move(mg));
     }
 
-    out.success = !out.meshes.empty();
-    if (!out.success) out.error = "No triangle meshes found";
+    auto loadTex = [&](const TexRef& r) -> TextureGPUData {
+        if (r.cooked.empty()) return {};
+        assetlib::TextureAsset t;
+        if (!assetlib::loadTexture(t, r.cooked)) return {};
+        return stageTexture(t, r.name);
+    };
+    for (size_t m = 0; m < asset.materials.size(); ++m) {
+        const auto& cm = asset.materials[m];
+        MaterialGPUData mg;
+        std::memcpy(mg.baseColorFactor, cm.baseColorFactor, 16);
+        mg.roughness = cm.roughness;
+        mg.metallic  = cm.metallic;
+        mg.baseColorTexture = loadTex(baseTex[m]);
+        mg.normalMapTexture = loadTex(normTex[m]);
+        mg.baseColorName = (cm.flags & assetlib::kMatFlag_HasBaseColor) ? cm.baseColorPath : "";
+        mg.normalMapName = (cm.flags & assetlib::kMatFlag_HasNormalMap) ? cm.normalMapPath : "";
+        out.materials.push_back(std::move(mg));
+    }
+    // A geometry-only cook has no material section: one default material, and
+    // no longer a search of the source folder for something named like it.
+    if (out.materials.empty()) out.materials.emplace_back();
+
+    out.outcome = LoadedAsset::Outcome::Loaded;
+    out.success = true;
+    LOG_INFO("Loader", "%-30s verts=%u idx=%u%s", name.c_str(), h.vertexCount,
+             h.indexCount, out.hasSkeleton ? " [skinned]" : "");
     return out;
-
-    } catch (const std::exception& ex) {
-        out.error = std::string("Assimp exception: ") + ex.what();
-        LOG_ERROR("Assimp", "Exception loading %s: %s", name.c_str(), ex.what());
-        return out;
-    } catch (...) {
-        out.error = "Unknown exception during Assimp import";
-        LOG_ERROR("Assimp", "Unknown exception loading %s", name.c_str());
-        return out;
-    }
 }
-
-// -----------------------------------------------------------------------
-// Worker lifecycle — ON THE ENGINE JOB POOL (backlog #9)
-// No dedicated loader thread anymore: each pending request becomes one
-// pool job, chained one-at-a-time (parse serialization matches the old
-// single worker — registry access stays single-consumer) but scheduled on
-// the shared pool. Hosts without jobs::init (bare tools) degrade to
-// inline synchronous loads via the jobs facade fallback.
-// -----------------------------------------------------------------------

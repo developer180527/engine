@@ -36,6 +36,10 @@ MARKERS = {
     "rgbcx":         "the BC1-5 encoder",
     "bc7enc":        "the BC7 encoder",
     "imageEncode":   "bimg's encoders (ASTC/ETC2)",
+    # Since WO-018 the runtime parses no source format at all, glTF and
+    # source images included: these are the cook stack's decoders now.
+    "cgltf_":        "cgltf (the glTF parser)",
+    "stbi_":         "stb_image (source image decoding)",
 }
 _PAT = re.compile("|".join(re.escape(m) for m in MARKERS), re.I)
 

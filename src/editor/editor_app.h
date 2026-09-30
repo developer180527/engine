@@ -60,7 +60,10 @@ public:
 
     void setRegistry(assetlib::AssetRegistry* r)          { m_assetLib = r; m_loader.setRegistry(r); }
     void setProjectRoot(const std::filesystem::path& root){ m_loader.setProjectRoot(root); }
-    void setCookService(CookService* cs) { m_cookService = cs; }
+    // The editor is the "real" cook provider (assets/cook_requests.h): an
+    // uncooked asset the loader is asked for becomes a cook request here, with
+    // a placeholder on screen until it lands (WO-018).
+    void setCookService(CookService* cs) { m_cookService = cs; m_loader.setCookRequests(cs); }
     void requestAssetRefresh() {
         if (m_cookService) m_cookService->requestRefresh();
     }
@@ -84,7 +87,6 @@ public:
                                    m_rt.ctx().ecs,
                                    storage,
                                    sceneAssetsFor(m_rt.ctx().assetService, &m_loader),
-                                   m_rt.ctx().importers,
                                    m_rt.ctx().primitives,
                                    ctx.projectRoot,
                                    m_rt.ctx().assetLib,
@@ -373,7 +375,7 @@ private:
         auto& rc = m_rt.ctx();
         return EngineContext{
             rc.ecs, rc.assets, rc.textures,
-            rc.materials, rc.project, rc.importers,
+            rc.materials, rc.project,
             m_editor, m_gizmo, rc.assetLib, rc.primitives,
             rc.assetService, rc.sceneService,
             rc.skeletons, rc.clips, rc.clipLibrary

@@ -39,6 +39,7 @@
 #include "components/skinned_mesh.h"
 #include "components/spinner.h"
 #include "scene/unresolved_mesh.h"
+#include "components/mesh_placeholder.h"
 #include "core/transform.h"
 #include "scene/reflected_serde.h"          // reflected::ReflectedPending
 
@@ -164,6 +165,9 @@ void registerClassification(flecs::world& w) {
     exempt<UnresolvedMesh>(w,
         "load-time bookkeeping — an authored mesh reference the loader could not "
         "resolve, kept so a save writes it back (WO-029); never simulated");
+    exempt<MeshPlaceholder>(w,
+        "load-time bookkeeping — which MeshRenderer handle is the stand-in shown "
+        "while the real mesh cooks or failed to (WO-018); never simulated");
     exempt<reflected::ReflectedPending>(w,
         "load-time bookkeeping — blobs awaiting a component type that has not "
         "registered yet; consumed by reflected::applyPending, never simulated");

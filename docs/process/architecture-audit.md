@@ -59,7 +59,7 @@ rule nobody agreed to.
 | `DET-01` | the fixed step reads no clock and no RNG | `src/runtime/docs/info.md` |
 | `HDR-01` | the C ABI headers pull in nothing of ours | `extension-model.md` |
 | `RHI-01` | bgfx's math library (`bx/`) spreads no further outside the renderer | `docs/rhi/evidence-coupling.md` |
-| `IMP-01` | Assimp is included only by the Assimp front end (`src/assets/import/frontend_assimp*`); the two runtime importers WO-018 deletes are baselined | `docs/plans/imported-scene.md` §2 |
+| `IMP-01` | Assimp is included only by the Assimp front end (`src/assets/import/frontend_assimp*`); no debt since WO-018 deleted the two runtime importers | `docs/plans/imported-scene.md` §2 |
 | `CAM-01` | no `bx::mtxLookAt` / `mtxProj` / `mtxOrtho` outside `src/render/view_math.h`: one handedness for every camera | `src/render/view_math.h` |
 | `OS-01` | in `src/core` and `src/runtime`, an `#else` after an OS check is `#error "port: …"` or marked `// any OS: <why>`; `docs/process/porting.md` is current | `src/core/os_family.h` |
 | `DOC-01` | every directory of code is covered by some document | `engineering-standards.md` §1 |
@@ -93,7 +93,7 @@ reason from.
 
 ## 4. What it found, and what that means
 
-Current state (2026-10-01): **70 findings, all baselined, 0 new.** 46 are the
+Current state (2026-10-01): **67 findings, all baselined, 0 new.** 46 are the
 module→module edges recorded as the declared dependency graph. The rest, and
 what the rules have caught and closed:
 
@@ -125,13 +125,14 @@ what the rules have caught and closed:
   design decree. A new edge that closes no loop passes LAYER-06, and
   LAYER-03 still asks for a decision on it.
 
-- **`RHI-01` ×22** — files outside the renderer using bx's math types. Recorded
+- **`RHI-01` ×21** — files outside the renderer using bx's math types. Recorded
   as evidence for the RHI programme (`docs/rhi/evidence-coupling.md`), not a
   defect: shrinking it is part of replacing the backend (WO-026/027, parked).
-- **`IMP-01` ×2** — `assets/importers/assimp_importer.cpp` and
-  `runtime/services/async_loader/parse.cpp`, the runtime's source parsers.
-  WO-018 deletes both. It was 5; WO-015 took Assimp out of `src/animation/`
-  (its three entries removed) by moving the Assimp helpers into the front end.
+- **`IMP-01` — found 5, now FIXED.** WO-015 took Assimp out of
+  `src/animation/` (three entries) by moving the Assimp helpers into the front
+  end. WO-018 removed the last two, the runtime's source parsers
+  (`assets/importers/assimp_importer.cpp`, `runtime/services/async_loader/parse.cpp`):
+  the runtime reads cooked content only, and RHI-01 lost one with them.
 - **`DET-01` ×1** — `hid::nowNs()` inside the fixed step, which the runtime's own
   doc lists as an open hazard ("inert while no tier reads input"). Owned by
   WO-043.

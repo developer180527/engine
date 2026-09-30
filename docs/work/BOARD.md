@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-018](WO-018-runtime-loads-cooked-only.md) **Runtime loads cooked assets only — a missing one is a cook job, not an inline parse** · P2 · size L — When an asset has no cooked version, the runtime parses the source itself with a *different* parser.
-2. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
-3. [WO-022](WO-022-decision-records.md) **Decision records — the "why" survives the person** · P2 · size M — Important decisions are buried in the middle of plan paragraphs, and those are the ones that get "fixed" back into bugs.
+1. [WO-020](WO-020-retained-scene-design-doc.md) **Write the retained-scene design into the renderer programme (§9)** · P2 · size M — The retained-scene design, the five-engine comparison and the "material data lives in VRAM" rule exist only in chat.
+2. [WO-022](WO-022-decision-records.md) **Decision records — the "why" survives the person** · P2 · size M — Important decisions are buried in the middle of plan paragraphs, and those are the ones that get "fixed" back into bugs.
+3. [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) **Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx)** · P2 · size S — The backend and shader set are picked with compile-time OS checks, so anything that isn't Apple or Windows gets Vulkan.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -40,7 +40,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-018](WO-018-runtime-loads-cooked-only.md) | Runtime loads cooked assets only — a missing one is a cook job, not an inline parse | Asset import & cooking | L | **ready** | asset-service |
 | [WO-019](WO-019-retained-scene-p3a.md) | Retained scene P3a — table, ids, lifetime, rebuild-and-diff | Renderer & RHI | L | blocked by WO-020 | render-scene (new) |
 | [WO-020](WO-020-retained-scene-design-doc.md) | Write the retained-scene design into the renderer programme (§9) | Renderer & RHI | M | **ready** | — |
 | [WO-021](WO-021-os-services-layer.md) | `os::` layer in core — one file per OS family | Portability | L | blocked by WO-006 | os-services (new) |
@@ -76,6 +75,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-047](WO-047-scene-below-runtime-and-an-acyclic-gate.md) | Scene serialization stops reaching into runtime services; the module graph is gated acyclic | 2026-10-01 | audit LAYER-03 drops scene -> runtime (47 -> 46 edges) and LAYER-06 reports no cycle (mutation: restoring the include fails --check, naming the cycle and its files); scene_material_roundtrip_test (BUG-0072, both halves mutation-checked); 136 tests, audit and doctor clean |
 | [WO-046](WO-046-break-the-cheap-layer-back-edges.md) | Four upward includes out of the layer cycle (core, components, render, systems) | 2026-10-01 | scripts/audit_baseline.json LAYER-03 drops 5 edges and gains none (52 -> 47); the module graph's only remaining cycle is runtime <-> scene (WO-047); 133 tests, audit and doctor clean |
 | [WO-045](WO-045-catch-up-frame-look-per-step.md) | A catch-up frame's look motion is spread over its steps, not given to the first | 2026-10-01 | sim_clock_test §3 (look per tick (10,1) (20,2) (34,-1) in a three-step frame; the old per-tick diff, restored as a mutation, gives (64,2) (0,0) (0,0) and fails 3 checks; an ordinary frame still delivers all its motion); sim_intent_test §4 and the determinism gate input tier unchanged; 136 tests, audit and doctor clean |
+| [WO-018](WO-018-runtime-loads-cooked-only.md) | Runtime loads cooked assets only — a missing one is a cook job, not an inline parse | 2026-10-01 | asset_cook_request_test (null -> Failed "not cooked"; cooker -> Pending, one cook request, Ready; cook failure -> Failed with the reason; a mesh waits for its texture; scene placeholder saved as the authored reference, then swapped; 3 mutations each red); player_has_no_cook_stack reads that test binary (no Assimp, cgltf or stb_image); audit IMP-01 with no baseline; 126 tests (all but the 10 fuzz explore campaigns) |
 | [WO-017](WO-017-cook-library-split.md) | Cook library split — the runtime never links the cook stack | 2026-10-01 | player_has_no_cook_stack (engine_player, engine_module_probe, server_link_probe: 0 cook-stack symbols; the pre-change player had 19 749 Assimp symbols, and linking the cook stack back in fails it naming 10 parts); engine_player 33.6 -> 24.4 MB in the default build; audit 0 new findings; 127 tests (all but the 10 fuzz explore campaigns) |
 | [WO-044](WO-044-abi-compat-test-covers-every-group.md) | The ABI compatibility test defends every API group (audit ABI-03) | 2026-09-30 | api_abi_compat_test (physics2 at 800, intent at 816, and a static_assert that frozen[] and offs[] list the same groups); audit ABI-03 ok with no baseline entries |
 | [WO-043](WO-043-fixed-step-reads-no-clock.md) | The fixed step reads no wall clock (audit DET-01) | 2026-09-30 | sim_clock_test (the boundary function; a catch-up frame's press/release/press lands one per tick, and with the clock read put back it is HPR H-- H--); audit DET-01 ok with no baseline entry; determinism_gate_test 0 divergences |

@@ -51,6 +51,20 @@ void CookService::start() {
     m_thread = std::thread([this] { cookLoop(); });
 }
 
+void CookService::requestCook(const std::string& sourcePath) {
+    std::filesystem::path p(sourcePath);
+    std::error_code ec;
+    if (p.is_absolute()) {
+        const auto rel = std::filesystem::relative(p, m_projectRoot, ec);
+        if (!ec && !rel.empty()) p = rel;
+    }
+    {
+        std::lock_guard<std::mutex> lk(m_requestMtx);
+        m_wanted.insert(p.generic_string());
+    }
+    requestRefresh();
+}
+
 void CookService::requestRefresh() {
     {
         std::lock_guard<std::mutex> lk(m_requestMtx);
@@ -232,6 +246,17 @@ void CookService::runOneCookPass() {
                  "(+%d engine default(s))", scope->size(), engineAdded);
     }
 
+    // Requested assets (ICookRequests): always in scope, and cooked first.
+    std::unordered_set<std::string> wanted;
+    {
+        std::lock_guard<std::mutex> lk(m_requestMtx);
+        wanted = m_wanted;
+    }
+    if (scope)
+        for (const auto& rec : all)
+            if (wanted.count(rec.sourcePath)) scope->insert(rec.uuid.toString());
+    std::unordered_set<std::string> wantedDeferred;
+
     int deferred = 0, backfilled = 0;
     std::vector<assetlib::UUID> todo;
     std::unordered_set<std::string> todoSet;   // scene→asset edge lookup
@@ -252,9 +277,24 @@ void CookService::runOneCookPass() {
             if (pipeline.backfillDdc(rec)) ++backfilled;
             continue;
         }
-        if (!fileSettled(src)) { ++deferred; continue; }
-        todo.push_back(rec.uuid);
+        if (!fileSettled(src)) {
+            ++deferred;
+            if (wanted.count(rec.sourcePath)) wantedDeferred.insert(rec.sourcePath);
+            continue;
+        }
+        // A requested asset goes to the FRONT: someone is looking at its
+        // placeholder. The graph still cooks in parallel; this is who starts.
+        if (wanted.count(rec.sourcePath)) todo.insert(todo.begin(), rec.uuid);
+        else                              todo.push_back(rec.uuid);
         todoSet.insert(rec.uuid.toString());
+    }
+    // A request is answered by this pass (cooked, failed, already up to date,
+    // or not cookable at all) unless the file was mid-write; then it waits
+    // for the pass requeueIfDeferred schedules.
+    {
+        std::lock_guard<std::mutex> lk(m_requestMtx);
+        for (const auto& w : wanted)
+            if (!wantedDeferred.count(w)) m_wanted.erase(w);
     }
     total = (int)todo.size();
     if (backfilled > 0)

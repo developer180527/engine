@@ -1022,13 +1022,15 @@ Four libraries (WO-017):
 - `engine_runtime`: `engine_core` plus the graphics/platform/plugin stack.
   It reads cooked content only, in every build: the player and the server
   link it and nothing below. `player_has_no_cook_stack` checks the binaries.
-- `engine_source_import` (`engine::source_import`, dev trees only): the
-  AsyncLoader and the runtime glTF/Assimp importers, over `engine_runtime`
-  and `engine_cooking`. A host opts in with `sourceimport::install(rt)`
-  after init (`runtime/services/source_import.h`): the editor, `engine_host`,
-  `scene_resave`. Until WO-017 `EngineRuntime::init` registered these in
-  every dev build, which is how `engine_player` carried Assimp and every
-  encoder (33.6 MB; 24.4 MB without).
+- No source import at all (WO-018). WO-017 had moved the AsyncLoader and
+  the runtime glTF/Assimp importers into a dev-only `engine_source_import`
+  library; WO-018 deleted the importers and made the AsyncLoader
+  cooked-only, back in `engine_runtime`. A missing cook is a request to an
+  `ICookRequests` (`assets/cook_requests.h`): the editor's `CookService`
+  answers it, everything else reports "not cooked". Until WO-017
+  `EngineRuntime::init` registered the importers in every dev build, which
+  is how `engine_player` carried Assimp and every encoder (33.6 MB; 24.4 MB
+  without).
 
 Keep new sources on the right side: data processing with no bgfx/GLFW goes
 in `engine_core` if a shipped game needs it, `engine_cooking` if only a cook

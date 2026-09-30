@@ -20,7 +20,6 @@
 #include "assets/cookers/scene/scene_cooker.h"
 #include "assets/cookers/texture/texture_encode.h"
 #include "assets/cookers/texture/texture_cooker.h"
-#include "assets/importers/gltf_losses.h"
 #include "assets/import/frontend_cgltf.h"
 #include "animation/cooked_clip.h"
 #include <cgltf.h>
@@ -105,13 +104,16 @@ static std::string tinyGltf(bool mesh, bool skin, bool anim) {
     return j;
 }
 
-// What gltf_losses.h concludes about a file, read the same way the paths read it.
-static bool lossesOf(const fs::path& src, GltfLosses& out, bool& valid) {
+// What a fixture contains, read the way the cook reads it. (This counted
+// through gltf_losses.h, the runtime glTF importer's report; WO-018 deleted
+// that importer and its header.)
+struct GltfCounts { std::size_t meshes = 0, skins = 0, animations = 0; };
+static bool lossesOf(const fs::path& src, GltfCounts& out, bool& valid) {
     cgltf_options o{}; cgltf_data* d = nullptr;
     if (cgltf_parse_file(&o, src.string().c_str(), &d) != cgltf_result_success) return false;
     const bool buffers = cgltf_load_buffers(&o, d, src.string().c_str()) == cgltf_result_success;
     valid = buffers && cgltf_validate(d) == cgltf_result_success;
-    out = gltfLosses(*d);
+    out = {d->meshes_count, d->skins_count, d->animations_count};
     cgltf_free(d);
     return buffers;
 }
@@ -222,7 +224,7 @@ int main() {
         for (const Case& c : cases) {
             const fs::path src = dir / (std::string("wo002_") + c.name + ".gltf");
             { std::ofstream f(src); f << tinyGltf(c.mesh, c.skin, c.anim); }
-            GltfLosses l; bool valid = false;
+            GltfCounts l; bool valid = false;
             CHECK(lossesOf(src, l, valid) && valid, "%s: fixture is a valid glTF", c.name);
 
             const fs::path out = dir / (std::string("wo002_") + c.name + ".cooked");

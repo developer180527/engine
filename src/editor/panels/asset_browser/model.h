@@ -66,12 +66,12 @@ public:
     // ── What is here ────────────────────────────────────────────────────────
     // Rescan the folder if something asked for it; otherwise only refresh each
     // file's `loaded` flag, which changes as loads finish and is cheap to ask.
-    void update(const ImporterRegistry&                        importers,
+    void update(const SpawnableFn&                             spawnable,
                 assetlib::AssetRegistry*                       registry,
                 const std::filesystem::path&                   projectRoot,
                 const std::function<bool(const std::string&)>& isLoaded) {
         if (m_needRefresh) {
-            m_files = scanDir(m_currentDir, importers, registry, projectRoot,
+            m_files = scanDir(m_currentDir, spawnable, registry, projectRoot,
                               projectRoot / ".cache");
             m_needRefresh = false;
             resolveSelection();

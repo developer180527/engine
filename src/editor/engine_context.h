@@ -19,7 +19,6 @@ struct EngineContext {
     TextureRegistry&  textures;
     MaterialRegistry& materials;
     ProjectContext&   project;
-    ImporterRegistry& importers;
     EditorState&      editor;
     GizmoState&       gizmoState;
     assetlib::AssetRegistry* assetLib     = nullptr;

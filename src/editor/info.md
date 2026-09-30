@@ -178,12 +178,16 @@ only layer that links ImGui/ImGuizmo — the runtime stays UI-free.
   model runs without an engine context. `asset_browser_model_test` pins the
   behaviour and fails to build if `model.h` includes ImGui. The split exists
   so a second front end (the libgui experiment) drives the same model.
-  - **Spawning a model** (`panels/asset_browser/spawn.h`) takes the async
-    loader's COOKED path whenever the asset has a Ready cooked version
-    (`AsyncLoader::hasCooked`), so a skinned glTF arrives with its skeleton,
-    clips and an auto-playing Animator. Only an uncooked glTF still goes
-    through the runtime glTF importer, which reads static geometry alone
-    (BUG-0066; WO-018 removes that branch).
+  - **Spawning a model** (`panels/asset_browser/spawn.h`) creates the entity
+    at once and loads its COOKED version, so a skinned model arrives with its
+    skeleton, clips and an auto-playing Animator (BUG-0066). An uncooked model
+    is a cook request to the editor's `CookService` (WO-018): the entity shows
+    the placeholder cube and carries its authored reference, so a save
+    mid-cook writes the model, and the mesh swaps in when the cook lands. A
+    failed cook keeps the placeholder, with the reason in the Inspector.
+    There is no in-process parse of any format any more; a model looks the
+    same whether or not it was cooked before the editor opened.
+    Spawnable = an extension `MeshCooker` takes (`SpawnableFn`).
   - **Reveal in the file manager** is per OS (`actions.h`, `revealCommand`, a
     pure function of path and OS): macOS `open -R`, Windows `explorer /select`,
     Linux `xdg-open` on the containing folder. It ran `open -R` everywhere

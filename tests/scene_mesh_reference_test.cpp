@@ -92,7 +92,7 @@ int main() {
 
     // ── 2. Async import still in flight when the scene is saved ────────────
     {
-        std::printf("2. async (Assimp) load not finished at save time\n");
+        std::printf("2. async load (a cook in progress) not finished at save time\n");
         { std::ofstream(root / "assets/models/house.fbx") << "not really an fbx"; }
         flecs::world w;
         std::vector<PendingMesh> pending;
@@ -105,12 +105,12 @@ int main() {
         CHECK(saveEntity(e, ctx).value("meshRenderer", json{}) == houseRef(),
               "saving mid-load writes the authored reference unchanged");
 
-        // The build has no importer at all (a server, a shipping player).
+        // The host loads nothing by source path at all (no streamer).
         SerdeContext noImport = diskCtx(root, nullptr);
         flecs::entity e2 = createEntity(w, entityWith(houseRef()), noImport, IdPolicy::Generate);
         const UnresolvedMesh* u2 = e2.try_get<UnresolvedMesh>();
-        CHECK(u2 && !u2->pending && u2->reason.find("no importer") != std::string::npos,
-              "no importer: kept, with a reason (%s)", u2 ? u2->reason.c_str() : "-");
+        CHECK(u2 && !u2->pending && u2->reason.find("no loader") != std::string::npos,
+              "no loader: kept, with a reason (%s)", u2 ? u2->reason.c_str() : "-");
         CHECK(saveEntity(e2, noImport).value("meshRenderer", json{}) == houseRef(),
               "…and saved back unchanged");
         fs::remove(root / "assets/models/house.fbx");

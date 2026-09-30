@@ -54,9 +54,8 @@ The `AssetService` is the boundary between these two worlds — it only speaks c
 |--------|-------------|----------------|
 | **assetlib::AssetRegistry** | SQLite DB tracking every source asset — UUID, hash, cook state, dependencies | `modules/assetlib/` |
 | **CookPipeline** | Converts source assets to `.cooked` binaries (mesh cooker, texture cooker) | `modules/assetlib/`, `src/cookers/` |
-| **CookService** | Background thread that watches for stale assets and re-cooks them | `src/io/cook_service.h` |
-| **AsyncLoader** (legacy) | Assimp-based loader with texture discovery heuristics, used by the editor's drag-and-drop import | `src/engine/async_loader.h` |
-| **ImporterRegistry** | Registered importers (GltfImporter, AssimpImporter) for source format parsing | `src/io/importer_registry.h` |
+| **CookService** | Background thread that watches for stale assets and re-cooks them; also the "real" `ICookRequests`: cooks a requested asset first (WO-018) | `src/assets/cookers/cook_service.h` |
+| **AsyncLoader** | Loads an asset by SOURCE path from its cooked version; an uncooked one is a cook request (Pending → Ready/Failed), never a parse (WO-018) | `src/runtime/services/async_loader.h` |
 
 ### Runtime systems (in AssetService)
 

@@ -25,7 +25,7 @@ inline SceneAssets sceneAssetsFor(AssetService* service, AsyncLoader* loader) {
         a.streamMesh = [loader](const std::string& path, const std::string& label,
                                 std::function<void(const StreamedMesh&)> done) {
             loader->load(path, label, [done = std::move(done)](const AsyncLoadResult& r, const std::string&) {
-                done({r.mesh, r.skeleton, r.clips});
+                done({r.mesh, r.skeleton, r.clips, r.error});
             });
         };
     return a;

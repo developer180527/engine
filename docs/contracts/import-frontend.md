@@ -15,7 +15,7 @@ tests:
   - tests/frontend_assimp_test.cpp
 covers:
   - src/assets/import/
-verified: 2026-09-30
+verified: 2026-10-01
 ---
 
 # import-frontend — a source file in, the engine's ImportedScene out

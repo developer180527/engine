@@ -4,7 +4,6 @@
 #include "render/texture_registry.h"
 #include "render/material_registry.h"
 #include "project/project_context.h"
-#include "assets/importers/importer_registry.h"
 #include <assetlib/asset_registry.h>
 
 class PrimitiveLibrary;   // forward declare
@@ -21,7 +20,6 @@ struct RuntimeContext {
     TextureRegistry&  textures;
     MaterialRegistry& materials;
     ProjectContext&   project;
-    ImporterRegistry& importers;
     assetlib::AssetRegistry* assetLib     = nullptr;
     PrimitiveLibrary*        primitives   = nullptr;
     AssetService*            assetService = nullptr;

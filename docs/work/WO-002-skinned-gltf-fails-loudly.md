@@ -8,7 +8,7 @@ size: S
 state: done
 done: 2026-09-30
 evidence: tests/cooker_test.cpp §2c (5 valid-glTF cases); 4 mutations each red on their own check
-contracts: [cooker, mesh-importer]
+contracts: [cooker]   # mesh-importer too, retired with the runtime importers by WO-018
 touches:
   - src/assets/cookers/mesh/mesh_cooker.cpp
   - src/assets/importers/gltf_importer.cpp

@@ -25,9 +25,10 @@
 // What streaming a source mesh produced: the handles a spawned entity is wired
 // with. Invalid mesh on failure.
 struct StreamedMesh {
-    MeshHandle                  mesh;
+    MeshHandle                  mesh;         // invalid: failed, see `error`
     SkeletonHandle              skeleton;     // invalid if not skinned
     std::vector<AnimClipHandle> clips;        // empty if no animations
+    std::string                 error;        // why, when `mesh` is invalid
 };
 
 struct SceneAssets {
@@ -41,8 +42,10 @@ struct SceneAssets {
     // Save: a material handle back to its authored name; empty if it has none.
     std::function<std::string(MaterialHandle)> materialName;
 
-    // Import a SOURCE model off the calling thread; `done` runs on the thread
-    // that drains the loader, with what it produced.
+    // Load a model by its SOURCE path, from its cooked version, off the
+    // calling thread; `done` runs once, on the thread that drains the loader,
+    // with the mesh or the reason there is none. An uncooked source is a cook
+    // job where the host can cook, and a failure where it cannot (WO-018).
     std::function<void(const std::string& sourcePath, const std::string& label,
                        std::function<void(const StreamedMesh&)> done)> streamMesh;
 };

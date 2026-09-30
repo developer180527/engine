@@ -364,9 +364,10 @@ Verified state of that rule:
 
 So a Qt or Rust editor can link `engine_cooking` **today** and get cooking,
 the DDC, the material/shader/texture cookers and package closure, plus
-`engine_core`'s project scaffolding, with no window system at all. To read
-source assets at runtime as the ImGui editor does, it links
-`engine_source_import` and calls `sourceimport::install` after init.
+`engine_core`'s project scaffolding, with no window system at all. To have
+uncooked assets cook on demand as the ImGui editor does, it hands its
+`CookService` to the loader (`AsyncLoader::setCookRequests`); the runtime
+itself parses no source format (WO-018).
 
 The window seam (`wsi::`, `runtime/platform/window_ops.h`) moved out of
 `src/editor/` for exactly this reason: it had made multi-window support an

@@ -89,6 +89,10 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
         assets/import/frontend_assimp.cpp
         assets/anim_from_scene.cpp     # ImportedScene skeletons/clips -> anim (WO-015)
         assets/clip_source.cpp         # ClipLibrary's source reader (WO-015)
+        # The single-header decoders. Only the cook stack parses glTF or
+        # decodes a source image since WO-018: the runtime reads cooked bytes.
+        assets/importers/stb_impl.cpp
+        assets/importers/cgltf_impl.cpp
         assets/cookers/scene/scene_cooker.cpp
         assets/cookers/texture/texture_cooker.cpp
         assets/cookers/texture/texture_encode.cpp
@@ -140,10 +144,6 @@ add_library(engine_core STATIC
     runtime/sim_intent.cpp
     runtime/take.cpp
 
-    # Single-header library implementation TUs (CPU decode only)
-    assets/importers/stb_impl.cpp
-    assets/importers/cgltf_impl.cpp
-
     # Memory manager (2MB blocks + TLSF tagged heaps) and the counting/routing
     # global new/delete that feeds it
     core/memory/mem.cpp
@@ -188,8 +188,8 @@ elseif(MSVC)
 endif()
 target_compile_definitions(engine_core PUBLIC
     BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,0>   # bx headers (cooker skeleton types)
-    # Whether this tree builds the cook stack at all (engine_cooking,
-    # engine_source_import). engine_build reads it; the runtime does not.
+    # Whether this tree builds the cook stack at all (engine_cooking).
+    # engine_build reads it; the runtime does not.
     ENGINE_WITH_SOURCE_IMPORTERS=$<BOOL:${ENGINE_WITH_SOURCE_IMPORTERS}>
 )
 
@@ -395,6 +395,12 @@ add_library(engine_runtime STATIC
     runtime/services/scene_service.cpp
     runtime/services/lut_library.cpp   # grading LUTs by path (colour stage B3)
     runtime/services/nav_service.cpp
+    # Load by SOURCE path from the COOKED version; an uncooked asset is a cook
+    # request (assets/cook_requests.h). No source parsing (WO-018), so it
+    # lives in the runtime, not in a dev-only library.
+    runtime/services/async_loader/loader.cpp
+    runtime/services/async_loader/parse.cpp
+    runtime/services/async_loader/upload.cpp
     runtime/scripting/engine_api.cpp
     runtime/scripting/engine_api_table.cpp
     core/jobs/jobs_enkits.cpp
@@ -415,8 +421,6 @@ add_library(engine_runtime STATIC
     ${ENGINE_SHADER_SOURCES}
 )
 
-# Source-format import (the AsyncLoader, the glTF/Assimp importers) is NOT
-# here: it is engine_source_import, below, which a host links to opt in.
 
 set_source_files_properties(
     ${ENGINE_SHADER_SOURCES}
@@ -467,6 +471,13 @@ set(ENGINE_SERVER_EXCLUDED
     render/pipeline/shadow_pass.cpp
     render/shader/shader_library.cpp
     render/diag/frame_gpu_stats.cpp
+    # The editor's load-by-source-path loader. It reads cooked files and would
+    # link here (gpu_null has upload's symbols), but its job is asking a
+    # cooker for what is missing, and a server has no cooker: it loads cooked
+    # scenes through SceneService.
+    runtime/services/async_loader/loader.cpp
+    runtime/services/async_loader/parse.cpp
+    runtime/services/async_loader/upload.cpp
 )
 
 # Derived from engine_runtime's OWN source list rather than copied. A new TU
@@ -599,26 +610,6 @@ endif()
 
 add_library(engine::runtime ALIAS engine_runtime)
 
-# ── engine_source_import — a runtime that reads SOURCE assets (dev only) ─────
-# The editor's drag-drop AsyncLoader and the runtime glTF/Assimp importers.
-# They need both halves: the GPU upload path (engine_runtime) and the import
-# front ends (engine_cooking). A host opts in by linking this and calling
-# sourceimport::install(rt) after init (runtime/services/source_import.h):
-# the editor, engine_host and scene_resave. The player and the server do not,
-# so they load cooked binaries only in every build, not just the shipping one
-# (WO-017). WO-018 removes the runtime importers altogether.
-if(ENGINE_WITH_SOURCE_IMPORTERS)
-    add_library(engine_source_import STATIC
-        runtime/services/source_import.cpp
-        runtime/services/async_loader/loader.cpp
-        runtime/services/async_loader/parse.cpp
-        runtime/services/async_loader/upload.cpp
-        assets/importers/gltf_importer.cpp
-        assets/importers/assimp_importer.cpp
-    )
-    target_link_libraries(engine_source_import PUBLIC engine_runtime engine_cooking)
-    add_library(engine::source_import ALIAS engine_source_import)
-endif()
 
 # ── engine::headers — include dirs + defines, ZERO libraries ─────────────────
 # For hot-reloadable game modules (shared libs loaded by engine_host): they
@@ -757,7 +748,7 @@ set_target_properties(engine_project PROPERTIES
 # reloads it live on change: engine_host <project-dir> <module.so>.
 # ENABLE_EXPORTS: the module resolves engine symbols from this executable.
 add_executable(engine_host tools/engine_host.cpp)
-target_link_libraries(engine_host PRIVATE engine_source_import)   # a dev runner reads sources
+target_link_libraries(engine_host PRIVATE engine_runtime)   # cooked only; no cooker (WO-018)
 set_target_properties(engine_host PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
     ENABLE_EXPORTS ON
@@ -780,7 +771,7 @@ set_target_properties(profiler_frames PROPERTIES
 # Loads a project's scene (waiting for async imports), saves it back in the
 # current format. Upgrades legacy scenes to AssetRef references.
 add_executable(scene_resave tools/scene_resave.cpp)
-target_link_libraries(scene_resave PRIVATE engine_source_import)
+target_link_libraries(scene_resave PRIVATE engine_runtime)
 set_target_properties(scene_resave PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )

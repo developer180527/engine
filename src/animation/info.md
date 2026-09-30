@@ -9,7 +9,6 @@ tests:
   - tests/fuzz_cooked_skin_test.cpp
   - tests/anim_pose_test.cpp
   - tests/clip_binding_test.cpp
-  - tests/import_test.cpp
 ---
 # Animation
 
@@ -23,10 +22,10 @@ debt). Clips and skeletons reach it as engine types:
   `imp::toAnimSkeleton(const imp::Skeleton&)` (`assets/anim_from_scene.h`)
   convert the import format and call it. The mesh cook back end and the
   standalone-clip reader both use them, so every clip is built identically.
-- The Assimp-typed helpers (`extractSkeleton`, `extractBoneWeights`, a legacy
-  `buildOzzClip(aiAnimation*)`) live in the Assimp front end
-  (`assets/import/frontend_assimp_skeleton.h`), for it and for the two runtime
-  importers WO-018 deletes.
+- The Assimp-typed helpers (`extractSkeleton`, `extractBoneWeights`) live in
+  the Assimp front end (`assets/import/frontend_assimp_skeleton.h`). WO-018
+  deleted the two runtime importers that also used them, and the legacy
+  `buildOzzClip(aiAnimation*)` only they called.
 
 Rotation keys are **not** conjugated (ozz uses the source convention), and bind
 rotations **are** (`toAnimSkeleton`). `mesh_backend_test` samples a cooked clip

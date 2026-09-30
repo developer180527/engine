@@ -32,11 +32,11 @@
 #include "components/entity_id.h"
 #include "components/skinned_mesh.h"
 #include "components/lod_mesh.h"
+#include "components/mesh_placeholder.h"
 #include "components/animator.h"
 #include "render/asset_registry.h"
 #include "assets/asset_ref.h"
 #include "assets/asset_storage.h"
-#include "assets/importers/importer_registry.h"
 #include "render/primitive_library.h"
 #include "scene/scene_assets.h"
 #include "core/lod_limit.h"
@@ -81,7 +81,6 @@ struct SerdeContext {
     // what the old `matOverrideId` field did. Empty when the host has none.
     std::function<std::string(MaterialHandle)> materialNameLookup;
 
-    ImporterRegistry*         importers   = nullptr;     // disk load: glTF (sync)
 
     // Load: id-collision index. Optional, but a loader creating many entities
     // MUST set it — createEntity's fallback is findById, which is O(n) and made
@@ -239,7 +238,11 @@ inline bool hasMesh(flecs::entity e) {
 }
 inline void saveMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx) {
     const MeshRenderer* mr = e.try_get<MeshRenderer>();
-    if (!mr) {
+    // Showing the placeholder (WO-018): the MeshRenderer is a stand-in, and
+    // what is saved is the authored reference, as if there were none.
+    const MeshPlaceholder* ph = e.try_get<MeshPlaceholder>();
+    const bool placeholder = mr && ph && ph->shown == mr->mesh && e.has<UnresolvedMesh>();
+    if (!mr || placeholder) {
         // Not resolved: write back exactly what was authored. Disk gets the
         // original object; a memory snapshot keeps it under "unresolved" so a
         // restore (undo, end of Play) puts the same component back.
@@ -251,6 +254,7 @@ inline void saveMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx
         } else {
             j["unresolved"]       = std::move(authored);
             j["unresolvedReason"] = u->reason;
+            if (placeholder) j["placeholderId"] = mr->mesh.id;
         }
         return;
     }
@@ -283,10 +287,15 @@ inline void saveMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx
         }
     }
 }
-inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
+inline void loadMeshRef(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
     if (ctx.mode == SerdeMode::Memory) {
         if (auto it = j.find("unresolved"); it != j.end() && it->is_object()) {
             e.set<UnresolvedMesh>({it->dump(), j.value("unresolvedReason", std::string{}), false});
+            if (const uint32_t pid = j.value("placeholderId", 0u)) {
+                MeshHandle mh; mh.id = pid;
+                e.set<MeshRenderer>({mh});
+                e.set<MeshPlaceholder>({mh});
+            }
             return;
         }
         uint32_t hid = j.value("handleId", 0u);
@@ -322,6 +331,7 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
     auto resolved = [&e](MeshRenderer mr) {
         e.set<MeshRenderer>(mr);
         e.remove<UnresolvedMesh>();
+        e.remove<MeshPlaceholder>();
     };
 
     // The authored material name, resolved to a handle. Empty is normal — most
@@ -387,29 +397,33 @@ inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx
         if (h.valid()) { resolved({h, matOverride}); return; }
     }
 
-    std::string ext = std::filesystem::path(srcPath).extension().string();
-    for (auto& c : ext) c = (char)std::tolower(c);
-    const bool isGltf = (ext == ".glb" || ext == ".gltf");
-    if (isGltf && ctx.importers && ctx.storage) {
-        auto result = ctx.importers->loadCached(srcPath, *ctx.storage);
-        if (result.success) {
-            if (Mesh* m = const_cast<Mesh*>(ctx.storage->meshes.getMesh(result.mesh)))
-                m->sourcePath = srcPath;
-            resolved({result.mesh, matOverride});
-        } else {
-            LOG_ERROR("Scene", "glTF load failed: %s", result.error.c_str());
-            unresolved("glTF load failed: " + result.error);
-        }
-        return;
-    }
+    // Everything else is loaded by SOURCE path from its cooked version, off
+    // the calling thread (SceneAssets::streamMesh). There is no in-process
+    // parse of any format any more, glTF included (WO-018): the one path for
+    // an uncooked asset is a cook, so it looks the same whether or not it was
+    // cooked before the scene opened.
     if (ctx.pendingAsync) {
-        ctx.pendingAsync->push_back({e, srcPath, matOverride});   // Assimp on a worker
+        ctx.pendingAsync->push_back({e, srcPath, matOverride});
         unresolved("loading", /*pending*/ true);    // the callback resolves it
     } else {
-        LOG_WARN("Scene", "no importer in this build for %s — reference kept",
+        LOG_WARN("Scene", "nothing loads source-referenced meshes here: %s — reference kept",
                  srcPath.c_str());
-        unresolved("no importer for this file in this build");
+        unresolved("no loader in this host");
     }
+}
+
+// Disk load, then the placeholder (WO-018): an entity whose mesh did not
+// resolve here (Pending: a cook is coming; Failed: none will) SHOWS the
+// primitive cube instead of nothing. MeshPlaceholder records that the
+// MeshRenderer is the stand-in, so saveMesh still writes the authored
+// reference. Needs the primitive library (absent headless: no placeholder).
+inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
+    loadMeshRef(e, j, ctx);
+    if (ctx.mode != SerdeMode::Disk || !e.has<UnresolvedMesh>() || e.has<MeshRenderer>()) return;
+    if (!ctx.primitives || !ctx.primitives->ready()) return;
+    const MeshHandle cube = ctx.primitives->cube();
+    e.set<MeshRenderer>({cube});
+    e.set<MeshPlaceholder>({cube});
 }
 
 // ── LodMesh (the coarser levels; level 0 is MeshRenderer's own mesh) ──────────

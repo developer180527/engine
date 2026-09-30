@@ -14,10 +14,9 @@
 # (option lives in the root CMakeLists; it instruments engine + third_party.)
 
 # engine_test(<name> [LIB <lib>...] [EXPORTS]
-#   LIB: engine_core, engine_runtime, engine_cooking (the cook stack) and/or
-#   engine_source_import (a runtime that reads source assets). The last two
-#   exist only in dev trees (WO-017); a test naming one is skipped when it is
-#   absent, since what it tests is not built.
+#   LIB: engine_core, engine_runtime and/or engine_cooking (the cook stack).
+#   engine_cooking exists only in dev trees (WO-017); a test naming it is
+#   skipped when it is absent, since what it tests is not built.
 #             [LABEL unit|stress|asset] [TIMEOUT sec] [ARGS ...])
 #   EXPORTS: test loads real kit .so modules that resolve engine symbols
 #   from the executable (ENABLE_EXPORTS).
@@ -26,7 +25,7 @@ function(engine_test name)
     if(NOT ET_LIB)
         set(ET_LIB engine_runtime)
     endif()
-    foreach(_devlib engine_cooking engine_source_import)
+    foreach(_devlib engine_cooking)
         if(_devlib IN_LIST ET_LIB AND NOT TARGET ${_devlib})
             return()
         endif()
@@ -158,6 +157,13 @@ engine_test(scene_mesh_reference_test)
 # SceneSerializer with a fake SceneAssets (WO-047). save() never installed the
 # name lookup, and a streamed mesh dropped its override at load.
 engine_test(scene_material_roundtrip_test)
+# WO-018: the runtime loads cooked content only, and a missing cook is a JOB.
+# Null provider -> Failed "not cooked"; a cooker -> Pending, cook requested,
+# Ready when it lands (or Failed with the cook's reason); a cooked mesh waits
+# for its uncooked texture; a scene entity shows the placeholder, saves its
+# authored reference, and swaps in. Links engine_runtime ONLY: there is no
+# parser in the process, and player_has_no_cook_stack reads this binary too.
+engine_test(asset_cook_request_test)
 # WO-010: the import-frontend contract. The ImportedScene invariants, each shown
 # failing on a scene broken its way; and the contract suite every front end must
 # pass (tests/import_contract.h), shown passing the fake AND failing front ends
@@ -415,7 +421,7 @@ engine_test(providers_test)
 # Importer-dependent tests — dev posture only (the shipping build compiles
 # the source-import stack out; these have nothing to exercise there).
 if(ENGINE_WITH_SOURCE_IMPORTERS)
-    engine_test(async_loader_test LIB engine_source_import)
+    engine_test(async_loader_test LIB engine_runtime engine_cooking)
     engine_test(cooker_test LIB engine_runtime engine_cooking)
     # WO-011: the ONE cook back end, ImportedScene -> cooked mesh, through
     # ImportedScene values only (no file parsed). Reads the cooked bytes back:
@@ -580,7 +586,6 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # built from the contract suite's reference scenes: no crash, no escaping
     # exception, nothing invalid cooks, and every cook loads back.
     engine_fuzz_target(fuzz_import_frontend_test import_frontend LIB engine_runtime engine_cooking)
-    engine_test(import_test LIB engine_source_import)
     engine_test(residency_test LIB engine_runtime engine_cooking)
 # ── The editor's first automated coverage ────────────────────────────────────
 # UndoStack is header-only with no ImGui in its include graph, and it is the
@@ -692,9 +697,6 @@ engine_test(stress_jobs      LABEL stress TIMEOUT 600)
 # never exercised at scale. Measures what extraction pays to WALK it.
 engine_test(stress_skinned   LABEL stress TIMEOUT 600)
 engine_test(stress_physics   LABEL stress TIMEOUT 600)
-if(ENGINE_WITH_SOURCE_IMPORTERS)
-    engine_test(stress_assets LIB engine_source_import LABEL stress TIMEOUT 600)   # importer fuzz
-endif()
 
 # ── docs lane — the documentation/maturity contract ──────────────────────────
 # engine_doctor validates every doc's front-matter against the TREE: covers/
@@ -795,7 +797,8 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/scripts/check_no_cook_stack.py
                      $<TARGET_FILE:engine_player> $<TARGET_FILE:engine_module_probe>
-                     $<TARGET_FILE:server_link_probe>)
+                     $<TARGET_FILE:server_link_probe>
+                     $<TARGET_FILE:asset_cook_request_test>)
     set_tests_properties(player_has_no_cook_stack PROPERTIES LABELS unit TIMEOUT 120)
 
     add_test(NAME architecture_audit
