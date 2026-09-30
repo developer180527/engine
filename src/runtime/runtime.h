@@ -178,7 +178,11 @@ public:
     // frameBegin: polls platform events, computes clamped dt, handles window
     // resize, drains async asset uploads. Returns false when the platform
     // requests close. frameEnd: flips the frame (bgfx::frame).
-    bool frameBegin(float& dt);
+    //
+    // `poll = false` is for a frame drawn from IPlatform's live-resize hook:
+    // that hook runs INSIDE pollEvents (the OS's modal resize loop), so the
+    // frame must not pump events again. Everything else is the same.
+    bool frameBegin(float& dt, bool poll = true);
     void frameEnd();
     void run(const std::function<void(float dt)>& frame);
 

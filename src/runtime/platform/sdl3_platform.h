@@ -48,6 +48,7 @@ public:
     float hdrHeadroom() const override;
     std::string hdrSurfaceDescription() const override;
     void  setNativeEventHook(NativeEventHook hook) override;
+    void  setLiveResizeHook(LiveResizeHook hook) override;
 
     // UI input (ui_input.h)
     void  enableUiInput(bool on) override { m_uiInput = on; }
@@ -69,6 +70,9 @@ private:
     std::unordered_map<uint32_t, Sdl3ToolWindow*> m_tools;   // by SDL_WindowID
 
     NativeEventHook m_eventHook;
+    LiveResizeHook  m_liveResizeHook;
+    bool            m_inLiveResizeHook = false;
+    static bool     liveResizeWatch(void* self, SDL_Event* e);
     bool                     m_uiInput = false;
     std::vector<uiin::Event> m_uiEvents;
     bool                     m_textInputOn = false;

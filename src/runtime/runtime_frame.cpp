@@ -13,14 +13,14 @@
 #include <chrono>
 #include <unordered_set>
 
-bool EngineRuntime::frameBegin(float& dt) {
+bool EngineRuntime::frameBegin(float& dt, bool poll) {
     if (!m_initialized) {
         LOG_ERROR("Runtime", "frameBegin()/run() before init()");
         return false;
     }
     if (!m_platform || m_platform->shouldClose()) return false;
 
-    m_platform->pollEvents();
+    if (poll) m_platform->pollEvents();
 
     // While minimized (zero-size framebuffer), block on events instead of
     // spinning. Headless platforms report 0x0 too but never resize — skip
@@ -28,6 +28,9 @@ bool EngineRuntime::frameBegin(float& dt) {
     if (!m_headless) {
         int fbw = 0, fbh = 0;
         m_platform->framebufferSize(fbw, fbh);
+        // Inside a live-resize hook we cannot wait for events: skip a
+        // zero-size frame instead (the caller draws nothing).
+        if (!poll && (fbw <= 0 || fbh <= 0)) return false;
         while ((fbw <= 0 || fbh <= 0) && !m_platform->shouldClose()) {
             m_platform->waitEvents(0.1);
             m_platform->pollEvents();

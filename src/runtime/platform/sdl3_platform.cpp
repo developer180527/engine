@@ -42,6 +42,7 @@ bool Sdl3Platform::init(const PlatformConfig& cfg) {
 }
 
 void Sdl3Platform::shutdown() {
+    setLiveResizeHook({});
     for (SDL_Cursor*& c : m_cursors)
         if (c) { SDL_DestroyCursor(c); c = nullptr; }
     if (m_window) { SDL_DestroyWindow(m_window); m_window = nullptr; }
@@ -85,6 +86,29 @@ void* Sdl3Platform::backendWindowHandle() const { return m_window; }
 
 void Sdl3Platform::setNativeEventHook(NativeEventHook hook) {
     m_eventHook = std::move(hook);
+}
+
+// Live resize: on macOS a window-edge drag runs the OS's modal loop inside
+// SDL_PumpEvents, so pollEvents does not return until the mouse is released.
+// SDL still delivers SDL_EVENT_WINDOW_EXPOSED (data1 = 1) to event WATCHERS
+// during that loop, on the main thread, and expects a redraw from there. A
+// queued event would only arrive after the drag, which is the stretching.
+void Sdl3Platform::setLiveResizeHook(LiveResizeHook hook) {
+    const bool had = static_cast<bool>(m_liveResizeHook);
+    m_liveResizeHook = std::move(hook);
+    if (m_liveResizeHook && !had)      SDL_AddEventWatch(&Sdl3Platform::liveResizeWatch, this);
+    else if (!m_liveResizeHook && had) SDL_RemoveEventWatch(&Sdl3Platform::liveResizeWatch, this);
+}
+
+bool Sdl3Platform::liveResizeWatch(void* self, SDL_Event* e) {
+    auto* p = static_cast<Sdl3Platform*>(self);
+    if (e->type == SDL_EVENT_WINDOW_EXPOSED && e->window.data1 == 1 &&
+        p->m_liveResizeHook && !p->m_inLiveResizeHook) {
+        p->m_inLiveResizeHook = true;   // the frame it draws must not re-enter
+        p->m_liveResizeHook();
+        p->m_inLiveResizeHook = false;
+    }
+    return true;   // a watcher's return value is ignored
 }
 
 void Sdl3Platform::pollEvents() {

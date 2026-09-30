@@ -129,6 +129,16 @@ public:
     using NativeEventHook = std::function<void(const void* nativeEvent)>;
     virtual void setNativeEventHook(NativeEventHook) {}
 
+    // Called while the user drags a window edge. On macOS the OS runs its own
+    // modal loop for a live resize and the app's loop is blocked inside
+    // pollEvents until the mouse is released, so without this the old frame
+    // is stretched and the layout only catches up afterwards. The hook should
+    // draw one frame WITHOUT polling events (EngineRuntime::frameBegin(dt,
+    // false)). It runs inside pollEvents, on the main thread. Default: never
+    // called, and a platform that does not block during resize needs nothing.
+    using LiveResizeHook = std::function<void()>;
+    virtual void setLiveResizeHook(LiveResizeHook) {}
+
     // The WINDOWING LIBRARY's window object (GLFWwindow* / SDL_Window*), as
     // opposed to nativeWindowHandle()'s OS-level handle. Opaque on purpose:
     // apps hand it to whichever ImGui platform backend and window-ops

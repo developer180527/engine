@@ -131,6 +131,14 @@ required.
   keeps floating panels inside the main window. GLFW tool windows expose X11
   handles only (no Wayland yet). Verified live on SDL3: a libgui tab dragged
   onto the desktop becomes its own window.
+- **Live resize** (2026-09-30): `IPlatform::setLiveResizeHook`. On macOS a
+  window-edge drag runs the OS's modal loop inside `pollEvents`, so the app's
+  loop is blocked until the mouse is released and the last frame is stretched.
+  SDL3 delivers `SDL_EVENT_WINDOW_EXPOSED` (data1 = 1) to event watchers during
+  that loop; the hook draws a frame from there with `frameBegin(dt, false)`,
+  which skips the poll it is already inside. Default: never called. GLFW has no
+  equivalent wired yet. Used by the libgui experiment; verified that a resize
+  drag ends with the layout at the new size, no automated test.
 - **`Key` covers what GUIs and shortcuts need** (2026-09-27): Home/End/PageUp/
   PageDown/Insert/CapsLock/Menu, punctuation by US-layout position, and the
   keypad — additive, GLFW-valued like every other Key, static_asserted in
