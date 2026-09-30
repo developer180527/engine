@@ -1,18 +1,24 @@
 ---
 status: as-built
 tier: working
-verified: 2026-08-08
+verified: 2026-09-30
 covers:
   - docs/
 ---
 # Documentation
 
-Start with **[`../ENGINE_STATUS.md`](../ENGINE_STATUS.md)** — generated from the
-tree, it answers *what is true right now* per subsystem. Nothing in it is
-hand-maintained, so nothing in it can quietly go stale.
+## Start here
 
-Then **[`process/roadmap.md`](process/roadmap.md)** for what is missing and in
-what order it should be built.
+1. **`python3 scripts/work_orders.py brief`**: where you left off. It shows
+   commits since your last session, uncommitted work, the last test run, stale
+   docs and the next ready work. It is read-only and takes well under a second.
+2. **[`../ENGINE_STATUS.md`](../ENGINE_STATUS.md)**: *what is true right now*,
+   per subsystem. It is generated from the tree, so it cannot quietly go stale.
+3. **[`work/BOARD.md`](work/BOARD.md)**: *what to do next*, every open work
+   order in priority and dependency order. Also generated, from `work/WO-*.md`.
+4. **[`process/roadmap.md`](process/roadmap.md)**: *why that order*, and what
+   we are deliberately not building. The only one of the four written by hand,
+   so it holds strategy, never numbers.
 
 ## Layout
 
@@ -22,6 +28,7 @@ what order it should be built.
 | `guides/` | How to *use* the engine — APIs, scripting, performance tuning. |
 | `reference/` | File formats and schemas, field by field. Lookup material, not narrative. |
 | `process/` | How we work: the doc contract, the maturity ladder, the roadmap. Also the defect record — [`bug-ledger.md`](process/bug-ledger.md) is the schema and [`bugs/`](process/bugs/) is one file per defect; [`open-questions.md`](process/open-questions.md) is what is known and *not* fixed; [`port-log-windows.md`](process/port-log-windows.md) is what the cross-platform port cost. |
+| `work/` | The work queue: one file per work order, checked by `scripts/work_orders.py`, with a generated `BOARD.md`. See [`work/README.md`](work/README.md). |
 | `plans/` | Work not yet done. Audits, phased plans, backlog. `plans/future-plans/` is speculative. |
 | `rhi/` | The graphics-abstraction programme, one purpose per file — the decision, its evidence, the design, the migration. [`rhi/workflow.md`](rhi/workflow.md) is how a question becomes a study becomes a decision; [`rhi/studies/`](rhi/studies/) is where the research lands. |
 | `generated/` | Doxygen output. Not written by hand, not reviewed. |

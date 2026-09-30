@@ -17,15 +17,14 @@ Nothing. Start the first order under **Next up**.
 
 ## Next up
 
-1. [WO-004](WO-004-roadmap-stops-lying.md) **The roadmap stops lying about where we are** · P1 · size S — `docs/README.md` tells you to read the roadmap second, and its numbers are a month old.
-2. [WO-005](WO-005-reveal-in-file-manager-per-os.md) **"Reveal in Finder" works per OS instead of running `open` everywhere** · P1 · size S — `revealInFinder` runs `std::system("open -R '…'")` unguarded on every OS. On Linux, `open` is a different program altogether.
-3. [WO-006](WO-006-unknown-os-is-a-compile-error.md) **An unknown OS is a compile error with a to-do list, not silently POSIX** · P1 · size M — Core memory, threading and module loading go `#if _WIN32 … #else POSIX`, so a new port compiles, then quietly does the wrong thing.
+1. [WO-005](WO-005-reveal-in-file-manager-per-os.md) **"Reveal in Finder" works per OS instead of running `open` everywhere** · P1 · size S — `revealInFinder` runs `std::system("open -R '…'")` unguarded on every OS. On Linux, `open` is a different program altogether.
+2. [WO-006](WO-006-unknown-os-is-a-compile-error.md) **An unknown OS is a compile error with a to-do list, not silently POSIX** · P1 · size M — Core memory, threading and module loading go `#if _WIN32 … #else POSIX`, so a new port compiles, then quietly does the wrong thing.
+3. [WO-008](WO-008-game-module-static-claim.md) **game_module.h stops claiming a static-link path that does not exist** · P1 · size S — The header says shipped games "link engine::runtime statically and never dlopen anything". No code does that.
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-004](WO-004-roadmap-stops-lying.md) | The roadmap stops lying about where we are | Process & context | S | **ready** | — |
 | [WO-005](WO-005-reveal-in-file-manager-per-os.md) | "Reveal in Finder" works per OS instead of running `open` everywhere | Portability | S | **ready** | — |
 | [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | Portability | M | **ready** | — |
 | [WO-008](WO-008-game-module-static-claim.md) | game_module.h stops claiming a static-link path that does not exist | Providers & modules | S | **ready** | kit-abi |
@@ -56,6 +55,7 @@ Nothing. Start the first order under **Next up**.
 |---|---|---|---|---|---|
 | [WO-023](WO-023-gpu-resident-materials.md) | Material data GPU-resident — the CPU binds indices, never walks contents | Renderer & RHI | L | blocked by WO-019 | render-pipeline |
 | [WO-028](WO-028-audio-provider-outbound-seam.md) | Finish the audio provider's outbound seam (B) before any physics ABI | Providers & modules | M | **ready** | audio-provider |
+| [WO-031](WO-031-shader-hot-reload.md) | Shader hot-reload — the runtime picks up a re-cooked shader | Renderer & RHI | M | **ready** | render-pipeline |
 
 ## Parked — on purpose, with what would unpark it
 
@@ -64,12 +64,14 @@ Nothing. Start the first order under **Next up**.
 | [WO-025](WO-025-static-module-registration.md) | Static module registration for platforms without dlopen | M | a console or iOS target is real |
 | [WO-026](WO-026-rhi-g0a-spike.md) | RHI G0a spike — answer the specific open questions, then throw it away | M | WO-020 is done (so the spike asks the retained scene's questions), or a free weekend |
 | [WO-027](WO-027-custom-rhi.md) | Custom RHI implementation | XL | WO-019, WO-020 and WO-026 are done, then split into G-phase orders of size L or less |
+| [WO-030](WO-030-retire-compiled-in-standard-program.md) | Retire the compiled-in standard program | M | we decide that a cooked shader cache is a hard prerequisite of running at all (a deployment decision) |
 
 ## Done
 
 | order | title | done | evidence |
 |---|---|---|---|
 | [WO-029](WO-029-save-never-drops-a-mesh-reference.md) | Saving a scene never drops a mesh reference it failed to load | 2026-09-30 | tests/scene_mesh_reference_test.cpp (7 cases) + editor_panel_models_test §8; 4 mutations each red on their own check |
+| [WO-004](WO-004-roadmap-stops-lying.md) | The roadmap stops lying about where we are | 2026-09-30 | docs/process/roadmap.md rewritten as status decided; docs/README.md start-here; WO-030 and WO-031 carry its open items |
 | [WO-003](WO-003-brief-reentry-command.md) | One command to regain context — `brief` | 2026-09-30 | tests/work_orders_test.py (brief: parsers, scratch tree, real git repo, 2 s budget on the real repo); 5 mutations each red on their own check |
 | [WO-002](WO-002-skinned-gltf-fails-loudly.md) | A skinned glTF fails loudly instead of cooking as a static mesh | 2026-09-30 | tests/cooker_test.cpp §2c (5 valid-glTF cases); 4 mutations each red on their own check |
 | [WO-001](WO-001-work-order-board.md) | Work-order board | 2026-09-30 | ctest -L docs runs work_orders_test and work_board_current |
