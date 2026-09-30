@@ -15,8 +15,9 @@
 //                       snapshots out — this is the multiplayer contract
 //                       (prediction stores it, the wire carries it, rollback
 //                       replays it). Later events stay staged for the next
-//                       tick. The engine currently ticks per-frame; when a
-//                       fixed-timestep sim lands, this API slots in as-is.
+//                       tick. The fixed step supplies tickEndNs from the
+//                       frame's pump time (lastPumpNs) and its accumulator,
+//                       never from a clock of its own (runtime/sim_clock.h).
 //   LATE-LATCH LOOK     consumeLook() drains ALL accumulated raw mouse
 //                       counts — including events newer than the last tick —
 //                       for the camera at render time. Freshest possible
@@ -113,6 +114,10 @@ public:
     // ── Frame flow ─────────────────────────────────────────────────────────
     void pump();                        // poll source -> staging (per frame)
     void beginTick(uint64_t tickEndNs); // staging(<=tickEnd) -> snapshot
+    // When pump() last collected input, in the input clock's nanoseconds; 0
+    // before the first pump. No staged event is newer. The fixed step derives
+    // its tick boundaries from this instead of reading a clock (sim_clock.h).
+    uint64_t lastPumpNs() const { return m_lastPumpNs; }
     const InputSnapshot& snapshot() const { return m_cur; }
     const InputSnapshot& prevSnapshot() const { return m_prev; }
 
@@ -212,6 +217,7 @@ private:
     std::unordered_map<uint32_t, Endpoint> m_endpoints;          // DeviceId ->
     std::unordered_map<uint64_t, uint32_t> m_elected;            // physId|type ->
     uint64_t m_lastDeviceGen = 0;   // last reconciled hotplug generation
+    uint64_t m_lastPumpNs = 0;      // see lastPumpNs()
 
     std::vector<hid::Event> m_staging;   // pumped, not yet ticked
     InputSnapshot m_cur, m_prev;

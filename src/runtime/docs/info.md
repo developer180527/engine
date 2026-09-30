@@ -379,7 +379,7 @@ step means something new rather than the same known state.
 | ~~`Spinner` at frame rate~~ **FIXED** | `tickSystems()` ran the spinner query with FRAME dt, so `Transform` — a hashed component — advanced at render rate, and `m_animatorSystem.tick(dt)` two lines below had the identical defect. Both clocks now advance in the fixed step at `kSimDt`; see below. |
 | ~~Collision order is a thread race~~ **FIXED** | contacts arrived from Jolt workers and became the order of `CollisionEvents`, which scripts iterate — divergent run-to-run in the same process. Sorted at the source, and the maps whose iteration drives body destruction and character stepping are now ordered (BUG-0054). |
 | ~~`m_ecs.progress()` takes no `delta_time`~~ **FIXED** | flecs documents `0` as "automatically measure the time passed since the last frame", so the ECS pipeline advanced on wall time. It now takes an explicit `dt`, and the sim world's `progress` moved into the fixed step. |
-| `hid::nowNs()` inside the fixed step | the tick boundary is wall-clock. Inert while nothing in the gate's tiers reads input. |
+| ~~`hid::nowNs()` inside the fixed step~~ **FIXED (WO-043)** | the tick boundary was wall-clock, read inside the step, and a catch-up frame folded every event into its first tick (a press and release in one frame lost the release). Each step's input window now ends where the frame's pump time and the accumulator put it (`runtime/sim_clock.h`); the step reads no clock. `sim_clock_test`; audit DET-01 holds with no debt. |
 
 None of these are fixed here. Recording them is what the instrument is for.
 
@@ -863,8 +863,9 @@ to quiet the gate fails the test until someone changes that number on purpose.
 
 It still measures **ECS-observable** determinism only. `JPH::PhysicsSystem`,
 `lua_State` and `AnimatorSystem::m_contexts` are hashed only through their
-consequences, and `hid::nowNs()` is still read inside the fixed step — inert
-while no tier reads input, and the next thing to close if one does.
+consequences. The fixed step reads no clock (WO-043): its input windows come
+from the frame's pump time, and a take replays the per-tick intents those
+windows produced.
 
 ### Two things a harness driving this loop must know
 

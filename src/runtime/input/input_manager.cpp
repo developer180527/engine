@@ -169,6 +169,9 @@ bool InputManager::accept(const hid::Event& e) {
 
 // ── Frame flow ──────────────────────────────────────────────────────────────
 void InputManager::pump() {
+    // Read BEFORE draining: an event stamped while the drain runs is newer than
+    // this and waits for a later tick, never lands in one that has closed.
+    m_lastPumpNs = hid::nowNs();
     // Reliable hotplug reconcile BEFORE draining. The ring's DeviceAdded/
     // DeviceRemoved are best-effort (droppable on a hitch); a lost DeviceRemoved
     // would otherwise leave a disconnected device ELECTED as an event type's

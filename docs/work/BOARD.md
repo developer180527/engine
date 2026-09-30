@@ -48,7 +48,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-022](WO-022-decision-records.md) | Decision records — the "why" survives the person | Process & context | M | **ready** | — |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
-| [WO-043](WO-043-fixed-step-reads-no-clock.md) | The fixed step reads no wall clock (audit DET-01) | Providers & modules | S | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
@@ -58,6 +57,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-028](WO-028-audio-provider-outbound-seam.md) | Finish the audio provider's outbound seam (B) before any physics ABI | Providers & modules | M | **ready** | audio-provider |
 | [WO-031](WO-031-shader-hot-reload.md) | Shader hot-reload — the runtime picks up a re-cooked shader | Renderer & RHI | M | **ready** | render-pipeline |
 | [WO-034](WO-034-frustum-near-plane-homogeneous-depth.md) | Frustum near plane is wrong under homogeneous depth (OpenGL) | Renderer & RHI | S | **ready** | — |
+| [WO-045](WO-045-catch-up-frame-look-per-step.md) | A catch-up frame's look motion is spread over its steps, not given to the first | Providers & modules | S | **ready** | — |
 
 ## Parked — on purpose, with what would unpark it
 
@@ -74,6 +74,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | done | evidence |
 |---|---|---|---|
 | [WO-044](WO-044-abi-compat-test-covers-every-group.md) | The ABI compatibility test defends every API group (audit ABI-03) | 2026-09-30 | api_abi_compat_test (physics2 at 800, intent at 816, and a static_assert that frozen[] and offs[] list the same groups); audit ABI-03 ok with no baseline entries |
+| [WO-043](WO-043-fixed-step-reads-no-clock.md) | The fixed step reads no wall clock (audit DET-01) | 2026-09-30 | sim_clock_test (the boundary function; a catch-up frame's press/release/press lands one per tick, and with the clock read put back it is HPR H-- H--); audit DET-01 ok with no baseline entry; determinism_gate_test 0 divergences |
 | [WO-042](WO-042-reverify-the-stale-design-docs.md) | Re-verify the stale docs, the asset cook architecture first | 2026-09-30 | engine_doctor check 0 warnings (was 13); ENGINE_STATUS.md 0 stale docs |
 | [WO-041](WO-041-ledger-the-bugs-of-2026-09-30.md) | Ledger the bugs fixed on 2026-09-30 that have no entry | 2026-09-30 | BUG-0065..0070 in docs/process/bugs/, all passing engine_doctor's ledger checks; each fix re-reverted and seen red (BUG-0066's pin is new: async_loader_test §3) |
 | [WO-040](WO-040-assimp-skeleton-truncation.md) | A rig over the bone limit is refused, not silently truncated | 2026-09-30 | mesh_backend_test (128 cooks, 129 refused by name); frontend_assimp_test §5 and frontend_cgltf_test §5 (300-bone rig read whole; 65,546-joint skin Skin/Wrong); render_pipeline_test (shader palette literal = kMaxBones*4); four mutations red |

@@ -74,11 +74,12 @@
 // through the intent sample, the contribution fold, EntityId resolution, the
 // character controller and Jolt.
 //
-// InputManager::beginTick is still called with hid::nowNs(), a wall clock, and
-// that is still a finding reported below: the events this tier feeds carry
-// small monotonic stamps, so they always fold on the tick they arrive in and
-// the clock cannot decide anything. A stream whose stamps straddled a real
-// tick boundary would be a different matter.
+// InputManager::beginTick used to be called with hid::nowNs(), a wall clock
+// read inside the step. Since WO-043 each step's window ends where the frame's
+// pump time and the accumulator put it (runtime/sim_clock.h), and the step
+// reads no clock. This tier's events carry small monotonic stamps, so they fold
+// on the tick they arrive in and it does not exercise the boundaries;
+// sim_clock_test does, with a catch-up frame whose events straddle them.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -1140,9 +1141,11 @@ int main(int argc, char** argv) {
     }
 
     std::printf("\n-- findings this gate does not fix --\n");
-    std::printf("  * hid::nowNs() is read INSIDE the fixed step "
-                "(runtime_sim.cpp, m_input.beginTick) — the tick boundary is "
-                "wall-clock. Inert here because no tier reads input.\n");
+    std::printf("  * (CLOSED 2026-09-30, WO-043) hid::nowNs() used to be read "
+                "INSIDE the fixed step (m_input.beginTick), so the tick boundary "
+                "was wall-clock. Each step's input window now comes from the "
+                "frame's pump time and the accumulator (sim_clock.h); "
+                "sim_clock_test pins it.\n");
     std::printf("  * (CLOSED 2026-09-08) m_ecs.progress() used to take NO "
                 "delta_time — flecs documents 0 as \"automatically measure the "
                 "time passed since the last frame\", i.e. a wall clock in the "

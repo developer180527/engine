@@ -366,6 +366,9 @@ engine_test(camera_look_test)
 # Stage 5: the intent layer. Its headline property needs a real engine driven
 # at two frame cadences, so this is not a pure-unit test.
 engine_test(sim_intent_test)
+# WO-043: a fixed step's input window comes from the frame's pump time, not a
+# clock read inside the step; a catch-up frame shares its input across steps.
+engine_test(sim_clock_test)
 # The physics verbs executed from the command record, in a fixed phase order,
 # and the script surface submitting them rather than calling the backend.
 engine_test(sim_command_exec_test)

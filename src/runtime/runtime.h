@@ -476,6 +476,7 @@ private:
     std::unique_ptr<FrameStatsChannel>   m_frameStats;     // profiler channel
     static constexpr float kSimDt = 1.0f / 60.0f;   // fixed simulation step
     float m_simAccumulator = 0.0f;
+    uint64_t m_inputTickEndNs = 0;     // the last fixed step's input boundary (sim_clock.h)
     dbg::DebugDraw      m_debugDraw;     // per-frame debug lines (engineDraw*)
 
     // Simulation state — game world only exists in Snapshot mode.

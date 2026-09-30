@@ -4,6 +4,7 @@
 // fixed-timestep loop, and the per-frame system tick.
 // NO <bgfx/bgfx.h> — sim never touches the GPU.
 #include "runtime/runtime.h"
+#include "runtime/sim_clock.h"
 #include "runtime/sim_classification.h"
 #include "runtime/sim_command.h"
 #include "runtime/sim_hash.h"
@@ -189,8 +190,13 @@ void EngineRuntime::tickSimulation(float dt) {
     // via the late-latch channel.
     m_simAccumulator += dt;
     if (m_simAccumulator > 4.0f * kSimDt) m_simAccumulator = 4.0f * kSimDt;
+    // The frame's one clock reading: when input was pumped. Each step's input
+    // window ends where sim_clock.h says, so the step reads no clock (DET-01)
+    // and a catch-up frame hands each step its own slice of the input.
+    const uint64_t pumpNs = m_input.lastPumpNs();
     while (m_simAccumulator >= kSimDt) {
         m_simAccumulator -= kSimDt;
+        m_inputTickEndNs = simclock::inputTickEndNs(pumpNs, m_simAccumulator, m_inputTickEndNs);
         // Age event components BEFORE any broadcast: a message written last tick
         // is guaranteed present for this whole tick regardless of who wrote or
         // reads it first (see event_sweeper.h), decoupling kits from load order.
@@ -217,7 +223,7 @@ void EngineRuntime::tickSimulation(float dt) {
             e.set<PrevTransform>({ t.position, t.rotation, t.scale });
         });
         w.defer_end(); }
-        m_input.beginTick(hid::nowNs());   // fold staged events -> snapshot
+        m_input.beginTick(m_inputTickEndNs);   // fold staged events -> snapshot
         m_simElapsed += kSimDt;
         ++m_simFrame;
         m_scriptHost->setFrame(kSimDt, m_simElapsed, m_simFrame);
@@ -821,7 +827,8 @@ void EngineRuntime::tickSystems(float dt, bool paused) {
     m_input.setUICapture(InputSystem::get().uiCapturesKeyboard(),
                          InputSystem::get().uiCapturesMouse());
     m_input.pump();
-    if (!m_simulating) m_input.beginTick(hid::nowNs());
+    // Editor preview: one snapshot per frame, ending when input was pumped.
+    if (!m_simulating) m_input.beginTick(m_inputTickEndNs = std::max(m_inputTickEndNs, m_input.lastPumpNs()));
     // ── EDITOR PREVIEW ONLY, and the guard is the whole point ───────────────
     // Spinner writes Transform, a component the determinism gate hashes. Run at
     // FRAME dt it advanced at render rate, so identical content simulated at
