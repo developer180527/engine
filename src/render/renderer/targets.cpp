@@ -138,6 +138,8 @@ bool Renderer::ensureBackHdrFB() {
 }
 
 void Renderer::renderScene(const float view[16], const float proj[16]) {
+    // Made on first use (WO-050), at the size init() or the editor last gave.
+    if (!m_sceneHdrFB.valid() && m_sceneW > 0 && m_sceneH > 0) createSceneFB(m_sceneW, m_sceneH);
     if (!m_sceneHdrFB.valid()) return;
 
     RenderTarget target;

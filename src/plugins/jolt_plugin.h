@@ -2,6 +2,8 @@
 #include <memory>
 #include <algorithm>
 #include <map>
+#include <set>
+#include <utility>
 #include <unordered_map>
 #include <thread>
 
@@ -134,38 +136,84 @@ public:
         LOG_INFO("Physics", "Jolt detached");
     }
 
-    // ── Capacity (WO-048) ────────────────────────────────────────────────
-    // These were 4 096 each, a demo-scene size. A box resting in a pile
-    // touches its neighbours and the boxes above and below, several contacts
-    // each: 1 000 boxes needed about 4 000 contact constraints and 2 000 about
-    // 8 000, so the larger scene overflowed. Jolt then DROPS the contacts that
-    // do not fit, bodies pass into each other and piles never settle, which
-    // sim_profile measured as 3 500 contact starts and ends per tick instead
-    // of 20 (reportUpdateErrors now says so).
-    //   * body pairs: Jolt asks for "much higher than the max amount of contact
-    //     points", since many nearby bodies do not actually touch
-    //   * contact constraints: their per-step array comes from the TEMP
-    //     allocator, which std::abort()s when full, so the two grow together.
-    //     Jolt's samples pair 10 240 constraints with 10 MB; 20 480 here gets
-    //     64 MB, reserved address space committed only as a step touches it.
-    // A project that needs more gets the error below, naming the constant.
-    static constexpr uint32_t kMaxBodies             = 65536;
-    static constexpr uint32_t kMaxBodyPairs          = 65536;
-    static constexpr uint32_t kMaxContactConstraints = 20480;
-    static constexpr uint32_t kTempAllocatorBytes    = 64u * 1024 * 1024;
+    // ── Capacity GROWS WITH CONTENT (WO-050; sizes from WO-048) ──────────
+    // Nothing is allocated until the first body or character exists: an empty
+    // or 2D game with no physics content pays nothing. The world used to be
+    // created at simulation start with capacity for 65 536 bodies, 65 536 body
+    // pairs, 20 480 contact constraints and a 64 MB temp allocator: 78 MB
+    // live in an empty project, sized for WO-048's 2 000-box piles.
+    //
+    // Jolt cannot resize a PhysicsSystem after Init, so growth is a REBUILD
+    // (rebuildWorld): a new system at a larger tier, every body re-added in
+    // entity order with its velocities (deterministic), characters re-created,
+    // and collision events carried across (m_touching). It happens when a body
+    // would not fit, or when a step reports a full cache (Jolt drops the
+    // contacts that do not fit, so the next step runs at the larger size).
+    //
+    //   * bodies: the next power of two at least twice the count, min 1 024
+    //   * contacts are sized from the MOVABLE (dynamic + kinematic) bodies,
+    //     because two statics never touch. WO-048 measured the worst case
+    //     known, boxes in dense piles, at ~4 contact constraints per box; the
+    //     plan is 8 constraints and 16 body pairs per movable body (Jolt asks
+    //     for pairs "much higher than the max amount of contact points"),
+    //     rounded up to a power of two. The world rebuilds when the movable
+    //     count outgrows that plan, BEFORE anything overflows.
+    //   * the TEMP allocator holds the per-step constraint array: ~1 KB per
+    //     constraint (Jolt's samples: 10 MB for 10 240), WITH A MALLOC
+    //     FALLBACK so an underestimate costs a malloc, not std::abort.
+    // PROACTIVE, BECAUSE JOLT ASSERTS: in builds with Jolt asserts on, any
+    // update error traps (PhysicsSystem.cpp), so "overflow, then grow" is not
+    // a mechanism there. Where asserts are off, a step that still overflows
+    // (denser than 8 per body) grows the world for the next step and says so.
+    struct Capacity { uint32_t bodies = 0, pairs = 0, constraints = 0; };
+    static constexpr uint32_t kMinBodies       = 1024;
+    static constexpr uint32_t kMinPairs        = 1024;
+    static constexpr uint32_t kMinConstraints  = 512;
+    static constexpr uint32_t kConstraintsPerMovable = 8;
+    static constexpr uint32_t kPairsPerMovable       = 16;
+    static constexpr uint32_t kBodyCeiling     = 1u << 21;
+    static constexpr uint32_t kPairCeiling     = 1u << 21;
+    static constexpr uint32_t kConstraintCeiling = 1u << 20;
+    static constexpr uint32_t kTempBytesPerConstraint = 1024;
+    static constexpr uint32_t kMinTempBytes    = 256u * 1024;
+
+    static uint32_t pow2AtLeast(uint32_t n) {
+        uint32_t p = 1;
+        while (p < n && p < (1u << 31)) p <<= 1;
+        return p;
+    }
+    static Capacity capacityFor(uint32_t bodies, uint32_t movable) {
+        Capacity c;
+        c.bodies      = std::min(kBodyCeiling, pow2AtLeast(std::max(kMinBodies, bodies * 2)));
+        c.pairs       = std::min(kPairCeiling,
+                                 pow2AtLeast(std::max(kMinPairs, movable * kPairsPerMovable)));
+        c.constraints = std::min(kConstraintCeiling,
+                                 pow2AtLeast(std::max(kMinConstraints, movable * kConstraintsPerMovable)));
+        return c;
+    }
+    // How many movable bodies a capacity was planned for.
+    static uint32_t plannedMovableFor(const Capacity& c) {
+        return std::min(c.constraints / kConstraintsPerMovable, c.pairs / kPairsPerMovable);
+    }
+    uint32_t plannedMovable() const { return plannedMovableFor(m_cap); }
+    // What the world is sized for now; zeroes before it exists. For tests and
+    // the Plugins panel.
+    Capacity capacity() const { return m_cap; }
+    uint32_t rebuildCount() const { return m_rebuilds; }
 
     void onSimulationStart(flecs::world& ecs) override {
-        m_tempAllocator = std::make_unique<JPH::TempAllocatorImpl>(kTempAllocatorBytes);
-        // Physics runs on the ENGINE pool (see jolt_jobs_adapter.h) — Jolt
-        // spawns no threads of its own.
-        m_jobSystem     = std::make_unique<JoltJobsAdapter>(
-            JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers);
-
-        m_physics = std::make_unique<JPH::PhysicsSystem>();
-        m_physics->Init(kMaxBodies, 0, kMaxBodyPairs, kMaxContactConstraints,
-            m_bpInterface, m_objVsBP, m_objPairFilter);
-        m_physics->SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
+        m_simRunning = true;
         ecs.set<PhysicsServiceRef>({ this });   // publish to the script backend
+
+        // Size the world for what the scene holds, or create none at all.
+        uint32_t n = 0, movable = 0;
+        ecs.query_builder<const RigidBody>().build().each([&](const RigidBody& rb) {
+            ++n;
+            if (rb.bodyType != PhysicsBodyType::Static) ++movable;
+        });
+        ecs.query_builder<const CharacterController>().build()
+            .each([&](const CharacterController&) { ++n; ++movable; });
+        if (n > 0) ensureWorld(n, movable);
 
         ecs.query_builder<const Transform, const RigidBody>().build()
             .each([this](flecs::entity e, const Transform& t, const RigidBody& rb) {
@@ -181,14 +229,149 @@ public:
         m_bodySyncQ = ecs.query_builder<const Transform, const RigidBody>().build();
         m_charSyncQ = ecs.query_builder<const Transform, const CharacterController>().build();
 
+        if (m_physics) m_physics->OptimizeBroadPhase();
+        LOG_SUCCESS("Physics", "Simulation start — %d bodies%s", (int)m_entityToBody.size(),
+                    m_physics ? "" : " (no physics content: nothing allocated)");
+    }
+
+    // The world exists and fits `bodies` bodies, `movable` of them movable;
+    // creating it, or growing it before anything would overflow.
+    void ensureWorld(uint32_t bodies, uint32_t movable) {
+        if (!m_physics) { createSystem(capacityFor(bodies, movable)); return; }
+        const bool needBodies  = bodies > m_cap.bodies && m_cap.bodies < kBodyCeiling;
+        const bool needContact = movable > plannedMovable() && m_cap.constraints < kConstraintCeiling;
+        if (!needBodies && !needContact) return;
+        const Capacity want = capacityFor(bodies, movable);
+        Capacity c;
+        c.bodies      = std::max(m_cap.bodies, want.bodies);
+        c.pairs       = std::max(m_cap.pairs, want.pairs);
+        c.constraints = std::max(m_cap.constraints, want.constraints);
+        rebuildWorld(c, needBodies ? "bodies" : "movable bodies");
+    }
+
+    void createSystem(Capacity c) {
+        m_cap = c;
+        m_tempAllocator = std::make_unique<JPH::TempAllocatorImplWithMallocFallback>(
+            std::max(kMinTempBytes, c.constraints * kTempBytesPerConstraint));
+        // Physics runs on the ENGINE pool (see jolt_jobs_adapter.h) — Jolt
+        // spawns no threads of its own.
+        if (!m_jobSystem)
+            m_jobSystem = std::make_unique<JoltJobsAdapter>(
+                JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers);
+        m_physics = std::make_unique<JPH::PhysicsSystem>();
+        m_physics->Init(c.bodies, 0, c.pairs, c.constraints,
+            m_bpInterface, m_objVsBP, m_objPairFilter);
+        m_physics->SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
         m_contactListener.owner = this;
         m_physics->SetContactListener(&m_contactListener);
+    }
+
+    // Jolt cannot grow a PhysicsSystem, so: snapshot, rebuild larger, re-add.
+    // Called between steps (never inside Update), on the main thread.
+    void rebuildWorld(Capacity c, const char* why) {
+        if (m_jobSystem && !m_jobSystem->drain()) {
+            LOG_ERROR("Physics", "cannot grow the physics world: jobs did not drain");
+            return;
+        }
+        // Bodies in ENTITY order (m_entityToBody is a std::map), so the new
+        // BodyIDs are assigned the same way in every run.
+        struct Snap { flecs::entity_t e; JPH::BodyCreationSettings s; bool active; };
+        std::vector<Snap> bodies;
+        bodies.reserve(m_entityToBody.size());
+        for (auto& [eid, bid] : m_entityToBody) {
+            JPH::BodyLockRead l(m_physics->GetBodyLockInterface(), bid);
+            if (l.Succeeded())
+                bodies.push_back({eid, l.GetBody().GetBodyCreationSettings(), l.GetBody().IsActive()});
+        }
+        struct CSnap { flecs::entity_t e; JPH::RVec3 p; JPH::Quat r; JPH::Vec3 v; };
+        std::vector<CSnap> chars;
+        for (auto& [eid, ch] : m_characters)
+            chars.push_back({eid, ch->GetPosition(), ch->GetRotation(), ch->GetLinearVelocity()});
+
+        // Contacts already reported this frame (earlier substeps) name OLD
+        // BodyIDs: carry them across by entity.
+        std::vector<std::pair<std::pair<flecs::entity_t, flecs::entity_t>, bool>> pending;
+        {
+            std::lock_guard lock(m_collisionMutex);
+            for (const CollisionPair& p : m_pendingCollisions) {
+                auto a = m_bodyToEntity.find(p.a), b = m_bodyToEntity.find(p.b);
+                if (a != m_bodyToEntity.end() && b != m_bodyToEntity.end())
+                    pending.push_back({{a->second, b->second}, p.enter});
+            }
+            m_pendingCollisions.clear();
+        }
+
+        m_characters.clear();   // they hold the old system: release first
+        m_entityToBody.clear();
+        m_bodyToEntity.clear();
+        m_physics.reset();
+        const Capacity old = m_cap;
+        createSystem(c);
+
+        auto& bi = m_physics->GetBodyInterface();
+        for (const Snap& b : bodies) {
+            // SLEEP STATE IS PRESERVED, and the event bookkeeping depends on it.
+            // In this Jolt a body going to sleep reports its contacts as ENDED,
+            // so a sleeping pile has no contacts in m_touching. Waking it here
+            // would re-detect them as new (measured: ten resting boxes each
+            // entered the floor again, then exited when they slept). An active
+            // body is re-added active, so its first step re-detects what it was
+            // touching, and m_touching marks those as re-reports.
+            const JPH::BodyID bid = bi.CreateAndAddBody(b.s,
+                b.active ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+            if (bid.IsInvalid()) continue;
+            m_entityToBody[b.e] = bid;
+            m_bodyToEntity[bid] = b.e;
+        }
         m_physics->OptimizeBroadPhase();
-        LOG_SUCCESS("Physics", "Simulation start — %d bodies", (int)m_entityToBody.size());
+        for (const CSnap& cs : chars) {
+            auto st = m_charState.find(cs.e);
+            if (st == m_charState.end() || !st->second.settings) continue;
+            JPH::Ref<JPH::CharacterVirtual> ch = new JPH::CharacterVirtual(
+                st->second.settings.GetPtr(), cs.p, cs.r, m_physics.get());
+            ch->SetLinearVelocity(cs.v);
+            m_characters[cs.e] = ch;
+        }
+        {
+            std::lock_guard lock(m_collisionMutex);
+            for (const auto& [ents, enter] : pending) {
+                auto a = m_entityToBody.find(ents.first), b = m_entityToBody.find(ents.second);
+                if (a != m_entityToBody.end() && b != m_entityToBody.end())
+                    m_pendingCollisions.push_back({a->second, b->second, enter});
+            }
+        }
+        m_touchingAtRebuild = m_touching;
+        m_suppressReadds    = true;
+        m_stepsSinceRebuild = 0;
+        ++m_rebuilds;
+        LOG_INFO("Physics", "world grown (%s): bodies %u->%u, pairs %u->%u, constraints %u->%u "
+                 "(%zu bodies, %zu characters re-added)", why, old.bodies, c.bodies,
+                 old.pairs, c.pairs, old.constraints, c.constraints, bodies.size(), chars.size());
+    }
+
+    // A step reported a full cache: grow what filled, for the NEXT step.
+    void growForOverflow(JPH::EPhysicsUpdateError err) {
+        Capacity c = m_cap;
+        if ((uint32_t)err & (uint32_t)JPH::EPhysicsUpdateError::BodyPairCacheFull)
+            c.pairs = std::min(kPairCeiling, c.pairs * 4);
+        if ((uint32_t)err & ((uint32_t)JPH::EPhysicsUpdateError::ManifoldCacheFull |
+                             (uint32_t)JPH::EPhysicsUpdateError::ContactConstraintsFull))
+            c.constraints = std::min(kConstraintCeiling, c.constraints * 4);
+        if (c.pairs != m_cap.pairs || c.constraints != m_cap.constraints)
+            rebuildWorld(c, "contacts");
     }
 
     void onSimulationStop() override {
-        if (!m_physics) return;
+        m_simRunning = false;
+        if (!m_physics) {                      // nothing was ever allocated
+            m_bodySyncQ = {};
+            m_charSyncQ = {};
+            m_charState.clear();
+            m_warnedSpawn.clear();
+            m_touching.clear();
+            m_accumulator = 0.0f;
+            return;
+        }
         // ── DRAIN FIRST, while everything the jobs touch is still alive ─────
         // QueueJob is fire-and-forget, so a `physics.job` can still be running
         // here. It holds a Job* from the adapter's free list and steps a
@@ -243,13 +426,19 @@ public:
         m_physics.reset();
         m_jobSystem.reset();     // already drained above; its dtor's wait is a no-op
         m_tempAllocator.reset();
+        m_cap = {};
+        m_movable = 0;
+        m_touching.clear();
+        m_touchingAtRebuild.clear();
+        m_suppressReadds = false;
         m_accumulator = 0.0f;
         LOG_INFO("Physics", "Simulation stop");
     }
 
     void onPhysicsStep(flecs::world& ecs, float dt) override {
-        if (!m_physics) return;
+        if (!m_simRunning) return;
         syncRuntimeBodies(ecs);   // entities cloned/destroyed DURING play
+        if (!m_physics) { m_accumulator = 0.0f; return; }   // still no content
         m_accumulator += dt;
         int steps = 0;
         while (m_accumulator >= kFixedDt && steps < 4) {
@@ -259,8 +448,11 @@ public:
             // three: the body would keep the velocity that got it there. Re-
             // targeting each substep drives it to zero on arrival instead.
             pushEcsToPhysics(ecs);
-            reportUpdateErrors(m_physics->Update(kFixedDt, 1,
-                m_tempAllocator.get(), m_jobSystem.get()));
+            const JPH::EPhysicsUpdateError err = m_physics->Update(kFixedDt, 1,
+                m_tempAllocator.get(), m_jobSystem.get());
+            reportUpdateErrors(err);
+            ++m_stepsSinceRebuild;
+            if (err != JPH::EPhysicsUpdateError::None) growForOverflow(err);
             updateCharacters(kFixedDt);
             m_accumulator -= kFixedDt;
             ++steps;
@@ -282,9 +474,11 @@ public:
                                 const CharacterController& cc) {
             if (!m_characters.count(e.id())) spawnCharacter(e, t, cc);
         });
+        if (!m_physics) return;   // no content yet: nothing to remove
         auto& bi = m_physics->GetBodyInterface();
         for (auto it = m_entityToBody.begin(); it != m_entityToBody.end();) {
             if (!ecs.entity(it->first).is_alive()) {
+                if (bi.GetMotionType(it->second) != JPH::EMotionType::Static && m_movable) --m_movable;
                 m_bodyToEntity.erase(it->second);
                 bi.RemoveBody(it->second);
                 bi.DestroyBody(it->second);
@@ -308,7 +502,7 @@ public:
     }
 
     // ── Stats (UI-free — the editor's Plugins panel reads these) ────────
-    bool simulationActive() const { return m_physics != nullptr; }
+    bool simulationActive() const { return m_simRunning; }
     int  bodyCount()        const { return (int)m_entityToBody.size(); }
     // Physics steps whose update reported a full cache (contacts dropped).
     uint64_t updateErrorSteps() const { return m_updateErrorSteps; }
@@ -445,7 +639,20 @@ public:
     ObjVsBPFilter        m_objVsBP;
     ObjLayerPairFilter   m_objPairFilter;
 
-    std::unique_ptr<JPH::TempAllocatorImpl> m_tempAllocator;
+    std::unique_ptr<JPH::TempAllocator>     m_tempAllocator;
+    Capacity                                m_cap;
+    bool                                    m_simRunning = false;
+    uint32_t                                m_rebuilds   = 0;
+    uint32_t                                m_movable    = 0;   // dynamic + kinematic bodies
+    // Entity pairs in contact, as the flushes have reported them. A rebuilt
+    // world re-reports every contact as NEW on its first step; the flush after
+    // a rebuild drops the re-report of a pair that was already touching
+    // (m_touchingAtRebuild), and reports the end of any that did not come
+    // back. Scripts therefore see no contact begin or end that did not happen.
+    std::set<std::pair<flecs::entity_t, flecs::entity_t>> m_touching;
+    std::set<std::pair<flecs::entity_t, flecs::entity_t>> m_touchingAtRebuild;
+    bool                                    m_suppressReadds = false;
+    uint32_t                                m_stepsSinceRebuild = 0;
     std::unique_ptr<JoltJobsAdapter>        m_jobSystem;
     std::unique_ptr<JPH::PhysicsSystem>       m_physics;
     float                                      m_accumulator = 0.0f;
@@ -509,6 +716,7 @@ public:
         bool      grounded     = false;
         float     gravityScale = 1.0f;
         float     stepHeight   = 0.3f;
+        JPH::Ref<JPH::CharacterVirtualSettings> settings;   // for rebuildWorld
     };
     std::map<flecs::entity_t, JPH::Ref<JPH::CharacterVirtual>>           m_characters;
     // Hashed on purpose — see the note on m_entityToBody. This one is never
@@ -565,15 +773,16 @@ public:
         ++m_updateErrorSteps;
         struct Kind { JPH::EPhysicsUpdateError bit; const char* what; };
         static const Kind kKinds[] = {
-            {JPH::EPhysicsUpdateError::ManifoldCacheFull,      "manifold cache full: too many contacts (raise kMaxContactConstraints)"},
-            {JPH::EPhysicsUpdateError::BodyPairCacheFull,      "body pair cache full: too many touching bodies (raise kMaxBodyPairs)"},
-            {JPH::EPhysicsUpdateError::ContactConstraintsFull, "contact constraint buffer full (raise kMaxContactConstraints)"},
+            {JPH::EPhysicsUpdateError::ManifoldCacheFull,      "manifold cache full: too many contacts"},
+            {JPH::EPhysicsUpdateError::BodyPairCacheFull,      "body pair cache full: too many touching bodies"},
+            {JPH::EPhysicsUpdateError::ContactConstraintsFull, "contact constraint buffer full"},
         };
         for (const Kind& k : kKinds)
             if (((uint32_t)err & (uint32_t)k.bit) && !((uint32_t)m_reportedErrors & (uint32_t)k.bit)) {
                 m_reportedErrors = m_reportedErrors | k.bit;
-                LOG_ERROR("Physics", "%s; contacts beyond it are DROPPED and bodies pass into each other "
-                          "(%d bodies)", k.what, (int)m_entityToBody.size());
+                LOG_ERROR("Physics", "%s; this step's contacts beyond it were DROPPED. The world grows "
+                          "for the next step (WO-050) unless it is at its ceiling (%d bodies)",
+                          k.what, (int)m_entityToBody.size());
             }
     }
     JPH::EPhysicsUpdateError m_reportedErrors = JPH::EPhysicsUpdateError::None;
@@ -632,12 +841,36 @@ public:
         struct Hit { flecs::entity_t self, other; bool enter; };
         std::vector<Hit> hits;
         hits.reserve(local.size() * 2);
+        std::set<std::pair<flecs::entity_t, flecs::entity_t>> readded;
         for (auto& p : local) {
             auto i1 = m_bodyToEntity.find(p.a);
             auto i2 = m_bodyToEntity.find(p.b);
             if (i1==m_bodyToEntity.end()||i2==m_bodyToEntity.end()) continue;
+            const auto key = std::minmax(i1->second, i2->second);
+            if (p.enter) {
+                // A rebuilt world re-reports contacts that never ended (WO-050).
+                if (m_suppressReadds && m_touchingAtRebuild.count(key) && m_touching.count(key)
+                    && readded.insert(key).second)
+                    continue;
+                m_touching.insert(key);
+            } else {
+                m_touching.erase(key);
+            }
             hits.push_back({i1->second, i2->second, p.enter});
             hits.push_back({i2->second, i1->second, p.enter});
+        }
+        // After a rebuild, once a step has run on the new world: a pair that
+        // was touching and was NOT re-reported came apart across the rebuild,
+        // so its end is reported here, in pair order (deterministic).
+        if (m_suppressReadds && m_stepsSinceRebuild > 0) {
+            for (const auto& key : m_touchingAtRebuild) {
+                if (readded.count(key) || !m_touching.count(key)) continue;
+                m_touching.erase(key);
+                hits.push_back({key.first, key.second, false});
+                hits.push_back({key.second, key.first, false});
+            }
+            m_touchingAtRebuild.clear();
+            m_suppressReadds = false;
         }
 
         // A body's FIRST contact gives it the component: the one structural
@@ -783,6 +1016,10 @@ public:
             settings.mMassPropertiesOverride.mMass = rb.mass;
         }
 
+        // Created or grown on demand, before the body could overflow anything.
+        ensureWorld((uint32_t)m_entityToBody.size() + 1,
+                    m_movable + (uint32_t)m_characters.size()
+                              + (motionType != JPH::EMotionType::Static ? 1u : 0u));
         JPH::BodyID bid = m_physics->GetBodyInterface().CreateAndAddBody(
             settings,
             motionType == JPH::EMotionType::Static
@@ -792,6 +1029,7 @@ public:
         if (!bid.IsInvalid()) {
             m_entityToBody[e.id()] = bid;
             m_bodyToEntity[bid]    = e.id();
+            if (motionType != JPH::EMotionType::Static) ++m_movable;
         } else {
             LOG_WARN("Physics", "Body creation failed for entity %llu", (uint64_t)e.id());
         }
@@ -806,7 +1044,11 @@ public:
             JPH::Vec3(0, cc.height * 0.5f, 0), JPH::Quat::sIdentity(), capsule).Create().Get();
 
         float wm[16]; getWorldMatrix(e, wm);
-        JPH::CharacterVirtualSettings settings;
+        ensureWorld(std::max<uint32_t>(1, (uint32_t)m_entityToBody.size()),
+                    m_movable + (uint32_t)m_characters.size() + 1);
+        // Kept (in CharState) so a rebuild can re-create the character.
+        JPH::Ref<JPH::CharacterVirtualSettings> settingsRef = new JPH::CharacterVirtualSettings();
+        JPH::CharacterVirtualSettings& settings = *settingsRef;
         settings.mShape         = shape;
         settings.mMaxSlopeAngle = JPH::DegreesToRadians(cc.maxSlopeDeg);
         settings.mMass          = cc.mass;
@@ -820,6 +1062,7 @@ public:
 
         m_characters[e.id()] = ch;
         CharState st; st.gravityScale = cc.gravityScale; st.stepHeight = cc.stepHeight;
+        st.settings = settingsRef;
         m_charState[e.id()] = st;
     }
 

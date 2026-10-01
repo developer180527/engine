@@ -195,6 +195,15 @@ endif()
 
 add_subdirectory(third_party/bgfx.cmake)
 
+# bgfx sizes its per-frame tables (draw records, the matrix cache, ...) for
+# BGFX_CONFIG_MAX_DRAW_CALLS, 65 535 by default, allocated at init whatever is
+# drawn. This engine cannot use them: ForwardPipeline caps itself at 4 096
+# draws a frame (kMaxDrawsPerFrame) because the Metal backend's fixed uniform
+# scratch overflows near 8 192. 16 383 keeps 4x headroom over the cap and 2x
+# over the Metal limit (editor ImGui draws included), at a quarter of the
+# memory. WO-050: an empty game should not carry tables for 65 535 draws.
+target_compile_definitions(bgfx PRIVATE BGFX_CONFIG_MAX_DRAW_CALLS=16383)
+
 # Sanitizer lanes instrument the whole tree — but bgfx's HOST BUILD TOOLS
 # (shaderc + its compiler stack) run at build time and abort under ASan on a
 # vendored stack overflow inside glslang, killing the build before any engine

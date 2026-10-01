@@ -158,7 +158,11 @@ bool Renderer::init(void* nwh, int width, int height,
         }
     }
 
-    createSceneFB(width, height);
+    // The editor's scene-view targets are NOT made here (WO-050): 14 MB at
+    // 1280x720 that a game, which renders to the backbuffer, never draws.
+    // renderScene creates them on first use; the editor's resize calls
+    // createSceneFB directly.
+    m_sceneW = width; m_sceneH = height;
 
     static const uint8_t kFlatNorm[4] = {128, 128, 255, 255};
     m_flatNormalTex = gpu::fromBgfx(bgfx::createTexture2D(1, 1, false, 1,

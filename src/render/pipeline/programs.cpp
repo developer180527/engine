@@ -92,17 +92,19 @@ void ForwardPipeline::onAttach(RenderContext& attachCtx) {
             true);
         m_uBoneMatrices = bgfx::createUniform("u_boneMatrices", bgfx::UniformType::Vec4,
                                              (uint16_t)(kMaxBones * 4));   // mat4 = 4 vec4s; the shaders declare the same
-        const uint64_t smFlags = BGFX_TEXTURE_RT
-            | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT
-            | BGFX_SAMPLER_U_CLAMP   | BGFX_SAMPLER_V_CLAMP;
-        m_shadowMap = bgfx::createTexture2D(SHADOW_SIZE, SHADOW_SIZE, false, 1,
-                                            bgfx::TextureFormat::D32F, smFlags);
-        // Report the cost. This one allocation dominates GPU memory on a
-        // low-end machine, so it should never be a silent decision.
-        LOG_INFO("Renderer", "shadow map %ux%u D32F = %.1f MB",
-                    SHADOW_SIZE, SHADOW_SIZE,
-                    (double)SHADOW_SIZE * SHADOW_SIZE * 4.0 / (1024.0 * 1024.0));
-        m_shadowFB  = bgfx::createFrameBuffer(1, &m_shadowMap, false);
+        // NO SHADOW MAP YET (WO-050). It is created by the shadow pass the
+        // first time a light actually casts (ensureShadowMap): 16 MB at 2048²
+        // that a game with no shadow-casting light never needs. Until then the
+        // opaque pass binds this 1x1 stand-in, so the sampler is never unbound
+        // (the shader skips the lookup when no light casts, but an unbound
+        // depth sampler is a validation error on some backends).
+        {
+            static const float kFar = 1.0f;
+            m_noShadowMap = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::R32F,
+                BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT
+                | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP,
+                bgfx::copy(&kFar, sizeof(kFar)));
+        }
         m_sShadowMap    = bgfx::createUniform("s_shadowMap",    bgfx::UniformType::Sampler);
         m_uShadowMtx    = bgfx::createUniform("u_shadowMtx",    bgfx::UniformType::Mat4);
         m_uShadowParams = bgfx::createUniform("u_shadowParams", bgfx::UniformType::Vec4);
@@ -136,6 +138,7 @@ void ForwardPipeline::onDetach() {
         if (bgfx::isValid(m_skinnedShadowProgram)) { bgfx::destroy(m_skinnedShadowProgram); m_skinnedShadowProgram = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowFB))      { bgfx::destroy(m_shadowFB);      m_shadowFB      = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowMap))     { bgfx::destroy(m_shadowMap);     m_shadowMap     = BGFX_INVALID_HANDLE; }
+        if (bgfx::isValid(m_noShadowMap))   { bgfx::destroy(m_noShadowMap);   m_noShadowMap   = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_shadowProgram)) { bgfx::destroy(m_shadowProgram); m_shadowProgram = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_lineProgram))   { bgfx::destroy(m_lineProgram);   m_lineProgram   = BGFX_INVALID_HANDLE; }
     }

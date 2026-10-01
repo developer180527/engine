@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-050](WO-050-empty-game-costs-nothing.md) **An empty game costs nothing — capacity grows with content, never reserved for it** · P1 · size M — Owner directive (2026-10-01): developers' scripts will be expensive, so the engine must cost close to nothing when it is idle. With no assets and no scripts, only the main loop running, the engine's own cost must be negligible. A minimal 2D game must not carry the engine's 3D performance or memory. The custom RHI will help later, but this cannot wait for it.
-2. [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) **Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx)** · P2 · size S — The backend and shader set are picked with compile-time OS checks, so anything that isn't Apple or Windows gets Vulkan.
-3. [WO-035](WO-035-fbx-units.md) **FBX units — decide whether imports arrive in metres** · P2 · size M — Assimp's FBX reader applies the file's `UnitScaleFactor` in centimetres, so an FBX arrives in the units it was authored in. That's usually centimetres, 100x the engine's metres, unless the exporter baked a conversion. The engine has always cooked FBX that way, and projects compensate with entity scale.
+1. [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) **Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx)** · P2 · size S — The backend and shader set are picked with compile-time OS checks, so anything that isn't Apple or Windows gets Vulkan.
+2. [WO-035](WO-035-fbx-units.md) **FBX units — decide whether imports arrive in metres** · P2 · size M — Assimp's FBX reader applies the file's `UnitScaleFactor` in centimetres, so an FBX arrives in the units it was authored in. That's usually centimetres, 100x the engine's metres, unless the exporter baked a conversion. The engine has always cooked FBX that way, and projects compensate with entity scale.
+3. [WO-023](WO-023-gpu-resident-materials.md) **Material data GPU-resident — the CPU binds indices, never walks contents** · P3 · size L — Every material bind in `opaque_pass.cpp` has the CPU walk `mat->blocks` and `mat->textureBinds`, resolve textures and issue uniforms.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,7 +35,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
-| [WO-050](WO-050-empty-game-costs-nothing.md) | An empty game costs nothing — capacity grows with content, never reserved for it | Providers & modules | M | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -68,6 +67,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-050](WO-050-empty-game-costs-nothing.md) | An empty game costs nothing — capacity grows with content, never reserved for it | 2026-10-01 | empty project 204.7 -> 95.8 MB mapped (physics 78.4 -> 0.01 MB, bgfx heap 86.5 -> 49.1 MB, render targets 72.2 -> 42.2 MB); empty_game_budget_test (2.74 MB tagged, 0.011 ms/tick; an eager physics world turns it red); physics_capacity_test (lazy, rebuild, no spurious events; removing the re-report suppression turns it red); 50k scene unchanged (527 draws, extract 3.7-4.3 ms); 130 tests (all but the 10 fuzz explore campaigns) |
 | [WO-049](WO-049-contacts-without-a-global-lock.md) | Jolt contacts are collected per thread, not under one mutex | 2026-10-01 | sim_profile 2 sampling profile, mutex wait 3.0% -> 2.1-2.4% of busy thread time (flushDeferred 79 -> 13-14 samples; the contact listener 0 before and after); physics mean 3.83 -> 3.74 ms (4 runs each); determinism gate 0 divergences |
 | [WO-048](WO-048-collision-events-without-archetype-churn.md) | Collision events without archetype churn; Sim.post stops growing faster than the world | 2026-10-01 | collision_events_test (delivery to scripts; 0 archetype moves after the first contact, 219 with the old removal); sim_profile Sim.post 443 -> 11 us at scale 2; determinism gate 0 divergences; BUG-0071 |
 | [WO-047](WO-047-scene-below-runtime-and-an-acyclic-gate.md) | Scene serialization stops reaching into runtime services; the module graph is gated acyclic | 2026-10-01 | audit LAYER-03 drops scene -> runtime (47 -> 46 edges) and LAYER-06 reports no cycle (mutation: restoring the include fails --check, naming the cycle and its files); scene_material_roundtrip_test (BUG-0072, both halves mutation-checked); 136 tests, audit and doctor clean |

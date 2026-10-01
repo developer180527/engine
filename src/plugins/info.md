@@ -10,6 +10,7 @@ tests:
   - tests/determinism_gate_test.cpp   # the physics tier pins the contact sort
   - tests/collision_events_test.cpp   # contacts reach scripts; no archetype churn
   - tests/physics_authority_test.cpp  # kinematic movability, character rotation, teleport
+  - tests/physics_capacity_test.cpp   # nothing until content; grows; events survive a rebuild
 ---
 # Plugins
 
@@ -41,13 +42,24 @@ Both run through the same `PluginRegistry` broadcasts.
   arrays of 16-byte types (`CharacterVirtual::Contact`) that way, and at the
   8 bytes realloc used to give, SSE code segfaulted on x86-64 (BUG-0068).
 
-  **Capacity is sized for game scenes, and overflow is reported (WO-048).**
-  `kMaxBodies` and `kMaxBodyPairs` are 65 536, `kMaxContactConstraints` 20 480
-  and the temp allocator 64 MB (the constraint array comes from it, and a full
-  temp allocator is `std::abort()`). They were 4 096 each: 2 000 boxes in piles
-  overflowed, Jolt DROPPED the contacts that did not fit and the piles never
-  settled, silently, because `Update`'s return value was discarded (BUG-0071).
-  `reportUpdateErrors` now logs each kind once, naming the constant to raise;
+  **Capacity grows with content (WO-050), and overflow is reported (WO-048).**
+  Nothing is allocated until the first body or character: an empty or 2D
+  game holds 0 bytes of physics (it was 78 MB, when WO-048 sized the world for
+  65 536 bodies with a 64 MB temp allocator at simulation start). The world is
+  then sized from the content (bodies, and contacts from the MOVABLE count: 8
+  constraints and 16 pairs per movable body, 2x WO-048's measured pile
+  density) and REBUILT larger when the content outgrows it, since Jolt cannot
+  resize a PhysicsSystem: bodies re-added in entity order with their
+  velocities and sleep state, characters re-created. Growth is proactive
+  because Jolt asserts on any update error where asserts are on; where they
+  are off, a step that still overflows grows the world for the next one. The
+  temp allocator has a malloc fallback, so an underestimate is a malloc, not
+  the `std::abort()` WO-048 sized against. Collision events survive a rebuild:
+  a touching-pair set drops the re-reports of contacts that never ended, and
+  reports the end of any that did not come back. Sleep state matters there:
+  in this Jolt a body going to sleep reports its contacts as ended, so waking
+  it in a rebuild would read as new contacts (measured, then fixed). Decision
+  record: DR-0011. `reportUpdateErrors` still logs each overflow kind once;
   `updateErrorSteps()` counts the steps that dropped contacts.
 
   **Collision events are published with no structural change per tick.** A

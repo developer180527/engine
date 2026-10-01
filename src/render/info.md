@@ -349,6 +349,28 @@ from `PrimaryCameraFinder` itself, pins that the camera's right lands on the
 right, checks the frustum planes from the new matrices, and checks the editor
 camera moves the way it looks.
 
+## What an empty game pays (WO-050)
+
+Nothing is created for content that is not there (decision record DR-0011):
+
+- **The shadow map** (2048² D32F, 16 MB) is made by the shadow pass the first
+  time a light casts (`ForwardPipeline::ensureShadowMap`) and kept from then.
+  Until then the opaque pass binds a 1x1 R32F stand-in holding 1.0, so the
+  sampler is never unbound and an accidental read means "not shadowed".
+- **The editor's scene-view targets** (HDR colour, depth and display: 14 MB at
+  1280x720) are made by the first `renderScene`, not by `init()`. A game
+  renders to the backbuffer and never draws that view.
+- **bgfx is compiled with `BGFX_CONFIG_MAX_DRAW_CALLS = 16383`**, not 65 535:
+  its per-frame tables are sized from it at init. `ForwardPipeline` caps
+  itself at 4 096 draws (the Metal uniform scratch overflows near 8 192), so
+  65 535 could never be used. bgfx's heap went 86.5 -> 49.1 MB.
+
+An empty project, windowed (`build-prof`): 204.7 -> 95.8 MB mapped, render
+targets 72.2 -> 42.2 MB (what is left is the backbuffer HDR target and its
+depth, which the frame needs). The rest of bgfx's 49 MB is its other
+compiled-in tables and command buffers, which this engine cannot size at
+runtime; the custom RHI is what replaces them.
+
 ## Shadow pass
 Depth-only, one 2048² map, first shadow-casting light. It binds **no material** — the
 program is fixed — which is why a caster whose submesh ranges tile its index buffer is

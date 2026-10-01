@@ -244,7 +244,9 @@ private:
     static constexpr float    SHADOW_BIAS         = 0.0025f; // normalized-depth slope bias base
     bgfx::ProgramHandle     m_shadowProgram = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_shadowFB      = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle     m_shadowMap     = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle     m_shadowMap     = BGFX_INVALID_HANDLE;   // lazy: ensureShadowMap
+    bgfx::TextureHandle     m_noShadowMap   = BGFX_INVALID_HANDLE;   // 1x1, bound until then
+    bool ensureShadowMap();
     float m_lightView[16] = {0};
     float m_lightProj[16] = {0};
     bool  m_hasShadowCaster = false;

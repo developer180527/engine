@@ -273,7 +273,7 @@ void ForwardPipeline::render(const RenderView& v, RenderContext& ctx) {
                             bgfx::setUniform(m_uTexFlags, texFlags);
                             m_boundMat.id = mh.id;
                         }
-                        bgfx::setTexture(2, m_sShadowMap, m_shadowMap);
+                        bgfx::setTexture(2, m_sShadowMap, bgfx::isValid(m_shadowMap) ? m_shadowMap : m_noShadowMap);
                         bgfx::setState(mat->doubleSided ? passstate::opaque(true) : state);
                         bgfx::setTransform(it.model.ptr());
                         bgfx::setVertexBuffer(0, gpu::toBgfx(it.mesh->vbh));
@@ -450,7 +450,7 @@ void ForwardPipeline::bindDrawState(bgfx::TextureHandle base,
               bgfx::TextureHandle norm, uint64_t state, const RenderItem& it) {
         bgfx::setTexture(0, m_sBaseColor, base);
         bgfx::setTexture(1, m_sNormalMap, norm);
-        bgfx::setTexture(2, m_sShadowMap, m_shadowMap);
+        bgfx::setTexture(2, m_sShadowMap, bgfx::isValid(m_shadowMap) ? m_shadowMap : m_noShadowMap);
         bgfx::setState(state);
         // INSTANCED draws must not set a transform: the model matrix arrives as
         // instance data (vs_instanced.sc), and a setTransform here would be

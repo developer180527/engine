@@ -11,6 +11,25 @@
 #include "render/view_math.h"
 #include "render/world/frustum.h"   // extractFrustumPlanes for the LIGHT frustum
 
+// The shadow map, created the first time a light casts (WO-050). Kept once
+// made: a light toggling its shadow should not re-allocate 16 MB each time.
+bool ForwardPipeline::ensureShadowMap() {
+    if (bgfx::isValid(m_shadowFB)) return true;
+    const uint64_t smFlags = BGFX_TEXTURE_RT
+        | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT
+        | BGFX_SAMPLER_U_CLAMP   | BGFX_SAMPLER_V_CLAMP;
+    m_shadowMap = bgfx::createTexture2D(SHADOW_SIZE, SHADOW_SIZE, false, 1,
+                                        bgfx::TextureFormat::D32F, smFlags);
+    if (!bgfx::isValid(m_shadowMap)) return false;
+    // Report the cost. This one allocation dominates GPU memory on a low-end
+    // machine, so it should never be a silent decision.
+    LOG_INFO("Renderer", "shadow map %ux%u D32F = %.1f MB (a light casts shadows)",
+             SHADOW_SIZE, SHADOW_SIZE,
+             (double)SHADOW_SIZE * SHADOW_SIZE * 4.0 / (1024.0 * 1024.0));
+    m_shadowFB = bgfx::createFrameBuffer(1, &m_shadowMap, false);
+    return bgfx::isValid(m_shadowFB);
+}
+
 void ForwardPipeline::renderShadow(const RenderView& v, RenderContext& ctx,
                       const rworld::PackedLights& lights) {
         m_hasShadowCaster = false;
@@ -28,6 +47,7 @@ void ForwardPipeline::renderShadow(const RenderView& v, RenderContext& ctx,
             break;
         }
         if (!sun) return;
+        if (!ensureShadowMap()) return;   // created on first need (WO-050)
         m_hasShadowCaster = true;
 
         const bx::Vec3 toLight = bx::normalize(sun->direction);

@@ -169,6 +169,14 @@ engine_test(asset_cook_request_test)
 # updates, retires and re-homes rows; and the rebuild-and-diff check names the
 # entity and column when the table drifts. GPU-free: frames are counters.
 engine_test(render_scene_test)
+# WO-050: the physics world grows with content. An empty simulation allocates
+# nothing; a body arriving mid-play creates the world; outgrowing it rebuilds
+# it, and bodies resting through the rebuild see no spurious collision event.
+engine_test(physics_capacity_test)
+# WO-050: the budget that turns red when something is sized for a big game up
+# front again. Stock plugins, empty simulation: every tagged heap together and
+# the median tick, against fixed limits.
+engine_test(empty_game_budget_test)
 # WO-010: the import-frontend contract. The ImportedScene invariants, each shown
 # failing on a scene broken its way; and the contract suite every front end must
 # pass (tests/import_contract.h), shown passing the fake AND failing front ends
