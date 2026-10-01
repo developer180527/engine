@@ -190,7 +190,7 @@ behind a measurement rig it does not require (corrected in §3.1 there).
 | **P0a** | **The bgfx GPU-driven spike.** Compute cull → compacted indirect args → indirect draw, per-instance material index from a storage buffer, on the 50 k fuzz scene. | Extraction stops dominating, **or** we can name the exact wall in one sentence. Weeks. **This decides whether P5–P8 are worth a year.** |
 | **P1** | **De-contaminate.** The **five** files that mix loading with GPU upload (`asset_service.cpp`, `async_loader/upload.cpp`, `mesh_loader.cpp`, `gltf_importer.cpp`, `assimp_importer.cpp`); `Renderer` behind a pointer in `runtime.h`. | `engine_runtime` links for a server target with no graphics libs; tests green. |
 | **P2** | **Close the seam.** Opaque handles; `RenderContext`/`RenderView` stop naming `bgfx::TextureHandle`, `FrameBufferHandle`, `ViewId`. Stable `objectId` on `RenderItem`. | A second backend is *expressible*. `include/engine/render.h` exposes no bgfx type. |
-| **P3** | **Retained scene.** Three mechanisms (§8.2) — a **heap sub-allocator** over one instance buffer, a **sparse uploader** that pushes only dirty ranges, and **one apply point per frame** — plus the **lifetime model** they need to be correct (§9). Host mutates via create/destroy/setTransform/setVisible. | Extraction becomes **O(dirty)** rather than O(total), demonstrated as a *curve* over `--objects 50k/100k/250k/500k`, not a single number (§9.6). The 18.8 ms is the ceiling on the win. |
+| **P3** | **Retained scene.** Three mechanisms (§8.2) — a **heap sub-allocator** over one instance buffer, a **sparse uploader** that pushes only dirty ranges, and **one apply point per frame** — plus the **lifetime model** they need to be correct (§9). Host mutates via create/destroy/setTransform/setVisible. | Extraction becomes **O(dirty)** rather than O(total), demonstrated as a *curve* over `--objects 50k/100k/250k/500k`, not a single number (§9.10). The 18.8 ms is the ceiling on the win. |
 | **P4** | **Render graph.** Passes declare reads and writes; barriers derived, transient targets aliased. Topology **cached and invalidated on change**, not rebuilt per frame (§8.3). | Shadow + opaque + one post pass through the graph; peak VRAM measurably below the hand-managed version. **Tier-2 control ships here.** The bgfx/RHI coexistence seam has a defined barrier contract (§8.4). |
 | **P5** | **Material + shader assets.** Data-driven materials, pluggable shading model, cooked shader variants through the DDC. | A project supplies a cel shading model without forking the engine. **Tier-1 control ships here.** |
 | **P6** | **GPU measurement lane** — one NVIDIA + one AMD box on the farm. | bgfx's current numbers reproduced on discrete hardware. Gates everything after it. |
@@ -272,11 +272,14 @@ Naming them separately removes most of the confusion this decision attracts:
 |---|---|---|---|
 | **Resources** — mesh vertex/index buffers, textures | GPU objects | **already retained** | unchanged |
 | **Scene description** — which objects exist, their transform, mesh and material | array of ~50 000 records | **rebuilt from scratch every frame** | **retained, patched** |
-| **Visible list** — which of them are on screen this frame | a subset, sorted | rebuilt every frame | rebuilt every frame, on the **GPU** |
+| **Visible list** — which of them are on screen this frame | a subset, sorted | rebuilt every frame | rebuilt every frame (on the CPU until G6 moves it to the **GPU**) |
+| **Draw commands** — the encoded submits themselves | per-draw state + calls | rebuilt every frame | **still rebuilt every frame — deliberately** (§8.6) |
 
 Row 1 was never the question — nobody re-uploads meshes per frame. Row 3 is
 rebuilt every frame in every engine ever written; GPU-driven only changes *where*.
-**Only row 2 changes**, and the argument for it is one sentence:
+Row 4 is the tier above P3 that Unreal retains and we do not (§8.6), recorded
+so that nobody later reads "retained" as including it. **Only row 2 changes**,
+and the argument for it is one sentence:
 
 > Between two frames maybe 200 of 50 000 objects changed. We rebuild all 50 000 to
 > express 200 changes. That is the measured 18.8 ms.
@@ -368,14 +371,86 @@ across two backends is the normal condition of this plan, not an edge case.**
 
 ### 8.5 What we still owe this section
 
-- **Decima's visibility talk**, read properly. It is the closest published work to
-  our exact problem — a very large object set, async-compute visibility, instance
-  batch collection — and it is currently a citation with no content behind it.
+- **Decima's visibility talk**, read properly. §8.6 places it (it is about the
+  visible list, row 3, not P3) but its content is still the abstract's: the
+  2026-09-22 survey located it and summarised its subject, and no one has
+  worked through the slides. Until someone does, the caution in the sourcing
+  note above stands.
 - **A GPU-driven reference beyond the vendor docs.** The foundational
-  Haar/Aaltonen material on GPU-driven pipelines is the obvious next read.
+  Haar/Aaltonen material on GPU-driven pipelines is the obvious next read. Not
+  closed by §8.6, which is about the retained scene, not GPU-driven culling.
 - **Anything on RAGE.** Rockstar publish little; if there is a credible technical
   account it has not been found yet, and its absence should be stated rather than
   filled with inference.
+
+### 8.6 Five engines' retained scenes, side by side
+
+Surveyed 2026-09-22 from primary sources (links below), to check that §9 is
+not speculative. It is not: every one of them has the same four pieces.
+
+1. **A stable handle**, not a pointer: Unreal's persistent `PrimitiveId`,
+   Godot's `RID`, Unity's allocation in a GPU buffer, Bevy's `RenderEntity`.
+2. **A flat SoA table**, not a hierarchy. Filament is the clearest case:
+   `RenderableSoa` is a `StructureOfArrays` of parallel fields
+   (`WORLD_TRANSFORM`, `WORLD_AABB_CENTER`, `VISIBLE_MASK`, `PRIMITIVES`, `UBO`).
+3. **One apply point** where accumulated changes integrate: Unreal's
+   `FScene::UpdateAllPrimitiveSceneInfos()` is the canonical one.
+4. **Deferred reuse**, because the GPU is still reading last frame's data (§9.1).
+
+Where they differ is the useful part:
+
+| engine | retained thing | handle | sync mechanism |
+|---|---|---|---|
+| **Unreal** | `FPrimitiveSceneInfo`, **cached mesh draw commands**, the GPUScene instance buffer | persistent `PrimitiveId` | `ENQUEUE_RENDER_COMMAND`, batched at `UpdateAllPrimitiveSceneInfos` |
+| **Unity** | instance data in a GPU buffer (BatchRendererGroup, GPU Resident Drawer) | allocation from `HeapAllocator` | `SparseUploader` `Begin`/`EndAndCommit`, uploaded by **compute dispatch** |
+| **Godot** | the rendering server *is* the scene | `RID` | direct calls: `instance_create`, `instance_set_transform` |
+| **Filament** | `RenderableSoa` | `Entity` + manager instance | `addEntity`/`remove`; `prepare()` builds culling data per frame |
+| **Bevy** | a second ECS world, retained since 0.15 | `RenderEntity` ↔ `MainEntity` | extract + `SyncComponentPlugin` |
+
+What each one changes in §9, taken or deliberately not:
+
+- **Unreal retains more than we will.** Beyond instance data it caches *draw
+  commands* (built in `CacheMeshDrawCommands`, reused every frame until the
+  proxy is removed), with a static path for things that do not change and a
+  dynamic one for particles. P3 retains the scene description and still
+  rebuilds the draw list (§8.1 row 4). That is the right scope here: submit
+  was 1.4 ms of a 24.8 ms frame when last measured, so caching commands would
+  optimise the wrong row. The ceiling exists; P3 does not reach for it.
+- **Unity uploads by compute shader, not memcpy.** `SparseUploader` collects
+  dirty ranges and submits them as compute dispatches. On bgfx the same idea is
+  `update(DynamicVertexBufferHandle, start, mem)` per range, which costs more
+  per range than a dispatch batch does, so our crossover (§9.2 #12) will sit
+  **lower** than theirs.
+- **Godot validates the host-facing API.** `instance_create` /
+  `instance_set_base` / `instance_set_transform` against an opaque `RID` is
+  almost exactly the create/destroy/set surface §9 proposes. Godot's docs also
+  say the scene tree is optional and bypassable for tens of thousands of
+  instances: the argument for the table sitting below the ECS, not inside it.
+- **Filament keeps planar AABB components** (`WORLD_AABB_CENTER_X/Y/Z` split
+  per axis) for vectorised culling. **Not taken, on measurement**: this tree
+  already tried four parallel arrays for its cull spheres and reversed it,
+  because one interleaved 16-byte stream measured 1.27x faster than four
+  streams (prefetcher and TLB), while the arithmetic planar layout speeds up is
+  ~4% of the cull (`render/world/render_world.h`, `CullStreams`). §9.4 keeps
+  the measured layout.
+- **Bevy is the cautionary one, and recent.** Its 0.15 notes say the switch to
+  a retained render world "caused a number of things to break", that perfect
+  synchronisation "proved to be a difficult problem", and that plugging the
+  holes took much of the cycle. That is independent, public confirmation of
+  §9.7: change detection is what bites, which is why the rebuild-and-diff mode
+  is a deliverable.
+- **Decima** (Guerrilla, SIGGRAPH 2017, *Visibility in Horizon Zero Dawn*) is
+  about the **visible list** (row 3): async-compute visibility and instance
+  batch collection. It informs G6, not P3; see §8.5 for what is still owed.
+
+Sources: [Unreal mesh drawing pipeline](https://dev.epicgames.com/documentation/en-us/unreal-engine/mesh-drawing-pipeline-in-unreal-engine) ·
+[Unity SparseUploader](https://docs.unity3d.com/Packages/com.unity.entities.graphics@1.2/api/Unity.Rendering.SparseUploader.html) ·
+[Unity GPU Resident Drawer](https://docs.unity3d.com/6000.0/Documentation/Manual/urp/gpu-resident-drawer.html) ·
+[Godot servers](https://docs.godotengine.org/en/stable/tutorials/performance/using_servers.html) ·
+[Filament `Scene.h`](https://github.com/google/filament/blob/main/filament/src/details/Scene.h) ·
+[Bevy 0.15](https://bevy.org/news/bevy-0-15/) ·
+[Bevy "Retain Rendering World"](https://github.com/bevyengine/bevy/pull/14449) ·
+[Decima visibility talk](https://www.guerrilla-games.com/read/decima-engine-visibility-in-horizon-zero-dawn)
 
 ## 9. P3 in detail — the retained scene's lifetime model
 
@@ -423,7 +498,9 @@ axiom 2, one layer up, and it has the same shape of answer.
 ### 9.2 The thirteen questions, answered
 
 Answers marked **decided** are positions this document takes. Answers marked
-**open** are genuinely undecided and must close before P3 codes.
+**deferred** say what they wait for and why P3a does not. Since 2026-10-01
+(WO-020) none is **open**: #7, #12 and #13 were the last, and each is answered
+or deferred with its reason below.
 
 | # | Question | Answer |
 |---|---|---|
@@ -433,13 +510,13 @@ Answers marked **decided** are positions this document takes. Answers marked
 | 4 | What happens when a mesh or material changes? | **Decided.** That is a **structural** change (§9.3), not a transform update. It may change which indirect batch the object belongs to, so it goes through the structural path. |
 | 5 | Can a slot be reused immediately? | **No, and this is the whole point of §9.1.** Immediate reuse is the defect. |
 | 6 | When is an old GPU slot safe to overwrite? | **Decided.** When the completed timeline value ≥ the value recorded at retire. This is `rhi::TimelineValue` in the RHI world and a frame-index fence on bgfx; the *rule* is backend-independent, which is why it is designed now rather than at P7. |
-| 7 | What happens during streaming? | **Open.** Streaming has no system yet (`aaa-gap-analysis.md` §5). The constraint P3 must not violate: a slot whose mesh is evicted becomes non-drawable **without** its id becoming invalid, so streaming and destruction are different states. Recorded so the table has room for it. |
+| 7 | What happens during streaming? | **Decided for what exists; the rest deferred, with room left for it.** Two things exist now. (a) Since WO-018 a mesh that is not cooked yet is a LIVE object drawing the **placeholder** mesh (`MeshPlaceholder`); the real mesh arriving is a mesh change, i.e. a **structural** change (§9.3). So "loading" needs no state of its own: LIVE stays one state. (b) Mesh residency eviction exists (`AssetService::evictOverBudget`) but **never evicts a mesh a live `MeshRenderer` references**, so no slot can lose its mesh while LIVE. Deferred: distance-based streaming that *would* evict a referenced mesh does not exist (`aaa-gap-analysis.md` §5). When it does, the constraint stands: such a slot becomes non-drawable **without** its id becoming invalid, so the table reserves a `streamedOut` bit in `flags[]` now (§9.4), at no cost until it is used. |
 | 8 | What happens when the GPU is two frames behind? | **Decided.** Retirement is timeline-driven, not frame-count-driven, so lag extends the `RETIRED` queue rather than corrupting anything. Budget: the free list must tolerate `maxFramesInFlight` worth of retirements without stalling. |
 | 9 | Are transforms double/triple buffered? | **Decided: no, and this is deliberate.** Double-buffering the whole table costs 50 000 × the record size, every frame, to solve a problem retirement already solves. The instance buffer is written by the sparse uploader on the copy queue and read after a timeline wait. **Only the dirty ranges are ordered, not the table.** |
 | 10 | Structural versus ordinary updates? | **Decided.** See §9.3 — the distinction is load-bearing enough to have its own subsection. |
 | 11 | Hundreds of thousands of dirty objects in one frame? | **Decided.** Above a threshold, the sparse path loses to a full re-upload. P3 measures the crossover and takes whichever is cheaper — an explicit fallback, not a cliff. A level load legitimately dirties everything. |
-| 12 | How are dirty uploads compacted? | **Open.** Coalesce adjacent dirty slots into runs, then decide a max-gap that is worth bridging (uploading two clean records to avoid a second copy). Needs measurement; the answer depends on copy-queue overhead per range. |
-| 13 | Skinned instances? | **Open, and the largest one.** Skinned objects already have a per-frame palette (`SkinnedMesh::paletteSlot`) whose data changes every frame by nature, so they are *always* dirty and the O(dirty) argument does not hold for them. Working assumption: skinned instances live in a **second table** with its own allocator, sized by `kMaxSkinnedInstances`, and the static table's dirty-tracking never sees them. This must be settled before P3 codes, because it decides whether there is one table or two. |
+| 12 | How are dirty uploads compacted? | **Deferred to P3b, by design: it is a number, not a decision.** The policy is fixed: coalesce adjacent dirty slots into runs, bridge a gap when uploading the clean records in it is cheaper than another `update()` call, and above a whole-buffer threshold upload everything (#11). The two thresholds depend on bgfx's per-`update()` overhead on each backend, which only a measurement gives; P3b records them as `[measured]` (§9.11). Expect both **lower** than Unity's: they upload ranges by compute dispatch, we pay a call per range (§8.6). P3a does not depend on it: it changes no upload. |
+| 13 | Skinned instances? | **Decided: two tables, one implementation.** Skinned objects carry a per-frame palette (`SkinnedMesh::paletteSlot` into `anim::skinPalettes()`) that changes every frame by nature, so they are *always* dirty and the O(dirty) argument does not hold for them. They are also already drawn differently: excluded from instancing, palette set once per item (`opaque_pass.cpp`). Folding them into the static table would put every skinned object in every frame's dirty set and give the static batch key a column only skinned rows use. So the **static** table is dirty-tracked and instanced, and the **skinned** table is rebuilt each frame like today, but both are instances of the same table type: one handle, generation and LIVE → RETIRED → FREE implementation, tested once. There is no fixed `kMaxSkinnedInstances`; the skinned table grows with the palette pool, which already allocates in chunks. A runtime-layout question only: the import-format question (one skeleton per scene or per mesh) is WO-009's, `imported-scene.md` §3. |
 
 ### 9.3 Structural versus ordinary changes
 
@@ -457,7 +534,115 @@ expensive because they are rare, and conflating the two is what makes naive
 retained-scene implementations either slow or wrong. Both still land at the same
 single apply point (§8.2) — the difference is what work they do there.
 
-### 9.4 The risk this section does not remove
+**The dirty signal** is flecs `OnSet` observers on the components the table
+mirrors: `Transform` (ordinary), `MeshRenderer` and `LodMesh` (structural: mesh
+or material), and add/remove of `MeshRenderer` (create/destroy). An observer only
+records the entity in an ordinary or a structural list; nothing touches the table
+from inside a hook.
+
+**The apply point is before the first `buildView` of the frame.** `buildView`
+runs up to three times a frame (`render/renderer/targets.cpp`: the editor's
+scene view, the game view, and the game view to the backbuffer). If the table
+were patched between them, two views of one frame would disagree about the same
+object. So: one apply, then every view reads the same table.
+
+### 9.4 The table
+
+One SoA table per kind (static and skinned, #13) in `src/render/world/`, which
+audit LAYER-04 already proves GPU-free and runtime-free. That is a feature here:
+the table is CPU data with no bgfx type in it, so the RHI swap touches only the
+uploader, and the server build keeps excluding it. Columns are split by **who
+reads them**:
+
+| column | element | read by |
+|---|---|---|
+| `model[]` | `Mat4`, 64 B | the uploader only (the GPU reads the copy) |
+| `sphere[]` | `CullSphere {x,y,z,r}`, 16 B, interleaved | the cull |
+| `keyBase[]` | `uint64` sort key, depth left zero | batching and the sort |
+| `mesh[]`, `material[]` | `MeshHandle`, `MaterialHandle` (integers) | batching, submit |
+| `flags[]` | `uint8`: LIVE, hasBounds, `streamedOut` (#7, reserved) | everyone |
+| `generation[]` | `uint32` | handle validation |
+
+`RenderObjectId { uint32 index; uint32 generation; }` names a row (#2). The
+generation bumps on every reuse, so a stale id is **detected** (debug asserts,
+release returns nothing) instead of silently aliasing whatever took the slot.
+
+**Bounds stay the measured interleaved sphere, not planar AABBs.** The survey
+(§8.6) suggested Filament's planar per-axis AABB columns for vectorised culling,
+and the plan once said "planar AABBs from day one". That layout was tried in
+this tree and reversed on measurement: one interleaved 16-byte stream beat four
+parallel arrays 1.27x, and the arithmetic a planar layout would speed up is ~4%
+of the cull (`render_world.h`, `CullStreams`). The table therefore owns the
+existing `CullSphere` stream, and `CullStreams` becomes a view into table
+columns instead of a per-frame rebuild. If a GPU-driven cull (G6) or a measured
+SIMD cull wants another layout, it can add a column then.
+
+**It replaces `RenderItem`'s dual role**, rather than sitting beside it.
+`RenderItem` is today both extraction's output and the cull's input, rebuilt
+from scratch per frame; the table is the persistent version of it.
+
+### 9.5 The rule: the CPU reads identity and bounds, never contents
+
+Decided 2026-09-22, and the reason is the target, not bgfx: the custom renderer
+is GPU-driven, so material and transform data **live in VRAM**, and reading them
+back on the CPU to describe them to the GPU is the wrong shape.
+
+> **The CPU may read an object's identity** (integers: mesh, material, sort
+> key, generation) **and its bounds** (the floats culling needs). **It never
+> reads an object's contents**: transforms, material parameters, texture
+> bindings, vertex data. The GPU fetches those itself, through indices.
+
+What that means concretely:
+
+- **Transforms**: the GPU reads `u_transforms[transformIndex]` from a persistent
+  buffer that changes only when an object moves. The per-instance payload drops
+  from a 64-byte matrix (`opaque_pass.cpp` copies one per visible object per
+  frame into a transient buffer today) to a **4-byte index**. On bgfx this is
+  `BUFFER_RO` in the vertex shader on an ordinary draw, which the vendored
+  example `41-tess` proves (`vs_terrain_render.sc` declares it, `tess.cpp` binds
+  it with `setBuffer(..., Access::Read)` before `submit`).
+- **Material parameters**: one VRAM buffer, written when a material is loaded,
+  read by `u_materials[materialIndex]`. Today the CPU walks `mat->blocks` and
+  `mat->textureBinds` for every bind (`opaque_pass.cpp`, `bindMaterial`).
+  **The stride question, checked against the cooker** (it was left open on
+  2026-09-22): a cooked material's blocks are built from its **shader's**
+  declared parameter list, complete and never sparse
+  (`src/assets/cookers/material/info.md`). So the layout is fixed **per
+  shader**, not globally: one material buffer per shader, at that shader's
+  stride. Materials of different shaders never share a draw anyway.
+- **Textures**: through a descriptor array or bindless table, the object
+  carrying slot numbers. **bgfx has neither** (no bindless or descriptor-indexing
+  capability in `bgfx/defines.h`), so on bgfx textures stay bound by the CPU per
+  batch, and this part of the rule is met only under the RHI. Said here so the
+  bgfx phase is not mistaken for meeting it.
+
+Consequences: the material-bind dedup in `opaque_pass.cpp` mostly disappears
+(it exists because binding is expensive), and objects with different materials
+of one shader can share a draw, which is a bigger win than the dedup ever was.
+The rule is checkable, so it becomes an audit rule with P3d (proposed `RHI-02`:
+no draw-path TU reads `Material::blocks`, `textureBinds` or a transform
+column), rather than a comment someone erodes.
+
+### 9.6 Contiguity and upload
+
+`setInstanceDataBuffer(DynamicVertexBufferHandle, start, num)` draws a
+**contiguous** range, so one batch's instances must be adjacent. The allocator
+is therefore **per batch** over one buffer, not a global free list:
+
+- each batch (`keyBase` minus depth) owns a run with slack;
+- a new object takes a slack slot: O(1), nothing else uploads;
+- a full run relocates to a larger free run, re-uploading only that run;
+- runs compact only when fragmentation crosses a threshold, amortised.
+
+Only the **index** array needs contiguity. The transform buffer is read at
+random by the vertex shader (§9.5), so it uses a plain slot allocator, and
+relocating a batch rewrites 4-byte indices, never 64-byte matrices.
+
+Upload is `bgfx::update(DynamicVertexBufferHandle, start, mem)` per dirty run,
+falling back to one whole upload above a measured crossover (#11, #12). Both
+APIs were checked in the vendored `bgfx.h`, not assumed.
+
+### 9.7 The risk this section does not remove
 
 §8.2 already names it and it is worth repeating next to the mechanism:
 
@@ -475,9 +660,30 @@ every frame and diffs it against the incremental one**, failing on any divergenc
 It is far too slow to ship and it is the only thing that catches a missed hook.
 That mode is part of P3's deliverable, not an optional extra — it is the same
 argument [`../rhi/design-axioms.md`](../rhi/design-axioms.md) axiom 5 makes about
-the CPU-driven path being the debug path.
+the CPU-driven path being the debug path. It fails on the first mismatch,
+naming the entity and the column, and it runs in the audit lane, not in normal
+builds.
 
-### 9.5 What this buys the RHI, since P3 lands first
+External confirmation, from a live engine: Bevy's switch to a retained render
+world (0.15) "caused a number of things to break", and its notes call perfect
+synchronisation "a difficult problem" (§8.6). Same failure, published.
+
+### 9.8 What stays expensive, said plainly
+
+P3 is not allowed to be sold as more than it is:
+
+- **The visible list stays O(visible) on the CPU until G6.** The step that walks
+  cull results and expands them into draws remains a per-frame CPU pass. The
+  4-byte index shrinks its payload 16x; it does not remove the pass.
+- **LOD selection stays O(total).** It is per object and depends on the camera,
+  so retention does not help it. It moves when culling does (G6), or into the
+  cull pass, not before.
+- **The skinned table is rebuilt every frame** (#13): O(skinned), by nature.
+- **The 18.8 ms ceiling is old.** It is R20's extraction cost, measured before
+  the LOD and extraction work since. P3a re-measures on the current tree before
+  any claim is made against it.
+
+### 9.9 What this buys the RHI, since P3 lands first
 
 P3 is worth doing on bgfx alone (§3, fact one). But it is also the thing that
 makes the later phases smaller, and that is not a coincidence:
@@ -491,7 +697,7 @@ makes the later phases smaller, and that is not a coincidence:
   [`../rhi/phases.md`](../rhi/phases.md) currently loads with persistent scene +
   upload system + GPU culling + HZB + indirect buffers at once.
 
-### 9.6 The exit criterion, stated as a curve
+### 9.10 The exit criterion, stated as a curve
 
 "Extraction stops scaling with entity count" is not falsifiable — everything
 scales somehow. P3 exits on a **measured curve**, and the tooling already exists:
@@ -510,3 +716,16 @@ Measure at **50 k / 100 k / 250 k / 500 k**, recording per point:
 The claim P3 is allowed to make is the first row going flat while the last three
 are unchanged. Anything less is a speedup, not a change of complexity class, and
 should be reported as one.
+
+### 9.11 Phasing
+
+Each phase lands complete and can be reverted alone. P3a–P3b touch no shader,
+so they are proven correct before the shader change; if `BUFFER_RO` misbehaves
+on a backend, P3d reverts to the 64-byte path with everything else intact.
+
+| phase | ships | gate |
+|---|---|---|
+| **P3a** (WO-019) | both tables, the columns of §9.4, ids, generations, LIVE → RETIRED → FREE by frame fence, and the rebuild-and-diff mode. Extraction still fills the table wholesale each frame. | diff mode green over the existing scenes; the 18.8 ms baseline re-measured (§9.8) |
+| **P3b** | `OnSet` dirty tracking, the single apply point, sparse upload, the crossover | diff mode green with the incremental path live; #12's thresholds recorded `[measured]` |
+| **P3c** | extraction and the cull **read** the table instead of rebuilding `RenderItem` | the §9.10 curve, before vs after |
+| **P3d** | the 4-byte instance index, transforms and material parameters fetched by `BUFFER_RO` (§9.5), and the audit rule | the same curve; per-frame upload bytes down ~16x |

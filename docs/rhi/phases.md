@@ -62,7 +62,7 @@ Each phase must be independently defensible — no phase justified only by the n
 >    rather than a project.
 >
 > `renderer-program.md` §9 is the lifetime design P3 needs — slot ownership,
-> generational ids, GPU-safe retirement, structural vs ordinary changes — and §9.6
+> generational ids, GPU-safe retirement, structural vs ordinary changes — and §9.10
 > gives its exit criterion as a curve over object count rather than a single
 > number. **Read that before reading G2 onward.**
 >
