@@ -19,6 +19,8 @@ verified: 2026-10-01
 
 # cook-request — a missing cooked asset is a job
 
+Decision record: DR-0009 (the runtime reads cooked content only).
+
 The runtime loads cooked content only (WO-018). When something asks for an
 asset by its SOURCE path (`AsyncLoader::load`, which the editor's spawn and
 scene loading use through `SceneAssets::streamMesh`) and the registry has no

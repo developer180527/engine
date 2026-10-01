@@ -71,7 +71,7 @@ than being swept into an RHI migration.
 > `component_abi_test` pins. That is still the right call to defer — it is
 > exactly the kind of change to make once, deliberately, rather than during a
 > backend migration — but it should be deferred knowing it is an ABI break and
-> not a find-and-replace.
+> not a find-and-replace. Decision record: DR-0005.
 >
 > `check_gpu_seam.py` deliberately ignores bx (it is not graphics), so nothing
 > gated it. `scripts/engine_audit.py`'s **`RHI-01`** now records every file

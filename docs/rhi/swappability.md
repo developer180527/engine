@@ -227,7 +227,7 @@ recommends doing it and stopping there.
    No ABI, no dispatch cost, full LTO. This is the reuse the programme is for
    ([`../plans/renderer-program.md`](../plans/renderer-program.md) §1: the reuse
    boundary sits *below* the renderer).
-4. **Do NOT build D.** No frozen renderer ABI, now or soon. Keep the *option*
+4. **Do NOT build D.** No frozen renderer ABI, now or soon (DR-0006). Keep the *option*
    open by making the scene handoff explicit and versioned — which item 1 forces
    anyway — and revisit only if an actual third party turns up wanting to ship a
    renderer against a frozen engine binary. Nobody does today.

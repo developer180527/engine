@@ -99,7 +99,9 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstdlib>   // std::abort: the retained-table diff mode
 #include <cstring>   // memmove, for the compaction pass
+#include <string>
 #include <limits>
 
 #include <bx/math.h>
@@ -271,6 +273,34 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
                                  std::memory_order_relaxed);
     };
 
+    // ── The retained scene (P3a, WO-019): capture this view's rows? ─────────
+    // Only on the FIRST view of the frame for this world: §9.3's single apply
+    // point, so the scene, game and backbuffer views of one frame never see
+    // the table change between them. The row is captured BEFORE applyLod:
+    // LOD is per view (camera-dependent), the table holds level 0 (§9.4).
+    rworld::RenderScene* scene = nullptr;
+    if (m_tableOn) {
+        auto& slot = m_scenes[&world];
+        if (!slot) slot = std::make_unique<rworld::RenderScene>();
+        if (!slot->appliedThisFrame(m_frameNo)) scene = slot.get();
+    }
+    const bool capture = scene != nullptr;
+    auto captureRow = [](const MeshRenderer& mr, const SkinnedMesh* skin,
+                         const RenderItem& it, const CullSphere& sp, uint64_t kb) {
+        rworld::RowData r;
+        r.model    = it.model;
+        r.sphere   = sp;
+        r.keyBase  = kb;
+        r.mesh     = mr.mesh;
+        r.material = it.material;
+        r.flags    = it.hasBounds ? rworld::kRowHasBounds : 0;
+        if (it.boneMatrices && skin) {
+            r.flags  |= rworld::kRowSkinned;
+            r.palette = skin->paletteSlot;
+        }
+        return r;
+    };
+
     // Parentless: the local matrix IS the world matrix. Zero component lookups —
     // Transform, MeshRenderer and the optional PrevTransform all arrive from the
     // query, resolved once per archetype instead of once per entity.
@@ -298,6 +328,9 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
             localMatrixLerp(c.tr[i], c.prev ? &c.prev[i] : nullptr,
                             m_simAlpha, it.model.m);
             rworld::writeCullEntry(it, sp[n], sk[n]);
+            if (capture)   // before LOD: the table holds level 0 (§9.4)
+                m_capture[c.outBegin + n] = {c.ids[i],
+                    captureRow(c.mr[i], c.skin ? &c.skin[i] : nullptr, it, sp[n], sk[n])};
             if (c.lod) applyLod(c.mr[i], c.lod[i], sp[n], it, sk[n]);
             ++n;
         }
@@ -318,6 +351,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         // mean side arrays for a handful of items. One append, everything in hand.
         CullSphere sp; uint64_t kb;
         rworld::writeCullEntry(it, sp, kb);
+        if (capture) m_capture.push_back({e.id(), captureRow(mr, skin, it, sp, kb)});
         if (lod) applyLod(mr, *lod, sp, it, kb);
         m_items.push_back(it);
         m_cull.sphere.push_back(sp);
@@ -364,6 +398,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
             while (it.next()) {
                 const uint32_t n = (uint32_t)it.count();
                 if (n == 0) continue;
+                const flecs::entity_t* ids = &it.entities()[0];
                 auto trF = it.field<const Transform>(0);
                 auto mrF = it.field<const MeshRenderer>(1);
                 const Transform*    tr = &trF[0];
@@ -381,7 +416,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
                     const uint32_t c = n - off < kExtractGrain ? n - off
                                                               : kExtractGrain;
                     m_chunks.push_back(ExtractChunk{
-                        tr + off, mr + off,
+                        ids + off, tr + off, mr + off,
                         prev ? prev + off : nullptr,
                         skin ? skin + off : nullptr,
                         lod ? lod + off : nullptr,
@@ -395,6 +430,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
 
     m_items.clear();
     m_lights.clear();
+    m_capture.clear();
     // Per-VIEW, not per-frame, and that is the honest reading: the census
     // describes the last view extracted. The scene and game views have different
     // cameras and legitimately pick different levels.
@@ -420,6 +456,7 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     if (flatTotal) {
         m_items.resize(flatTotal);
         m_cull.resize(flatTotal);
+        if (capture) m_capture.resize(flatTotal);
         const bool parallel = jobs::initialized()
                            && flatTotal >= kExtractParallelMin
                            && m_chunks.size() > 1;
@@ -452,11 +489,16 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
                 std::memmove(m_cull.keyBase.data() + write,
                              m_cull.keyBase.data() + c.outBegin,
                              c.written * sizeof(uint64_t));
+                if (capture)
+                    std::move(m_capture.begin() + c.outBegin,
+                              m_capture.begin() + c.outBegin + c.written,
+                              m_capture.begin() + write);
             }
             write += c.written;
         }
         m_items.resize(write);
         m_cull.resize(write);
+        if (capture) m_capture.resize(write);
     }
 
     // Parented items and lights stay serial: they need an entity handle for the
@@ -468,6 +510,22 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     // cull would read one object's bounds for another's, and the failure mode of
     // that is a silently wrong frame, not a crash.
     assert(m_cull.size() == m_items.size());
+
+    // The single apply point of this frame for this world (§9.3), and, in
+    // diff mode, the check that the retained table agrees with a rebuild.
+    if (capture) {
+        assert(m_capture.size() == m_items.size());
+        ENGINE_PROFILE_SCOPE("Render.table");
+        scene->apply(m_capture, m_frameNo);
+        if (m_tableDiff) {
+            const std::string d = scene->diff(m_capture);
+            if (!d.empty()) {
+                LOG_ERROR("Renderer", "retained table diverged from a rebuild at frame %llu: %s",
+                          (unsigned long long)m_frameNo, d.c_str());
+                std::abort();   // a debug mode: the first divergence is the finding
+            }
+        }
+    }
     if (&world == m_editorWorld) m_lightQuery.each(extractLight);
     else                        m_gameLightQuery.get(world).each(extractLight);
 

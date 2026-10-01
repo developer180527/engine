@@ -13,6 +13,7 @@
 #include "render/gpu_bgfx.h"   // fromBgfx — renderer-internal
 
 #include <cstdio>
+#include <cstdlib>   // getenv: ENGINE_RENDER_TABLE
 #include <cstring>
 
 #include <bgfx/bgfx.h>
@@ -52,11 +53,17 @@ bool Renderer::init(void* nwh, int width, int height,
                     SkeletonRegistry& skeletons) {
     m_editorWorld = &editorWorld;
     m_assets      = &assets;
+    // The retained scene (P3a, WO-019): opt-in until something reads it.
+    if (const char* e = std::getenv("ENGINE_RENDER_TABLE_DIFF"); e && *e && *e != '0')
+        setRetainedTable(true, true);
+    else if (const char* t = std::getenv("ENGINE_RENDER_TABLE"); t && *t && *t != '0')
+        setRetainedTable(true);
     m_textures    = &textures;
     m_materials   = &materials;
     m_skeletons   = &skeletons;
 
     // ── Single-threaded bgfx, deliberately. MEASURED 2026-08-03. ────────────
+    // (Decision record DR-0008.)
     // Calling renderFrame() BEFORE init tells bgfx not to spawn a render thread;
     // bgfx::frame() then renders inline on this thread.
     //
@@ -268,6 +275,7 @@ void Renderer::endFrame() {
     m_externalDraws.clear();
     m_externalDropped = 0;
     m_warnedExternalCeiling = false;   // one report per frame, not per process
+    ++m_frameNo;   // the retained scene's fence clock (render_scene.h)
 }
 
 uint32_t Renderer::submittedDrawCount() const {

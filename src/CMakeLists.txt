@@ -387,6 +387,7 @@ add_library(engine_runtime STATIC
     render/world/draw_sort.cpp
     render/world/visibility.cpp
     render/world/light_packing.cpp
+    render/world/render_scene.cpp     # the retained scene's table + lifetime (P3a)
     # Cooked-shader loading. shader_select is GPU-free (and tested); only
     # shader_library touches bgfx.
     render/shader/shader_select.cpp

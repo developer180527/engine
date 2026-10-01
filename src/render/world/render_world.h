@@ -125,7 +125,8 @@ struct RenderItem {
 // measured 1.27x faster on the same data, because four arrays are four streams for
 // the prefetcher and four TLB entries.
 //
-// So the layout follows the memory, not the instruction set. If SIMD is revisited,
+// So the layout follows the memory, not the instruction set (decision record
+// DR-0007). If SIMD is revisited,
 // arm64's `vld4q_f32` deinterleaves this layout in one instruction (measured at
 // 1.98x — still not worth it, but not blocked either).
 //

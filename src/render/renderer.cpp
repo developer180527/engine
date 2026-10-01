@@ -86,4 +86,7 @@ void Renderer::resetWorldCaches() {
     m_gameItemQuery.reset();
     m_gameChildItemQuery.reset();
     m_gameLightQuery.reset();
+    // The play world's retained scene dies with it; the editor world's stays.
+    for (auto it = m_scenes.begin(); it != m_scenes.end();)
+        it = (it->first == m_editorWorld) ? std::next(it) : m_scenes.erase(it);
 }

@@ -20,6 +20,12 @@ covers:
    we are deliberately not building. The only one of the four written by hand,
    so it holds strategy, never numbers.
 
+And before "fixing" something that looks wrong:
+**[`process/decisions/`](process/decisions/README.md)**, one file per decision
+that would look like a mistake to someone who was not there (what was decided,
+what was rejected, why, and what would reverse it). A source that carries a
+decision cites its `DR-NNNN`, so a search for the id finds the reasons.
+
 ## Layout
 
 | Directory | What lives here |
@@ -27,7 +33,7 @@ covers:
 | `architecture/` | How a subsystem is built and **why**. Load-bearing decisions and the invariants that are silent when broken. |
 | `guides/` | How to *use* the engine — APIs, scripting, performance tuning. |
 | `reference/` | File formats and schemas, field by field. Lookup material, not narrative. |
-| `process/` | How we work: the doc contract, the maturity ladder, the roadmap. Also the defect record — [`bug-ledger.md`](process/bug-ledger.md) is the schema and [`bugs/`](process/bugs/) is one file per defect; [`open-questions.md`](process/open-questions.md) is what is known and *not* fixed; [`port-log-windows.md`](process/port-log-windows.md) is what the cross-platform port cost. |
+| `process/` | How we work: the doc contract, the maturity ladder, the roadmap. Also the defect record — [`bug-ledger.md`](process/bug-ledger.md) is the schema and [`bugs/`](process/bugs/) is one file per defect; [`open-questions.md`](process/open-questions.md) is what is known and *not* fixed; [`decisions/`](process/decisions/README.md) is one record per decision, with its reasons (`DR-NNNN`, checked by `scripts/work_orders.py`); [`port-log-windows.md`](process/port-log-windows.md) is what the cross-platform port cost. |
 | `work/` | The work queue: one file per work order, checked by `scripts/work_orders.py`, with a generated `BOARD.md`. See [`work/README.md`](work/README.md). |
 | `plans/` | Work not yet done. Audits, phased plans, backlog. `plans/future-plans/` is speculative. |
 | `rhi/` | The graphics-abstraction programme, one purpose per file — the decision, its evidence, the design, the migration. [`rhi/workflow.md`](rhi/workflow.md) is how a question becomes a study becomes a decision; [`rhi/studies/`](rhi/studies/) is where the research lands. |

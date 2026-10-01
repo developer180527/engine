@@ -6,6 +6,12 @@
     python3 scripts/work_orders.py check          validate every order; exit 1 on error
     python3 scripts/work_orders.py board          regenerate docs/work/BOARD.md
     python3 scripts/work_orders.py board --check  fail if BOARD.md is out of date (CI)
+    python3 scripts/work_orders.py decisions      regenerate docs/process/decisions/README.md
+    python3 scripts/work_orders.py decisions --check   ... fail if it is out of date (CI)
+
+Decision records (WO-022) live in docs/process/decisions/DR-NNNN-slug.md: what
+was decided, what was rejected, why, and what would reverse it. `check` also
+validates them, and the links between them and the documents they came from.
 
 Orders live in docs/work/WO-NNN-slug.md. The format and the rules are in
 docs/work/README.md. Everything on the board is DERIVED from the order files —
@@ -28,6 +34,8 @@ REPO = Path(__file__).resolve().parent.parent
 WORK_DIR = "docs/work"
 CONTRACT_DIR = "docs/contracts"
 BOARD = "BOARD.md"
+DECISIONS_DIR = "docs/process/decisions"
+DECISIONS_INDEX = "README.md"
 
 PRIORITIES = {
     "P0": "broken now — wrong output or lost data. Nothing else starts first.",
@@ -554,12 +562,151 @@ def brief(root: Path, orders: list[Order], errs: list[str], since: str | None) -
     return 1 if errs else 0
 
 
+# ── Decision records (WO-022) ────────────────────────────────────────────────
+# One file per decision, four sections. They exist because the decisions most
+# likely to be undone by accident are the ones buried mid-paragraph in a plan:
+# the code looks wrong, the reason is three documents away, someone "fixes" it,
+# and the bug it avoided comes back.
+DR_ID_RE = re.compile(r"^DR-\d{4}$")
+DR_REF_RE = re.compile(r"\bDR-\d{4}\b")
+DR_SECTIONS = ("Decided", "Rejected", "Why", "What would reverse it")
+DR_STATUSES = ("decided", "superseded")
+# Where "we decided" must cite a record: design writing, not the work queue
+# (an order may quote the phrase) and not the records themselves.
+DR_PROSE_ROOTS = ("docs/plans", "docs/rhi", "docs/architecture", "docs/process", "src")
+DR_PROSE_SKIP = (DECISIONS_DIR, "docs/process/bugs")
+WE_DECIDED_RE = re.compile(r"\bwe decided\b", re.I)
+
+
+def load_decisions(root: Path) -> tuple[list[Order], list[str]]:
+    out, errs = [], []
+    d = root / DECISIONS_DIR
+    if not d.is_dir():
+        return out, errs
+    for path in sorted(d.glob("DR-*.md")):
+        r = parse(path)
+        if isinstance(r, str):
+            errs.append(f"{path.name}: {r}")
+        else:
+            out.append(r)
+    return out, errs
+
+
+def _paragraphs(text: str) -> list[str]:
+    return [p for p in re.split(r"\n\s*\n", text) if p.strip()]
+
+
+def check_decisions(root: Path, recs: list[Order]) -> list[str]:
+    errs: list[str] = []
+    ids: dict[str, Order] = {}
+    for r in recs:
+        n = r.path.name
+        def e(msg): errs.append(f"{n}: {msg}")
+        rid = r.id
+        if not DR_ID_RE.match(rid):
+            e(f"id `{rid}` is not DR-NNNN"); continue
+        if not n.startswith(rid + "-"):
+            e(f"filename must start with its id `{rid}-`")
+        if rid in ids:
+            e(f"duplicate id {rid} (also {ids[rid].path.name})")
+        ids[rid] = r
+        st = r.meta.get("status", "")
+        if st not in DR_STATUSES:
+            e(f"`status:` must be one of {'/'.join(DR_STATUSES)}")
+        for k in ("title", "date"):
+            if not r.meta.get(k):
+                e(f"missing `{k}:`")
+        if r.meta.get("date") and not re.match(r"^\d{4}-\d{2}-\d{2}$", str(r.meta["date"])):
+            e("`date:` is not YYYY-MM-DD")
+        names = list(r.sections)
+        if names != list(DR_SECTIONS):
+            e("sections must be exactly, in order: " + " / ".join(f"## {x}" for x in DR_SECTIONS)
+              + f" (found: {', '.join(names) or 'none'})")
+        for sec in DR_SECTIONS:
+            if sec in r.sections and not r.sections[sec].strip():
+                e(f"`## {sec}` is empty")
+        if st == "superseded":
+            by = r.meta.get("superseded-by", "")
+            if not by:
+                e("`superseded` needs `superseded-by: DR-NNNN`")
+        # THE BACK-LINK. A record names where the decision was made, and that
+        # document must cite the record: otherwise the next reader of the
+        # source finds the decision without its reasons, which is the failure
+        # this whole directory exists to prevent.
+        srcs = r.lst("source")
+        if not srcs:
+            e("missing `source:` (where the decision was made)")
+        for src in srcs:
+            sp = root / src
+            if not sp.exists():
+                e(f"`source:` {src} does not exist")
+            elif rid not in sp.read_text(encoding="utf-8", errors="replace"):
+                e(f"`source:` {src} does not cite {rid}: add the id where the decision is described")
+    for r in recs:
+        by = r.meta.get("superseded-by", "")
+        if by and by not in ids:
+            errs.append(f"{r.path.name}: `superseded-by: {by}` is not a decision record")
+
+    # Every DR-NNNN cited anywhere must exist, and "we decided" in design
+    # writing must cite one in the same paragraph.
+    for base in DR_PROSE_ROOTS:
+        bp = root / base
+        if not bp.exists():
+            continue
+        for path in sorted(bp.rglob("*")):
+            if path.suffix not in (".md", ".h", ".hpp", ".cpp", ".py") or not path.is_file():
+                continue
+            rel = path.relative_to(root).as_posix()
+            if rel.startswith(DECISIONS_DIR):
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for ref in sorted(set(DR_REF_RE.findall(text))):
+                if ref not in ids:
+                    errs.append(f"{rel}: cites {ref}, which is not a decision record")
+            if path.suffix != ".md" or any(rel.startswith(s) for s in DR_PROSE_SKIP):
+                continue
+            for para in _paragraphs(text):
+                if WE_DECIDED_RE.search(para) and not DR_REF_RE.search(para):
+                    line = text[:text.find(para)].count("\n") + 1
+                    errs.append(f"{rel}:{line}: says \"we decided\" without citing a decision "
+                                f"record (DR-NNNN); write one in {DECISIONS_DIR}/")
+    return errs
+
+
+def render_decisions(recs: list[Order]) -> str:
+    out = ["---", "status: reference", "---",
+           "# Decision records", "",
+           "<!-- GENERATED by scripts/work_orders.py — do not edit by hand.",
+           "     Edit the DR-*.md files, then: python3 scripts/work_orders.py decisions -->",
+           "",
+           "Decisions that would look wrong to someone who did not make them, each in",
+           "four parts: what we decided, what we rejected, why, and what would reverse",
+           "it. The reasons are the point: without them, the code that carries a",
+           "decision reads as a mistake, gets \"fixed\", and the bug it avoided returns.",
+           "",
+           "**Adding one.** Copy any record, take the next number, keep the four",
+           "headings, and cite its id where the decision is described (`source:`): the",
+           "check fails until the source cites it. Writing \"we decided\" in a plan or",
+           "an info.md requires a DR id in the same paragraph. Old decisions are",
+           "backfilled only when someone trips on them (WO-022).",
+           "",
+           "| id | decision | date | status |", "|---|---|---|---|"]
+    for r in sorted(recs, key=lambda r: r.id):
+        st = r.meta.get("status", "")
+        if st == "superseded":
+            st = f"superseded by {r.meta.get('superseded-by', '?')}"
+        out.append(f"| [{r.id}]({r.path.name}) | {r.meta.get('title', '')} | "
+                   f"{r.meta.get('date', '')} | {st} |")
+    return "\n".join(out) + "\n"
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--root", type=Path, default=REPO, help=argparse.SUPPRESS)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check")
     b = sub.add_parser("board"); b.add_argument("--check", action="store_true")
+    dr = sub.add_parser("decisions"); dr.add_argument("--check", action="store_true")
     sub.add_parser("next")
     br = sub.add_parser("brief", help="regain context: git, lanes, stale docs, the queue")
     br.add_argument("--since", help="a git ref to list commits from (default: your "
@@ -568,6 +715,8 @@ def main(argv=None) -> int:
 
     orders, errs = load(a.root)
     errs += check(a.root, orders)
+    recs, derrs = load_decisions(a.root)
+    errs += derrs + check_decisions(a.root, recs)
     if a.cmd == "brief":                 # runs even with errors: that is when you need it
         return brief(a.root, orders, errs, a.since)
     if errs:
@@ -576,7 +725,23 @@ def main(argv=None) -> int:
         return 1
 
     if a.cmd == "check":
-        print(f"{len(orders)} work orders, 0 errors")
+        print(f"{len(orders)} work orders, {len(recs)} decision records, 0 errors")
+        return 0
+
+    if a.cmd == "decisions":
+        text = render_decisions(recs)
+        path = a.root / DECISIONS_DIR / DECISIONS_INDEX
+        if a.check:
+            cur = path.read_text(encoding="utf-8") if path.exists() else ""
+            if cur != text:
+                print(f"{DECISIONS_DIR}/{DECISIONS_INDEX} is out of date — run: "
+                      "python3 scripts/work_orders.py decisions")
+                return 1
+            print(f"{DECISIONS_DIR}/{DECISIONS_INDEX} is up to date")
+            return 0
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        print(f"wrote {DECISIONS_DIR}/{DECISIONS_INDEX} ({len(recs)} records)")
         return 0
 
     if a.cmd == "board":

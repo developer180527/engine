@@ -120,6 +120,18 @@ mechanism, both problems.
 > available to a retained scene is bounded by 18.8 ms, not 24.8. Corrected
 > 2026-09-05; `issues.md` R20 is the source and always had the breakdown.
 
+> **Re-measured 2026-10-01 (WO-019): fact one no longer holds at that size.**
+> Same scene shape as R20 (`gen_fuzz_scene --objects 50000 --seed 1`: 176 real
+> meshes, 25% movers, 15% parented), `build-prof`, windowed `engine_host`:
+> `Render.extract` is **4.0–4.6 ms**, GPU 6.35 ms average, frame vsync-paced.
+> The work since R20 (LOD, extraction and cull streams, the WO-046/048 fixes)
+> took the bottleneck P3 was built for down about 4x. P3 is still the
+> scene-representation decision §9 argues for, and still what a GPU-driven
+> renderer needs; but its *performance* ceiling at 50 k objects is now ~4.6
+> ms, not 18.8, and the case for P3b–P3d should be re-made on a measured curve
+> (§9.10) at 100 k–500 k rather than on R20's number. Not rewritten here: the
+> order of the programme is a decision for its owner, and this is the evidence.
+
 **Fact two: we have never tried GPU-driven rendering on the backend we already
 have.** bgfx has compute dispatch, `createIndirectBuffer`, storage buffers and
 `submit(view, program, indirectHandle)`. This engine has **zero call sites** for
@@ -679,9 +691,10 @@ P3 is not allowed to be sold as more than it is:
   so retention does not help it. It moves when culling does (G6), or into the
   cull pass, not before.
 - **The skinned table is rebuilt every frame** (#13): O(skinned), by nature.
-- **The 18.8 ms ceiling is old.** It is R20's extraction cost, measured before
-  the LOD and extraction work since. P3a re-measures on the current tree before
-  any claim is made against it.
+- **The 18.8 ms ceiling was old, and is gone.** It was R20's extraction cost.
+  Re-measured by P3a (2026-10-01) on the same scene shape: **4.0–4.6 ms** at
+  50 k objects (§3's note). The table itself costs 0.46 ms to apply wholesale,
+  which is why it stays off until P3c reads it.
 
 ### 9.9 What this buys the RHI, since P3 lands first
 
@@ -725,7 +738,7 @@ on a backend, P3d reverts to the 64-byte path with everything else intact.
 
 | phase | ships | gate |
 |---|---|---|
-| **P3a** (WO-019) | both tables, the columns of §9.4, ids, generations, LIVE → RETIRED → FREE by frame fence, and the rebuild-and-diff mode. Extraction still fills the table wholesale each frame. | diff mode green over the existing scenes; the 18.8 ms baseline re-measured (§9.8) |
-| **P3b** | `OnSet` dirty tracking, the single apply point, sparse upload, the crossover | diff mode green with the incremental path live; #12's thresholds recorded `[measured]` |
+| **P3a** (WO-019, **done**) | both tables, the columns of §9.4, ids, generations, LIVE → RETIRED → FREE by frame fence, and the rebuild-and-diff mode. Extraction still fills the table wholesale each frame, opt-in (`ENGINE_RENDER_TABLE`). | diff mode green over the existing scenes; the 18.8 ms baseline re-measured (§9.8): 4.0–4.6 ms |
+| **P3b** | `OnSet` dirty tracking, sparse upload, the crossover | diff mode green with the incremental path live, **including an animated (skinned) scene**, which no existing scene provides; #12's thresholds recorded `[measured]` |
 | **P3c** | extraction and the cull **read** the table instead of rebuilding `RenderItem` | the §9.10 curve, before vs after |
 | **P3d** | the 4-byte instance index, transforms and material parameters fetched by `BUFFER_RO` (§9.5), and the audit rule | the same curve; per-frame upload bytes down ~16x |

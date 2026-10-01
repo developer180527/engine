@@ -164,6 +164,11 @@ engine_test(scene_material_roundtrip_test)
 # authored reference, and swaps in. Links engine_runtime ONLY: there is no
 # parser in the process, and player_has_no_cook_stack reads this binary too.
 engine_test(asset_cook_request_test)
+# WO-019 (P3a): the retained scene's table. A stale id is detected, never
+# aliased; a retired slot waits for its frame fence; wholesale apply creates,
+# updates, retires and re-homes rows; and the rebuild-and-diff check names the
+# entity and column when the table drifts. GPU-free: frames are counters.
+engine_test(render_scene_test)
 # WO-010: the import-frontend contract. The ImportedScene invariants, each shown
 # failing on a scene broken its way; and the contract suite every front end must
 # pass (tests/import_contract.h), shown passing the fake AND failing front ends
@@ -736,6 +741,12 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME work_board_current
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/work_orders.py board --check)
     set_tests_properties(work_board_current PROPERTIES LABELS docs TIMEOUT 60)
+    # WO-022: the decision-record index is generated like the board, and goes
+    # stale the same way. (`check`, which work_orders_test runs, validates the
+    # records themselves and their links to the documents they came from.)
+    add_test(NAME decisions_index_current
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/work_orders.py decisions --check)
+    set_tests_properties(decisions_index_current PROPERTIES LABELS docs TIMEOUT 60)
 
     # ── Missing standard headers, caught here instead of on a Linux runner ────
     # libc++ (macOS) pulls much of the standard library in transitively;

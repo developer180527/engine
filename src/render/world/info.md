@@ -6,9 +6,35 @@ covers:
   - src/render/world/
 tests:
   - tests/render_world_test.cpp
+  - tests/render_scene_test.cpp   # the retained scene: ids, fence, apply, diff (P3a)
 ---
 # Render world — the machinery half of the renderer
 
+
+## The retained scene, phase one (WO-019)
+
+`render_scene.h` is the table `docs/plans/renderer-program.md` §9 designs:
+one row per drawable object, named by `RenderObjectId {index, generation}`,
+in two tables of one type (static, skinned: §9.2 #13). It holds the
+view-independent half of an object (§9.4): this frame's model matrix, the
+interleaved cull sphere, the level-0 sort key, mesh and material handles,
+the skin palette slot, flags. LOD stays per view.
+
+P3a builds it and proves it, and nothing reads it yet. When
+`ENGINE_RENDER_TABLE=1`, extraction captures each item's row on the first
+view of a frame for a world (the single apply point, §9.3) and applies it
+wholesale; `ENGINE_RENDER_TABLE_DIFF=1` also rebuilds a fresh scene from the
+same rows every frame and aborts on the first mismatch, naming the entity
+and column. Off by default until P3c, when extraction reads it.
+
+Measured 2026-10-01 on `gen_fuzz_scene --objects 50000 --seed 1` (176 real
+meshes, 25% movers, 15% parented; `build-prof`, windowed `engine_host`):
+`Render.extract` 4.0–4.6 ms with the table off, 4.5–5.0 ms with it on, of
+which the apply (`Render.table`) is 0.46 ms. Diff mode adds ~4 ms and stayed
+green for 900 frames. What the diff can and cannot catch in P3a: lifetime
+bookkeeping (a missing, leaked, stale or mis-homed row), because the table
+is written from the same capture it is compared with. Missed CHANGE HOOKS
+are what it catches once P3b makes the writes incremental.
 
 ## Two frusta, one extractor
 `extractFrustumPlanes` turns a view*proj into six inward normalized planes. It is
@@ -61,6 +87,7 @@ Everything here is **GPU-free**. Nothing includes bgfx; nothing dereferences
 | `cull_stream.h` | One RenderItem → the 24 bytes the cull reads (`writeCullEntry`). |
 | `lod.h` | How big is this on screen, and which detail level draws? `lodScreenHeight` + `selectLod`, and nothing else — the mesh swap needs a registry, so it lives in extraction. |
 | `light_packing.h/.cpp` | `LightItem[]` → the float layout the shader expects. |
+| `render_scene.h/.cpp` | The retained scene (P3a, WO-019): `RenderObjectId`, one SoA `RenderTable` per kind (static, skinned), LIVE → RETIRED → FREE by frame fence, `RenderScene::apply` (wholesale) and `diff` (rebuild and compare). Contract `render-scene`. |
 
 ## The cull reads streams, not items
 

@@ -527,7 +527,8 @@ public:
     // shows 0 samples waiting here (all 284 mutex-wait samples were the job
     // adapter and Jolt's barrier). Per-thread buffers would buy nothing
     // measurable and add a merge. Revisit if a profile shows this lock again,
-    // e.g. a game whose every tick is a burst of new contacts.
+    // e.g. a game whose every tick is a burst of new contacts. (Decision record
+    // DR-0010.)
     std::mutex                   m_collisionMutex;
     std::vector<CollisionPair>   m_pendingCollisions;
 

@@ -283,6 +283,78 @@ if _os.environ.get("CI") == "true":
 else:
     check(elapsed < 2.0, f"brief on the real repo took {elapsed:.2f}s (budget 2s)")
 
+# ── Decision records (WO-022) ────────────────────────────────────────────────
+def record(id_="DR-0001", *, status="decided", source="docs/plans/p.md", extra="",
+           sections=("Decided", "Rejected", "Why", "What would reverse it"), empty=None):
+    fm = [f"status: {status}", f"id: {id_}", "title: A decision", "date: 2026-10-01"]
+    if source: fm += ["source:", f"  - {source}"]
+    if extra: fm.append(extra)
+    body = "".join(f"\n## {x}\n{'' if x == empty else 'Text.'}\n" for x in sections)
+    return "---\n" + "\n".join(fm) + "\n---\n" + body
+
+
+def run_dr(records, docs, argv=("check",)):
+    """The valid work tree plus decision records and arbitrary docs."""
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t)
+        (root / "docs/work").mkdir(parents=True)
+        (root / "docs/contracts").mkdir(parents=True)
+        (root / "docs/process/decisions").mkdir(parents=True)
+        (root / "src").mkdir()
+        (root / "src/a.cpp").write_text("")
+        (root / "docs/contracts/cooker.md").write_text("---\ncontract: cooker\n---\n")
+        for name, text in base().items():
+            (root / "docs/work" / name).write_text(text)
+        for name, text in records.items():
+            (root / "docs/process/decisions" / name).write_text(text)
+        for rel, text in docs.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = wo.main(["--root", str(root), *argv])
+        idx = root / "docs/process/decisions/README.md"
+        return rc, out.getvalue(), (idx.read_text() if idx.exists() else "")
+
+
+GOOD_DOC = {"docs/plans/p.md": "We pick X over Y (DR-0001).\n"}
+rc, out, _ = run_dr({"DR-0001-a.md": record()}, GOOD_DOC)
+check(rc == 0 and "1 decision records" in out, f"valid decision tree rejected:\n{out}")
+
+
+def dr_rejects(desc, records, docs, needle):
+    rc, out, _ = run_dr(records, docs)
+    check(rc == 1 and needle in out, f"{desc}: expected rejection mentioning {needle!r}, got rc={rc}:\n{out}")
+
+
+dr_rejects("bad id", {"DR-0001-a.md": record("DR-1")}, GOOD_DOC, "not DR-NNNN")
+dr_rejects("filename/id", {"DR-0001-a.md": record("DR-0002")}, {"docs/plans/p.md": "DR-0002"}, "filename must start")
+dr_rejects("bad status", {"DR-0001-a.md": record(status="maybe")}, GOOD_DOC, "`status:` must be one of")
+dr_rejects("a section missing", {"DR-0001-a.md": record(sections=("Decided", "Why", "What would reverse it"))},
+           GOOD_DOC, "sections must be exactly")
+dr_rejects("sections out of order", {"DR-0001-a.md": record(sections=("Why", "Decided", "Rejected", "What would reverse it"))},
+           GOOD_DOC, "sections must be exactly")
+dr_rejects("an empty section", {"DR-0001-a.md": record(empty="Rejected")}, GOOD_DOC, "`## Rejected` is empty")
+dr_rejects("no source", {"DR-0001-a.md": record(source="")}, GOOD_DOC, "missing `source:`")
+dr_rejects("source missing", {"DR-0001-a.md": record(source="docs/plans/gone.md")}, GOOD_DOC, "does not exist")
+dr_rejects("source does not cite it (the back-link)", {"DR-0001-a.md": record()},
+           {"docs/plans/p.md": "We pick X over Y.\n"}, "does not cite DR-0001")
+dr_rejects("a dangling citation", {"DR-0001-a.md": record()},
+           {"docs/plans/p.md": "DR-0001\n", "src/x.h": "// see DR-0042\n"}, "cites DR-0042, which is not")
+dr_rejects("superseded without successor", {"DR-0001-a.md": record(status="superseded")}, GOOD_DOC, "superseded-by")
+dr_rejects("superseded by nothing", {"DR-0001-a.md": record(status="superseded", extra="superseded-by: DR-0009")},
+           GOOD_DOC, "is not a decision record")
+dr_rejects("\"we decided\" with no record", {"DR-0001-a.md": record()},
+           {"docs/plans/p.md": "DR-0001\n\nHere we decided to keep it.\n"}, "says \"we decided\" without citing")
+rc, out, _ = run_dr({"DR-0001-a.md": record()},
+                    {"docs/plans/p.md": "DR-0001\n\nWe decided to keep it (DR-0001).\n"})
+check(rc == 0, f"\"we decided\" WITH a citation in the paragraph passes:\n{out}")
+# The index: generated, and --check catches a stale one.
+rc, out, idx = run_dr({"DR-0001-a.md": record()}, GOOD_DOC, ("decisions",))
+check(rc == 0 and "[DR-0001](DR-0001-a.md)" in idx and "GENERATED" in idx, f"index written:\n{out}\n{idx}")
+rc, out, _ = run_dr({"DR-0001-a.md": record()}, GOOD_DOC, ("decisions", "--check"))
+check(rc == 1 and "out of date" in out, f"a missing index fails --check:\n{out}")
+
 if failures:
     print(f"\n{len(failures)} failure(s)")
     sys.exit(1)

@@ -191,7 +191,7 @@ Kinematic is gameplay-owned in *both* directions — writing the physics pose ba
 would round-trip gameplay's own value through a velocity integration that does
 not land exactly on its target (measured: 5.0 comes back as 4.99999952). The
 plan's authority table had Kinematic as physics-owned; implementing it is what
-showed that was wrong.
+showed that was wrong. Decision record: DR-0001.
 
 **Teleport is the pose change gameplay *is* allowed to make** (BUG-0057). A raw
 `Transform` write on a dynamic body is still discarded, deliberately — physics

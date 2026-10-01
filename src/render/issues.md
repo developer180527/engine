@@ -499,6 +499,10 @@ mesh it picks. Built anyway, because it is a missing system rather than an optim
 and because the moment geometry density or output resolution rises it is the only lever
 that reduces the workload itself instead of moving it.
 
+> **Re-measured 2026-10-01 (WO-019), same scene shape** (`gen_fuzz_scene --objects 50000
+> --seed 1`, `build-prof`, windowed `engine_host`): `Render.extract` **4.0–4.6 ms**, not
+> 18.8; GPU 6.35 ms average. The 18.8 above is history, not the current bottleneck.
+
 **Shape.** Level 0 is `MeshRenderer::mesh`; `LodMesh` holds up to three COARSER levels
 plus the thresholds. That is Unreal's arrangement rather than Unity's, and the reason is
 failure modes: one source of truth for "what mesh is this", and deleting the component

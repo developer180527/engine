@@ -31,7 +31,7 @@
 // the "minimal AgX" it credits take Rec.709 through a conversion with a 7-term
 // fit. Two constant sets for one name, and a subtly wrong tone curve is an error
 // no test here can see. So ToneMapper has room for it and nothing more, until
-// the constants are copied from one named source file.
+// the constants are copied from one named source file. (Decision record DR-0004.)
 #include <algorithm>
 #include <cmath>
 #include <cstdint>

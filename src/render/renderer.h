@@ -6,6 +6,7 @@
 #include <memory>
 
 class ShaderLibrary;   // render/shader/shader_library.h
+#include <unordered_map>
 #include <vector>
 #include "render/gpu.h"
 #include "render/renderer_interface.h"
@@ -21,6 +22,7 @@ class ShaderLibrary;   // render/shader/shader_library.h
 #include "components/light.h"
 #include "animation/skeleton_registry.h"
 #include "render/world/cull_stream.h"   // CullStreamStore (extraction fills it)
+#include "render/world/render_scene.h"  // the retained scene (P3a)
 #include "components/world_query_cache.h"
 
 // Owns the GPU device lifecycle and ALL render-side state: framebuffers,
@@ -242,6 +244,7 @@ private:
     // `written` is per-chunk because an item whose mesh is missing produces
     // nothing, so a chunk can write fewer items than it read.
     struct ExtractChunk {
+        const flecs::entity_t* ids = nullptr;  // the archetype's entities (P3a capture)
         const Transform*     tr   = nullptr;
         const MeshRenderer*  mr   = nullptr;
         const PrevTransform* prev = nullptr;   // null: absent in this archetype
@@ -289,6 +292,34 @@ private:
     // it — and producing it here is the point: the bounding sphere is built once,
     // while the model matrix is hot, instead of once per view inside each cull.
     rworld::CullStreamStore m_cull;
+
+    // ── The retained scene, P3a (WO-019, renderer-program.md §9) ────────────
+    // One RenderScene per world drawn. On the FIRST view of a frame for a world
+    // (§9.3: one apply point), extraction also captures each item's
+    // view-independent row (level 0's mesh and key, before LOD) into
+    // m_capture, parallel to m_items, and applies it wholesale. NOTHING READS
+    // THE TABLE YET: P3a proves the lifetime and the diff while the table is a
+    // mirror; P3c makes extraction read it.
+    //
+    // OFF unless ENGINE_RENDER_TABLE=1 (or ENGINE_RENDER_TABLE_DIFF=1, which
+    // also rebuilds and diffs every applied frame and aborts on the first
+    // mismatch, naming the entity and column). Off, the hot path pays one
+    // branch per chunk; on, it pays the capture and one serial apply, which
+    // WO-019 measures. It turns on by default when something reads it (P3c).
+    bool     m_tableOn   = false;
+    bool     m_tableDiff = false;
+    uint64_t m_frameNo   = 1;   // advanced by endFrame(); the fence's clock
+    std::unordered_map<const flecs::world*, std::unique_ptr<rworld::RenderScene>> m_scenes;
+    std::vector<rworld::CapturedRow> m_capture;
+public:
+    // For tests and tools: the retained scene of `world`, or null when the
+    // table is off or the world has not been drawn yet.
+    const rworld::RenderScene* renderScene(const flecs::world& world) const {
+        auto it = m_scenes.find(&world);
+        return it == m_scenes.end() ? nullptr : it->second.get();
+    }
+    void setRetainedTable(bool on, bool diff = false) { m_tableOn = on || diff; m_tableDiff = diff; }
+private:
 
     gpu::ViewId        m_viewCursor    = 5; // first free view past reserved 0..4
     gpu::TextureHandle m_flatNormalTex;
