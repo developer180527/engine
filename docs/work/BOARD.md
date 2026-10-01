@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) **Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx)** · P2 · size S — The backend and shader set are picked with compile-time OS checks, so anything that isn't Apple or Windows gets Vulkan.
-2. [WO-035](WO-035-fbx-units.md) **FBX units — decide whether imports arrive in metres** · P2 · size M — Assimp's FBX reader applies the file's `UnitScaleFactor` in centimetres, so an FBX arrives in the units it was authored in. That's usually centimetres, 100x the engine's metres, unless the exporter baked a conversion. The engine has always cooked FBX that way, and projects compensate with entity scale.
-3. [WO-023](WO-023-gpu-resident-materials.md) **Material data GPU-resident — the CPU binds indices, never walks contents** · P3 · size L — Every material bind in `opaque_pass.cpp` has the CPU walk `mat->blocks` and `mat->textureBinds`, resolve textures and issue uniforms.
+1. [WO-050](WO-050-empty-game-costs-nothing.md) **An empty game costs nothing — capacity grows with content, never reserved for it** · P1 · size M — Owner directive (2026-10-01): developers' scripts will be expensive, so the engine must cost close to nothing when it is idle. With no assets and no scripts, only the main loop running, the engine's own cost must be negligible. A minimal 2D game must not carry the engine's 3D performance or memory. The custom RHI will help later, but this cannot wait for it.
+2. [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) **Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx)** · P2 · size S — The backend and shader set are picked with compile-time OS checks, so anything that isn't Apple or Windows gets Vulkan.
+3. [WO-035](WO-035-fbx-units.md) **FBX units — decide whether imports arrive in metres** · P2 · size M — Assimp's FBX reader applies the file's `UnitScaleFactor` in centimetres, so an FBX arrives in the units it was authored in. That's usually centimetres, 100x the engine's metres, unless the exporter baked a conversion. The engine has always cooked FBX that way, and projects compensate with entity scale.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,6 +35,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
+| [WO-050](WO-050-empty-game-costs-nothing.md) | An empty game costs nothing — capacity grows with content, never reserved for it | Providers & modules | M | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 
