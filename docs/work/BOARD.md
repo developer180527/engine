@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) **Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx)** · P2 · size S — The backend and shader set are picked with compile-time OS checks, so anything that isn't Apple or Windows gets Vulkan.
-2. [WO-035](WO-035-fbx-units.md) **FBX units — decide whether imports arrive in metres** · P2 · size M — Assimp's FBX reader applies the file's `UnitScaleFactor` in centimetres, so an FBX arrives in the units it was authored in. That's usually centimetres, 100x the engine's metres, unless the exporter baked a conversion. The engine has always cooked FBX that way, and projects compensate with entity scale.
-3. [WO-023](WO-023-gpu-resident-materials.md) **Material data GPU-resident — the CPU binds indices, never walks contents** · P3 · size L — Every material bind in `opaque_pass.cpp` has the CPU walk `mat->blocks` and `mat->textureBinds`, resolve textures and issue uniforms.
+1. [WO-051](WO-051-kit-abi-meaning-revisions.md) **A kit-ABI component that changes meaning refuses old kits, instead of loading them** · P1 · size S — The kit gate hashes a shared component's LAYOUT (sizeof, alignof), so a change of MEANING with the same layout loads old kits silently.
+2. [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) **Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx)** · P2 · size S — The backend and shader set are picked with compile-time OS checks, so anything that isn't Apple or Windows gets Vulkan.
+3. [WO-035](WO-035-fbx-units.md) **FBX units — decide whether imports arrive in metres** · P2 · size M — Assimp's FBX reader applies the file's `UnitScaleFactor` in centimetres, so an FBX arrives in the units it was authored in. That's usually centimetres, 100x the engine's metres, unless the exporter baked a conversion. The engine has always cooked FBX that way, and projects compensate with entity scale.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,6 +35,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
+| [WO-051](WO-051-kit-abi-meaning-revisions.md) | A kit-ABI component that changes meaning refuses old kits, instead of loading them | Providers & modules | S | **ready** | kit-abi |
+| [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | blocked by WO-051 | kit-abi, engine-plugin, script-services |
+| [WO-053](WO-053-bone-maps-per-section.md) | Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128 | Asset import & cooking | L | blocked by WO-051 | cooker, kit-abi |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -43,6 +46,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-021](WO-021-os-services-layer.md) | `os::` layer in core — one file per OS family | Portability | L | blocked by WO-006 | os-services (new) |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
+| [WO-055](WO-055-fuzz-cooked-clips.md) | Fuzz the cooked clip format a shipped game reads | Asset import & cooking | S | **ready** | cooker |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
@@ -62,6 +66,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-026](WO-026-rhi-g0a-spike.md) | RHI G0a spike — answer the specific open questions, then throw it away | M | WO-020 is done (so the spike asks the retained scene's questions), or a free weekend |
 | [WO-027](WO-027-custom-rhi.md) | Custom RHI implementation | XL | WO-019, WO-020 and WO-026 are done, then split into G-phase orders of size L or less |
 | [WO-030](WO-030-retire-compiled-in-standard-program.md) | Retire the compiled-in standard program | M | we decide that a cooked shader cache is a hard prerequisite of running at all (a deployment decision) |
+| [WO-054](WO-054-gpu-bone-buffer.md) | One GPU bone buffer per frame — no per-draw palette upload | L | the RHI reaches G4 (per-draw data in a structured buffer, WO-027); building it on bgfx means building it twice |
 
 ## Done
 
