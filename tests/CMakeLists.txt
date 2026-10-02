@@ -813,9 +813,10 @@ if(Python3_Interpreter_FOUND)
     # the point: CI's shipping job proves the build setting, this proves the
     # library boundary in the default build too.
     # MSVC keeps symbols in the PDB, so on Windows the check reads the linker's
-    # map instead (/MAP writes <binary>.map beside the binary).
+    # map instead (/MAP writes <binary>.map beside the binary). server_link_probe
+    # is defined further down, so its /MAP is set there.
     if(MSVC)
-        foreach(_t engine_player engine_module_probe server_link_probe asset_cook_request_test)
+        foreach(_t engine_player engine_module_probe asset_cook_request_test)
             target_link_options(${_t} PRIVATE /MAP)
         endforeach()
     endif()
@@ -854,6 +855,10 @@ add_executable(server_link_probe server_link_probe.cpp)
 target_link_libraries(server_link_probe PRIVATE engine_runtime_server)
 set_target_properties(server_link_probe PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+if(MSVC)
+    # The link map player_has_no_cook_stack reads (see there).
+    target_link_options(server_link_probe PRIVATE /MAP)
+endif()
 add_test(NAME server_link COMMAND server_link_probe)
 set_tests_properties(server_link PROPERTIES LABELS unit TIMEOUT 120)
 
