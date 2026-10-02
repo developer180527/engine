@@ -283,7 +283,15 @@ fn a_sibling_path_the_format_cannot_carry_is_refused_not_mangled() {
     let bad_src = dir.join("bad\nname.gltf");
     if std::fs::write(&bad_src, textured_gltf()).is_err() {
         // Windows rejects a newline in a filename outright, so the defect cannot
-        // exist there. Skipping is the honest report; the control above still ran.
+        // exist there: not a lane that failed to run (the control above did), but
+        // a case the platform rules out. skip() would turn that into a failure
+        // under ENGINE_REQUIRE_COOK_TESTS, which is what both Windows legs did
+        // (WO-038). Anywhere else, a refusal is unexpected and stays a skip.
+        if cfg!(windows) {
+            println!("cook result frame (newline leg): not applicable on Windows, \
+                      which forbids a newline in a filename");
+            return;
+        }
         skip("cook result frame (newline leg)",
              "this filesystem will not create a filename containing a newline");
         return;

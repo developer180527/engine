@@ -92,8 +92,14 @@ int main() {
         t.setProjectRoot(tmp.string());
         t.runCommand("echo first-command");
         t.runCommand("echo second-command");
+        // Compared without trailing spaces: cmd.exe's echo keeps everything up to
+        // the redirection, so `echo second-command 2>&1` prints "second-command "
+        // on Windows (still failing there after the cd /d fix, WO-038).
         bool sawOutput = false;
-        for (const auto& l : t.history) sawOutput |= l == "second-command";
+        for (std::string l : t.history) {
+            while (!l.empty() && l.back() == ' ') l.pop_back();
+            sawOutput |= l == "second-command";
+        }
         CHECK(sawOutput, "a command's output lands in the history");
         bool changed = false;
         CHECK(t.stepHistory(+1, changed) == "echo second-command" && changed, "Up: the newest command first");

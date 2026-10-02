@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-10-01
+verified: 2026-10-03
 covers:
   - src/core/
 tests:
@@ -119,6 +119,9 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   and empty domains, and is fuzzed (`fuzz_cube_lut`). Red changes fastest; pinned
   with channel-distinguishable values, because a swapped reader still returns an
   identity on grey.
+  A NaN channel reads as 0 (2026-10-03): `std::clamp` passes NaN through and
+  `(int)NaN` is INT_MIN on x86-64 but 0 on arm64, so it indexed outside the
+  table on x64 only (`fuzz_cube_lut` segfaulted on the Linux x64 legs, WO-038).
 - **`colour.h`** (2026-09-17, colour pipeline stage A) — the sRGB transfer
   function, `srgbToLinear` / `linearToSrgb`, IEC 61966-2-1 piecewise (not a 2.2
   power). The ONE CPU definition: the renderer's clear colours and Kelvin lights

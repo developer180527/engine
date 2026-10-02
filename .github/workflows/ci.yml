@@ -648,6 +648,19 @@ jobs:
           TSAN_OPTIONS: halt_on_error=0:second_deadlock_stack=1
         run: ctest -L unit --output-on-failure --timeout 600
 
+      # The committed fuzz corpora, instrumented. Hostile-input parsers are
+      # where sanitizers find the most, and this job ran the unit lane only:
+      # applyCubeLut's (int)NaN was UB that UBSan reports on any CPU, and it
+      # reached CI as a segfault on Linux x64 instead (WO-038). Seconds per
+      # target; the explore lane stays nightly and uninstrumented.
+      - name: Test (fuzz-regress lane)
+        if: matrix.slug != 'tsan'
+        working-directory: build-${{ matrix.slug }}
+        env:
+          ASAN_OPTIONS: halt_on_error=1:abort_on_error=1:detect_leaks=0
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest -L fuzz-regress --output-on-failure --timeout 600
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4

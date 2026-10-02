@@ -93,6 +93,9 @@ class Rule:
     source: str        # the document that already states this rule
     why: str           # what breaks when it is violated
     findings: list[Finding] = field(default_factory=list)
+    # False for a rule whose findings may never be accepted as debt: the
+    # baseline does not record them and the gate fails on every one.
+    baselinable: bool = True
 
 
 # ── Tree access ──────────────────────────────────────────────────────────────
@@ -288,6 +291,66 @@ def rule_declared_edges() -> Rule:
     return r
 
 
+def module_cycles(edges: dict[str, set[str]]) -> list[list[str]]:
+    """Strongly connected components of more than one module (Tarjan), each
+    as a list of modules, sorted, so the finding's signature is stable."""
+    graph: dict[str, set[str]] = {}
+    for edge in edges:
+        a, b = edge.split(" -> ")
+        graph.setdefault(a, set()).add(b)
+        graph.setdefault(b, set())
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    stack: list[str] = []
+    on: set[str] = set()
+    out: list[list[str]] = []
+
+    def visit(v: str) -> None:
+        index[v] = low[v] = len(index)
+        stack.append(v); on.add(v)
+        for w in sorted(graph[v]):
+            if w not in index:
+                visit(w)
+                low[v] = min(low[v], low[w])
+            elif w in on:
+                low[v] = min(low[v], index[w])
+        if low[v] == index[v]:
+            comp = []
+            while True:
+                w = stack.pop(); on.discard(w); comp.append(w)
+                if w == v:
+                    break
+            if len(comp) > 1:
+                out.append(sorted(comp))
+
+    for v in sorted(graph):
+        if v not in index:
+            visit(v)
+    return sorted(out)
+
+
+def rule_acyclic_modules() -> Rule:
+    r = Rule("LAYER-06", "the module graph has no cycle",
+             "docs/process/architecture-audit.md — the layer order. WO-046 and "
+             "WO-047 broke the last cycle; this keeps it broken.",
+             "in a cycle there is no layer order: every module in it can be "
+             "affected by a change to any other, and none can be built, tested "
+             "or replaced alone.",
+             baselinable=False)
+    edges = module_edges()
+    for comp in module_cycles(edges):
+        members = set(comp)
+        inner = sorted(e for e in edges
+                       if e.split(" -> ")[0] in members and e.split(" -> ")[1] in members)
+        lines = [f"{e}: {', '.join(sorted(edges[e])[:4])}"
+                 + (f" (+{len(edges[e]) - 4} more)" if len(edges[e]) > 4 else "")
+                 for e in inner]
+        r.findings.append(Finding(r.id, " <-> ".join(comp),
+                                  f"cycle {' <-> '.join(comp)}\n            "
+                                  + "\n            ".join(lines)))
+    return r
+
+
 # ── ABI rules ────────────────────────────────────────────────────────────────
 _TABLE_BLOCK = re.compile(
     r'typedef struct EngineApiTableV1 \{(.*?)\} EngineApiTableV1;', re.S)
@@ -465,7 +528,7 @@ def rule_tests_registered() -> Rule:
              "running once for exactly this reason.")
     # Every CMakeLists.txt under tests/, not only the top one: a lane may live
     # in a subdirectory (tests/perf/ does, so MSVC Debug can drop /RTC1 for it).
-    cmake = "\n".join(read(str(p.relative_to(REPO)))
+    cmake = "\n".join(read(p.relative_to(REPO).as_posix())
                       for p in sorted((REPO / "tests").rglob("CMakeLists.txt")))
     for rel in tracked("tests/*.cpp", "tests/*.c"):
         stem = Path(rel).stem
@@ -730,7 +793,9 @@ def rule_doc_coverage() -> Rule:
             if not m:
                 break
             covers.append(m.group(1).rstrip("/"))
-    dirs = {str(Path(p).parent) for p in tracked("src/*") if p.endswith(SRC_EXT)}
+    # as_posix: `covers:` entries use "/", and str(Path) is "\\" on Windows, where
+    # every directory read as uncovered (48 findings, Windows CI, WO-038).
+    dirs = {Path(p).parent.as_posix() for p in tracked("src/*") if p.endswith(SRC_EXT)}
     for d in sorted(dirs):
         if not any(d == c or d.startswith(c + "/") for c in covers):
             r.findings.append(Finding(r.id, d, f"{d} is covered by no document"))
@@ -738,7 +803,7 @@ def rule_doc_coverage() -> Rule:
 
 
 RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
-         rule_render_world_purity, rule_import_format_purity, rule_abi_group_wiring, rule_abi_offsets_tile,
+         rule_acyclic_modules, rule_render_world_purity, rule_import_format_purity, rule_abi_group_wiring, rule_abi_offsets_tile,
          rule_abi_compat_coverage, rule_component_hash_membership,
          rule_fuzz_corpus, rule_tests_registered, rule_sim_determinism,
          rule_c_abi_header_purity, rule_bx_creep, rule_unknown_os_is_an_error,
@@ -805,7 +870,10 @@ def main() -> int:
 
     rules = [fn() for fn in RULES]
     baseline = load_baseline()
-    accepted = {r: set(s) for r, s in baseline.get("findings", {}).items()}
+    # A rule that cannot be baselined ignores the file even if someone edits
+    # its findings in by hand.
+    hard = {r.id for r in rules if not r.baselinable}
+    accepted = {r: set(s) for r, s in baseline.get("findings", {}).items() if r not in hard}
 
     if args.update_baseline:
         payload = {
@@ -816,7 +884,7 @@ def main() -> int:
                     "NOT listed here; shrinking this file is the cleanup, and "
                     "nothing may be added to it without a reason in the commit.",
             "findings": {r.id: sorted(f.signature for f in r.findings)
-                         for r in rules if r.findings},
+                         for r in rules if r.findings and r.baselinable},
         }
         BASELINE.write_text(json.dumps(payload, indent=2) + "\n")
         n = sum(len(v) for v in payload["findings"].values())

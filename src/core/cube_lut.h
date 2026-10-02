@@ -166,6 +166,11 @@ inline void applyCubeLut(const CubeLut& lut, float rgb[3]) {
     float f[3];
     for (int c = 0; c < 3; ++c) {
         float t = (rgb[c] - lut.domainMin[c]) / (lut.domainMax[c] - lut.domainMin[c]);
+        // NaN is not clamped by std::clamp (every comparison is false), and
+        // (int)NaN is INT_MIN on x86-64 but 0 on arm64: a NaN channel indexed
+        // far outside the table on x64 only (fuzz_cube_lut, Linux x64, WO-038).
+        // A NaN reads as 0, the domain minimum; the other channels are untouched.
+        if (!(t == t)) t = 0.0f;
         t = std::clamp(t, 0.0f, 1.0f) * (float)(n - 1);
         i0[c] = std::min((int)t, (int)n - 2);
         i1[c] = i0[c] + 1;

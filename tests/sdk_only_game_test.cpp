@@ -50,6 +50,7 @@
 #include <assetlib/scene_asset.h>
 
 #include "test_watchdog.h"
+#include "shell_run.h"   // runShell: std::system with one meaning on every OS
 
 #include <cmath>
 #include <cstdio>
@@ -57,10 +58,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-
-#if !defined(_WIN32)
-#  include <sys/wait.h>
-#endif
 
 namespace fs = std::filesystem;
 
@@ -76,18 +73,7 @@ static bool nearly(float a, float b) { return std::fabs(a - b) < 1e-4f; }
 
 // Run a tool and return its exit code, or -1 if it could not run at all.
 static int runTool(const std::string& exe, const std::string& args) {
-    const std::string cmd = "\"" + exe + "\" " + args +
-#if defined(_WIN32)
-        " > NUL 2>&1";
-#else
-        " > /dev/null 2>&1";
-#endif
-    const int rc = std::system(cmd.c_str());
-#if defined(_WIN32)
-    return rc;
-#else
-    return (rc >= 0 && WIFEXITED(rc)) ? WEXITSTATUS(rc) : -1;
-#endif
+    return runShell("\"" + exe + "\" " + args + " > " + nullDevice() + " 2>&1");
 }
 
 // ── The hand-written scene ──────────────────────────────────────────────────

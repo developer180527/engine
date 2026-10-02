@@ -194,7 +194,11 @@ int main() {
         CHECK(done && got.mesh.valid() && got.skeleton.valid() && got.clips.size() == 1,
               "the cooked load returns the mesh, its skeleton and its clip (skeleton %d, %zu clip(s))",
               got.skeleton.valid(), got.clips.size());
-        fs::remove_all(root);
+        // Close the registry first: Windows cannot delete registry.db while it
+        // is open, and the throwing remove_all terminated a test that had passed
+        // (0xc0000409, Windows CI, WO-038). Cleanup cannot fail the test.
+        reg.close();
+        { std::error_code ec; fs::remove_all(root, ec); }
     }
 
     jobs::shutdown();

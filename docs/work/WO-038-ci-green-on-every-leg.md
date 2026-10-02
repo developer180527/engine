@@ -44,4 +44,13 @@ New platforms or architectures. They are worth adding only on top of a green bas
   - `engine_module_probe` did not export its symbols (`ENABLE_EXPORTS`), unlike every other host, so on Linux every module, the ABI fixtures and any user's kit, failed with "undefined symbol: EcsOnLoad" and was reported as refused.
   - `work_orders_test` held `brief` to 2 s of wall clock on a cold CI runner (3.15 s there, 0.1 s locally). `brief` now skips dirty submodules; the budget applies off CI.
   - `seam_cost_bench` used `<dlfcn.h>` directly (Windows compile error). It has a per-OS loader, its plugin exports `seamDraw` on Windows, and a plugin that fails to load now fails the benchmark instead of reporting success.
+- 2026-10-03, second full run: macOS, Linux arm64 and both sanitizer jobs green; Linux x64 and Windows still red, plus three new Windows failures from the WO-015..050 commits. Fixed, not yet confirmed by a run:
+  - Linux x64: `applyCubeLut` read `(int)NaN` (INT_MIN on x86-64, 0 on arm64) as a table index. A NaN channel now reads as 0; UBSan reports the old code on any CPU. The sanitizer job ran the unit lane only, so it now runs fuzz-regress as well.
+  - Windows `std::system`: cmd.exe strips the first and last quote of a line that starts with one, so every tool a test launched by quoted path failed to start (`sim_replay`, `sdk_only_game`, and probably the `addon_protocol` hang). `tests/shell_run.h` adds the outer quotes and returns the real exit code.
+  - Windows stdout is text mode: `writeManifest` now writes the framed bytes in binary, so `\n` stays `\n` and the digest matches (`module_abi_conformance`).
+  - the terminal panel: the project root was unquoted (every OS) and `cd` without `/d` cannot change drive on Windows; its test now ignores the trailing space cmd's `echo` keeps.
+  - `async_loader_test`, `clip_cook_test`: passed every check, then `fs::remove_all` threw on the still-open `registry.db` (0xc0000409). The registry is closed first and cleanup cannot fail a test.
+  - `player_has_no_cook_stack`: MSVC keeps symbols in the PDB, so on x64 `nm` read an empty table and PASSED with nothing checked, and on arm64 it could not read the file. MSVC now writes a link map (`/MAP`) and the script reads it; no symbols to read is a failure.
+  - `architecture_audit`: DOC-01 compared `\`-separated paths with `/` ones; `cooked_format_conformance`: a newline filename is not applicable on Windows rather than a skip.
+  - still open: the `addon_protocol_test` hang is not diagnosed (the quote fix may cure it), and `audio_abi_conformance` failed once on macOS CI comparing the audio sample clock with the host clock under load (push run 36778999094) — a timing flake to look at.
 

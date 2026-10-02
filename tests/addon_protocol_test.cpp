@@ -18,6 +18,7 @@
 #include <engine/addon_protocol.h>
 
 #include "test_watchdog.h"
+#include "shell_run.h"   // runShell: std::system with one meaning on every OS
 
 #include <cstdio>
 #include <cstdlib>
@@ -26,13 +27,6 @@
 #include <iterator>
 #include <string>
 #include <vector>
-
-#if !defined(_WIN32)
-// WIFEXITED/WEXITSTATUS. std::system returns a wait status on POSIX, not an exit
-// code, and reading it as one makes every non-zero status look like a different
-// number than the tool actually returned.
-#  include <sys/wait.h>
-#endif
 
 namespace fs = std::filesystem;
 namespace addon = engine::addon;
@@ -254,18 +248,7 @@ static void testEngineBuildContract() {
     auto runTool = [&](const std::string& args) {
         // Output silenced: this test is about statuses and files, and the tool's
         // human channel is deliberately chatty.
-        const std::string cmd = tool + " " + args + " > " +
-#if defined(_WIN32)
-            "NUL 2>&1";
-#else
-            "/dev/null 2>&1";
-#endif
-        const int rc = std::system(cmd.c_str());
-#if defined(_WIN32)
-        return rc;
-#else
-        return (rc >= 0 && WIFEXITED(rc)) ? WEXITSTATUS(rc) : -1;
-#endif
+        return runShell(tool + " " + args + " > " + nullDevice() + " 2>&1");
     };
 
     // No arguments: the command line is wrong, nothing ran.
@@ -294,7 +277,7 @@ static void testEngineBuildContract() {
     // a failure rather than a string this test happens to find substrings in.
     const fs::path manOut = tmp / "manifest.txt";
     const std::string manCmd = tool + " --addon-manifest > \"" + manOut.string() + "\" 2>&1";
-    const int manRc = std::system(manCmd.c_str());
+    const int manRc = runShell(manCmd);
     CHECK(manRc == 0, "--addon-manifest exits 0");
 
     std::ifstream mf(manOut, std::ios::binary);

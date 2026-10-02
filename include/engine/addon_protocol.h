@@ -94,6 +94,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#if defined(_WIN32)
+#  include <fcntl.h>   // _O_BINARY
+#  include <io.h>      // _setmode, _fileno
+#endif
 
 namespace engine::addon {
 
@@ -508,10 +512,22 @@ private:
 // loads nothing, opens nothing and runs no third-party anything: it prints a
 // constant and exits. The channel is uncontended precisely when the tool has
 // done no work, which is the only case this uses it for.
+//
+// BINARY, on Windows too. The CRT opens stdout in text mode there, which turns
+// every "\n" into "\r\n", so the frame's digest never matched what a reader
+// received ("corrupt: body digest does not match END", module_abi_conformance
+// on both Windows legs, WO-038). The frame's bytes are its contract.
 inline void writeManifest(const Result& manifest) {
     const std::string out = manifest.framedAs(kManifestMagic);
+    std::fflush(stdout);
+#if defined(_WIN32)
+    const int previous = _setmode(_fileno(stdout), _O_BINARY);
+#endif
     std::fwrite(out.data(), 1, out.size(), stdout);
     std::fflush(stdout);
+#if defined(_WIN32)
+    if (previous != -1) _setmode(_fileno(stdout), previous);
+#endif
 }
 
 } // namespace engine::addon

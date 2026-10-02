@@ -812,6 +812,13 @@ if(Python3_Interpreter_FOUND)
     # encoders) must not reach them in ANY build — this one included, which is
     # the point: CI's shipping job proves the build setting, this proves the
     # library boundary in the default build too.
+    # MSVC keeps symbols in the PDB, so on Windows the check reads the linker's
+    # map instead (/MAP writes <binary>.map beside the binary).
+    if(MSVC)
+        foreach(_t engine_player engine_module_probe server_link_probe asset_cook_request_test)
+            target_link_options(${_t} PRIVATE /MAP)
+        endforeach()
+    endif()
     add_test(NAME player_has_no_cook_stack
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/scripts/check_no_cook_stack.py

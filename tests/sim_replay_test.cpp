@@ -40,6 +40,7 @@
 #include <flecs.h>
 
 #include "core/memory/mem.h"
+#include "shell_run.h"   // runShell: std::system with one meaning on every OS
 #include "components/character_controller.h"
 #include "components/entity_id.h"
 #include "components/name.h"
@@ -415,7 +416,7 @@ int main(int argc, char** argv) {
         std::error_code ec; std::filesystem::remove(out, ec);
         const std::string cmd = "\"" + std::string(argv[0]) + "\" --replay-child \"" +
                                 file.string() + "\" \"" + out.string() + "\"";
-        const int rc = std::system(cmd.c_str());
+        const int rc = runShell(cmd);
         int started = 0, complete = 0, kind = -1, overran = 1;
         unsigned long long compared = 0, first = ~0ull, reads = 0;
         if (std::FILE* f = std::fopen(out.string().c_str(), "r")) {

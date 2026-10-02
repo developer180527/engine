@@ -173,7 +173,11 @@ int main() {
               "a future version is refused by name (%s)", why.c_str());
     }
 
-    fs::remove_all(root);
+    // Close the registry first: Windows cannot delete registry.db while it is
+    // open, and the throwing remove_all then terminated a test that had passed
+    // every check (0xc0000409, Windows CI, WO-038). Cleanup cannot fail the test.
+    reg.close();
+    { std::error_code ec; fs::remove_all(root, ec); }
     std::printf("clip_cook_test: %d failure(s)\n", g_failures);
     return g_failures ? 1 : 0;
 }

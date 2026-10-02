@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 # Substrings of (mangled or plain) symbol names that only the cook stack
 # defines. Case-insensitive. Each is a namespace or class of engine_cooking,
@@ -44,23 +45,42 @@ MARKERS = {
 _PAT = re.compile("|".join(re.escape(m) for m in MARKERS), re.I)
 
 
+def symbol_lines(binary: str) -> tuple[list[str] | None, str]:
+    """The binary's linked symbols, one per line, and where they came from.
+
+    MSVC keeps symbols in the PDB, not the .exe, so `nm` on a Windows binary
+    either reads nothing (x64: an empty table, which used to PASS) or cannot
+    read it at all (MinGW nm on ARM64 PE: "file format not recognized"). There
+    the linker's map is the record of what was linked: tests/CMakeLists.txt asks
+    MSVC for one (/MAP) beside each binary this checks (WO-038).
+    """
+    mapfile = Path(binary).with_suffix(".map")
+    if mapfile.exists():
+        return mapfile.read_text(encoding="utf-8", errors="ignore").splitlines(), f"the link map {mapfile.name}"
+    nm = shutil.which("nm")
+    if not nm:
+        return None, "no `nm` on this host and no link map beside the binary"
+    p = subprocess.run([nm, binary], capture_output=True, text=True, check=False)
+    if p.returncode != 0:
+        return None, f"nm failed: {p.stderr.strip()}"
+    return p.stdout.splitlines(), "nm"
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
         return 2
-    nm = shutil.which("nm")
-    if not nm:
-        # MSVC hosts have dumpbin, not nm. Say so rather than pass silently.
-        print("check_no_cook_stack: SKIPPED — no `nm` on this host")
-        return 0
     failed = False
     for binary in sys.argv[1:]:
-        p = subprocess.run([nm, binary], capture_output=True, text=True, check=False)
-        if p.returncode != 0:
-            print(f"check_no_cook_stack: nm failed on {binary}: {p.stderr.strip()}")
-            return 1
+        lines, source = symbol_lines(binary)
+        # Nothing to read is not a pass: an empty table proves nothing about
+        # what was linked, which is how Windows x64 passed with nothing checked.
+        if not lines:
+            print(f"FAIL  {binary}: no symbols to check ({source})")
+            failed = True
+            continue
         hits: dict[str, list[str]] = {}
-        for line in p.stdout.splitlines():
+        for line in lines:
             m = _PAT.search(line)
             if m:
                 key = next(k for k in MARKERS if k.lower() == m.group(0).lower())
@@ -71,7 +91,7 @@ def main() -> int:
             for key, syms in sorted(hits.items()):
                 print(f"        {MARKERS[key]}: {len(syms)} symbol(s), e.g. {syms[0]}")
         else:
-            print(f"ok    {binary}: no cook-stack symbols")
+            print(f"ok    {binary}: no cook-stack symbols ({len(lines)} lines from {source})")
     return 1 if failed else 0
 
 
