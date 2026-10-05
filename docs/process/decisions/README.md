@@ -30,3 +30,4 @@ backfilled only when someone trips on them (WO-022).
 | [DR-0009](DR-0009-the-runtime-reads-cooked-content-only.md) | The runtime reads cooked content only; a missing cook is a job | 2026-10-01 | decided |
 | [DR-0010](DR-0010-one-mutex-for-contact-events.md) | Jolt contact events are collected under one mutex | 2026-10-01 | decided |
 | [DR-0011](DR-0011-capacity-grows-with-content.md) | Capacity grows with content; nothing is reserved for content that does not exist | 2026-10-01 | decided |
+| [DR-0012](DR-0012-the-rhi-is-a-standalone-library.md) | The RHI is built as a standalone, reusable library; bgfx is not its upper bound | 2026-10-05 | decided |

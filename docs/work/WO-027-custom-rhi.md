@@ -6,17 +6,19 @@ program: renderer
 priority: P3
 size: XL
 state: parked
-parked-until: WO-019, WO-020 and WO-026 are done, then split into G-phase orders of size L or less
-depends: [WO-019, WO-020, WO-026]
+parked-until: WO-056 (the G2 prerequisites) is done, then split into G-phase orders of size L or less
+depends: [WO-019, WO-020, WO-056]
 contracts: [gpu-seam]
 touches:
   - docs/rhi/README.md
-source: conversation 2026-09-22 — "should we start the RHI?"
+source: conversation 2026-09-22 — "should we start the RHI?"; DR-0012 (2026-10-05)
 ---
 ## Why
 The largest and least reversible piece of work in the engine, with no working middle stage.
 
 Its shape depends on what the retained renderer asks of it, so building it first means designing for a consumer we're about to replace.
+
+Since DR-0012 it is a standalone library with the engine as its first consumer, and WO-026 is a baseline, no longer a gate.
 
 ## Done when
 - [ ] split into G-phase orders, each of size L or less, each ending in something that runs
