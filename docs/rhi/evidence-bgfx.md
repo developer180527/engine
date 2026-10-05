@@ -57,8 +57,8 @@ per-instance data read from a storage buffer.
 
 That distinction is worth a spike before committing a year: a GPU-driven cull →
 indirect draw path on bgfx, with per-instance material indices in a storage
-buffer, would either move the 18.8 ms extraction number or fail against a wall we
-can name precisely. Either outcome is worth more than the rest of this directory
+buffer, would either move the 18.8 ms extraction number (4.0–4.6 ms since
+WO-019's re-measurement) or fail against a wall we can name precisely. Either outcome is worth more than the rest of this directory
 is without it. That spike is [`phases.md`](phases.md) **G0a**, and it is
 [`studies/`](studies/) question 004.
 

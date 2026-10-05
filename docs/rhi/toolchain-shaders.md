@@ -13,9 +13,14 @@ This is the part that sinks these projects, so it goes in the plan rather than
 being discovered in month three. bgfx gives us a shader language *and* `shaderc`
 *and* reflection. Replacing it means owning:
 
-- **HLSL 2021 / SM 6.6+ as the one source language.** DXC → DXIL for D3D12, DXC →
-  SPIR-V for Vulkan, and SPIR-V → MSL (via `spirv-cross` or Metal Shader
-  Converter) for the dev backend.
+- **One source language, HLSL 2021 / SM 6.6+ for now, and that choice is
+  OPEN** (study 008: HLSL through DXC, or Slang). Either way: SPIR-V for
+  Vulkan 1.3, and SPIR-V → MSL (via `spirv-cross` or Metal Shader Converter)
+  for Metal 4, a full shipping backend since axiom 6's rewrite, not a "dev
+  backend" as this line once said. **DXIL is not a target**: D3D12 is deferred
+  (axiom 6), and DXIL returns with it. A portable tier H, if one is built
+  (`design-axioms.md` "Tiers"), needs WGSL, which Tint or naga produce from
+  SPIR-V, so the source must reach SPIR-V that they accept.
 - **Reflection**, though far less of it: bindless means there is almost no binding
   surface left to reflect. We already have `shader_reflect.h`.
 - **Variants/permutations**, which we already have machinery for.

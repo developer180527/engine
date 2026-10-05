@@ -41,7 +41,11 @@ RT passes          inline ray queries for shadows / AO / gameplay visibility
 The load-bearing consequence: **the CPU stops touching per-visible-object data.**
 Extraction becomes an incremental upload of what changed, not a rebuild of
 everything — which is the fix for the 18.8 ms that this whole directory started
-from, and it is not reachable through bgfx.
+from, and it is not reachable through bgfx. *(Re-measured 2026-10-01, WO-019, same scene shape: `Render.extract` is now 4.0–4.6 ms. The 18.8 ms here is R20's, kept as the history this was argued from.)*
+
+> **Tiers.** What the API looks like on each tier follows
+> [`design-axioms.md`](design-axioms.md) "Tiers" (provisional on study 007):
+> the types below are tier L's.
 
 That first line is the hardest one and the least designed. "Only DIRTY entities
 re-uploaded" is a retained scene with an ownership model, and how shipped engines

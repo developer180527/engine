@@ -24,6 +24,7 @@ this engine is `Render.extract` — **18.8 ms of a 24.8 ms CPU frame, against
 not touch that 18.8 ms of extraction. Done in the wrong order, this project is four months of work for a
 frame time that does not move, and the repo has a standing rule against exactly
 that kind of change (NEON was declined on a 0.4%-of-frame measurement).
+*(Re-measured 2026-10-01, WO-019, same scene shape: `Render.extract` is now 4.0–4.6 ms. The 18.8 ms here is R20's, kept as the history this was argued from.)*
 
 The argument that does hold is stronger than "bgfx is old":
 

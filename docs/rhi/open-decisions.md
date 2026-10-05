@@ -58,12 +58,22 @@ this document was written, not by argument.*
    The iPad floor is a third number, set by argument buffers and
    `MTLIndirectCommandBuffer`, and it has to be stated before G7 rather than
    discovered in it.
+
+   **Proposed answer, as tiers:** [`design-axioms.md`](design-axioms.md)
+   "Tiers" (provisional on study 007). Fast tier L on Metal 4 / Vulkan 1.3
+   class hardware; a portable tier H for WebGPU-class devices, if built. Not
+   restated here (workflow §3); not closed until 007 concludes.
 4. **G0b hardware** — one NVIDIA + one AMD box on the farm. Every *performance*
    claim after G4 needs them; G1 does not
    ([`method-measurement.md`](method-measurement.md) §3.1).
 5. **Do we do incremental extraction first?** It is cheap, independent, and attacks
    the *actual* current bottleneck. Recommendation: yes, in parallel with
    G0–G1, so the frame gets faster while the substrate is being built.
+   **Under way:** the retained scene's table landed as P3a (WO-019,
+   2026-10-01; `renderer-program.md` §9), with P3b (incremental writes) next.
+   The same work re-measured the bottleneck: extraction is 4.0–4.6 ms at
+   50 000 real props, not 18.8, so its payoff is now argued on the §9.10 curve
+   at 100 k–500 k.
 6. **Does the RHI compile shaders?** Recommend **no**: it takes bytes
    (DXIL/SPIR-V/metallib) and the cooker stays host-side. That is NVRHI's choice
    and it is what keeps a second consumer from inheriting our content pipeline. It
@@ -81,9 +91,10 @@ this document was written, not by argument.*
 |---|---|---|
 | 3 (iPad floor) | device access + Metal docs | 005 |
 | 4 | buying hardware | — |
-| 5 | a measurement we can take today | — |
+| 5 | under way: P3a landed (WO-019); P3b next | — |
 | 6 | reading NVRHI / NRI | 002 |
 | 7 | reading NVRHI / NRI + the validation story | 001 |
 
-Three of the five need no hardware. Decision 5 is the one that could move the
-frame time *this month* and is not blocked on anything.
+Three of the five need no hardware. Decision 5 is no longer waiting: its first
+phase landed, and it measured the bottleneck at a quarter of what this file
+assumed.

@@ -10,8 +10,8 @@ covers:
 | **Status** | `in-progress` |
 | **Opened** | 2026-10-05 |
 | **Concluded** | — |
-| **Verdict lands in** | `../design-api.md` |
-| **Highest rung reached** | reading, first pass from memory (each §4 claim marked *verify* still needs its source opened, §6) |
+| **Verdict lands in** | `../design-axioms.md` ("Tiers"); `design-api.md`, open decision 3 and `phases.md` link to it (workflow §3: one landing doc) |
+| **Highest rung reached** | 6: a first pass **from memory**. Per workflow §4 a source not yet opened is rung 6, not 5; each §4 claim marked *verify* needs its source opened and cited (§6) before anything closes |
 | **Superseded by** | — |
 
 ## 1. The question
@@ -109,8 +109,11 @@ source has been opened and the section cited in §6.
      replacement, while tier L is designed.** This gets web early, but only if
      the render graph exists first, so passes are tier-neutral from day one.
 
-   The recommendation is (a). Web is a reach target, while the frame-time
-   problem (`issues.md` R20) is on the low tier's path.
+   The recommendation is (a). Web is a reach target, while bindless and the
+   GPU-driven path (axioms 2 and 5, DR-0012's reasons) exist only on the low
+   tier. *(This first said "the frame-time problem (`issues.md` R20)". R20's
+   18.8 ms extraction was re-measured at 4.0–4.6 ms by WO-019, so it no longer
+   carries the argument; the bindless reach does.)*
 
 ### 4.3 Making it more modern than the prior art
 
@@ -127,9 +130,15 @@ What none of the above does fully, and this RHI can:
 - **A C ABI as function tables, like NRI,** so kits and the vCAD consumer link
   against a stable interface, not C++ classes.
 - **Validation as a wrapper device, like NVRHI and wgpu,** compiled in by
-  default in dev builds. That answers open decision 7.
-- **Shaders as bytes in, one source out** (study 002): Slang or HLSL to SPIR-V
-  plus MSL, and WGSL for tier H through Tint/naga.
+  default in dev builds. That weakens the validation argument for binding sets
+  in open decision 7 (bindless-only or binding sets), but does not answer it:
+  study 001 does.
+- **Shaders as bytes in, one source out.** Bytes in is study 002's question.
+  The SOURCE LANGUAGE is not decided anywhere: `toolchain-shaders.md` says HLSL
+  through DXC, this pass said "Slang or HLSL". That is study 008, and it decides
+  tier H's shader path too: WGSL comes from SPIR-V (Tint or naga), so tier H
+  needs HLSL/Slang → SPIR-V → WGSL, and whether that accepts the bindless-heavy
+  SPIR-V tier L emits is unverified.
 - **Pipelines as a tiny set:** dynamic state wherever both APIs allow it, so
   the PSO permutation count stays small.
 
@@ -141,17 +150,23 @@ tier", no.** Tier H is `webgpu.h`, adopted and not written, and portable but
 not bindless. Tier L is ours, bindless and GPU-driven. The render graph sits
 above both, and tier L is built first.
 
-- **Did the falsifier fire?** Condition one fired for the web backend: WebGPU
-  cannot carry bindless. That is why the tiers split into "portable vs. fast"
-  rather than "simple vs. advanced".
-- **What changes:** `design-api.md` gets the tier split; axiom 6 gains "tier H
-  via `webgpu.h` for the web and low end"; open decision 3 (minimum spec) is
-  answered *as tiers*: H for WebGL2/WebGPU-class devices, L for Metal 4 /
-  Vulkan 1.3. Not edited yet: the verdict is provisional.
-- **Still unknown:** the bindless-in-WebGPU timeline; whether Dawn or
-  wgpu-native is lighter to ship (size, build, C ABI stability); and whether
-  G0a shows bgfx is enough for tier H's role, which would make tier H "keep bgfx"
-  instead.
+- **Did the falsifier fire?** Yes, condition one: a tier that runs on WebGPU
+  cannot carry bindless. The question was therefore RE-SCOPED, from "simple
+  tier, then advanced tier" to "portable tier, then fast tier", and the
+  verdict is about the re-scoped question. Condition two did not fire.
+- **What changes, in ONE place:** `design-axioms.md` "Tiers" (written
+  2026-10-05, marked provisional) states the split and that axioms 2, 5 and 6
+  are tier L's. `design-api.md` (types per tier), open decision 3 (minimum
+  spec as tiers) and `phases.md` (tier H is not a phase) link to it rather than
+  restate it. It becomes non-provisional when this study concludes.
+- **Still unknown, the two reads that decide the most** (WO-056):
+  1. the WebGPU bindless timeline (gpuweb proposal status, 2026), which
+     decides whether tier H stays "portable, not fast";
+  2. Dawn versus wgpu-native to ship: binary size, build cost, and the
+     stability of the `webgpu.h` C ABI.
+
+  Also: whether G0a shows bgfx is enough for tier H's role, which would make
+  tier H "keep bgfx" instead; and the shader source language (study 008).
 
 ## 6. Sources (to open and cite by section before concluding)
 

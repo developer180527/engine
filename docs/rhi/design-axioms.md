@@ -10,7 +10,11 @@ the axiom numbering that other documents cite ("axiom 2", "axiom 6").*
 
 ## 4.1 Axioms
 
-Six, and each one is a thing we refuse rather than a feature we add:
+Six, and each one is a thing we refuse rather than a feature we add.
+
+**They describe the fast tier (tier L) only** (see "Tiers" below). If study
+007 concludes for a portable tier H on WebGPU, axioms 2, 5 and 6 do not hold
+there, and each says so:
 
 1. **No per-draw uniforms. Ever.** All per-draw data lives in GPU buffers indexed
    by draw ID. This single rule deletes the 8 MB ceiling, the `kMaxDrawsPerFrame`
@@ -22,6 +26,8 @@ Six, and each one is a thing we refuse rather than a feature we add:
    `ResourceDescriptorHeap[]`. Vulkan: one giant descriptor set with
    `descriptor_indexing` (core 1.2) and `nonuniformEXT`. This is a *smaller* API
    than bgfx's, not a bigger one.
+   *Tier L only:* core WebGPU has bind groups and no bindless, so a portable
+   tier H cannot satisfy this axiom (study 007 §4.2).
 3. **Explicit queues and timelines.** Graphics, async compute, copy. Compute
    culling and BVH refits overlap graphics; streaming uploads go on copy.
 4. **Barriers come from a render graph, never from the caller.** Passes declare
@@ -31,6 +37,8 @@ Six, and each one is a thing we refuse rather than a feature we add:
 5. **GPU-driven is the default path, CPU-driven is the debug path.** Not the other
    way round — otherwise the fast path is the untested one, which is the drift this
    repo already refuses in extraction ("ONE body, serial or parallel").
+   *Tier L only:* WebGPU has no guaranteed indirect-count, so on tier H the
+   CPU-driven path would be the main path, not the debug one (study 007 §4.2).
 6. **TWO backends: Metal 4 and Vulkan 1.3. D3D12 is deferred, and Xbox is its
    trigger.** *(Rewritten twice on 2026-08-28. The original read "three backends,
    only two of them ship", with Metal 3 as a dev-only backend "explicitly allowed
@@ -75,6 +83,32 @@ Six, and each one is a thing we refuse rather than a feature we add:
    is Windows' native and generally best-tested path, especially on Intel iGPUs.
    It is a good bet — every IHV ships Vulkan on Windows and Proton has hardened it
    enormously — but it is a bet, and the fallback is adding the third backend.
+
+   *Tier L only:* the two backends are tier L's. A tier H on WebGPU would add
+   Dawn or wgpu-native as a third backend DEPENDENCY (adopted, not written), and
+   that is still a third set of driver behaviour to test. See "Tiers" below.
+
+## Tiers — PROVISIONAL, pending study 007
+
+*The verdict of [study 007](studies/007-two-tier-rhi-and-prior-art.md) lands
+here, and only here ([`workflow.md`](workflow.md) §3). Until 007 concludes it
+is a proposal at rungs 5–6 and closes nothing.*
+
+- **Tier L (fast)** is ours: explicit and bindless, GPU-driven by default, on
+  Metal 4 and Vulkan 1.3. All six axioms above are tier L's. It is built first.
+- **Tier H (portable)** would be the WebGPU model (bind groups, automatic
+  barriers, no memory control), ADOPTED through `webgpu.h` (Dawn or
+  wgpu-native) rather than written, for the web and the low end. Axioms 2, 5
+  and 6 do not hold there. It is a reach target and is not scheduled
+  ([`phases.md`](phases.md)).
+- **The renderer above both is written against the render graph** (axiom 4),
+  so passes are tier-neutral. Each pass declares what it needs, and each tier
+  supplies its own implementation.
+
+What links here instead of restating it: [`design-api.md`](design-api.md) (the
+types per tier, once 007 concludes), [`open-decisions.md`](open-decisions.md)
+decision 3 (the minimum spec, answered as tiers), and [`phases.md`](phases.md)
+(tier H is not a phase).
 
 ## Rungs
 
