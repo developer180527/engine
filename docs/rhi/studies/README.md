@@ -16,6 +16,7 @@ Copy [`TEMPLATE.md`](TEMPLATE.md). Number sequentially; never renumber.
 | # | Question | Status | Verdict landed in |
 |---|---|---|---|
 | — | *none concluded yet* | — | — |
+| 007 | [Two tiers (WebGPU-shaped, then explicit), and what wgpu, Dawn, NVRHI, NRI and SDL_GPU teach](007-two-tier-rhi-and-prior-art.md) | in-progress (first pass, sources to verify) | `../design-api.md` |
 
 ## Queued — questions worth a study, not yet started
 
