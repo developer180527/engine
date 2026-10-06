@@ -53,3 +53,4 @@ Double-sided materials. Their state already sets no cull bit.
   red at 6 poses; a half-done WO-033 (only the game camera right-handed) is
   red on §3.
 - Closed 2026-09-30: its one open item, the visual check, moved into WO-033, which changed the culling again.
+- 2026-10-06: confirmed by eye under WO-033's check: a one-sided quad disappears from behind on macOS, closed meshes unchanged.

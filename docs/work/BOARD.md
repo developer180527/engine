@@ -15,8 +15,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 - [WO-038](WO-038-ci-green-on-every-leg.md) **CI green on every leg, and red is noticed** — 5/7 done. Still open:
   - a `workflow_dispatch` run of the full matrix is green on all six legs plus the sanitizer, SDK-only and shipping jobs (Windows may show more once it links)
   - a failed nightly notifies instead of sitting red for weeks
-- [WO-033](WO-033-the-image-is-mirrored.md) **Every camera renders the world mirrored left-to-right** — 5/6 done. Still open:
-  - an asymmetric asset (text on a texture) reads correctly in the editor and the player, checked by eye by the user before closing. **This one check also covers WO-032**: back faces are culled on macOS for the first time, so a single-sided open surface seen from behind now disappears (correct), closed meshes look the same, and the editor gizmo (ImGuizmo, whose own demo uses right-handed matrices) should now rotate and translate the way it points.
 
 ## Next up
 
@@ -34,7 +32,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | Renderer & RHI | M | **active** 5/6 | — |
 | [WO-051](WO-051-kit-abi-meaning-revisions.md) | A kit-ABI component that changes meaning refuses old kits, instead of loading them | Providers & modules | S | **ready** | kit-abi |
 | [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | blocked by WO-051 | kit-abi, engine-plugin, script-services |
 | [WO-053](WO-053-bone-maps-per-section.md) | Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128 | Asset import & cooking | L | blocked by WO-051 | cooker, kit-abi |
@@ -74,6 +71,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | 2026-10-06 | checked by eye by the owner 2026-10-06, editor and player screenshots of a text-textured single-sided quad (READ ME, LEFT, RIGHT +X): text reads, +X on the right, back face culled, gizmo and fly camera move the way they point |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | 2026-10-05 | docs/rhi/design-api.md §4.7 (runtime choice from config plus capability, shader blobs per backend, named fallback order, no silent downgrade); cited by phases.md G2; device.cpp comment at the |
 | [WO-050](WO-050-empty-game-costs-nothing.md) | An empty game costs nothing — capacity grows with content, never reserved for it | 2026-10-01 | empty project 204.7 -> 95.8 MB mapped (physics 78.4 -> 0.01 MB, bgfx heap 86.5 -> 49.1 MB, render targets 72.2 -> 42.2 MB); empty_game_budget_test (2.74 MB tagged, 0.011 ms/tick; an eager physics world turns it red); physics_capacity_test (lazy, rebuild, no spurious events; removing the re-report suppression turns it red); 50k scene unchanged (527 draws, extract 3.7-4.3 ms); 130 tests (all but the 10 fuzz explore campaigns) |
 | [WO-049](WO-049-contacts-without-a-global-lock.md) | Jolt contacts are collected per thread, not under one mutex | 2026-10-01 | sim_profile 2 sampling profile, mutex wait 3.0% -> 2.1-2.4% of busy thread time (flushDeferred 79 -> 13-14 samples; the contact listener 0 before and after); physics mean 3.83 -> 3.74 ms (4 runs each); determinism gate 0 divergences |

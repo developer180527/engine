@@ -5,7 +5,9 @@ title: Every camera renders the world mirrored left-to-right
 program: renderer
 priority: P1
 size: M
-state: active
+state: done
+done: 2026-10-06
+evidence: checked by eye by the owner 2026-10-06, editor and player screenshots of a text-textured single-sided quad (READ ME, LEFT, RIGHT +X): text reads, +X on the right, back face culled, gizmo and fly camera move the way they point
 touches:
   - src/runtime/camera_util.h
   - src/editor/fly_camera.h
@@ -32,7 +34,7 @@ What a mirror costs, even when everything "looks fine":
 - [x] `passstate::kCullBackFaces` becomes `BGFX_STATE_CULL_CW`. `cull_mode_test` §2 fails until it does, because it derives the bit from the camera path, and §3 fails if only some cameras change.
 - [x] a test pins "world +X in front of the camera lands on the RIGHT of the screen", replacing `cull_mode_test`'s note
 - [x] every compensation is found and removed: the fly camera's `-step` on right, its yaw and pitch signs, `CameraLook`'s basis, the gizmo, picking/unprojection, and the shadow map's texel lookup (`sy` in `shadow_pass.cpp`), each checked, not assumed
-- [ ] an asymmetric asset (text on a texture) reads correctly in the editor and the player, checked by eye by the user before closing. **This one check also covers WO-032**: back faces are culled on macOS for the first time, so a single-sided open surface seen from behind now disappears (correct), closed meshes look the same, and the editor gizmo (ImGuizmo, whose own demo uses right-handed matrices) should now rotate and translate the way it points.
+- [x] an asymmetric asset (text on a texture) reads correctly in the editor and the player, checked by eye by the user before closing. **This one check also covers WO-032**: back faces are culled on macOS for the first time, so a single-sided open surface seen from behind now disappears (correct), closed meshes look the same, and the editor gizmo (ImGuizmo, whose own demo uses right-handed matrices) should now rotate and translate the way it points.
 - [x] **kit-visible**: `Kits/` and `fps_shooter/` are untracked, and their look and strafe signs may carry the same compensation. `docs/guides/` gets a migration note listing what flips, since that code cannot be edited from here.
 
 ## Not in scope
@@ -77,3 +79,4 @@ Changing the world's handedness. The world is right-handed and stays so. Only th
 - Found on the way: the frustum near plane is wrong under homogeneous depth
   (latent, since no OpenGL backend is ever selected). Filed as WO-034.
 - Stays **active** until the user's visual check, which also covers WO-032's.
+- 2026-10-06, the visual check, by the owner: a one-sided 4 x 2 m quad textured "READ ME", LEFT on the left and "RIGHT +X" on its +X edge, in a fresh project. Editor and player: the text reads, RIGHT +X is on the right of the screen. Seen from behind the quad disappears (WO-032). The X gizmo moves it toward +X and the fly camera strafes and turns the way it is pushed. Closed.
