@@ -7,9 +7,10 @@
 // reload — a mismatched kit would misread memory the running host is still using.
 //
 // ── The hole this closes ────────────────────────────────────────────────────
-// That hash is built from `sizeof` and `alignof` ONLY:
+// That hash is built from `sizeof` and `alignof` (and, since WO-051, each
+// type's kAbiRevision, which is the MEANING and is checked elsewhere):
 //
-//     #define ENGINE_ABI_HASH_TYPE(T) h = mix(mix(h, sizeof(T)), alignof(T))
+//     h = mix(mix(h, sizeof(T)), alignof(T)); if (T::kAbiRevision) h = mix(h, ...)
 //
 // **Reordering two same-sized fields changes neither.** Measured, not assumed —
 // swapping `radius` and `height` in `CharacterController`:

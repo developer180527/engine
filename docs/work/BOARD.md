@@ -18,9 +18,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-051](WO-051-kit-abi-meaning-revisions.md) **A kit-ABI component that changes meaning refuses old kits, instead of loading them** · P1 · size S — The kit gate hashes a shared component's LAYOUT (sizeof, alignof), so a change of MEANING with the same layout loads old kits silently.
-2. [WO-056](WO-056-rhi-g2-prerequisites.md) **RHI G2 prerequisites — the reading and decisions the first triangle needs** · P1 · size M — G2 writes the API every later phase and every other consumer inherits. Its
-3. [WO-058](WO-058-vulkan-validation-ci-lane.md) **A Vulkan CI lane — software driver plus validation layers, before the first backend commit** · P1 · size S — The Vulkan backend must be tested from its first commit, and CI runners have
+1. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
+2. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
+3. [WO-056](WO-056-rhi-g2-prerequisites.md) **RHI G2 prerequisites — the reading and decisions the first triangle needs** · P1 · size M — G2 writes the API every later phase and every other consumer inherits. Its
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -32,9 +32,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-051](WO-051-kit-abi-meaning-revisions.md) | A kit-ABI component that changes meaning refuses old kits, instead of loading them | Providers & modules | S | **ready** | kit-abi |
-| [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | blocked by WO-051 | kit-abi, engine-plugin, script-services |
-| [WO-053](WO-053-bone-maps-per-section.md) | Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128 | Asset import & cooking | L | blocked by WO-051 | cooker, kit-abi |
+| [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | **ready** | kit-abi, engine-plugin, script-services |
+| [WO-053](WO-053-bone-maps-per-section.md) | Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128 | Asset import & cooking | L | **ready** | cooker, kit-abi |
 | [WO-056](WO-056-rhi-g2-prerequisites.md) | RHI G2 prerequisites — the reading and decisions the first triangle needs | Renderer & RHI | M | **ready** | — |
 | [WO-057](WO-057-rhi-module-home.md) | The RHI's home — a module that builds, tests and ships without the engine | Renderer & RHI | S | blocked by WO-056 | — |
 | [WO-058](WO-058-vulkan-validation-ci-lane.md) | A Vulkan CI lane — software driver plus validation layers, before the first backend commit | Renderer & RHI | S | **ready** | — |
@@ -71,6 +70,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-051](WO-051-kit-abi-meaning-revisions.md) | A kit-ABI component that changes meaning refuses old kits, instead of loading them | 2026-10-06 | tests/module_abi/tests/gate.rs (old_revision fixture refused, named); ctest kit_abi_headers; mutations in the log |
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | 2026-10-06 | checked by eye by the owner 2026-10-06, editor and player screenshots of a text-textured single-sided quad (READ ME, LEFT, RIGHT +X): text reads, +X on the right, back face culled, gizmo and fly camera move the way they point |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | 2026-10-05 | docs/rhi/design-api.md §4.7 (runtime choice from config plus capability, shader blobs per backend, named fallback order, no silent downgrade); cited by phases.md G2; device.cpp comment at the |
 | [WO-050](WO-050-empty-game-costs-nothing.md) | An empty game costs nothing — capacity grows with content, never reserved for it | 2026-10-01 | empty project 204.7 -> 95.8 MB mapped (physics 78.4 -> 0.01 MB, bgfx heap 86.5 -> 49.1 MB, render targets 72.2 -> 42.2 MB); empty_game_budget_test (2.74 MB tagged, 0.011 ms/tick; an eager physics world turns it red); physics_capacity_test (lazy, rebuild, no spurious events; removing the re-report suppression turns it red); 50k scene unchanged (527 draws, extract 3.7-4.3 ms); 130 tests (all but the 10 fuzz explore campaigns) |

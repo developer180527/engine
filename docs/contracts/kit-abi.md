@@ -11,11 +11,12 @@ implementations:
 tests:
   - tests/api_abi_compat_test.cpp
   - tests/component_abi_test.cpp
+  - scripts/kit_abi_headers.py
 covers:
   - include/engine/engine_api.h
   - include/engine/engine_api_table.h
   - include/engine/contract.h
-verified: 2026-09-27
+verified: 2026-10-06
 ---
 
 # kit-abi — the frozen C ABI kits and games are built against
@@ -57,4 +58,7 @@ no completion signal. Everything else is synchronous.
 Logging goes through the engine (`engineLog*`); warnings and errors reach the
 game console regardless of level masks. Version or layout skew is refused at
 module load — "a build error's moral equivalent, delivered at the last safe
-moment" — never discovered at runtime.
+moment" — never discovered at runtime. A kit built against an older MEANING of a
+shared component (its `kAbiRevision`, WO-051) is refused the same way, by name:
+the message names the component, both revisions and
+`docs/guides/kit-abi-revisions.md`.

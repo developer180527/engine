@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-10-01
+verified: 2026-10-06
 covers:
   - src/components/
 tests:
@@ -48,6 +48,15 @@ for a reason that is not a defect — cross-toolchain mixing is already refused 
 > **Changing a component layout is always a deliberate act.** Update the frozen
 > numbers in the same commit, and expect `componentLayoutHash()` to refuse every
 > older module — which is the gate working, not the gate breaking.
+
+**The meaning is part of the ABI too (WO-051).** Each of the thirteen declares
+`static constexpr uint32_t kAbiRevision`, folded into the hash when it is not 0.
+Raise it when the same bytes come to mean something else, as WO-048 did to
+`CollisionEvents` (revision 1: kept with empty lists rather than removed). The
+loader then refuses older kits by naming the component, and
+[`kit-abi-revisions.md`](../../docs/guides/kit-abi-revisions.md) says what changed.
+`kit_abi_headers` (ctest) fails on any edit to these headers until it is recorded
+as comment-only or as a revision bump (`scripts/kit_abi_headers.py`).
 
 ## Purpose
 Plain-data ECS component definitions shared by runtime, plugins, and editor.

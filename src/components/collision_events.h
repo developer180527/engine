@@ -1,10 +1,13 @@
 #pragma once
+#include <cstdint>
 #include <vector>
 #include <flecs.h>
 
 // ── CollisionEvents ────────────────────────────────────────────────────────
-// Set by JoltPlugin::flushCollisionEvents() on entities that had contact
-// events this frame. Removed when no events remain (clean archetypes).
+// Set by JoltPlugin::flushCollisionEvents() on a body at its first contact,
+// and KEPT from then on: on a tick with no contact change both lists are
+// empty. "Has CollisionEvents" means "has touched something, ever", not "had
+// an event this tick"; test hasEnter()/hasExit() (WO-048, revision 1).
 //
 // GAME CODE CONTRACT:
 //   Always validate handles before use — an entity may be deleted between
@@ -20,6 +23,12 @@
 //   read a complete, consistent event set. With flecs pipelines, schedule
 //   your script system after the PhysicsUpdate phase.
 struct CollisionEvents {
+    // The MEANING of this component in the kit ABI (WO-051). Bump it when the same
+    // bytes start to mean something else, and add a note to docs/guides/kit-abi-revisions.md.
+    // Revision 1 (WO-048): the component stays on with empty lists, where
+    // revision 0 removed it on a quiet tick.
+    static constexpr uint32_t kAbiRevision = 1;
+
     std::vector<flecs::entity_t> entered; // bodies that started contact this frame
     std::vector<flecs::entity_t> exited;  // bodies that lost contact this frame
 

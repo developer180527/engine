@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 // ── CharacterController ──────────────────────────────────────────────────
 // Kinematic player movement via Jolt CharacterVirtual (collide-and-slide,
 // slope/step handling, no rigid-body jitter). An entity has EITHER a
@@ -11,6 +12,10 @@
 // FEET — matching typical model origins. Set the entity's position to where
 // the feet should rest.
 struct CharacterController {
+    // The MEANING of this component in the kit ABI (WO-051). Bump it when the same
+    // bytes start to mean something else, and add a note to docs/guides/kit-abi-revisions.md.
+    static constexpr uint32_t kAbiRevision = 0;
+
     float radius       = 0.3f;   // capsule radius
     float height       = 1.8f;   // total capsule height (cylinder + 2 hemispheres)
     float maxSlopeDeg  = 45.0f;  // steepest walkable slope

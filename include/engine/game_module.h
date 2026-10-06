@@ -49,7 +49,8 @@
 //  3. abiFingerprint   — compiler + C++ std + build mode, baked at compile
 //                        time; catches debug-vs-release and cross-compiler
 //  4. componentLayoutHash — sizeof/alignof of every shared component struct
-//                        (and RuntimeContext). World data SURVIVES reloads,
+//                        (and RuntimeContext), plus each one's kAbiRevision
+//                        (its meaning, WO-051). World data SURVIVES reloads,
 //                        so a module compiled against changed component
 //                        layouts would misread live ECS memory; the hash
 //                        turns that silent corruption into a refusal with
@@ -93,25 +94,50 @@ constexpr uint64_t kFnvBasis = 1469598103934665603ull;
 constexpr uint64_t kFnvPrime = 1099511628211ull;
 constexpr uint64_t mix(uint64_t h, uint64_t v) { return (h ^ v) * kFnvPrime; }
 
-constexpr uint64_t componentLayoutHash() {
+// Every component (and RuntimeContext) in the kit ABI, once. The hash and the
+// revision table below both expand it, so they cannot cover different sets.
+#define ENGINE_ABI_COMPONENTS(X) \
+    X(Transform) X(Name) X(MeshRenderer) X(SkinnedMesh) X(Animator) X(Camera) \
+    X(Light) X(RigidBody) X(CharacterController) X(ScriptComponent)          \
+    X(CollisionEvents) X(EntityId) X(RuntimeContext)
+
+// sizeof and alignof catch a change of LAYOUT. A change of MEANING with the
+// same bytes (WO-048 kept CollisionEvents on bodies with empty lists, where it
+// used to be removed) is each type's kAbiRevision (WO-051), folded in when it
+// is not 0 so a hash from before revisions existed is unchanged until a bump.
+// `withRevisions = false` is that older hash: what a kit built before WO-051
+// reports, which the gate tests use to stand in for one.
+constexpr uint64_t componentLayoutHash(bool withRevisions = true) {
     uint64_t h = kFnvBasis;
-#define ENGINE_ABI_HASH_TYPE(T) h = mix(mix(h, sizeof(T)), alignof(T))
-    ENGINE_ABI_HASH_TYPE(Transform);
-    ENGINE_ABI_HASH_TYPE(Name);
-    ENGINE_ABI_HASH_TYPE(MeshRenderer);
-    ENGINE_ABI_HASH_TYPE(SkinnedMesh);
-    ENGINE_ABI_HASH_TYPE(Animator);
-    ENGINE_ABI_HASH_TYPE(Camera);
-    ENGINE_ABI_HASH_TYPE(Light);
-    ENGINE_ABI_HASH_TYPE(RigidBody);
-    ENGINE_ABI_HASH_TYPE(CharacterController);
-    ENGINE_ABI_HASH_TYPE(ScriptComponent);
-    ENGINE_ABI_HASH_TYPE(CollisionEvents);
-    ENGINE_ABI_HASH_TYPE(EntityId);
-    ENGINE_ABI_HASH_TYPE(RuntimeContext);
+#define ENGINE_ABI_HASH_TYPE(T) h = mix(mix(h, sizeof(T)), alignof(T)); \
+    if (withRevisions && T::kAbiRevision != 0) h = mix(h, T::kAbiRevision);
+    ENGINE_ABI_COMPONENTS(ENGINE_ABI_HASH_TYPE)
 #undef ENGINE_ABI_HASH_TYPE
     return h;
 }
+} // namespace engine_abi
+
+// ── Which MEANING of each component a module was built against (WO-051) ──────
+// The layout hash says THAT something changed; this says WHAT, so the host can
+// refuse a kit by naming the component and its migration note. A module built
+// before this export existed has none: the host reads it as revision 0 for
+// every component.
+extern "C" {
+typedef struct EngineComponentRevision {
+    const char* name;       // the C++ type name, e.g. "CollisionEvents"
+    uint32_t    revision;   // its kAbiRevision when the module was compiled
+} EngineComponentRevision;
+typedef const EngineComponentRevision* (*EngineModuleComponentRevisionsV1Fn)(int* count);
+}
+
+namespace engine_abi {
+inline constexpr EngineComponentRevision kComponentRevisions[] = {
+#define ENGINE_ABI_REVISION_ROW(T) { #T, T::kAbiRevision },
+    ENGINE_ABI_COMPONENTS(ENGINE_ABI_REVISION_ROW)
+#undef ENGINE_ABI_REVISION_ROW
+};
+inline constexpr int kComponentCount =
+    (int)(sizeof(kComponentRevisions) / sizeof(kComponentRevisions[0]));
 } // namespace engine_abi
 
 // Why the host loaded the module — delivered via the (nullable) loadReason
@@ -217,6 +243,11 @@ typedef void                (*EngineGameModuleDestroyV1Fn)(EngineGameModuleV1*);
         t->loadReason  = nullptr; /* fill in a custom create if you need it */ \
         return t;                                                              \
     }                                                                          \
+    extern "C" ENGINE_MODULE_EXPORT                                            \
+    const EngineComponentRevision* engineModuleComponentRevisionsV1(int* n) {  \
+        if (n) *n = engine_abi::kComponentCount;                               \
+        return engine_abi::kComponentRevisions;                                \
+    }                                                                          \
     extern "C" ENGINE_MODULE_EXPORT                          \
     void engineGameModuleDestroyV1(EngineGameModuleV1* t) {                    \
         if (!t) return;                                                        \
@@ -234,6 +265,8 @@ typedef void                (*EngineGameModuleDestroyV1Fn)(EngineGameModuleV1*);
 // Detected and refused at load:
 //   • debug/release & cross-compiler mixes                (fingerprint)
 //   • shared component/RuntimeContext layout drift        (layout hash)
+//   • a component whose meaning changed (kAbiRevision)    (hash; named by
+//     engineModuleComponentRevisionsV1)
 // Still inherent — discipline, not mechanism:
 //   • module globals/statics/threads/callbacks outliving dlclose: release
 //     everything module-pointing in onDetach/onSimulationStop

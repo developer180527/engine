@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-10-01
+verified: 2026-10-06
 parses-external-input: true
 covers:
   - src/runtime/

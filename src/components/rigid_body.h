@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <bx/math.h>
 
 enum class PhysicsBodyType { Static, Kinematic, Dynamic };
@@ -10,6 +11,10 @@ enum class PhysicsShape    { Box, Sphere, Capsule };
 // During simulation, Transform is written back from Jolt every frame
 // for Dynamic and Kinematic bodies.
 struct RigidBody {
+    // The MEANING of this component in the kit ABI (WO-051). Bump it when the same
+    // bytes start to mean something else, and add a note to docs/guides/kit-abi-revisions.md.
+    static constexpr uint32_t kAbiRevision = 0;
+
     PhysicsBodyType bodyType    = PhysicsBodyType::Dynamic;
     PhysicsShape    shape       = PhysicsShape::Box;
     float           mass        = 1.0f;

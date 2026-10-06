@@ -1,0 +1,15 @@
+# Kit-ABI component headers, recorded (WO-051). Written by scripts/kit_abi_headers.py;
+# do not edit by hand. type  text-hash  code-hash  kAbiRevision  header
+Animator 7c6dde9b9bf50ff9 89581f26ca7b73fd 0 src/components/animator.h
+Camera 515b8dedb6050e0b 9435371f86eac6aa 0 src/components/camera.h
+CharacterController 526657c7641a150e 2fc7f769fc8c56e9 0 src/components/character_controller.h
+CollisionEvents ace2a78cfbc84244 1582484f8162deb9 1 src/components/collision_events.h
+EntityId ef8122a68f13ea72 299ba9018f19992f 0 src/components/entity_id.h
+Light 16c6013ae58a0692 10e1513c14ae0f27 0 src/components/light.h
+MeshRenderer 5556edc270c7e50b 3fb5d8b6ff89e295 0 src/components/mesh_renderer.h
+Name 813e03702c767275 0d86c4466db4eeaf 0 src/components/name.h
+RigidBody ac70421a9af6d660 565a7048dfd4da88 0 src/components/rigid_body.h
+RuntimeContext f81f5d3457b0c483 0c83b44367b51710 0 src/runtime/runtime_context.h
+ScriptComponent 3e9217e71c2b200e 97ebe892bcc36829 0 src/components/script_component.h
+SkinnedMesh 48e56ab8e9378ade 486256424acd63d3 0 src/components/skinned_mesh.h
+Transform 1caf8b0c1f0e2962 a9f14e27b84444ea 0 src/core/transform.h

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <flecs.h>
 #include "render/asset_registry.h"
 #include "render/texture_registry.h"
@@ -15,6 +16,10 @@ class ClipLibrary;        // forward declare
 class ScriptHost;         // forward declare
 
 struct RuntimeContext {
+    // The MEANING of this component in the kit ABI (WO-051). Bump it when the same
+    // bytes start to mean something else, and add a note to docs/guides/kit-abi-revisions.md.
+    static constexpr uint32_t kAbiRevision = 0;
+
     flecs::world&     ecs;
     AssetRegistry&    assets;
     TextureRegistry&  textures;

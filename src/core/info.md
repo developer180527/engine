@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-10-03
+verified: 2026-10-06
 covers:
   - src/core/
 tests:

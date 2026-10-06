@@ -60,6 +60,7 @@
 #define ABI_GATE_CONTRACT_V1   7
 #define ABI_GATE_CONTRACT_V2   8
 #define ABI_GATE_NOISY_STDOUT  9
+#define ABI_GATE_OLD_REVISION 10
 
 // ── Defect 9: a module that writes on the probe's stdout ────────────────────
 // The only fixture here whose defect is not in its ABI table. Its table is
@@ -210,6 +211,12 @@ EngineGameModuleV1* engineGameModuleCreateV1(void) {
     // survives reloads, so this module would misread live ECS memory — the
     // one condition whose remedy is "restart the host", not "rebuild".
     t->componentLayoutHash = engine_abi::componentLayoutHash() ^ 0xDEADBEEFull;
+#elif ABI_GATE_DEFECT == ABI_GATE_OLD_REVISION
+    // A kit built before WO-051, against revision 0 of every component: the
+    // same layouts, the hash without revisions, and no revisions export (this
+    // fixture never defines one). CollisionEvents changed meaning in WO-048,
+    // so the host must refuse it and NAME the component (WO-051).
+    t->componentLayoutHash = engine_abi::componentLayoutHash(/*withRevisions*/ false);
 #endif
 
     return t;

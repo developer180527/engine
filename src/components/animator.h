@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 #include "core/handle.h"
 #include <string>
@@ -16,6 +17,10 @@
 //
 // Requires SkinnedMesh + MeshRenderer on the same entity.
 struct Animator {
+    // The MEANING of this component in the kit ABI (WO-051). Bump it when the same
+    // bytes start to mean something else, and add a note to docs/guides/kit-abi-revisions.md.
+    static constexpr uint32_t kAbiRevision = 0;
+
     AnimClipHandle clip;          // currently playing clip (session-local handle)
     std::string    clipPath;      // standalone clip source path ("" = use clipIndex)
     int            clipIndex = 0; // clip index within the mesh's source file

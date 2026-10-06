@@ -13,6 +13,10 @@
 //   Static meshes (the 90%+ common case) carry zero animation overhead.
 //   Only entities with both MeshRenderer + SkinnedMesh enter the skinned path.
 struct SkinnedMesh {
+    // The MEANING of this component in the kit ABI (WO-051). Bump it when the same
+    // bytes start to mean something else, and add a note to docs/guides/kit-abi-revisions.md.
+    static constexpr uint32_t kAbiRevision = 0;
+
     SkeletonHandle skeleton;
 
     // The bone palette lives in anim::skinPalettes(), NOT here. This used to be

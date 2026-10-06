@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 #include <string>
 
@@ -13,5 +14,9 @@
 // projectiles spawned at runtime) typically don't have one. The hierarchy
 // panel skips unnamed entities or shows them as "(unnamed)".
 struct Name {
+    // The MEANING of this component in the kit ABI (WO-051). Bump it when the same
+    // bytes start to mean something else, and add a note to docs/guides/kit-abi-revisions.md.
+    static constexpr uint32_t kAbiRevision = 0;
+
     std::string value;
 };

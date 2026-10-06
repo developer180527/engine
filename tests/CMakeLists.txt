@@ -828,6 +828,14 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:asset_cook_request_test>)
     set_tests_properties(player_has_no_cook_stack PROPERTIES LABELS unit TIMEOUT 120)
 
+    # A kit-ABI component header cannot change without being recorded as
+    # comment-only or with its kAbiRevision raised, so a change of MEANING
+    # cannot pass as an ordinary edit (WO-051).
+    add_test(NAME kit_abi_headers
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/scripts/kit_abi_headers.py --check)
+    set_tests_properties(kit_abi_headers PROPERTIES LABELS unit TIMEOUT 60)
+
     add_test(NAME architecture_audit
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/scripts/engine_audit.py --check)
@@ -1059,6 +1067,8 @@ set(ABI_GATE_FIXTURES
     # own. That is what moved the probe's machine output off stdout and into a
     # framed Add-on result file.
     noisy_stdout  9
+    # A kit built against an older MEANING of a component, same layout (WO-051).
+    old_revision 10
 )
 set(_abi_gate_targets "")
 list(LENGTH ABI_GATE_FIXTURES _abi_gate_len)

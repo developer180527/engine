@@ -18,6 +18,10 @@
 enum class LightType : uint32_t { Directional = 0, Point = 1, Spot = 2 };
 
 struct Light {
+    // The MEANING of this component in the kit ABI (WO-051). Bump it when the same
+    // bytes start to mean something else, and add a note to docs/guides/kit-abi-revisions.md.
+    static constexpr uint32_t kAbiRevision = 0;
+
     LightType type      = LightType::Directional;
     Vec3      color     { 1.0f, 1.0f, 1.0f };
     float     intensity = 3.0f;    // ~ the old hardcoded sun

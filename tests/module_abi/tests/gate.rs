@@ -126,6 +126,24 @@ fn a_changed_component_layout_is_refused() {
                 Live world data would be misread.\nhost said:\n{}", run.stderr);
 }
 
+/// A kit built against an older MEANING of a component, with the same layout.
+///
+/// WO-048 kept `CollisionEvents` on bodies with empty lists; a kit written for
+/// "has CollisionEvents means a contact happened" loaded and misbehaved. The
+/// fixture is a kit from before revisions existed: old hash, no revisions
+/// export. Refused, and the message names the component and the guide (WO-051).
+#[test]
+fn a_kit_built_against_an_older_component_meaning_is_refused_by_name() {
+    let Some(f) = setup("abi gate old revision", &["old_revision"]) else { return };
+    let run = probe_one(&f);
+    assert_eq!(run.only(), Verdict::Refused,
+               "a kit built against revision 0 of CollisionEvents was accepted.\
+                \nhost said:\n{}", run.stderr);
+    // The host's log is on the human channel (stdout), beside the probe's lines.
+    assert!(run.stdout.contains("CollisionEvents") && run.stdout.contains("kit-abi-revisions.md"),
+            "refused, but without naming the component and its guide:\n{}", run.stdout);
+}
+
 /// Two modules declaring the same contract at different versions.
 ///
 /// The only gate condition a single module cannot provoke: the registry starts

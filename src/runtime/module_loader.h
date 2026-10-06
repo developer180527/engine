@@ -211,6 +211,27 @@ public:
     // the file itself: resolve the exports, run the compatibility gauntlet, pin
     // the component contracts, build the adapter.
 private:
+    // "CollisionEvents (kit revision 0, engine revision 1), ..." for every
+    // component whose revision the loaded image disagrees with; empty if none.
+    std::string changedComponentMeanings() const {
+        const EngineComponentRevision* rows = nullptr;
+        int n = 0;
+        if (auto fn = (EngineModuleComponentRevisionsV1Fn)
+                libSym(m_handle, "engineModuleComponentRevisionsV1"))
+            rows = fn(&n);
+        std::string out;
+        for (const EngineComponentRevision& host : engine_abi::kComponentRevisions) {
+            uint32_t kit = 0;
+            for (int i = 0; rows && i < n; ++i)
+                if (rows[i].name && std::string(rows[i].name) == host.name) kit = rows[i].revision;
+            if (kit == host.revision) continue;
+            if (!out.empty()) out += ", ";
+            out += std::string(host.name) + " (kit revision " + std::to_string(kit) +
+                   ", engine revision " + std::to_string(host.revision) + ")";
+        }
+        return out;
+    }
+
     bool finishLoad(const fs::path& sourcePath) {
         (void)sourcePath;
         auto create  = (EngineGameModuleCreateV1Fn) libSym(m_handle, "engineGameModuleCreateV1");
@@ -255,6 +276,16 @@ private:
         // World data SURVIVES reloads; a module built against changed component
         // layouts would misread live ECS memory. Refuse, restart.
         if (t->componentLayoutHash != engine_abi::componentLayoutHash()) {
+            // A changed MEANING is named, with where to read what changed
+            // (WO-051). A module with no revisions export predates them: every
+            // component it saw was revision 0.
+            const std::string changed = changedComponentMeanings();
+            if (!changed.empty()) {
+                LOG_ERROR("Module", "Built against an older meaning of %s — "
+                          "rebuild the kit; what changed and what to do: "
+                          "docs/guides/kit-abi-revisions.md", changed.c_str());
+                return refuse();
+            }
             LOG_ERROR("Module", "Component layout changed since the host was "
                       "built — RESTART the host (live world data would be "
                       "misread by the new module)");

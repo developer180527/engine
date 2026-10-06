@@ -453,7 +453,10 @@ def rule_abi_compat_coverage() -> Rule:
     return r
 
 
-_HASH_TYPE = re.compile(r'ENGINE_ABI_HASH_TYPE\((\w+)\)')
+# The hashed set is the ENGINE_ABI_COMPONENTS list (WO-051), one X(T) per type;
+# the hash and the revision table both expand it.
+_ABI_LIST = re.compile(r'#define ENGINE_ABI_COMPONENTS\(X\)((?:.*\\\n)*.*\n)')
+_HASH_TYPE = re.compile(r'X\((\w+)\)')
 _STRUCT = re.compile(r'^\s*(?:struct|class)\s+(\w+)\s*(?:final\s*)?\{', re.M)
 
 
@@ -465,10 +468,11 @@ def rule_component_hash_membership() -> Rule:
              "the hash is what makes ModuleLibrary::load refuse a stale kit. A "
              "component outside it can change shape while kits keep reading the "
              "old layout out of live world memory.")
-    hashed = set(_HASH_TYPE.findall(read("include/engine/game_module.h")))
+    m = _ABI_LIST.search(read("include/engine/game_module.h"))
+    hashed = set(_HASH_TYPE.findall(m.group(1))) if m else set()
     if not hashed:
         r.findings.append(Finding(r.id, "parse",
-                                  "could not find ENGINE_ABI_HASH_TYPE entries in "
+                                  "could not find the ENGINE_ABI_COMPONENTS list in "
                                   "game_module.h — this rule is not checking anything"))
         return r
     q, _ = includes("include/engine/components.h")
