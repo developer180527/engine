@@ -49,6 +49,7 @@
 //     the exit code of every accident. A failed kit build and a segfault in cmake
 //     were indistinguishable; now they are not.
 #include "tools/packaging/package_closure.h"
+#include "stdout_live.h"
 
 #include <engine/addon_protocol.h>
 
@@ -287,7 +288,7 @@ static int usage() {
 }
 
 int main(int argc, char** argv) {
-    setvbuf(stdout, nullptr, _IOLBF, 0);
+    stdoutLive();
 
     std::string projectArg, distArg;
     for (int i = 1; i < argc; ++i) {

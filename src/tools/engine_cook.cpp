@@ -16,6 +16,7 @@
 #include "assets/cookers/cook_service.h"
 #include "project/project_context.h"
 #include "core/logger.h"
+#include "stdout_live.h"
 
 #include <cstdio>
 #include <cstring>
@@ -23,7 +24,7 @@
 #include <string>
 
 int main(int argc, char** argv) {
-    setvbuf(stdout, nullptr, _IOLBF, 0);   // logs stream live to pipes/files
+    stdoutLive();   // logs stream live to pipes/files
 
     bool cookAll = false, gc = false, gcPrune = false;
     std::string projectArg;

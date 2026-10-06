@@ -22,6 +22,7 @@
 #include "core/profiler.h"           // periodic frame-profile dump (dev runner)
 #include "runtime/frame_stats_channel.h"  // frame-time distribution + CSV
 #include "render/render_pipeline.h"      // IRenderPipeline::submitStats — the
+#include "stdout_live.h"
                                         // runtime now hands out IRenderer, whose
                                         // pipeline() returns this incomplete type
 #include "render/render_stats_channel.h"  // GPU handle churn + VRAM budget
@@ -93,7 +94,7 @@ private:
 
 int main(int argc, char** argv) {
     // Dev tool: line-buffer stdout so logs stream to pipes/files live.
-    setvbuf(stdout, nullptr, _IOLBF, 0);
+    stdoutLive();
     if (argc < 2) {
         std::fprintf(stderr,
             "usage: engine_host <project-dir> [dev-module.dylib]\n"

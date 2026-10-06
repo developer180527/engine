@@ -14,6 +14,7 @@
 // Built with ENGINE_WITH_SOURCE_IMPORTERS=OFF this links no Assimp at all.
 #include <engine/engine.h>
 #include <engine/input.h>
+#include "stdout_live.h"
 
 #include <cstdio>
 #include <cstdlib>   // strtol — --frames
@@ -26,7 +27,7 @@
 namespace fs = std::filesystem;
 
 int main(int argc, char** argv) {
-    setvbuf(stdout, nullptr, _IOLBF, 0);   // logs stream live to pipes/files
+    stdoutLive();   // logs stream live to pipes/files
 
     // Diagnostic flags. A shipped player needs these because the numbers that
     // matter are the ones measured ON THE TARGET MACHINE — the whole point of

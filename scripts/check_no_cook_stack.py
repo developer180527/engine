@@ -81,6 +81,11 @@ def main() -> int:
             continue
         hits: dict[str, list[str]] = {}
         for line in lines:
+            # MSVC's map names a string literal by its text (`??_C@_0L@...@ShaderCook?$AA@`),
+            # so a log channel called "ShaderCook" read as the shader cooker.
+            # nm never lists literals; neither does this.
+            if "??_C@" in line:
+                continue
             m = _PAT.search(line)
             if m:
                 key = next(k for k in MARKERS if k.lower() == m.group(0).lower())

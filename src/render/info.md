@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-10-05
+verified: 2026-10-06
 covers:
   - src/render/
 tests:
