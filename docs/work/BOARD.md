@@ -47,7 +47,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-021](WO-021-os-services-layer.md) | `os::` layer in core — one file per OS family | Portability | L | blocked by WO-006 | os-services (new) |
-| [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | Renderer & RHI | S | **ready** | — |
 | [WO-026](WO-026-rhi-g0a-spike.md) | RHI G0a baseline — what the bgfx path costs at 50 000 objects, so the RHI has a number to beat | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
 | [WO-055](WO-055-fuzz-cooked-clips.md) | Fuzz the cooked clip format a shipped game reads | Asset import & cooking | S | **ready** | cooker |
@@ -75,6 +74,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | 2026-10-05 | docs/rhi/design-api.md §4.7 (runtime choice from config plus capability, shader blobs per backend, named fallback order, no silent downgrade); cited by phases.md G2; device.cpp comment at the |
 | [WO-050](WO-050-empty-game-costs-nothing.md) | An empty game costs nothing — capacity grows with content, never reserved for it | 2026-10-01 | empty project 204.7 -> 95.8 MB mapped (physics 78.4 -> 0.01 MB, bgfx heap 86.5 -> 49.1 MB, render targets 72.2 -> 42.2 MB); empty_game_budget_test (2.74 MB tagged, 0.011 ms/tick; an eager physics world turns it red); physics_capacity_test (lazy, rebuild, no spurious events; removing the re-report suppression turns it red); 50k scene unchanged (527 draws, extract 3.7-4.3 ms); 130 tests (all but the 10 fuzz explore campaigns) |
 | [WO-049](WO-049-contacts-without-a-global-lock.md) | Jolt contacts are collected per thread, not under one mutex | 2026-10-01 | sim_profile 2 sampling profile, mutex wait 3.0% -> 2.1-2.4% of busy thread time (flushDeferred 79 -> 13-14 samples; the contact listener 0 before and after); physics mean 3.83 -> 3.74 ms (4 runs each); determinism gate 0 divergences |
 | [WO-048](WO-048-collision-events-without-archetype-churn.md) | Collision events without archetype churn; Sim.post stops growing faster than the world | 2026-10-01 | collision_events_test (delivery to scripts; 0 archetype moves after the first contact, 219 with the old removal); sim_profile Sim.post 443 -> 11 us at scale 2; determinism gate 0 divergences; BUG-0071 |

@@ -15,21 +15,20 @@ Copy [`TEMPLATE.md`](TEMPLATE.md). Number sequentially; never renumber.
 
 | # | Question | Status | Verdict landed in |
 |---|---|---|---|
-| — | *none concluded yet* | — | — |
-| 007 | [Two tiers (WebGPU-shaped, then explicit), and what wgpu, Dawn, NVRHI, NRI and SDL_GPU teach](007-two-tier-rhi-and-prior-art.md) | in-progress (first pass from memory, rung 6; sources to verify) | `../design-axioms.md` ("Tiers", provisional) |
+| 001 | [Bindless-only, or immutable binding sets?](001-bindless-only-or-binding-sets.md) | concluded 2026-10-05: bindless-only (rung 3) | `../design-axioms.md` (axiom 2) |
+| 002 | [Does the RHI compile shaders, or take bytes?](002-rhi-takes-shader-bytes.md) | concluded 2026-10-05: bytes (rung 3) | `../design-api.md` (§4.5) |
+| 007 | [Two tiers (WebGPU-shaped, then explicit), and what wgpu, Dawn, NVRHI, NRI and SDL_GPU teach](007-two-tier-rhi-and-prior-art.md) | concluded 2026-10-05: tier L first; tier H = Dawn's `webgpu.h`, never bindless (rung 3) | `../design-axioms.md` ("Tiers") |
+| 008 | [The shader source language: HLSL (DXC) or Slang, and the WGSL path](008-shader-source-language.md) | in-progress: Slang proposed (rung 3); needs a compile spike (rung 1) to conclude | `../toolchain-shaders.md` |
 
 ## Queued — questions worth a study, not yet started
 
 Taken from [`../open-decisions.md`](../open-decisions.md) and
-[`../phases.md`](../phases.md). The first three are answerable by reading alone;
+[`../phases.md`](../phases.md). Of those left, 003 is answerable by reading alone;
 the rest are blocked on the spike or on hardware.
 
 | # | Question | Why it is expensive to get wrong | Blocked on |
 |---|---|---|---|
-| 001 | **Bindless-only, or immutable binding sets?** Axiom 2 says bindless-only; NVRHI and NRI's higher tier both chose binding sets, explicitly for validation. | It is the one axiom that cannot be relaxed later — the handle *is* the index, so every shader and every resource type is shaped by the answer. | reading |
-| 002 | **Does the RHI compile shaders, or take bytes?** Recommendation is bytes; NVRHI's choice. | Decides whether a second consumer (vCAD) inherits our content pipeline. | reading |
 | 003 | **What does the extract→submit sync look like in shipped engines?** Unreal's proxy + single apply point, Unity's `HeapAllocator`/`SparseUploader`, Decima, RAGE. | The ownership model of the retained scene (P3) and of G6; getting it wrong is a rewrite, not a fix. (This row first said "the 18.8 ms the whole project exists to remove"; WO-019 re-measured that extraction at 4.0–4.6 ms.) | reading |
 | 004 | **Can bgfx already do GPU-driven cull → indirect draw?** | If yes, G2–G6 lose most of their justification and the project shrinks to bindless. | G0a spike |
 | 005 | **The iPad floor** — argument buffers and `MTLIndirectCommandBuffer` limits under a 50 000-part assembly. | vCAD's shipping platform, and the weakest CPU driving the largest object count. | device access |
-| 008 | **The shader source language: HLSL (DXC) or Slang, and the WGSL path.** `toolchain-shaders.md` says HLSL through DXC; study 007 said "Slang or HLSL". Tier H's WGSL comes from SPIR-V (Tint or naga), so the choice also decides whether one source reaches the web. | Every shader is written in it, and the cooker, reflection and variants are built around it; switching later rewrites all of them. | reading |
 | 006 | **Is Vulkan-on-Windows good enough to skip D3D12?** Axiom 6 calls this a bet. | The fallback is a third backend — the single largest unschedulable cost in the plan. | G0b hardware |

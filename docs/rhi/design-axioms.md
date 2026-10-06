@@ -12,9 +12,8 @@ the axiom numbering that other documents cite ("axiom 2", "axiom 6").*
 
 Six, and each one is a thing we refuse rather than a feature we add.
 
-**They describe the fast tier (tier L) only** (see "Tiers" below). If study
-007 concludes for a portable tier H on WebGPU, axioms 2, 5 and 6 do not hold
-there, and each says so:
+**They describe the fast tier (tier L) only** (see "Tiers" below, from study
+007). On a portable tier H, axioms 2, 5 and 6 do not hold, and each says so:
 
 1. **No per-draw uniforms. Ever.** All per-draw data lives in GPU buffers indexed
    by draw ID. This single rule deletes the 8 MB ceiling, the `kMaxDrawsPerFrame`
@@ -26,6 +25,13 @@ there, and each says so:
    `ResourceDescriptorHeap[]`. Vulkan: one giant descriptor set with
    `descriptor_indexing` (core 1.2) and `nonuniformEXT`. This is a *smaller* API
    than bgfx's, not a bigger one.
+   **Kept after study 001 (2026-10-05):** both tier-L APIs now make bindless
+   their own model. Metal 4's `MTL4ArgumentTable` needs one buffer binding in
+   the bindless case; on Vulkan the floor is `descriptor_indexing` (core
+   1.2), and `VK_EXT_descriptor_heap` (1.4.340) removes descriptor sets
+   altogether where it is present. The validation this costs is split
+   between the RHI's validation device and GPU-assisted validation
+   ([`design-api.md`](design-api.md) "Validation").
    *Tier L only:* core WebGPU has bind groups and no bindless, so a portable
    tier H cannot satisfy this axiom (study 007 §4.2).
 3. **Explicit queues and timelines.** Graphics, async compute, copy. Compute
@@ -88,27 +94,34 @@ there, and each says so:
    Dawn or wgpu-native as a third backend DEPENDENCY (adopted, not written), and
    that is still a third set of driver behaviour to test. See "Tiers" below.
 
-## Tiers — PROVISIONAL, pending study 007
+## Tiers (study 007, concluded 2026-10-05)
 
 *The verdict of [study 007](studies/007-two-tier-rhi-and-prior-art.md) lands
-here, and only here ([`workflow.md`](workflow.md) §3). Until 007 concludes it
-is a proposal at rungs 5–6 and closes nothing.*
+here, and only here ([`workflow.md`](workflow.md) §3). Its decisive claims are
+rung 3: gpuweb proposals and issues, Khronos and Apple documentation, library
+headers.*
 
-- **Tier L (fast)** is ours: explicit and bindless, GPU-driven by default, on
-  Metal 4 and Vulkan 1.3. All six axioms above are tier L's. It is built first.
-- **Tier H (portable)** would be the WebGPU model (bind groups, automatic
-  barriers, no memory control), ADOPTED through `webgpu.h` (Dawn or
-  wgpu-native) rather than written, for the web and the low end. Axioms 2, 5
-  and 6 do not hold there. It is a reach target and is not scheduled
-  ([`phases.md`](phases.md)).
+- **Tier L (fast)** is ours: explicit and bindless, GPU-driven by default.
+  All six axioms above are tier L's. **It is built first.** Its floors:
+  - **Metal 4:** Apple M1 and later, A14 Bionic and later (WWDC25 "Discover
+    Metal 4").
+  - **Vulkan 1.3**, with `descriptor_indexing` (core since 1.2) as the
+    bindless floor; `VK_EXT_descriptor_heap` used where present. It is an
+    EXT outside the Roadmap 2026 profile, so it cannot be required.
+- **Tier H (portable)** is the WebGPU model: bind groups, automatic barriers,
+  no memory control. If built, it is **Dawn's `webgpu.h`**, adopted not
+  written: Dawn implements the stable header, and wgpu-native does not yet.
+  It is **never bindless and never indirect-count**: in WebGPU, bindless is a
+  Draft optional proposal and multi-draw-indirect is Chromium-only, with the
+  count buffer not even proposed. Axioms 2, 5 and 6 do not hold there. It is
+  a reach target and is not scheduled ([`phases.md`](phases.md)).
 - **The renderer above both is written against the render graph** (axiom 4),
   so passes are tier-neutral. Each pass declares what it needs, and each tier
   supplies its own implementation.
 
-What links here instead of restating it: [`design-api.md`](design-api.md) (the
-types per tier, once 007 concludes), [`open-decisions.md`](open-decisions.md)
-decision 3 (the minimum spec, answered as tiers), and [`phases.md`](phases.md)
-(tier H is not a phase).
+What links here instead of restating it: [`design-api.md`](design-api.md),
+[`open-decisions.md`](open-decisions.md) decision 3 (the minimum spec, as
+tiers), and [`phases.md`](phases.md) (tier H is not a phase).
 
 ## Rungs
 

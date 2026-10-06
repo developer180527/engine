@@ -7,11 +7,11 @@ covers:
 
 | | |
 |---|---|
-| **Status** | `in-progress` |
+| **Status** | `concluded` |
 | **Opened** | 2026-10-05 |
-| **Concluded** | — |
+| **Concluded** | 2026-10-05 (second pass, WO-056) |
 | **Verdict lands in** | `../design-axioms.md` ("Tiers"); `design-api.md`, open decision 3 and `phases.md` link to it (workflow §3: one landing doc) |
-| **Highest rung reached** | 6: a first pass **from memory**. Per workflow §4 a source not yet opened is rung 6, not 5; each §4 claim marked *verify* needs its source opened and cited (§6) before anything closes |
+| **Highest rung reached** | 3 for the decisive claims (W3C/gpuweb proposals, Khronos and Apple documentation, library headers and READMEs, each opened 2026-10-05 and cited in §6); 5–6 for the shape argument built on them |
 | **Superseded by** | — |
 
 ## 1. The question
@@ -54,131 +54,125 @@ source has been opened and the section cited in §6.
 
 ## 4. What was found
 
-### 4.1 The libraries
+The first pass (2026-10-05, from memory, rung 6) is kept in the git history.
+This is the second pass: every claim checked against an opened source, cited
+in §6. **Corrections to the first pass are marked ✗.**
 
-| Library | Level | Binding model | Barriers / memory | What to take | What to avoid |
-|---|---|---|---|---|---|
-| **wgpu** (Rust; Firefox's WebGPU) | WebGPU-shaped, also native | Bind groups. Native-only `binding_array` features give a bindless subset *(verify current naming)* | Automatic: tracks every resource's state, inserts barriers, owns memory | Validation as a product feature, with errors that name the call. One API from browser to native. `wgpu-native` exposes the standard `webgpu.h` | The per-resource tracking cost on large draw counts is exactly what axiom 4 rejects. No user-controlled memory |
-| **Dawn** (Google C++; Chrome's WebGPU) | WebGPU-shaped | Bind groups | Automatic, like wgpu | The reference `webgpu.h`. Its *Tint* compiler turns WGSL into SPIR-V/MSL/HLSL. Mature conformance test suite (CTS) | Large build. Chrome's release cadence |
-| **NVRHI** (NVIDIA C++; D3D11/12, Vulkan) | Mid-level | Immutable **binding sets** plus bindless **descriptor tables** | Automatic state tracking, which can be switched off per resource and replaced with explicit barriers | The *opt-out* barrier tracking (the clean form of "explicit where it matters"). Its validation layer as a wrapper device | No Metal. Reference-counted COM-style objects all the way down |
-| **NRI** (NVIDIA C; D3D11/12, Vulkan, Metal in progress *(verify)*) | Low-level | Descriptor pools/sets, close to Vulkan | Fully explicit barriers and memory, with optional helper interfaces | C ABI and **interfaces as function tables** that a backend fills in, which suits our kit ABI. A core interface plus optional "helper" and "streamer" extensions | Exposes Vulkan's model nearly unchanged, so Metal is the odd one out |
-| **SDL3 GPU** (C; D3D12, Vulkan, Metal) | Mid-level, deliberately small | Per-draw slot binding, no bindless | Automatic within passes, plus "cycling" to avoid read/write hazards | Proof that a *small* C API over the three can ship. Its "cycle" idea for transient buffers | No bindless or indirect-count, so too low a ceiling for us |
-| **Diligent** (C++) | Mid-level, many backends including WebGPU *(verify)* | Shader resource bindings plus bindless | Optional automatic transitions | Covers WebGPU and the explicit APIs behind one interface, which is the closest existing answer to your two tiers | Large surface; the "all backends equal" design caps it at the lowest backend |
-| **bgfx** (what we have) | High-level | Per-draw uniforms and samplers | Fully hidden | Portability and 15 years of driver quirks | Exactly the axioms 1–2 problems (`evidence-bgfx.md`) |
-| **"No Graphics API"** (Aaltonen, 2025) | Thought experiment | GPU pointers plus one descriptor heap; no binding API | Minimal, pipeline-free state where possible | The modern target shape: buffer device address, root pointers, bindless heap. Matches axioms 1–2 almost exactly | It's an essay, not a library |
+### 4.1 The two reads that decide the most
 
-### 4.2 What this means for the proposal (our conclusions, not the sources')
+**WebGPU bindless (rung 3, gpuweb `proposals/bindless.md`).** A **Draft**
+proposal, created 2025-10-13 (issue #380). It adds `GPUResourceTable` and
+WGSL `getResource<T>(index)` / `hasResource<T>(index)`, as **two optional
+features** (`"sampling-resource-table"`, `"heterogeneous-resource-table"`),
+with a fixed maximum of 65 536 entries. The working group calls it the
+priority item for 2026 (meeting notes, 2026-02), and in 2026 it gained a
+dependency on a WGSL aliasing extension. Nothing in the proposal states
+implementation status in any browser.
 
-1. **"Abstract only where the models differ" is right, and NRI is the evidence.**
-   Where Vulkan and Metal 4 agree (command buffers, explicit queues, timeline
-   semaphores / shared events, buffer device address / `gpuAddress`, argument
-   tables / descriptor indexing, residency sets / explicit allocation), expose
-   the concept once, thinly. Where they differ (render-pass load/store vs.
-   dynamic rendering, residency, heap layout, shader IR), abstract the
-   concept, not the call.
+**WebGPU indirect count (rung 3, gpuweb #5175, #1354; Chrome 131 notes).**
+Multi-draw-indirect exists only as Chromium's non-standard
+`"chromium-experimental-multi-draw-indirect"`. The standards issue (#5175,
+opened 2025-04-25, Milestone 3, open) proposes `drawCount` and
+`maxDrawIndirectCount` and **explicitly excludes** the count-buffer variant
+(`vkCmdDrawIndexedIndirectCount`); `drawIndirectCount` itself (#1354) was
+deferred to after v1.
 
-2. **WebGPU cannot be under the bindless tier.** Core WebGPU has bind groups
-   only. Bindless is a proposal, and multi-draw-indirect-count is an optional
-   feature at best *(verify both, 2026)*. So a high tier that runs on WebGPU
-   **cannot be "the bindless backend"**: axioms 1–2 hold on the low tier only.
-   This is the falsifier's first condition, and it fires **for the web
-   backend**, not for the shape.
+**What we conclude:** both things axioms 2 and 5 need are, in WebGPU, either
+a draft optional feature or non-standard, and the count buffer is not even
+proposed. Tier H stays "portable, not fast" for the foreseeable future. *(Rung
+6 on the timeline: no source gives a date.)*
 
-3. **So the tiers are not "simple, then advanced". They are "portable, then fast".**
-   - **Tier H (portable).** The WebGPU *model*: bind groups, automatic
-     barriers, no memory control. **Don't write it; adopt `webgpu.h`** through
-     Dawn or wgpu-native. That already runs on Metal, Vulkan and D3D12 natively
-     and in the browser. Our part is a thin engine layer above it, plus WGSL
-     generated by Tint/naga from the same shader source.
-   - **Tier L (fast).** Our own explicit, bindless RHI on Metal 4 and Vulkan 1.3,
-     with barriers from the render graph (axiom 4) and GPU-driven by default
-     (axiom 5). No WebGPU anywhere in it.
-   - **The renderer above both** is written against the **render graph**, not
-     either tier. Each pass declares what it needs (bindless or binding sets,
-     indirect count or a CPU loop), and each tier supplies its own
-     implementation. That keeps the falsifier's second condition from firing:
-     the tiers share passes, not code paths.
+**Dawn versus wgpu-native (rung 3, `webgpu-native/webgpu-headers` README;
+wgpu-native README).** `webgpu.h` is the "stable C header". **Dawn and
+Emdawnwebgpu implement the stable version; the README states that
+"wgpu-native does not yet implement the stable version of this header".**
+wgpu-native builds with Rust (MSRV 1.87, MSRV bumps are breaking) and ships
+prebuilt 32/64-bit macOS, Windows and Linux releases. Dawn builds with CMake
+(`DAWN_FETCH_DEPENDENCIES`, `add_subdirectory`), and Emdawnwebgpu is the same
+`webgpu.h` over the browser's JavaScript API (Chrome's "Build an app with
+WebGPU"). **Binary size: unverified.** A search snippet quoted 7.6 MB for a
+macOS Dawn dylib, but the cited page shows no size; it is not used here.
 
-4. **The order should be reversed from the proposal, or run in parallel, not
-   "high first".** If tier H is built first and the renderer is ported to it,
-   the renderer gets shaped by bind groups and automatic barriers, which is the
-   bgfx shape again. Then tier L has to undo it. Two better orders:
-   - **(a) Tier L first** on Metal 4 (your machine) and Vulkan. Tier H later,
-     as the web and low-end fallback through `webgpu.h`.
-   - **(b) Tier H first, but only as an off-the-shelf backend under bgfx's
-     replacement, while tier L is designed.** This gets web early, but only if
-     the render graph exists first, so passes are tier-neutral from day one.
+**What we conclude:** if tier H is built, it is **Dawn**. The deciding fact is
+the stable C ABI, not size: an engine that promises a stable ABI to kits
+cannot sit on a header its implementation has not adopted.
 
-   The recommendation is (a). Web is a reach target, while bindless and the
-   GPU-driven path (axioms 2 and 5, DR-0012's reasons) exist only on the low
-   tier. *(This first said "the frame-time problem (`issues.md` R20)". R20's
-   18.8 ms extraction was re-measured at 4.0–4.6 ms by WO-019, so it no longer
-   carries the argument; the bindless reach does.)*
+### 4.2 The libraries, checked
 
-### 4.3 Making it more modern than the prior art
+| Library | What the source says (rung 3) | Corrections to the first pass |
+|---|---|---|
+| **wgpu** | Binding arrays are native-only features: `TEXTURE_BINDING_ARRAY`, `BUFFER_BINDING_ARRAY`, `STORAGE_RESOURCE_BINDING_ARRAY`, `SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING`, `PARTIALLY_BOUND_BINDING_ARRAY`; `MULTI_DRAW_INDIRECT_COUNT` is native-only too (`wgpu::Features`) | Naming confirmed. And wgpu-native lags the stable `webgpu.h` (§4.1) |
+| **Dawn** | Implements the stable `webgpu.h`; Tint compiles WGSL; Emdawnwebgpu targets the web | — |
+| **NVRHI** | Automatic state tracking, switched off with `setEnableAutomaticBarriers`; per-resource alternatives: `keepInitialState`, permanent states; **binding sets AND descriptor tables (bindless)**; backends D3D11, D3D12, Vulkan and **`nvrhi::validation::createDevice`** (validation as a wrapping device); no Metal (Programming Guide). Shaders are **bytes**: `createShader(const ShaderDesc&, const void* binary, size_t binarySize)` (`nvrhi.h`) | — |
+| **NRI** | D3D12 (Enhanced Barriers), D3D11, Vulkan 1.2+, **Metal through MoltenVK**, **WebGPU through wgpu-native**, a dummy backend; a C/C++ API of **function tables**; core `NRI.h` plus extension headers (`NRIHelper`, `NRIStreamer`, `NRIRayTracing`, `NRIMeshShader`, …); descriptor pools/sets **and directly indexed descriptor heaps** (`NRIDescriptorHeap.h`); automatic barriers are a non-goal (README) | ✗ First pass said Metal "in progress": it is MoltenVK, not native. ✗ It missed the WebGPU backend and the descriptor-heap path |
+| **SDL3 GPU** | "A Note On Cycling": writable resources act as ring buffers, so a write with `cycle` set never touches data a pending command buffer reads. Plain indirect draws exist; no indirect count, no bindless (`SDL_gpu.h`) | ✗ First pass said "no indirect": it has plain indirect, not count |
+| **Diligent** | D3D11, D3D12, OpenGL/GLES, Vulkan, **Metal**, **WebGPU**; automatic *or* explicit state transitions; bindless via dynamic resource indexing (README) | WebGPU confirmed |
+| **Aaltonen, "No Graphics API"** (blog, 2025-12-16) | GPU pointers for all data; one descriptor heap, textures as 32-bit indices; one 64-bit root pointer instead of a binding API; stage-only barriers (no per-resource tracking, given coherent caches); minimal PSOs. Assumes ReBAR/UMA, coherent last-level caches, per-lane bindless sampling, 64-bit shader pointers | — |
 
-What none of the above does fully, and this RHI can:
-- **Pointers, not descriptors, for buffers.** Buffer device address (Vulkan)
-  and `gpuAddress` (Metal) become the per-draw data path. The descriptor heap
-  then holds only textures and samplers. This is Aaltonen's shape, and it
-  makes axiom 1 nearly free.
-- **One descriptor heap with stable 32-bit indices** (axiom 2), using
-  `VK_EXT_descriptor_buffer` (or the newer descriptor-heap extension, if it has
-  shipped *(verify)*) and Metal 4 argument tables.
-- **Barriers only from the render graph** (axiom 4), with NVRHI-style opt-in
-  automatic tracking kept for tools and the debug path.
-- **A C ABI as function tables, like NRI,** so kits and the vCAD consumer link
-  against a stable interface, not C++ classes.
-- **Validation as a wrapper device, like NVRHI and wgpu,** compiled in by
-  default in dev builds. That weakens the validation argument for binding sets
-  in open decision 7 (bindless-only or binding sets), but does not answer it:
-  study 001 does.
-- **Shaders as bytes in, one source out.** Bytes in is study 002's question.
-  The SOURCE LANGUAGE is not decided anywhere: `toolchain-shaders.md` says HLSL
-  through DXC, this pass said "Slang or HLSL". That is study 008, and it decides
-  tier H's shader path too: WGSL comes from SPIR-V (Tint or naga), so tier H
-  needs HLSL/Slang → SPIR-V → WGSL, and whether that accepts the bindless-heavy
-  SPIR-V tier L emits is unverified.
-- **Pipelines as a tiny set:** dynamic state wherever both APIs allow it, so
-  the PSO permutation count stays small.
+### 4.3 The explicit APIs, checked
+
+- **Vulkan descriptor heap (rung 3, Khronos refpage and blog, 2026-01-23).**
+  `VK_EXT_descriptor_heap` shipped in Vulkan 1.4.340: ratified, it
+  **removes descriptor sets and pipeline layouts**, descriptors are found by
+  heap offset, and "push data" replaces push constants; it requires buffer
+  device address. **It is not in the Roadmap 2026 profile**: Khronos seeks
+  feedback before a KHR version for a later milestone. ✗ First pass had it as
+  "if it has shipped": it has, as an EXT.
+- **Metal 4 (rung 3, WWDC25 "Discover Metal 4").** `MTL4ArgumentTable`
+  ("in the bindless case, the argument table just needs one buffer binding"),
+  residency sets populated at startup and attached to a `MTL4CommandQueue`,
+  `MTL4CommandAllocator`-owned command memory, and an explicit stage-to-stage
+  barrier API. Hardware: **Apple M1 and later, A14 Bionic and later.**
+
+### 4.4 What this means for the proposal (our conclusions, rung 6 on rung 3)
+
+1. **Abstracting only where the models differ: confirmed.** Vulkan with
+   descriptor indexing (or the descriptor heap) and Metal 4 agree on the
+   concepts axioms 1–4 need: device addresses, an index-addressed resource
+   table, explicit barriers, allocator-owned command memory.
+2. **WebGPU cannot be under the bindless tier: confirmed and sharper.** Both
+   bindless and the count buffer are absent from standard WebGPU (§4.1).
+3. **Tier H, if built, is Dawn's `webgpu.h`**, adopted not written, for the
+   stable C ABI (§4.1).
+4. **Tier L's descriptor path has two levels.** The floor is
+   `descriptor_indexing` (core since 1.2); `VK_EXT_descriptor_heap` is the
+   better match for axiom 2 where present, since it removes the descriptor-set
+   model axiom 2 already refuses. The handle-is-the-index rule hides which
+   one a device uses.
+5. **Tier L first: confirmed**, for bindless and GPU-driven reach (DR-0012),
+   not R20's old number.
 
 ## 5. Verdict
 
-*Provisional, pending the source reads in §6:* **two tiers, yes. Abstracting
-only where the models differ, yes. "High tier first" and "a bindless WebGPU
-tier", no.** Tier H is `webgpu.h`, adopted and not written, and portable but
-not bindless. Tier L is ours, bindless and GPU-driven. The render graph sits
-above both, and tier L is built first.
+**Two tiers: tier L (ours: explicit, bindless, GPU-driven, Metal 4 and
+Vulkan 1.3) built first; tier H (portable) a reach target, adopted as Dawn's
+`webgpu.h` if built, never bindless.**
 
-- **Did the falsifier fire?** Yes, condition one: a tier that runs on WebGPU
-  cannot carry bindless. The question was therefore RE-SCOPED, from "simple
-  tier, then advanced tier" to "portable tier, then fast tier", and the
-  verdict is about the re-scoped question. Condition two did not fire.
-- **What changes, in ONE place:** `design-axioms.md` "Tiers" (written
-  2026-10-05, marked provisional) states the split and that axioms 2, 5 and 6
-  are tier L's. `design-api.md` (types per tier), open decision 3 (minimum
-  spec as tiers) and `phases.md` (tier H is not a phase) link to it rather than
-  restate it. It becomes non-provisional when this study concludes.
-- **Still unknown, the two reads that decide the most** (WO-056):
-  1. the WebGPU bindless timeline (gpuweb proposal status, 2026), which
-     decides whether tier H stays "portable, not fast";
-  2. Dawn versus wgpu-native to ship: binary size, build cost, and the
-     stability of the `webgpu.h` C ABI.
+- **Did the falsifier fire?** Condition one fired: a tier on WebGPU cannot
+  carry bindless or a count buffer (rung 3, §4.1), so the question was
+  re-scoped from "simple, then advanced" to "portable, then fast", and this
+  verdict is about the re-scoped question. Condition two did not fire: the
+  tiers share passes (the render graph), not code.
+- **What changed:** `design-axioms.md` "Tiers" is no longer provisional, and
+  names Dawn and the tier-L floors. `design-api.md`, open decision 3 and
+  `phases.md` link to it.
+- **Still unknown:** any date for WebGPU bindless reaching a stable spec;
+  Dawn's shipped binary size (no verified number); and whether the
+  descriptor heap reaches KHR. None of them changes the verdict.
 
-  Also: whether G0a shows bgfx is enough for tier H's role, which would make
-  tier H "keep bgfx" instead; and the shader source language (study 008).
+## 6. Sources (opened 2026-10-05)
 
-## 6. Sources (to open and cite by section before concluding)
-
-- wgpu / wgpu-native: README, `wgpu-types` features (binding arrays), the
-  `webgpu.h` header.
-- Dawn: `webgpu.h`, the Tint design docs.
-- WebGPU spec (W3C), and the gpuweb bindless proposal issue.
-- NVRHI: README and the `nvrhi.h` state tracking and binding layout sections.
-- NRI: README and `NRI.h` / the `Extensions/` interfaces.
-- SDL3: the `SDL_gpu.h` header comments ("cycling").
-- Diligent Engine: README backend list.
-- Sebastian Aaltonen, "No Graphics API", blog, 2025.
-- Vulkan: `VK_EXT_descriptor_buffer`, buffer device address (1.2 core), and
-  any descriptor-heap extension. Metal 4: argument tables, residency sets
-  (WWDC 2025).
+- gpuweb, `proposals/bindless.md` (status, "Resource tables creation", features, limits), and issue #380.
+- gpuweb issue #5175 "MultiDrawIndirect feature and maxDrawIndirectCount limit"; issue #1354 "DrawIndirectCount"; Chrome for Developers, "What's New in WebGPU (Chrome 131)".
+- GPU for the Web WG wiki, meeting notes 2026-01-07 and 2026-02-24/25.
+- `webgpu-native/webgpu-headers`, README (implementations, "stable C header").
+- `gfx-rs/wgpu-native`, README (bindings, MSRV, releases).
+- Chrome for Developers, "Build an app with WebGPU" ("Get Dawn", "Update CMake settings").
+- docs.rs, `wgpu::Features` (binding-array and indirect-count features).
+- NVIDIA-RTX/NVRHI, `doc/ProgrammingGuide.md` (state tracking, binding sets, descriptor tables, backends); `include/nvrhi/nvrhi.h` line 3832 (`createShader`).
+- NVIDIA-RTX/NRI, README (backends, C interface, extensions, descriptor heaps, barriers).
+- libsdl-org/SDL, `include/SDL3/SDL_gpu.h` ("A Note On Cycling"; indirect draw functions).
+- DiligentGraphics/DiligentEngine, README (platform and backend table, features).
+- Sebastian Aaltonen, "No Graphics API", sebastianaaltonen.com, 2025-12-16.
+- Khronos, `VK_EXT_descriptor_heap` reference page; Khronos blog "Vulkan Introduces Roadmap 2026 and New Descriptor Heap Extension", 2026-01-23.
+- Apple, WWDC25 session 205 "Discover Metal 4" (argument tables, residency sets, command allocators, barriers, hardware).

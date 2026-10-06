@@ -15,12 +15,16 @@ being discovered in month three. bgfx gives us a shader language *and* `shaderc`
 
 - **One source language, HLSL 2021 / SM 6.6+ for now, and that choice is
   OPEN** (study 008: HLSL through DXC, or Slang). Either way: SPIR-V for
-  Vulkan 1.3, and SPIR-V → MSL (via `spirv-cross` or Metal Shader Converter)
-  for Metal 4, a full shipping backend since axiom 6's rewrite, not a "dev
-  backend" as this line once said. **DXIL is not a target**: D3D12 is deferred
-  (axiom 6), and DXIL returns with it. A portable tier H, if one is built
-  (`design-axioms.md` "Tiers"), needs WGSL, which Tint or naga produce from
-  SPIR-V, so the source must reach SPIR-V that they accept.
+  Vulkan 1.3, and SPIR-V → MSL via `spirv-cross` for Metal 4. (This once said
+  "or Metal Shader Converter": MSC takes **DXIL**, not SPIR-V, so it is only an
+  option on an HLSL → DXC → DXIL route; study 008.) Metal 4 is a full
+  shipping backend since axiom 6's rewrite, not a "dev backend" as this line
+  once said. **DXIL is not a target**: D3D12 is deferred (axiom 6), and DXIL
+  returns with it. A portable tier H, if one is built (`design-axioms.md`
+  "Tiers"), needs WGSL, and that is a **separate, non-bindless variant** of
+  each shader, not a conversion of tier L's: Tint's SPIR-V reader does not
+  take runtime-indexed descriptor arrays. One source that emits both variants
+  is the case for Slang (study 008, proposed, pending a compile spike).
 - **Reflection**, though far less of it: bindless means there is almost no binding
   surface left to reflect. We already have `shader_reflect.h`.
 - **Variants/permutations**, which we already have machinery for.

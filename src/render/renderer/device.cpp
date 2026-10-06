@@ -113,6 +113,7 @@ bool Renderer::init(void* nwh, int width, int height,
     init.allocator = &s_bgfxAllocator;   // Rendering heap (see above)
     // Let bgfx pick the best backend for this platform:
     //   macOS  → Metal    Windows → Direct3D11/12    Linux → Vulkan/OpenGL
+    // Compile-time choice, kept on bgfx: the RHI must choose at runtime (docs/rhi/design-api.md §4.7, WO-024).
 #if defined(__APPLE__)
     init.type              = bgfx::RendererType::Metal;
 #elif defined(_WIN32)

@@ -59,10 +59,11 @@ this document was written, not by argument.*
    `MTLIndirectCommandBuffer`, and it has to be stated before G7 rather than
    discovered in it.
 
-   **Proposed answer, as tiers:** [`design-axioms.md`](design-axioms.md)
-   "Tiers" (provisional on study 007). Fast tier L on Metal 4 / Vulkan 1.3
-   class hardware; a portable tier H for WebGPU-class devices, if built. Not
-   restated here (workflow §3); not closed until 007 concludes.
+   **Answered as tiers (study 007, 2026-10-05):** see
+   [`design-axioms.md`](design-axioms.md) "Tiers", which carries the floors
+   (not restated here, workflow §3). Still open inside it: whether the Intel
+   UHD 630 floor above meets tier L's Vulkan 1.3 floor on its shipped
+   drivers, which no source read here settles, and the iPad number below.
 4. **G0b hardware** — one NVIDIA + one AMD box on the farm. Every *performance*
    claim after G4 needs them; G1 does not
    ([`method-measurement.md`](method-measurement.md) §3.1).
@@ -74,12 +75,15 @@ this document was written, not by argument.*
    The same work re-measured the bottleneck: extraction is 4.0–4.6 ms at
    50 000 real props, not 18.8, so its payoff is now argued on the §9.10 curve
    at 100 k–500 k.
-6. **Does the RHI compile shaders?** Recommend **no**: it takes bytes
+6. **Does the RHI compile shaders?** **Answered: no** (study 002,
+   2026-10-05; [`design-api.md`](design-api.md) §4.5). Recommended **no**: it takes bytes
    (DXIL/SPIR-V/metallib) and the cooker stays host-side. That is NVRHI's choice
    and it is what keeps a second consumer from inheriting our content pipeline. It
    also contains [`toolchain-shaders.md`](toolchain-shaders.md), which this
    directory calls the hidden 40%.
-7. **Bindless-only, or binding sets?** Axiom 2 says bindless-only, and
+7. **Bindless-only, or binding sets?** **Answered: bindless-only** (study
+   001, 2026-10-05; axiom 2; validation in [`design-api.md`](design-api.md)
+   §4.6). Axiom 2 says bindless-only, and
    GPU-driven at 50 k objects genuinely needs it. Worth recording that every
    reusable RHI shipping today (NVRHI, and NRI's higher-level tier) chose immutable
    binding sets instead, explicitly for validation. Recommend keeping axiom 2 and
@@ -92,8 +96,8 @@ this document was written, not by argument.*
 | 3 (iPad floor) | device access + Metal docs | 005 |
 | 4 | buying hardware | — |
 | 5 | under way: P3a landed (WO-019); P3b next | — |
-| 6 | reading NVRHI / NRI | 002 |
-| 7 | reading NVRHI / NRI + the validation story | 001 |
+| 6 | answered 2026-10-05 | 002 |
+| 7 | answered 2026-10-05 | 001 |
 
 Three of the five need no hardware. Decision 5 is no longer waiting: its first
 phase landed, and it measured the bottleneck at a quarter of what this file
