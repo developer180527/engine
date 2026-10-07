@@ -37,6 +37,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-056](WO-056-rhi-g2-prerequisites.md) | RHI G2 prerequisites — the reading and decisions the first triangle needs | Renderer & RHI | M | **ready** | — |
 | [WO-057](WO-057-rhi-module-home.md) | The RHI's home — a module that builds, tests and ships without the engine | Renderer & RHI | S | blocked by WO-056 | — |
 | [WO-058](WO-058-vulkan-validation-ci-lane.md) | A Vulkan CI lane — software driver plus validation layers, before the first backend commit | Renderer & RHI | S | **ready** | — |
+| [WO-061](WO-061-the-engine-paces-its-own-frames.md) | The engine paces its own frames, and draws none without a reason | Providers & modules | M | **ready** | — |
+| [WO-062](WO-062-bgfx-sized-for-what-the-host-draws.md) | bgfx is sized for what the host draws, not for its defaults (about 49 MB down to about 21 MB) | Renderer & RHI | S | **ready** | — |
+| [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -47,6 +50,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
 | [WO-055](WO-055-fuzz-cooked-clips.md) | Fuzz the cooked clip format a shipped game reads | Asset import & cooking | S | **ready** | cooker |
 | [WO-059](WO-059-os-link-scope.md) | OS frameworks and X11 are linked by the target that calls them, not handed to every consumer | Portability | S | **ready** | — |
+| [WO-064](WO-064-keyboard-from-events.md) | The keyboard snapshot is built from key events, not about 315 key polls a frame | Providers & modules | S | **ready** | input-source |
+| [WO-065](WO-065-job-pool-idle-cost.md) | The job pool costs nothing when there is no work, measured, and starts as small as the work | Providers & modules | S | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 

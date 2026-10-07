@@ -17,7 +17,8 @@ touches:
   - src/core/frame_arena.h
   - src/runtime/module_loader.h
   - modules/assetlib/src
-source: review 2026-09-29 P2, P4, P5; platform audit 2026-10-07
+  - include/engine/addon_protocol.h
+source: review 2026-09-29 P2, P4, P5; platform audit 2026-10-07 (and its follow-up the same day)
 ---
 ## Why
 OS calls are scattered across memory, threads, module loading, process spawning, paths and editor tools.
@@ -29,6 +30,7 @@ A port should be one directory: `src/core/os/<family>/`.
 - [ ] posix, apple and win32 implementations; `mem.cpp`, `thread_qos.cpp`, `module_loader.h`, the cook workers and `engine_build` call `os::` only
 - [ ] one contract test suite that runs on every CI platform
 - [ ] no OS header reaches a public or widely included header: `frame_arena.h`, `module_loader.h`, `project_context.h` and `asset_path.h` include `os::` declarations only, and the OS headers live in the per-family `.cpp` files (audit 2026-10-07: these four put `<windows.h>`/`<dlfcn.h>`/`<unistd.h>` into every file that includes them)
+- [ ] no OS header reaches an INSTALLED SDK header: `include/engine/addon_protocol.h` includes `<io.h>` on Windows (for `_setmode`), so every kit author gets it. The binary-mode switch moves behind `os::` or into a .cpp (found 2026-10-07)
 - [ ] `modules/assetlib` is in scope (`task_graph.cpp`, `ddc/fs_util.cpp`, `store.cpp`, `hash.cpp`, `gc.cpp`, `cook/dispatch.cpp`, `result_file.cpp`). It is a separate module that must not include engine core, so the decision is written down first: either `os::` is its own small library both link, or assetlib keeps its own per-family files like `worker_posix.cpp`/`worker_win32.cpp` already do
 - [ ] OS-01's scope widens from `src/core` + `src/runtime` to all of `src/` (minus the vendored `src/editor/imgui/` backend) with zero findings. On 2026-09-30 that meant 22 bare `#else`s in 11 files: `shaderc_invoke.cpp` ×3, `engine_cook_worker.cpp` ×3, `miniaudio_provider.cpp`, `asset_browser/actions.h`, `terminal/model.h`, `project_context.h`, `engine_build.cpp`, plus `shader_blobs.h`, `device.cpp` and `output.cpp`, which belong to WO-024 (backend choice)
 - [ ] cooking is written down as desktop-only (P4), as a decision, not an accident
