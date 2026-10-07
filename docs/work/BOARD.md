@@ -46,6 +46,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-026](WO-026-rhi-g0a-spike.md) | RHI G0a baseline — what the bgfx path costs at 50 000 objects, so the RHI has a number to beat | Renderer & RHI | S | **ready** | — |
 | [WO-035](WO-035-fbx-units.md) | FBX units — decide whether imports arrive in metres | Asset import & cooking | M | **ready** | — |
 | [WO-055](WO-055-fuzz-cooked-clips.md) | Fuzz the cooked clip format a shipped game reads | Asset import & cooking | S | **ready** | cooker |
+| [WO-059](WO-059-os-link-scope.md) | OS frameworks and X11 are linked by the target that calls them, not handed to every consumer | Portability | S | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
@@ -55,6 +56,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-028](WO-028-audio-provider-outbound-seam.md) | Finish the audio provider's outbound seam (B) before any physics ABI | Providers & modules | M | **ready** | audio-provider |
 | [WO-031](WO-031-shader-hot-reload.md) | Shader hot-reload — the runtime picks up a re-cooked shader | Renderer & RHI | M | **ready** | render-pipeline |
 | [WO-034](WO-034-frustum-near-plane-homogeneous-depth.md) | Frustum near plane is wrong under homogeneous depth (OpenGL) | Renderer & RHI | S | **ready** | — |
+| [WO-060](WO-060-ozz-out-of-engine-headers.md) | ozz stays in the animation .cpp files; engine headers show engine types | Asset import & cooking | S | **ready** | — |
 
 ## Parked — on purpose, with what would unpark it
 
