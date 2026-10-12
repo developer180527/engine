@@ -88,6 +88,25 @@ this document was written, not by argument.*
    reusable RHI shipping today (NVRHI, and NRI's higher-level tier) chose immutable
    binding sets instead, explicitly for validation. Recommend keeping axiom 2 and
    accepting we take the harder validation story — but knowingly.
+8. **Does the RHI wait for the display before it starts a frame?** *(Raised
+   2026-10-07, from WO-061's research.)* Under bgfx the engine can only brake
+   at present time, because bgfx hides the swap chain. Every platform now offers
+   a better clock: a wait *before* the frame starts, signalled when the display
+   can take one, which lowers latency and stops frames queueing:
+   - Windows: the DXGI frame-latency waitable object (DXGI 1.3), waited on before
+     each frame ([Microsoft](https://learn.microsoft.com/en-us/windows/uwp/gaming/reduce-latency-with-dxgi-1-3-swap-chains));
+   - Apple: `CAMetalDisplayLink` (macOS 14, iOS 17) calls back with the frame's
+     deadline, within a preferred frame-rate range
+     ([Apple](https://developer.apple.com/documentation/quartzcore/cametaldisplaylink));
+   - Vulkan and Android: present timing (`VK_GOOGLE_display_timing`, and
+     `VK_KHR_present_wait`), which Android's Swappy uses so frames are never
+     presented early ([Android](https://developer.android.com/games/sdk/frame-pacing)).
+
+   So the RHI's swap chain should expose "wait for the next frame slot" and a
+   presentation time, and the engine's frame pacer (WO-061, DR on frame pacing)
+   should be able to use it in place of its sleep limiter. **Not decided:** the
+   API shape, whether Metal 4 tier L requires `CAMetalDisplayLink` (macOS 14) as
+   a floor, and how a sub-refresh cap maps onto present timing on Vulkan.
 
 ## What each remaining item is waiting on
 
@@ -98,6 +117,7 @@ this document was written, not by argument.*
 | 5 | under way: P3a landed (WO-019); P3b next | — |
 | 6 | answered 2026-10-05 | 002 |
 | 7 | answered 2026-10-05 | 001 |
+| 8 | reading (the three platform clocks above) and G2's swap-chain design | — |
 
 Three of the five need no hardware. Decision 5 is no longer waiting: its first
 phase landed, and it measured the bottleneck at a quarter of what this file
