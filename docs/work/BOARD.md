@@ -20,7 +20,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 1. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
 2. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
-3. [WO-056](WO-056-rhi-g2-prerequisites.md) **RHI G2 prerequisites — the reading and decisions the first triangle needs** · P1 · size M — G2 writes the API every later phase and every other consumer inherits. Its
+3. [WO-057](WO-057-rhi-module-home.md) **The RHI's home — a module that builds, tests and ships without the engine** · P1 · size S — DR-0012 makes the RHI a library for more than this engine. Independence that
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -34,8 +34,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 |---|---|---|---|---|---|
 | [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | **ready** | kit-abi, engine-plugin, script-services |
 | [WO-053](WO-053-bone-maps-per-section.md) | Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128 | Asset import & cooking | L | **ready** | cooker, kit-abi |
-| [WO-056](WO-056-rhi-g2-prerequisites.md) | RHI G2 prerequisites — the reading and decisions the first triangle needs | Renderer & RHI | M | **ready** | — |
-| [WO-057](WO-057-rhi-module-home.md) | The RHI's home — a module that builds, tests and ships without the engine | Renderer & RHI | S | blocked by WO-056 | — |
+| [WO-057](WO-057-rhi-module-home.md) | The RHI's home — a module that builds, tests and ships without the engine | Renderer & RHI | S | **ready** | — |
 | [WO-058](WO-058-vulkan-validation-ci-lane.md) | A Vulkan CI lane — software driver plus validation layers, before the first backend commit | Renderer & RHI | S | **ready** | — |
 | [WO-061](WO-061-the-engine-paces-its-own-frames.md) | The engine paces its own frames, and draws none without a reason | Providers & modules | M | **ready** | — |
 | [WO-062](WO-062-bgfx-sized-for-what-the-host-draws.md) | bgfx is sized for what the host draws, not for its defaults (about 49 MB down to about 21 MB) | Renderer & RHI | S | **ready** | — |
@@ -77,6 +76,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-056](WO-056-rhi-g2-prerequisites.md) | RHI G2 prerequisites — the reading and decisions the first triangle needs | 2026-10-12 | studies 001, 002, 007, 008 concluded (008 by docs/rhi/studies/008-spike/spike.sh, Metal runs mutation-checked); design-api.md §4.5-4.7; DR-0013 |
 | [WO-051](WO-051-kit-abi-meaning-revisions.md) | A kit-ABI component that changes meaning refuses old kits, instead of loading them | 2026-10-06 | tests/module_abi/tests/gate.rs (old_revision fixture refused, named); ctest kit_abi_headers; mutations in the log |
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | 2026-10-06 | checked by eye by the owner 2026-10-06, editor and player screenshots of a text-textured single-sided quad (READ ME, LEFT, RIGHT +X): text reads, +X on the right, back face culled, gizmo and fly camera move the way they point |
 | [WO-024](WO-024-backend-choice-is-an-rhi-requirement.md) | Runtime GPU-backend choice written down as an RHI requirement (not built on bgfx) | 2026-10-05 | docs/rhi/design-api.md §4.7 (runtime choice from config plus capability, shader blobs per backend, named fallback order, no silent downgrade); cited by phases.md G2; device.cpp comment at the |

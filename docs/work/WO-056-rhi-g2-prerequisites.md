@@ -5,7 +5,9 @@ title: RHI G2 prerequisites — the reading and decisions the first triangle nee
 program: renderer
 priority: P1
 size: M
-state: todo
+state: done
+done: 2026-10-12
+evidence: studies 001, 002, 007, 008 concluded (008 by docs/rhi/studies/008-spike/spike.sh, Metal runs mutation-checked); design-api.md §4.5-4.7; DR-0013
 depends: []
 touches:
   - docs/rhi/open-decisions.md
@@ -27,7 +29,7 @@ would decide them by accident.
 
 ## Done when
 - [x] study 007's second pass: every *verify* claim checked against its source, cited by section, verdict landed in `design-axioms.md` "Tiers" (the ONE landing doc, workflow §3; `design-api.md`, open decision 3 and `phases.md` link to it). The two reads that decide the most come first: the WebGPU bindless timeline, and Dawn versus wgpu-native (size, build, `webgpu.h` ABI stability)
-- [ ] study 008 concluded: the shader source language (HLSL or Slang) and whether its SPIR-V reaches WGSL for tier H
+- [x] study 008 concluded: the shader source language (HLSL or Slang) and whether its SPIR-V reaches WGSL for tier H
 - [x] study 001 concluded (bindless-only or binding sets), answering open decision 7
 - [x] study 002 concluded (the RHI takes shader bytes or compiles), answering open decision 6
 - [x] the validation story written: what the wrapper device checks, on by default in dev builds
@@ -69,3 +71,4 @@ would decide them by accident.
     this engine's shaders (rung 1) can conclude it, and no shader compiler
     is installed here. Downloading Slang needs the owner's go-ahead.
 
+- 2026-10-12: study 008 concluded by a spike (`docs/rhi/studies/008-spike/spike.sh`): Slang 2026.19 compiles the ported lit, skinned, cull and triangle shaders to SPIR-V, Metal and WGSL; the triangle and the cull RUN on Metal and match the CPU (mutation-checked); the lit SPIR-V carries 8 `NonUniform` decorations. Four bindless/atomic rules found and landed in `toolchain-shaders.md`; DR-0013. Not shown: SPIR-V on a Vulkan driver (WO-058), the bindless lit shader running (needs G2's heap).

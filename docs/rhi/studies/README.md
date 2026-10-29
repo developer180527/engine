@@ -18,7 +18,7 @@ Copy [`TEMPLATE.md`](TEMPLATE.md). Number sequentially; never renumber.
 | 001 | [Bindless-only, or immutable binding sets?](001-bindless-only-or-binding-sets.md) | concluded 2026-10-05: bindless-only (rung 3) | `../design-axioms.md` (axiom 2) |
 | 002 | [Does the RHI compile shaders, or take bytes?](002-rhi-takes-shader-bytes.md) | concluded 2026-10-05: bytes (rung 3) | `../design-api.md` (§4.5) |
 | 007 | [Two tiers (WebGPU-shaped, then explicit), and what wgpu, Dawn, NVRHI, NRI and SDL_GPU teach](007-two-tier-rhi-and-prior-art.md) | concluded 2026-10-05: tier L first; tier H = Dawn's `webgpu.h`, never bindless (rung 3) | `../design-axioms.md` ("Tiers") |
-| 008 | [The shader source language: HLSL (DXC) or Slang, and the WGSL path](008-shader-source-language.md) | in-progress: Slang proposed (rung 3); needs a compile spike (rung 1) to conclude | `../toolchain-shaders.md` |
+| 008 | [The shader source language: HLSL (DXC) or Slang, and the WGSL path](008-shader-source-language.md) | concluded 2026-10-12: **Slang** (DR-0013); compiled and run on Metal, SPIR-V validated (Vulkan run: WO-058) | `../toolchain-shaders.md` |
 
 ## Queued — questions worth a study, not yet started
 

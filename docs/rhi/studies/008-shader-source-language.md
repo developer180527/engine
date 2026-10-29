@@ -7,11 +7,11 @@ covers:
 
 | | |
 |---|---|
-| **Status** | `in-progress` (reading done; the compile spike is not) |
+| **Status** | `concluded` |
 | **Opened** | 2026-10-05 |
-| **Concluded** | — |
+| **Concluded** | 2026-10-12: Slang ([DR-0013](../../process/decisions/DR-0013-shaders-are-written-in-slang.md)) |
 | **Verdict lands in** | `../toolchain-shaders.md` |
-| **Highest rung reached** | 3 (each compiler's own documentation); the deciding rung is 1, a compile spike, not yet run |
+| **Highest rung reached** | 1 for Metal (compiled and run on the GPU, checked against the CPU); 2 for SPIR-V (Slang's built-in validation; not yet run on a Vulkan driver) |
 | **Superseded by** | — |
 
 ## 1. The question
@@ -69,21 +69,65 @@ equivalents with each candidate to SPIR-V and Metal, and run them.
   Slang → SPIR-V → `spirv-cross` → MSL is the fallback while its Metal target
   is experimental. HLSL needs DXC plus `spirv-cross` (or DXIL plus MSC).
 
-## 5. Verdict — PROPOSED, not concluded
+## 5. The spike (rung 1), 2026-10-12
 
-**Proposed: Slang as the source language, with SPIR-V as the canonical IR,
-`spirv-cross` to MSL until Slang's Metal target is no longer experimental,
-and Slang's WGSL target for tier H if tier H is built.**
+`008-spike/`: four Slang shaders and `spike.sh`, which compiles each to
+SPIR-V, Metal source, metallib (Apple's compiler) and WGSL, checks the lit
+shader's SPIR-V for `NonUniform`, and runs two of them on this Mac's GPU.
+Slang 2026.19, macOS arm64 release (61.9 MB), from GitHub.
 
-It does not conclude without the rung-1 spike in §3: two of the three
-targets that matter here are labelled experimental by Slang itself, and only
-running this engine's shaders through them says whether that matters.
-`toolchain-shaders.md` already states the language is open; it changes when
-this concludes.
+| shader | what it is | SPIR-V | Metal (metallib) | WGSL | run |
+|---|---|---|---|---|---|
+| `triangle` | the smallest pipeline | ✅ | ✅ | ✅ | ✅ Metal: vertex colours, blend and clear checked by pixel |
+| `lit` | `vs_triangle` + `fs_triangle` ported 1:1: GGX, 16 lights, shadow PCF in a loop at explicit LOD, normal map, per-draw data by draw id, bindless material textures | ✅ 8 `NonUniform` | ✅ | ✅ (not standard WebGPU, see below) | — |
+| `skinned` | `vs_skinned` with the palette in a buffer (no 128-bone uniform ceiling) | ✅ | ✅ | ✅ | — |
+| `cull` | G6 shape: frustum-cull 10 000 spheres, atomic append, indirect args | ✅ | ✅ | ✅ | ✅ Metal: count and visible set equal the CPU's, three random scenes |
 
-## 6. Sources (opened 2026-10-05)
+Both run checks were mutation-checked: a cull that skips a plane and a
+triangle with a collapsed vertex each fail.
+
+**What the first attempt got wrong, and what it taught** (all now rules in
+`toolchain-shaders.md`):
+- `Texture2D textures[]`, the textbook bindless form, compiles to SPIR-V, but
+  Slang's Metal output fails Apple's compiler ("flexible array member … is not
+  at the end of struct"); a sized array runs out of Metal texture slots.
+  `DescriptorHandle<T>` inside a struct in a buffer works on all three targets.
+- `NonUniformResourceIndex` is refused by the Metal target on an index, has no
+  effect on a handle (Slang's own warning), and **wrapped in a helper function
+  silently drops the SPIR-V decoration**. `nonuniform(handle)` is the form that
+  works, so `spike.sh` checks for the decoration rather than trusting the source.
+- `InterlockedAdd` on a plain buffer field fails for WGSL; an `Atomic<uint>`
+  member works everywhere.
+- A bare `StructuredBuffer<DescriptorHandle<T>>` fails on Metal.
+
+**Not shown by the spike:**
+- **SPIR-V on a Vulkan driver.** This Mac has no native Vulkan; MoltenVK would
+  translate the SPIR-V back to Metal through `spirv-cross`, which tests the
+  translator more than Slang. WO-058's lavapipe lane, with validation layers,
+  is where Slang's SPIR-V first runs.
+- **The bindless lit shader running.** Its Metal output compiles under Apple's
+  compiler; running it needs textures' resource ids written into an argument
+  buffer, which is the RHI's bindless heap (G2), not a shader question.
+- **WGSL validity.** No WGSL validator was available. For the bindless lit
+  shader Slang emits `array<texture_2d<f32>>` at runtime size, which standard
+  WebGPU does not have: as study 007 predicted, tier H is a separate,
+  non-bindless variant.
+
+## 6. Verdict — concluded: Slang
+
+The falsifier (§2) was "HLSL wins if Slang cannot produce working tier-L
+output". It can, for every shader shape this engine has, including the two
+that matter most for the RHI (bindless material fetches and a GPU-driven
+cull). Slang's "experimental" Metal label did not bite here. Decided in
+[DR-0013](../../process/decisions/DR-0013-shaders-are-written-in-slang.md),
+landed in [`toolchain-shaders.md`](../toolchain-shaders.md) with the rules
+above. `spirv-cross` stays as the Metal fallback, unused so far.
+
+## 7. Sources (opened 2026-10-05)
 
 - shader-slang/slang, README ("Supported compilation targets", HLSL compatibility, license).
 - Khronos press release "Khronos Group Launches Slang Initiative…", 2024-11-21.
 - Apple, "Metal shader converter" page (input, output, requirements).
 - Dawn, `docs/tint/spirv-reader-overview.md` (accepted SPIR-V, limitations).
+- Slang reference, `nonuniform` for `DescriptorHandle` (shader-slang docs, core module reference), opened 2026-10-12.
+- `slangc -h` (2026.19): SPIR-V validation is on unless `-skip-spirv-validation`.
