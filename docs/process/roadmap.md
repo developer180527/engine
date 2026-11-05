@@ -1,6 +1,6 @@
 ---
 status: decided
-verified: 2026-09-30
+verified: 2026-11-06
 ---
 # Roadmap: the order of the big pieces, and what we won't build
 
@@ -45,8 +45,11 @@ cook (WO-002). A P0 on the board cannot be parked.
 queue and a one-command re-entry (`brief`) came before any programme that spans
 more than one session. See [`docs/work/README.md`](../work/README.md).
 
-**3. Renderer: retained scene before a custom RHI.** An RHI's shape is set by
-what its consumer asks of it. Built against today's immediate-mode renderer, it
+**3. Renderer: retained scene before a custom RHI.** *(Superseded in part by
+DR-0012, 2026-10-05: the RHI is now a standalone library, librhi, built in its
+own repository and not gated on the retained scene. What still holds below is
+the renderer's own order: retained scene, then the render graph when needed.)*
+An RHI's shape is set by what its consumer asks of it. Built against today's immediate-mode renderer, it
 would be optimised for a consumer we are about to replace. So the retained scene
 (P3) lands on bgfx first, and the RHI stays in research (a throwaway spike)
 until P3 has said what it needs. Detail and phases:
@@ -73,6 +76,27 @@ what a provider ABI costs on the smaller subsystem, before freezing a bigger one
 gets before the real implementation exists (null, stub, fake or a pending job),
 so each side can be built on a different day. The rule and the registry:
 [`docs/contracts/README.md`](../contracts/README.md).
+
+**8. Architecture: the C API's foundations before any provider moves.**
+The engine's target shape is one C API over a fixed core with swappable
+providers ([`ARCHITECTURE.md`](../../ARCHITECTURE.md), DR-0028, DR-0029). Its
+pieces depend on each other in one direction, so they are ranked on the board
+(`rank:` in each order) in this order:
+1. **The frame and the main window** (`engStep`): useful at once, and it proves
+   the C API's frame model on today's internals before anything else moves.
+2. **Component schemas and one serializer**, unknown components kept: every
+   later step names components by registered schema.
+3. **The change stream**: what every provider that keeps its own copy of the
+   world reads.
+4. **The world through the C API**, flecs off the boundary.
+5. **Physics on it**, with providers chosen from a registry that refuses by
+   name: the smallest real provider proves the path.
+6. **The renderer contract**, proven by the null renderer, before the librhi
+   renderer is built on it.
+
+Asset and shipping work (engine-owned formats, nothing built at runtime, a
+shipping build without dev machinery) does not depend on this path and fills
+the second active slot. Game UI waits until a game needs a HUD.
 
 ## 3. Known, and deliberately not scheduled
 

@@ -189,6 +189,8 @@ def check(root: Path, orders: list[Order]) -> list[str]:
             e(f"size `{size}` (want {'/'.join(SIZES)})")
         if o.state and o.state not in STATES:
             e(f"state `{o.state}` (want {'/'.join(STATES)})")
+        if "rank" in o.meta and rank_of(o) is None:
+            e(f"rank `{o.meta['rank']}` is not a whole number")
 
         # Too big to start is too big to hold in your head.
         if size == "XL" and o.state != "parked":
@@ -278,8 +280,17 @@ def status_of(o: Order, by_id: dict) -> str:
     return "**ready**"
 
 
+def rank_of(o: Order):
+    """`rank:` places an order on the roadmap's sequence within its priority.
+    Ranked orders come first, lowest rank first; unranked ones follow by id.
+    docs/process/roadmap.md says why the ranked orders are in that order."""
+    r = str(o.meta.get("rank", "")).strip()
+    return int(r) if r.isdigit() else None
+
+
 def sort_key(o: Order):
-    return (o.priority, o.id)
+    r = rank_of(o)
+    return (o.priority, 0 if r is not None else 1, r if r is not None else 0, o.id)
 
 
 def ready(orders, by_id):

@@ -44,6 +44,7 @@ program: assets              # process | assets | portability | renderer | provi
 priority: P2                 # P0 broken now · P1 cheap, and makes the rest cheaper · P2 programmes · P3 later
 size: M                      # S one session · M 2-4 · L a week or more · XL must be split
 state: todo                  # todo | active | done | parked
+rank: 3                      # optional: its place on the roadmap's sequence within its priority (lower first; ranked before unranked). Why that order: docs/process/roadmap.md
 depends: [WO-011]
 contracts: [cooker]          # contracts in docs/contracts/ this order changes
 new-contracts: [import-frontend]   # contracts this order creates

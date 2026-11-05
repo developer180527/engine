@@ -18,9 +18,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
-2. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
-3. [WO-057](WO-057-rhi-module-home.md) **The RHI's home — a module that builds, tests and ships without the engine** · P1 · size S — DR-0012 makes the RHI a library for more than this engine. Independence that
+1. [WO-070](WO-070-engstep-and-main-window.md) **`engStep` and main-window control on today's internals — the C API's first, usable step** · P1 · size M — The C API (DR-0028) is a 102-function draft that nothing implements; its frame and window model is the part every other piece stands on, and it can be proven on today's internals before anything else moves.
+2. [WO-071](WO-071-schema-registry-and-generic-serializer.md) **A component schema registry and one generic scene serializer, with unknown components kept** · P1 · size L — Every later step names components by registered schema: the change stream, the C world API, provider-namespaced components, migrations. Today the scene serializer is a hand-written list (`entity_serializer.h`, 11 schemas hard-coded in `meta_registry.h`) that drops any component it does not know, and `MeshRenderer` saves the bgfx renderer's registry ids.
+3. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -32,6 +32,12 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
+| [WO-070](WO-070-engstep-and-main-window.md) | `engStep` and main-window control on today's internals — the C API's first, usable step | Providers & modules | M | **ready** | — |
+| [WO-071](WO-071-schema-registry-and-generic-serializer.md) | A component schema registry and one generic scene serializer, with unknown components kept | Asset import & cooking | L | **ready** | scene-service |
+| [WO-072](WO-072-change-stream.md) | One change stream per registered component — free without subscribers, merged per read | Renderer & RHI | M | blocked by WO-071 | render-scene |
+| [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | blocked by WO-071, WO-072 | kit-abi |
+| [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API — and providers chosen from a registry that refuses by name | Providers & modules | M | blocked by WO-073 | engine-plugin |
+| [WO-075](WO-075-renderer-contract-headers.md) | The renderer contract as headers, with a conformance suite the null renderer passes first | Renderer & RHI | M | blocked by WO-073 | renderer |
 | [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | **ready** | kit-abi, engine-plugin, script-services |
 | [WO-053](WO-053-bone-maps-per-section.md) | Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128 | Asset import & cooking | L | **ready** | cooker, kit-abi |
 | [WO-057](WO-057-rhi-module-home.md) | The RHI's home — a module that builds, tests and ships without the engine | Renderer & RHI | S | **ready** | — |

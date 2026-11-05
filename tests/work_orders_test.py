@@ -154,6 +154,18 @@ rc, _, board = run(f, ("board",))
 check("2/1" not in board and "1/2 done. Still open:" in board and "  - two" in board,
       "active order should show progress and its open items:\n" + board)
 
+# ── rank: the roadmap's sequence within a priority ───────────────────────────
+# Two ready P2 orders: WO-007 is ranked, WO-006 is not, so WO-007 comes first
+# although its id is higher; among ranked ones the lower rank leads.
+f = base()
+f["WO-006-r.md"] = order("WO-006")
+f["WO-007-s.md"] = order("WO-007", extra="rank: 2")
+f["WO-008-t.md"] = order("WO-008", extra="rank: 1")
+rc, _, board = run(f, ("board",))
+i8, i7, i6 = (board.find(f"[WO-00{n}](WO-00{n}-") for n in (8, 7, 6))
+check(0 <= i8 < i7 < i6, "ranked orders must lead their priority, lowest rank first:\n" + board)
+rejects("bad rank", with_("WO-003-c.md", order("WO-003", extra="rank: soon")), "not a whole number")
+
 with tempfile.TemporaryDirectory() as t:
     pass  # --check needs a persistent tree; exercised below via main directly
 def board_check_roundtrip():
