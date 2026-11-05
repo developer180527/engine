@@ -196,6 +196,34 @@ engine_test(cull_mode_test)
 # fixed with api_abi_compat_test; nothing had done it for components, and
 # `offsetof` appeared in exactly one file in the tree.
 engine_test(component_abi_test)
+# The C API's first part (WO-070, DR-0028): engStep against EngineRuntime's own
+# loop on one physics scene (same ticks, same world hash), and every refusal by
+# name. eng_window_test drives a real (hidden) window and skips without a
+# display; eng_header_check compiles the headers as strict C99 with no implicit
+# padding; eng_exports checks the shared library exports eng* and nothing else.
+engine_test(eng_step_test LIB engine_capi)
+target_include_directories(eng_step_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_executable(eng_window_test eng_window_test.c)
+target_link_libraries(eng_window_test PRIVATE engine_capi)
+set_target_properties(eng_window_test PROPERTIES LINKER_LANGUAGE CXX
+                      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} C_STANDARD 99 C_STANDARD_REQUIRED ON)
+add_test(NAME eng_window_test COMMAND eng_window_test)
+set_tests_properties(eng_window_test PROPERTIES LABELS unit TIMEOUT 120 SKIP_RETURN_CODE 77)
+# Built, never run by ctest: needs a person (fullscreen switches, a declined
+# close). `build/eng_window_manual`; WO-070's last box.
+add_executable(eng_window_manual eng_window_manual.c)
+target_link_libraries(eng_window_manual PRIVATE engine_capi)
+set_target_properties(eng_window_manual PROPERTIES LINKER_LANGUAGE CXX
+                      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} C_STANDARD 99 C_STANDARD_REQUIRED ON)
+add_library(eng_header_check OBJECT eng_header_check.c)
+target_include_directories(eng_header_check PRIVATE ${CMAKE_SOURCE_DIR}/include)
+set_target_properties(eng_header_check PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+if(MSVC)
+    target_compile_options(eng_header_check PRIVATE /W4 /WX)
+else()
+    target_compile_options(eng_header_check PRIVATE -Wall -Wextra -Wpedantic -Werror -Wpadded)
+endif()
+# eng_exports is registered below, after Python is found.
 engine_test(event_test)
 engine_test(input_test)
 engine_test(script_host_test)
@@ -718,6 +746,15 @@ engine_test(stress_physics   LABEL stress TIMEOUT 600)
 # silently otherwise — this makes drift a test failure instead of a discovery
 # months later. See docs/process/engineering-standards.md.
 find_package(Python3 COMPONENTS Interpreter QUIET)
+if(TARGET eng AND Python3_EXECUTABLE)
+    # WO-070: the shared C API library exports the header's eng* functions and
+    # nothing else, and every function the headers declare is exported.
+    add_test(NAME eng_exports
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_eng_exports.py
+                     $<TARGET_FILE:eng> ${CMAKE_SOURCE_DIR}/include/eng
+                     ${CMAKE_CURRENT_SOURCE_DIR}/eng_header_check.c)
+    set_tests_properties(eng_exports PROPERTIES LABELS unit TIMEOUT 60)
+endif()
 if(Python3_Interpreter_FOUND)
     add_test(NAME docs_contract
              COMMAND ${Python3_EXECUTABLE}

@@ -643,12 +643,35 @@ target_compile_definitions(engine_headers INTERFACE
 target_compile_features(engine_headers INTERFACE cxx_std_20)
 add_library(engine::headers ALIAS engine_headers)
 
+# ── engine_capi — the engine's C API (DR-0028), its first part (WO-070) ─────
+# include/eng/: create, step, run, and the main window, over EngineRuntime.
+# UNSTABLE (0.x). A static library for programs that link the engine; on
+# macOS also a shared one, `eng`, whose ONLY exports are eng* (tests:
+# eng_exports). Not yet on Linux: a shared library needs position-independent
+# code, and the engine's static libraries (and the third-party ones under
+# them) are not built that way; turning that on for the whole build is a
+# decision of its own (WO-070's log). Not on Windows: there a DLL exports only
+# what is marked dllexport, so the property holds by construction.
+add_library(engine_capi STATIC capi/eng_capi.cpp)
+target_link_libraries(engine_capi PUBLIC engine_runtime)
+target_include_directories(engine_capi PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_compile_definitions(engine_capi PUBLIC ENG_STATIC)
+add_library(engine::capi ALIAS engine_capi)
+
+if(APPLE)
+    add_library(eng SHARED capi/eng_capi.cpp)
+    target_link_libraries(eng PRIVATE engine_runtime)
+    target_include_directories(eng PUBLIC ${CMAKE_SOURCE_DIR}/include)
+    set_target_properties(eng PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+    target_link_options(eng PRIVATE "LINKER:-exported_symbol,_eng[A-Z]*")
+endif()
+
 # ── engine_player — the shipped-game runtime ─────────────────────────────────
 # What a game actually ships: cooked content only, no dev machinery. Built in
 # BOTH postures; under ENGINE_WITH_SOURCE_IMPORTERS=OFF it links zero Assimp.
 # ENABLE_EXPORTS: project kits resolve engine symbols from this executable.
 add_executable(engine_player tools/engine_player.cpp)
-target_link_libraries(engine_player PRIVATE engine_runtime)
+target_link_libraries(engine_player PRIVATE engine_capi)   # WO-070: runs on the C API
 set_target_properties(engine_player PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
     ENABLE_EXPORTS ON

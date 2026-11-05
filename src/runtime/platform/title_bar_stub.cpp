@@ -17,4 +17,7 @@ bool  toggleWindowZoom(void*)  { return false; }
 bool  titleBarNeedsCustomButtons() { return false; }
 bool  minimizeWindow(void*)        { return false; }
 
+// No OS fullscreen toggle exists for an ordinary window here (title_bar.h).
+bool setUserFullscreenEnabled(void*, bool) { return true; }
+
 } // namespace platwin

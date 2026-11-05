@@ -84,4 +84,12 @@ bool titleBarNeedsCustomButtons();
 // does not have to branch on platform to wire a menu item to it.
 bool minimizeWindow(void* nativeWindow);
 
+// Whether the OS's own fullscreen control (macOS's green button and
+// Ctrl-Cmd-F) can change the window's mode. A fullscreen-only game turns it off
+// (the C API's ENG_WINDOW_NO_USER_MODE_CHANGE, WO-070). Returns whether the
+// request took effect. Windows and Linux give an ordinary window no OS
+// fullscreen toggle of their own, so there is nothing to block and the stubs
+// return true; a window manager's own shortcut on Linux is outside our control.
+bool setUserFullscreenEnabled(void* nativeWindow, bool enabled);
+
 } // namespace platwin

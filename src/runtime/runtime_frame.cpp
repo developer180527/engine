@@ -49,6 +49,26 @@ bool EngineRuntime::frameBegin(float& dt, bool poll) {
     m_lastFrameTime = now;
     m_firstFrame    = false;
 
+    frameHousekeeping();
+    return true;
+}
+
+bool EngineRuntime::canPresent() {
+    if (!m_platform) return false;
+    if (m_headless) return true;
+    int fbw = 0, fbh = 0;
+    m_platform->framebufferSize(fbw, fbh);
+    if (fbw <= 0 || fbh <= 0) return false;
+    resize(fbw, fbh);   // no-op when unchanged
+    return true;
+}
+
+void EngineRuntime::tickNoRender(float dt) {
+    tickSystems(dt, false);
+    tickSimulation(dt);
+}
+
+void EngineRuntime::frameHousekeeping() {
     prof::Profiler::get().beginFrame();
     m_frameArena.reset();   // last frame's transient allocations are freed here
     m_debugDraw.clear();    // debug lines are per-frame — kits re-queue each frame
@@ -123,11 +143,18 @@ bool EngineRuntime::frameBegin(float& dt, bool poll) {
             LOG_INFO("AssetService", "texture eviction freed %.1f MB",
                      (double)freedTex / (1024.0 * 1024.0));
     }
-
-    return true;
 }
 
-void EngineRuntime::frameEnd() {
+void EngineRuntime::frameEnd() { frameEnd(true); }
+
+void EngineRuntime::frameEnd(bool present) {
+    if (!present) {
+        // Nothing is shown, but the frame still ends: the submission lists
+        // reset (the device-free half) and the profiler frame closes.
+        m_renderer->endFrame();
+        prof::Profiler::get().endFrame();
+        return;
+    }
     { ENGINE_PROFILE_SCOPE("Renderer.frame");
       // UNCONDITIONAL, and that is the whole point.
       //

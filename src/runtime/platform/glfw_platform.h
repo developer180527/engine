@@ -2,6 +2,7 @@
 #include "runtime/platform/platform.h"
 
 struct GLFWwindow;
+struct GLFWmonitor;
 struct GLFWcursor;
 
 // Default IPlatform: creates and owns a GLFW window. The editor (and any
@@ -52,8 +53,43 @@ public:
     // platforms don't compile-but-break on hidden GLFW deps.
     GLFWwindow* glfwWindow() const { return m_window; }
 
+    // ── Main-window control (WO-070) ────────────────────────────────────────
+    bool windowControl() const override { return true; }
+    bool canExclusiveFullscreen() const override;
+    bool canPositionWindow() const override;
+    std::vector<MonitorDesc> monitors() override;
+    std::vector<DisplayModeDesc> monitorModes(uint32_t monitorId) override;
+    bool windowState(WindowState& out) const override;
+    bool setWindowMode(WindowMode mode, uint32_t monitorId,
+                       const DisplayModeDesc* exclusive) override;
+    bool setWindowSize(int w, int h) override;
+    bool setWindowPosition(int x, int y) override;
+    bool setWindowSizeLimits(int minW, int minH, int maxW, int maxH) override;
+    bool setWindowAspect(int numerator, int denominator) override;
+    bool setWindowFlags(uint32_t flags) override;
+    bool showWindow(bool visible) override;
+    bool focusWindow() override;
+    void takeWindowEvents(std::vector<WindowEvent>& out) override;
+
 private:
     GLFWwindow* m_window = nullptr;
+
+    // Window control state (WO-070).
+    GLFWmonitor* monitorById(uint32_t id);
+    uint32_t idOf(GLFWmonitor* m);
+    void     gatherWindowEvents();
+    std::vector<GLFWmonitor*> m_monitorIds;  // id = index + 1, append-only
+    WindowMode  m_mode = WindowMode::Windowed;
+    int         m_minW = 0, m_minH = 0, m_maxW = 0, m_maxH = 0;   // 0: no limit
+    int         m_windowedX = 0, m_windowedY = 0, m_windowedW = 0, m_windowedH = 0;
+    WindowState m_lastState;
+    bool        m_haveLastState = false;
+    bool        m_closedReported = false;
+public:   // the close callback reads these
+    bool        m_handleClose = false;
+    std::vector<WindowEvent> m_windowEvents;
+    void (*m_prevCloseCallback)(GLFWwindow*) = nullptr;
+private:
 
 public:   // the C callbacks append here; not part of the interface
     // Where one window's UI events go: this platform's own, or a tool

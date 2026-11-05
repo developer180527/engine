@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-10-06
+verified: 2026-11-06
 parses-external-input: true
 covers:
   - src/runtime/
@@ -355,6 +355,17 @@ engine.run([&](float dt) { ...; engine.tick(dt, view, proj); ... });
 `frameBegin(dt)`: poll events → minimize-wait → resize → clamped dt (≤50ms)
 → drain async GPU uploads. `frameEnd()`: `bgfx::frame()`. `tick()`: gameplay
 systems → animation → `flecs::world::progress()` → scene render.
+
+**The step primitives (WO-070).** `frameBegin` is now pump + minimised wait +
+resize + dt + `frameHousekeeping()` (profiler frame, frame arena, debug-draw
+reset, uploads, residency sweep). The C API's `engStep` (`src/capi/`) calls the
+pieces itself, because it must never pump or wait (DR-0030):
+`frameHousekeeping()`, then `canPresent()` (false while minimised), then
+`tick(dt)` or `tickNoRender(dt)` (the simulation keeps its rate while nothing
+can be shown), then `frameEnd(present)` (`present=false` resets the frame's
+lists without presenting). `simulationTicks()` counts fixed steps.
+`eng_step_test` holds `engStepWithDelta` to the same ticks and world hash as
+this loop.
 
 ## Is the simulation reproducible? (`sim_hash.h`, `sim_classification.cpp`)
 

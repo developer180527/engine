@@ -1,6 +1,7 @@
 #pragma once
 #include "runtime/platform/ui_input.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -17,6 +18,61 @@ struct PlatformConfig {
     // point. Where the platform has no implementation yet the flag is ignored
     // and a normal title bar is drawn.
     bool        hideTitleBar = false;
+    // Created hidden; shown later (the C API's ENG_WINDOW_HIDDEN: show the
+    // window once its first frame is ready, WO-070).
+    bool        startHidden = false;
+};
+
+// ── Main-window control (WO-070, the C API's eng_window.h) ───────────────────
+// What a game may ask of its main window. A platform that cannot do something
+// reports it (`windowControl()` false, or a setter returning false); it never
+// pretends. Monitors are identified by small stable ids (1, 2, ...) that keep
+// naming the same display while it stays connected; 0 means "none".
+enum class WindowMode { Windowed, BorderlessFullscreen, ExclusiveFullscreen };
+
+struct DisplayModeDesc {
+    int width = 0, height = 0;
+    int refreshMilliHz = 0;            // 59940 is 59.94 Hz
+};
+
+struct MonitorDesc {
+    uint32_t        id = 0;
+    std::string     name;
+    bool            primary = false;
+    int             x = 0, y = 0;      // on the virtual desktop
+    int             width = 0, height = 0;
+    float           contentScale = 1.0f;
+    DisplayModeDesc currentMode;
+};
+
+struct WindowState {
+    WindowMode mode = WindowMode::Windowed;
+    uint32_t   monitor = 0;            // the monitor it is on (fullscreen) or mostly over
+    int        x = 0, y = 0;
+    int        width = 0, height = 0;          // points
+    int        widthPixels = 0, heightPixels = 0;
+    float      contentScale = 1.0f;
+    bool       focused = false, minimised = false, visible = false;
+};
+
+// Behaviour flags a game may change at any time. Values match the C API's
+// EngWindowFlags, which casts straight to these.
+enum WindowFlagBits : uint32_t {
+    kWindowFixedSize         = 1u << 0,
+    kWindowNoDecoration      = 1u << 1,
+    kWindowAlwaysOnTop       = 1u << 2,
+    kWindowHidden            = 1u << 3,
+    kWindowNoUserModeChange  = 1u << 4,
+    kWindowHandleClose       = 1u << 5,
+};
+
+struct WindowEvent {
+    enum class Type { CloseRequested, Closed, Resized, Moved, FocusChanged,
+                      MinimisedChanged, ModeChanged, MonitorChanged };
+    Type     type = Type::Resized;
+    int      x = 0, y = 0, width = 0, height = 0;   // as Type says
+    int      a = 0, b = 0;                         // pixels, flags, mode
+    uint32_t monitor = 0;
 };
 
 // ── IPlatform ───────────────────────────────────────────────────────────────
@@ -184,6 +240,36 @@ public:
     virtual bool globalPointer(float& /*x*/, float& /*y*/, bool& /*primaryDown*/) const {
         return false;
     }
+
+    // ── Main-window control (WO-070) ────────────────────────────────────────
+    // Whether this backend implements the calls below (they still need the
+    // window: before init() each setter returns false). Monitor listing and
+    // these capability queries work before init(), so a game can pick a
+    // monitor before it opens its window.
+    virtual bool windowControl() const { return false; }
+    virtual bool canExclusiveFullscreen() const { return false; }
+    virtual bool canPositionWindow() const { return false; }   // false on Wayland
+    virtual std::vector<MonitorDesc> monitors() { return {}; }
+    virtual std::vector<DisplayModeDesc> monitorModes(uint32_t /*monitorId*/) { return {}; }
+    virtual bool windowState(WindowState& /*out*/) const { return false; }
+    // `exclusive` null: the monitor's current mode. monitorId 0: the monitor the
+    // window is on, else the primary one.
+    virtual bool setWindowMode(WindowMode, uint32_t /*monitorId*/,
+                               const DisplayModeDesc* /*exclusive*/) { return false; }
+    virtual bool setWindowSize(int /*w*/, int /*h*/) { return false; }
+    virtual bool setWindowPosition(int /*x*/, int /*y*/) { return false; }
+    // 0 means "no limit" for each value.
+    virtual bool setWindowSizeLimits(int, int, int, int) { return false; }
+    // 0/0: free.
+    virtual bool setWindowAspect(int /*numerator*/, int /*denominator*/) { return false; }
+    // WindowFlagBits; kWindowHidden is ignored here (showWindow).
+    virtual bool setWindowFlags(uint32_t /*flags*/) { return false; }
+    virtual bool showWindow(bool /*visible*/) { return false; }
+    virtual bool focusWindow() { return false; }
+    // What changed since the last call, gathered during pollEvents(). With
+    // kWindowHandleClose set, a close by the user is ONLY a CloseRequested
+    // event and shouldClose() stays false: the game decides (requestClose()).
+    virtual void takeWindowEvents(std::vector<WindowEvent>& /*out*/) {}
 };
 
 // The platform for the backend this build selected (ENGINE_WINDOW_BACKEND).

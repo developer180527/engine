@@ -124,4 +124,20 @@ bool minimizeWindow(void* nativeWindow) {
     return true;
 }
 
+// The green button and Ctrl-Cmd-F act through the window's collection
+// behaviour: FullScreenNone removes the window from the OS's fullscreen
+// spaces, FullScreenPrimary restores the default.
+bool setUserFullscreenEnabled(void* nativeWindow, bool enabled) {
+    if (!nativeWindow || ![NSThread isMainThread]) return false;
+    NSWindow* w = (__bridge NSWindow*)nativeWindow;
+    NSWindowCollectionBehavior b = w.collectionBehavior;
+    b &= ~(NSWindowCollectionBehaviorFullScreenPrimary |
+           NSWindowCollectionBehaviorFullScreenAuxiliary |
+           NSWindowCollectionBehaviorFullScreenNone);
+    b |= enabled ? NSWindowCollectionBehaviorFullScreenPrimary
+                 : NSWindowCollectionBehaviorFullScreenNone;
+    w.collectionBehavior = b;
+    return true;
+}
+
 } // namespace platwin

@@ -55,6 +55,9 @@ struct EngineConfig {
     // Draw over the title bar instead of under it (the editor does; a game
     // window does not). Keeps a real OS window — see platform/title_bar.h.
     bool        hideTitleBar = false;
+    // Create the window hidden; the program shows it when its first frame is
+    // ready (the C API's ENG_WINDOW_HIDDEN, WO-070).
+    bool        startHidden = false;
     int         width  = 1280;
     int         height = 720;
     float       fov    = 60.0f;
@@ -185,6 +188,25 @@ public:
     bool frameBegin(float& dt, bool poll = true);
     void frameEnd();
     void run(const std::function<void(float dt)>& frame);
+
+    // ── The step primitives (WO-070, the C API's engStep) ────────────────────
+    // frameBegin() = pump events + wait while minimised + resize + dt + THIS.
+    // engStep must not pump or wait (DR-0030: the host owns the loop), so it
+    // calls the housekeeping on its own: profiler frame, frame arena, debug
+    // draw reset, async uploads, residency sweep. It also applies a resize.
+    void frameHousekeeping();
+    // Whether the main window can show a frame now: false while minimised
+    // (zero-size framebuffer). Headless: true (nothing to present, nothing
+    // skipped). Applies a pending resize when it can.
+    bool canPresent();
+    // Ends the frame. present=false: the frame's lists are reset and the
+    // profiler frame closes, but nothing is presented (a minimised window).
+    void frameEnd(bool present);
+    // tick(dt) without drawing: systems and simulation run, rendering is
+    // skipped. What a frame is while the window cannot be seen: the simulation
+    // keeps its rate (DR-0030).
+    void tickNoRender(float dt);
+    uint64_t simulationTicks() const { return m_simFrame; }
 
     // ── Simulation lifecycle ────────────────────────────────────────────────
     // Owns plugin sim broadcasts + the optional snapshot game world. A game

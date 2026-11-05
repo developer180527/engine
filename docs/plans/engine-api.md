@@ -251,6 +251,48 @@ Compile-only, since nothing is implemented. Run by hand, not in CI.
 - **Not checked:** real MSVC, whether any of this can be implemented as designed,
   whether generated bindings are pleasant to use, performance.
 
+## 10a. What building the first part taught (WO-070, 2026-11-06)
+
+`include/eng/` now holds the frame and the main window, implemented over
+`EngineRuntime` (29 functions; `eng_step_test`, `eng_window_test`, `eng_exports`,
+`eng_header_check`). What the draft could not be built as written, or had not
+said:
+
+1. **A window cannot appear after the engine has started.** The runtime binds
+   its renderer to the window at start, so this version requires the window to
+   be created before the first `engStep` (or the engine runs headless), and
+   destroying the only window ends the run. The draft's "windows at any time"
+   needs the renderer to start late and to survive a window going away; that is
+   the multi-window step's first problem, not a detail.
+2. **Size limits bind code too.** GLFW applies limits to the user's resizing
+   only; a size set from code went past them (2000x2000 against a 1000x800
+   maximum). The platform now clamps both. The header should say limits apply
+   to `engSetWindowSize` as well.
+3. **Window events come from comparing state, not callbacks.** A window has
+   one callback per kind in GLFW, and ImGui and the input system already own
+   several. After each pump the platform compares the window's state with the
+   last and reports the differences; only a close is intercepted (chained), so
+   it can be declined.
+4. **Display modes cross in pixels, GLFW gives screen coordinates.** They are
+   converted with the monitor's content scale. Exact on one-scale setups;
+   worth a test on mixed-scale monitors before 1.0.
+5. **Monitor ids** are small numbers that keep naming a display while it stays
+   connected. `MONITOR_ADDED` / `MONITOR_REMOVED` are not produced yet.
+6. **`interpolation_alpha` is 0**: the runtime does not expose its fixed-step
+   accumulator yet.
+7. **`log_fn` and `modules` are refused, not ignored.** The logger has no
+   output hook, and kits still load from the project's manifest.
+8. **`engRun` under `ENG_PACING_ENGINE` still pauses the simulation while the
+   window is minimised** (today's behaviour), while `engStep` keeps it running.
+   WO-061 decides which is right for the engine's own loop.
+9. **The shared library is macOS-only for now.** Linux needs the engine built
+   as position-independent code; Windows exports only `dllexport` symbols, so
+   the property already holds there. A program on the shared library cannot
+   load today's kits, which resolve engine symbols the library now hides: the
+   kit side must move to `get_proc` (§4) before a shared engine can host kits.
+10. **Validating a project path must not create it.** `ProjectContext::load`
+    creates a project's folders, so existence is checked first.
+
 ## 11. Questions for the owner
 
 1. ~~**One C API for everything, with C++ as a wrapper?**~~ **Answered

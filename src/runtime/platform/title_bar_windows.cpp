@@ -196,6 +196,9 @@ bool minimizeWindow(void* nativeWindow) {
     return true;
 }
 
+// No OS fullscreen toggle exists for an ordinary window here (title_bar.h).
+bool setUserFullscreenEnabled(void*, bool) { return true; }
+
 } // namespace platwin
 
 #endif // _WIN32
