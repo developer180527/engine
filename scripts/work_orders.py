@@ -160,6 +160,17 @@ def known_contracts(root: Path) -> set[str]:
 
 
 # ── Rules ────────────────────────────────────────────────────────────────────
+def git_ignored(root: Path, path: str) -> bool:
+    """True if git ignores `path` (.gitignore or .git/info/exclude). False
+    outside a git repository, where there is no CI checkout to differ from."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", path],
+                           capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
 def check(root: Path, orders: list[Order]) -> list[str]:
     errs: list[str] = []
     by_id: dict[str, Order] = {}
@@ -238,6 +249,11 @@ def check(root: Path, orders: list[Order]) -> list[str]:
             for t in o.lst("touches"):
                 if not (root / t).exists():
                     e(f"`touches:` path does not exist: {t}")
+                elif git_ignored(root, t):
+                    # On disk here, never in the repository: CI's checkout does
+                    # not have it, so this order passes locally and fails there
+                    # (WO-067 named experiments/, excluded by .git/info/exclude).
+                    e(f"`touches:` path is ignored by git, so it exists only on this machine: {t}")
 
     # Graph rules.
     for o in orders:

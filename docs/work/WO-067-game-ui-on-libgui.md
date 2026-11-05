@@ -9,7 +9,6 @@ state: todo
 depends: []
 new-contracts: [game-ui]
 touches:
-  - experiments/libgui_sandbox/CMakeLists.txt
   - CMakeLists.txt
 source: review 2026-11-06 (should libgui also draw the in-game HUD)
 ---
@@ -31,7 +30,7 @@ Nothing: without the UI service a game draws no UI, and `engFindService("engine.
 
 ## Steps
 1. The contract, written against `docs/plans/engine-api.md`.
-2. libgui in the build, renderer backend from `experiments/libgui_sandbox/libgui_bgfx.cpp`.
+2. libgui in the build, renderer backend from `experiments/libgui_sandbox/libgui_bgfx.cpp` (the owner's local sandbox: `experiments/` is not in the repository, so the code moves into a tracked directory as part of this step).
 3. Screen-space HUD, then UI into a texture, then world-space input.
 4. Idle cost and the audit rule.
 
