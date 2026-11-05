@@ -6,7 +6,7 @@ program: assets
 priority: P2
 size: L
 state: todo
-depends: []
+depends: [WO-069]
 touches:
   - src/animation/clip_library.h
   - src/animation/ozz_bridge.h
@@ -32,7 +32,7 @@ A shipped game should only load and use data. All building, converting and compi
 ## Done when
 - [ ] animation: the cook produces the clip in the form the runtime samples, so loading a clip runs no ozz builder. Cooked clips are bound per skeleton at cook time, or else the cooked form is skeleton-independent and binding is a lookup table with no building; this order records which one, with load-time numbers for both
 - [ ] scripts: `engine_build` ships Lua as precompiled bytecode, the shipped runtime loads binary chunks only (`mode "b"`), and refuses source
-- [ ] audio: the cooker produces one engine audio format (PCM or one chosen codec, plus sample rate, channels and loop points); `engine_build` ships that format, not source files; the audio provider gets that format only
+- [ ] audio: the shipped game loads only the cooked engine audio format from WO-069, and does no format conversion or resampling at runtime
 - [ ] navigation: the navmesh is baked at cook time into a cooked asset, the runtime loads it, and Recast's builder is absent from the shipped player
 - [ ] shaders: no runtime shader compiler in the shipped player (no `shaderc`, no Slang, no source in `dist/`); pipelines are created at load; a pipeline created during a frame is logged with its name
 - [ ] a check fails CI if the shipped player contains any builder symbol (ozz `AnimationBuilder`/`SkeletonBuilder`, Lua's parser, Recast build functions, shader compilers), extending WO-066's symbol check, mutation-tested
@@ -50,4 +50,4 @@ Nothing: a development build may still build things on demand (the editor's cook
 ## Not in scope
 - Text the game only knows at runtime (player names, chat), which needs glyphs rasterised at runtime. That is the game UI's question (WO-067), and the order there should decide whether it is a second exception.
 - Procedural content a game generates on purpose (`engCreateMesh`, `engCreateTexture` in the API draft). That is the game's own data, not cooking.
-- The audio engine format's codec choice, which needs its own short study first.
+- Designing the animation and audio formats themselves: that is WO-069, which this order builds on.
