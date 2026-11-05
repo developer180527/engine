@@ -107,6 +107,9 @@ typedef uint32_t EngSystem;
 typedef uint32_t EngChangeStream;
 typedef uint32_t EngAction;
 typedef uint32_t EngAsset;
+/* Engine-owned variable-length bytes held by a component field
+ * (ENG_FIELD_BLOB, eng_world.h). 64-bit: index and generation. */
+typedef uint64_t EngBlob;
 
 ENG_EXTERN_C_END
 #endif /* ENG_BASE_H */

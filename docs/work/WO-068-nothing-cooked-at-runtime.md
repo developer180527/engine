@@ -31,10 +31,13 @@ A shipped game should only load and use data. All building, converting and compi
 
 ## Done when
 - [ ] animation: the cook produces the clip in the form the runtime samples, so loading a clip runs no ozz builder. Cooked clips are bound per skeleton at cook time, or else the cooked form is skeleton-independent and binding is a lookup table with no building; this order records which one, with load-time numbers for both
-- [ ] scripts: `engine_build` ships Lua as precompiled bytecode, the shipped runtime loads binary chunks only (`mode "b"`), and refuses source
+- [ ] scripts: `engine_build` ships Lua as precompiled bytecode, the shipped runtime loads binary chunks only (`mode "b"`), and refuses source. Two limits written into the asset-system doc with it:
+  - **only the game's own cooked scripts load as bytecode.** Malformed bytecode can crash or subvert the Lua VM (Lua's manual warns against loading untrusted binary chunks), so mods and downloaded scripts are source only, in a sandbox, or not allowed; the shipped runtime refuses bytecode from anywhere but the game's package
+  - **bytecode is per Lua version and per platform** (word size, endianness), so it is cooked per target by `engine_build`, never shared between targets
 - [ ] audio: the shipped game loads only the cooked engine audio format from WO-069, and does no format conversion or resampling at runtime
 - [ ] navigation: the navmesh is baked at cook time into a cooked asset, the runtime loads it, and Recast's builder is absent from the shipped player
 - [ ] shaders: no runtime shader compiler in the shipped player (no `shaderc`, no Slang, no source in `dist/`); pipelines are created at load; a pipeline created during a frame is logged with its name
+- [ ] physics: collision shapes that need building are cooked. Today every shape is a primitive built from a few numbers (`jolt_plugin.h`, spheres, capsules, boxes), which is allowed; a mesh, convex-hull or height-field collider, when one arrives, is built at cook time and saved (Jolt's `SaveBinaryState`), and its builder joins the symbol check
 - [ ] a check fails CI if the shipped player contains any builder symbol (ozz `AnimationBuilder`/`SkeletonBuilder`, Lua's parser, Recast build functions, shader compilers), extending WO-066's symbol check, mutation-tested
 - [ ] the asset-system doc states the rule and the one exception
 

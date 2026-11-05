@@ -32,3 +32,11 @@ backfilled only when someone trips on them (WO-022).
 | [DR-0011](DR-0011-capacity-grows-with-content.md) | Capacity grows with content; nothing is reserved for content that does not exist | 2026-10-01 | decided |
 | [DR-0012](DR-0012-the-rhi-is-a-standalone-library.md) | The RHI is built as a standalone, reusable library; bgfx is not its upper bound | 2026-10-05 | decided |
 | [DR-0013](DR-0013-shaders-are-written-in-slang.md) | Shaders are written in Slang; SPIR-V and Metal come from one source | 2026-10-12 | decided |
+| [DR-0028](DR-0028-one-c-api-is-the-public-boundary.md) | One C API is the engine's only public boundary; every language binds to it | 2026-11-06 | decided |
+| [DR-0029](DR-0029-core-is-fixed-providers-are-swappable.md) | Core is fixed and private, the ECS is core; providers are swappable behind contracts | 2026-10-29 | decided |
+| [DR-0030](DR-0030-the-host-owns-the-loop.md) | The host owns the loop and the windows; the engine blocks only when asked to pace | 2026-11-06 | decided |
+| [DR-0031](DR-0031-cooked-files-are-engine-formats.md) | Cooked files are in the engine's own formats; a provider's form is a rebuildable cache | 2026-11-06 | decided |
+| [DR-0032](DR-0032-dev-machinery-is-absent-from-shipped-games.md) | Development machinery is absent from a shipped game, not switched off | 2026-11-06 | decided |
+| [DR-0033](DR-0033-every-tool-is-a-cli.md) | Every tool is a CLI over the library | 2026-11-06 | decided |
+| [DR-0034](DR-0034-old-data-migrates.md) | Old data migrates, never breaks; unknown components are kept | 2026-11-06 | decided |
+| [DR-0035](DR-0035-refuse-by-name.md) | Refuse by name; never fall back silently | 2026-11-06 | decided |

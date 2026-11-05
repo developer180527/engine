@@ -12,6 +12,7 @@ touches:
   - src/render/pipeline/programs.cpp
   - src/runtime/input/input_manager.cpp
   - src/tools/engine_cook.cpp
+  - src/tools/engine_project.cpp
 source: review 2026-10-07, items 5 and 6, and "found on the way"
 ---
 ## Why
@@ -27,6 +28,7 @@ Boot is 0.32 s, so the last two are about doing work once, not speed. The review
 ## Done when
 - [ ] the leaked reference found and released; shutdown logs nothing about referenced programs. A test (or the existing shutdown path under a test) fails if a program is still referenced at shutdown
 - [ ] `engine_cook --help` prints usage and exits 0 without touching any project; an unknown option exits Usage (2) without cooking; a test covers both
+- [ ] the same for `engine_project`: `engine_project create --help` created a project in a folder named `--help` (found at the repository root on 2026-11-06, made 2026-09-17). Every CLI tool answers `--help` and refuses an unknown option before it creates, cooks or writes anything; one test runs each tool with `--help` and `--bogus`
 - [ ] the compiled-in standard program is built only when no cooked one will be used (or, if the project is not known yet at that point, the reason is written down and the cost measured)
 - [ ] input contexts load once per project open
 - [ ] boot allocations measured before and after, recorded in the log

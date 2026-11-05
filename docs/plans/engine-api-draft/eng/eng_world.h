@@ -37,7 +37,17 @@ enum {
     ENG_FIELD_BOOL32 = 0, ENG_FIELD_I32, ENG_FIELD_U32, ENG_FIELD_I64, ENG_FIELD_U64,
     ENG_FIELD_F32, ENG_FIELD_F64, ENG_FIELD_VEC3, ENG_FIELD_QUAT,
     ENG_FIELD_ENTITY, ENG_FIELD_ASSET,
-    ENG_FIELD_FIXED_STRING /* count bytes of NUL-terminated UTF-8 */
+    ENG_FIELD_FIXED_STRING, /* count bytes of NUL-terminated UTF-8 */
+    /* Proposed 2026-11-06 (review): appended, never reordered. */
+    ENG_FIELD_U8, ENG_FIELD_I8, ENG_FIELD_U16, ENG_FIELD_I16,
+    ENG_FIELD_VEC2, ENG_FIELD_VEC4, /* VEC4 also carries colours */
+    ENG_FIELD_MAT4,                 /* 16 floats, column-major */
+    /* An EngBlob: variable-length bytes the ENGINE owns (a list of contacts,
+     * a script path, a spline's points). The component stays plain bytes; the
+     * blob is saved with the scene, migrated, freed with the component, and
+     * readable from every language. What a kit used to keep in its own
+     * storage keyed by entity, which nothing saved or saw. */
+    ENG_FIELD_BLOB
 };
 /* Passed as an array, so it can never grow. */
 typedef struct EngFieldDesc {
@@ -86,7 +96,12 @@ enum {
     ENG_ACCESS_READ = 0,  /* column supplied, read-only */
     ENG_ACCESS_WRITE = 1, /* column supplied; every row in it counts as changed */
     ENG_ACCESS_WITH = 2,  /* must have it; no column */
-    ENG_ACCESS_WITHOUT = 3/* must not have it; no column */
+    ENG_ACCESS_WITHOUT = 3,/* must not have it; no column */
+    /* Proposed 2026-11-06 (review): column supplied, writable, but only the
+     * rows passed to engMarkChanged count as changed. For systems that write
+     * a few rows of many: physics writing only awake bodies' transforms must
+     * not make the renderer re-upload every sleeping one. */
+    ENG_ACCESS_WRITE_MARKED = 4
 };
 /* Passed as an array, so it can never grow. */
 typedef struct EngQueryTerm {
@@ -120,6 +135,18 @@ typedef struct EngQueryIter EngQueryIter;
 ENG_API EngResult engQueryBegin(EngWorld* world, EngQuery query, EngQueryIter** out);
 ENG_API EngBool engQueryNext(EngQueryIter* iter, EngQueryBatch* out);
 ENG_API void engQueryEnd(EngQueryIter* iter);
+/* Proposed: for an ENG_ACCESS_WRITE_MARKED term, rows [first, first + count) of
+ * the current batch changed. Rows not marked are not reported. */
+ENG_API void engMarkChanged(EngQueryIter* iter, uint32_t term, uint32_t first, uint32_t count);
+
+/* ── Blobs: the bytes behind an ENG_FIELD_BLOB field (proposed) ──
+ * Created empty or from bytes, then stored in a component's field. Owned by
+ * the component that holds it: freed when the component or entity goes. */
+ENG_API EngResult engCreateBlob(EngWorld* world, const void* bytes_or_null, uint32_t size, EngBlob* out);
+/* The pointer is valid until the blob is next set or freed. */
+ENG_API EngResult engGetBlob(EngWorld* world, EngBlob blob, const void** out_bytes, uint32_t* out_size);
+/* Replaces the contents; counts as a change of the component that holds it. */
+ENG_API EngResult engSetBlob(EngWorld* world, EngBlob blob, const void* bytes, uint32_t size);
 
 /* ── Systems: your code in the engine's frame ── */
 typedef uint32_t EngPhase;
@@ -167,7 +194,11 @@ typedef struct EngChange {
 ENG_API EngResult engSubscribeChanges(EngWorld* world, EngComponent component, EngChangeStream* out);
 ENG_API void engUnsubscribeChanges(EngWorld* world, EngChangeStream stream);
 /* count: in, capacity; out, entries written. Call until it returns fewer than
- * the capacity. */
+ * the capacity.
+ * Merged per read (proposed): each entity appears at most once per stream
+ * between two reads. Changed many times is one CHANGED; added then changed is
+ * ADDED; changed then removed is REMOVED; added then removed is nothing.
+ * An entity id is not reused while a stream could still report it. */
 ENG_API EngResult engReadChanges(EngWorld* world, EngChangeStream stream,
                                  EngChange* out, uint32_t* count);
 

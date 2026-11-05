@@ -24,6 +24,7 @@ A game needs UI: a HUD, menus, and for something like the Apollo LM, panels on s
 - [ ] an idle HUD costs nothing measurable: `empty_game_budget_test` with a static HUD shows no per-frame UI work
 - [ ] an audit rule: no file a game links includes `src/editor/` or editor-only libgui widgets (docking)
 - [ ] a game theme (image-skinned widgets, the game's fonts) is either built here or recorded as a libgui work order, with the reason
+- [ ] **Rust on every platform a game ships to:** libgui is Rust, so game UI makes every port need a Rust toolchain for that target. Desktop, iOS, Android and wasm are covered; consoles are not public (Rust for them exists only under the platform holders' agreements, and lags). This order records which console targets are wanted and whether Rust is confirmed there; where it is not, game UI on that platform has a named fallback (a C/C++ implementation of `engine.ui.v1`), so the contract never depends on the language
 
 ## Contract
 Nothing: without the UI service a game draws no UI, and `engFindService("engine.ui.v1")` returns NOT_FOUND, which a game handles.

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-10-29
+verified: 2026-11-06
 covers:
   - docs/
 ---
@@ -123,7 +123,7 @@ claim about freshness as much as about tests. See
   whether an implementation is one.
 - **Is bgfx holding us back?** — [`architecture/renderer-vs-production.md`](architecture/renderer-vs-production.md)
   answers that with numbers (short version: no, and here is what we don't use yet).
-- **The rest of the architecture** — [`architecture/overview.md`](architecture/overview.md),
+- **The rest of the architecture** — [`../ARCHITECTURE.md`](../ARCHITECTURE.md) (the map),
   [`architecture/asset-system.md`](architecture/asset-system.md),
   [`architecture/dependencies.md`](architecture/dependencies.md).
 - **Plans not yet started** — [`plans/`](plans/): animation, soak/fuzz testing,

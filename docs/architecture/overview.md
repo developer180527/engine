@@ -1,26 +1,8 @@
 ---
-status: unreviewed
+status: reference
 ---
-Engine Architecture
+# Architecture overview
 
-Engine is a real-time application platform built around:
-
-- Flecs ECS
-- bgfx renderer
-- Plugin-based services
-- Reflection-driven tooling
-- Asset cooking pipeline
-
-High-level flow:
-
-Editor
-    ↓
-Scene Data
-    ↓
-Runtime World
-    ↓
-Render Extraction
-    ↓
-Render View
-    ↓
-Render Pipeline
+Moved to [`ARCHITECTURE.md`](../../ARCHITECTURE.md) at the root of the repository:
+the map of the engine, its rules, what is built and what is planned, and where
+each part is described in depth.

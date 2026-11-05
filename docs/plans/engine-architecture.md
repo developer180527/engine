@@ -7,9 +7,10 @@ covers:
 ---
 # Engine architecture: a fixed core, swappable providers, two kinds of user
 
-> **Status: plan, 2026-10-29. Nothing here is built.** Agreed with the owner on
-> 2026-10-29: the ECS is core (not swappable), and editor users write C++ kits
-> as well as Lua. It sits above [`renderer-contract.md`](renderer-contract.md),
+> **Status: plan, 2026-10-29. Nothing here is built.** Decided by the owner:
+> the ECS is core, not swappable (2026-10-29, DR-0029); editor users write kits
+> in C or C++ as well as Lua; and one C API is the only public boundary, for
+> both kinds of user, so any language can bind to it (2026-11-06, DR-0028). It sits above [`renderer-contract.md`](renderer-contract.md),
 > which is this plan applied to one provider kind. The public API itself is being
 > drafted in [`engine-api.md`](engine-api.md) (**----DRAFT------**, for review).
 
@@ -40,16 +41,20 @@ public surface uses only the engine's own types.**
 |---|---|---|
 | Gets | the engine as source, linked as a library (`engine::runtime`) | a prebuilt engine, editor and tools |
 | Binaries they receive | tools only: the cooker, profiler, packager, and the editor if wanted | everything |
-| Writes | anything: games, kits, **new providers** | Lua scripts and **C++ kits** |
-| Their code is compiled | with the engine, from source | against the prebuilt engine's SDK, then bundled with the runtime and cooked assets |
+| Writes | anything: games, kits, **new providers** | Lua scripts and **kits in C or C++** |
+| Their code is compiled | against the engine's C API, from source with the engine or not | against the prebuilt engine's C API, then bundled with the runtime and cooked assets |
 | Can swap providers | to any provider, including their own | to any provider **shipped prebuilt** with that engine version |
-| Their contract is | the source API (C++, may change between versions) | **the kit ABI** (`docs/contracts/kit-abi.md`): C, small, versioned, refused by name on mismatch |
+| Their contract is | **the C API** (`engine-api.md`), with a C++ wrapper over it | **the same C API**; today, the kit ABI (`docs/contracts/kit-abi.md`) until it is replaced |
 
-Two consequences, both deliberate:
-- **The kit ABI is the editor user's whole contract**, so it stays C, small
-  and checked (`componentLayoutHash`, `kAbiRevision`, `kit_abi_headers`,
-  WO-051). Writing a *provider* is library-user work, and needs no binary ABI
-  (DR-0006 stands).
+One C API for both (DR-0028), so the two columns share one contract, and every
+other language binds to the same functions. Consequences, both deliberate:
+- **The C API is everyone's whole contract**, so it stays small and checked
+  (`engine-api.md` §7; today's checks, `componentLayoutHash`, `kAbiRevision`
+  and `kit_abi_headers` from WO-051, are its start).
+- **Providers:** a renderer stays a C++ source contract compiled with the
+  engine (DR-0006 stands: its shape is still changing). Other provider kinds
+  may later be offered as binary services through the C API (§6a,
+  `engine-api.md` §11.6).
 - **A shipped game contains the runtime, the chosen providers, the kits and the
   cooked assets.** Never the cooker, never the editor (WO-017,
   `player_has_no_cook_stack`).
@@ -106,8 +111,8 @@ swap nobody wants. What changes is the boundary:
 
 1. **An engine-owned world API** for games, kits and providers: entity handles,
    component access by registered type, queries, and the change stream (§5).
-   In the kit ABI it is C; for library users a thin C++ layer over the same
-   calls.
+   It is part of the C API (`eng_world.h`, DR-0028), with the C++ wrapper over
+   the same calls.
 2. **Providers get the world through their contract**, never `flecs::world`.
    A renderer gets a read-only view and the change stream
    (`renderer-contract.md` §3.2); physics gets its bodies the same way.
@@ -188,6 +193,9 @@ each provider's strengths reachable explicitly.
 ## 6a. New kinds of provider
 
 A provider developer is not limited to the kinds above.
+- **Binary or source:** a service is a C function table (DR-0028), so a
+  provider of most kinds could ship as a binary built against the C API. The
+  exception is renderers, which stay source-only until DR-0006 is reversed.
 - **A kind is a service: a name and a version** (`"voxelworld.v1"`,
   `"ai.navigation.v1"`), defined in whoever's headers declare it. The core
   registry knows services, never particular kinds.
@@ -251,9 +259,9 @@ Each step leaves a working engine.
 
 ## 9. Open questions for the owner
 
-1. Should the world API for library users be the C kit ABI with a C++ wrapper
-   (as librhi does), or a separate C++ API? Recommended: **one C API with a C++
-   wrapper**, so both users see the same world.
+1. ~~Should the world API for library users be the C kit ABI with a C++
+   wrapper, or a separate C++ API?~~ **Answered 2026-11-06: one C API with a C++
+   wrapper, for everyone** (DR-0028).
 2. Is networking a provider kind now, or core until a second implementation
    exists? Recommended: **a provider kind, contract written when the second
    implementation is wanted.**

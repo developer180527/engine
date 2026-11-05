@@ -15,7 +15,9 @@ covers:
 
 ## 1. The idea
 
-**One C API is the engine's only public boundary.** Programs, kits, the editor,
+**One C API is the engine's only public boundary** (decided by the owner,
+2026-11-06, DR-0028: C, so that any language can bind to it and it stays stable
+across compilers). Programs, kits, the editor,
 the tools and every language package use it. The C++ layer is a thin wrapper over
 it, the way librhi is built.
 
@@ -112,12 +114,12 @@ Vulkan and OpenGL work this way.
 | `eng_window.h` | 26 | capabilities, monitors, windows, native handles, embedding, events |
 | `eng_view.h` | 8 | which camera appears where; offscreen capture |
 | `eng_input.h` | 7 | actions, custom input sources, replayable intents |
-| `eng_world.h` | 27 | entities, component schemas, queries, systems, change stream |
+| `eng_world.h` | 31 | entities, component schemas, queries, systems, change stream, blobs |
 | `eng_components.h` | 0 | the common vocabulary (first few, to show the shape) |
 | `eng_asset.h` | 8 | load by name, or make meshes, textures and materials in code |
 | `eng_module.h` | 3 | kits, providers, and services of any kind |
 
-That's 98 functions. It should stay small: **gameplay features are services,
+That's 102 functions. It should stay small: **gameplay features are services,
 not core calls.** Physics is the worked example (`EngPhysicsV1`). Audio, animation,
 navigation, debug draw and networking follow the same pattern, and each can grow
 or be absent without touching core.
@@ -146,6 +148,25 @@ keeps that in its own storage, keyed by entity.
 change stream, so a query declares `ENG_ACCESS_WRITE` and every row in that column
 counts as changed. A provider may see a row that did not really change, and never
 misses one that did.
+
+**Proposed after review (2026-11-06), in the headers, marked "proposed":**
+- **Marked writes.** `ENG_ACCESS_WRITE` alone would make physics, which writes
+  every body's transform each step, report every row: the renderer would
+  re-upload all objects every frame though most are asleep, which is the
+  opposite of what the stream is for (WO-019). `ENG_ACCESS_WRITE_MARKED` plus
+  `engMarkChanged(iter, term, first, count)` reports only the rows a system says
+  it changed. `ENG_ACCESS_WRITE` stays as the safe default.
+- **Merged changes.** Between two reads an entity appears at most once per
+  stream: changed many times is one CHANGED, added then removed is nothing, and
+  an entity id is not reused while a stream could still report it.
+- **Engine-owned variable-length data.** A component is still plain bytes, but a
+  field may be an `EngBlob`: bytes the engine owns (`ENG_FIELD_BLOB`,
+  `engCreateBlob`, `engGetBlob`, `engSetBlob`), saved with the scene, migrated,
+  freed with the component and readable from every language. Without it, a list
+  (contacts for `CollisionEvents`, WO-052; a script path) lives in a kit's own
+  storage, which nothing saves, migrates or sees.
+- **More field types**, appended before anyone binds the enum: 8- and 16-bit
+  integers, VEC2, VEC4 (and colours), MAT4.
 
 ## 6. How it changes over time
 
@@ -220,7 +241,7 @@ the symbol, returns `ENG_ERROR_UNSUPPORTED`, and has no loader inside.
 
 Compile-only, since nothing is implemented. Run by hand, not in CI.
 
-- All headers and both examples compile with `-Wall -Wextra -Wpedantic -Werror`
+- All headers and both examples compile (re-run 2026-11-06 with the proposals) with `-Wall -Wextra -Wpedantic -Werror`
   under Clang for AArch64 Linux, x86-64 Linux, x86-64 Windows (MSVC target) and
   32-bit WASM. Headers also compile alone as C99, and together as C++17.
 - All 36 structs show no implicit padding on macOS arm64, x86-64 Linux and WASM.
@@ -232,8 +253,8 @@ Compile-only, since nothing is implemented. Run by hand, not in CI.
 
 ## 11. Questions for the owner
 
-1. **One C API for everything, with C++ as a wrapper?** The draft assumes yes
-   (`engine-architecture.md` §9.1). The cost: more wrapper code up front.
+1. ~~**One C API for everything, with C++ as a wrapper?**~~ **Answered
+   2026-11-06: yes** (DR-0028).
 2. **Asking by name instead of a frozen table?** Recommended: yes (§4).
 3. **Old kits:** `kit-abi.md` promises the old table is filled indefinitely, but
    only our own kits exist so far. Recommended: **move them all, then retire the
