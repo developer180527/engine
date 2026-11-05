@@ -52,6 +52,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-064](WO-064-keyboard-from-events.md) | The keyboard snapshot is built from key events, not about 315 key polls a frame | Providers & modules | S | **ready** | input-source |
 | [WO-065](WO-065-job-pool-idle-cost.md) | The job pool costs nothing when there is no work, measured, and starts as small as the work | Providers & modules | S | **ready** | — |
 | [WO-066](WO-066-shipping-build-absent-not-disabled.md) | Shipping build — development machinery absent from the binary, not switched off | Process & context | L | **ready** | — |
+| [WO-068](WO-068-nothing-cooked-at-runtime.md) | Nothing is cooked or compiled at runtime — shaders' final driver step is the only exception | Asset import & cooking | L | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
