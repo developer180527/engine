@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-10-06
+verified: 2026-11-06
 covers:
   - scripts/engine_audit.py
   - scripts/audit_cron.sh

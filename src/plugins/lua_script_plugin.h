@@ -280,6 +280,13 @@ private:
     void collectAutorunScripts(flecs::world& gw,
                                std::vector<Init>& toInit) {
         namespace fs = std::filesystem;
+        // No project, no content: a code-first engine (the C API with no
+        // project_path, a test, a tool) runs no autorun scripts. With both
+        // roots empty the paths below are RELATIVE, and used to resolve
+        // against the working directory, so running any program from a
+        // folder with scripts/autorun/ ran that folder's scripts (found
+        // running eng_window_manual from the repository root, WO-070).
+        if (m_projectRoot.empty()) return;
         fs::path autoDir = m_assetsRoot / "scripts" / "autorun";
         if (!fs::exists(autoDir) || !fs::is_directory(autoDir))
             autoDir = m_projectRoot / "scripts" / "autorun"; // legacy layout

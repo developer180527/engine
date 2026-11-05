@@ -13,6 +13,7 @@
 
 #include "capi/eng_internal.h"
 #include "components/rigid_body.h"
+#include "components/script_component.h"
 #include "core/transform.h"
 #include "plugins/stock_plugins.h"
 #include "runtime/platform/headless_platform.h"
@@ -21,6 +22,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 
@@ -112,6 +115,33 @@ int main() {
     CHECK(stepSum == ticksB, "EngStepInfo.simulation_steps sums to the ticks (%llu)", (unsigned long long)stepSum);
     CHECK(lastFrame == (uint64_t)kFrames, "EngStepInfo.frame counts frames (%llu)", (unsigned long long)lastFrame);
     CHECK(presented == 0, "headless: no window presented");
+
+    // ── 2b. A code-first engine runs nothing from the working directory ────
+    // It used to: with no project the script plugin's autorun folder resolved
+    // against the cwd, so a program run from a folder with scripts/autorun/
+    // ran those scripts (WO-070's manual check, from the repository root).
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "eng_step_test_cwd";
+        fs::remove_all(dir);
+        fs::create_directories(dir / "scripts" / "autorun");
+        std::ofstream(dir / "scripts" / "autorun" / "marker.lua") << "print('autorun ran')\n";
+        const fs::path was = fs::current_path();
+        fs::current_path(dir);
+        EngEngineDesc d = desc();
+        EngEngine* e = nullptr;
+        int scripts = -1;
+        if (engCreateEngine(&d, &e) == ENG_OK) {
+            engStepWithDelta(e, kDt, nullptr);
+            scripts = 0;
+            if (EngineRuntime* rt = engInternalRuntime(e))
+                rt->simWorld().each([&](flecs::entity, const ScriptComponent&) { ++scripts; });
+            engDestroyEngine(e);
+        }
+        fs::current_path(was);
+        fs::remove_all(dir);
+        CHECK(scripts == 0, "no script from the working directory runs without a project (%d)", scripts);
+    }
 
     // ── 3. Refusals, each by name ──────────────────────────────────────────
     auto refused = [](EngResult got, EngResult want, const char* needle, const char* what) {

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-10-01
+verified: 2026-11-06
 covers:
   - src/plugins/
 tests:
@@ -165,6 +165,11 @@ Both run through the same `PluginRegistry` broadcasts.
   The editor registers an ImGui backend; hosts without a UI surface no-op. This
   keeps plugins/kits free of any ImGui/editor dependency (works in `engine_host`
   too). (`IEditorPlugin` is retired.)
+- A plugin resolves content against the PROJECT's roots, never the working
+  directory. With no project (a code-first C API engine, a test, a tool) there
+  is no content: the Lua plugin runs no autorun scripts then. Its empty roots
+  used to make `scripts/autorun` a relative path, so any program started from a
+  folder holding one ran it (WO-070; `eng_step_test` §2b).
 
 ## Future Work
 - Split plugin headers into backend (runtime-clean) + editor UI parts.
