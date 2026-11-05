@@ -10,7 +10,8 @@ covers:
 > **Status: plan, 2026-10-29. Nothing here is built.** Agreed with the owner on
 > 2026-10-29: the ECS is core (not swappable), and editor users write C++ kits
 > as well as Lua. It sits above [`renderer-contract.md`](renderer-contract.md),
-> which is this plan applied to one provider kind.
+> which is this plan applied to one provider kind. The public API itself is being
+> drafted in [`engine-api.md`](engine-api.md) (**----DRAFT------**, for review).
 
 ## 1. The principle
 
