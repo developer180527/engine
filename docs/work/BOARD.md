@@ -51,6 +51,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-059](WO-059-os-link-scope.md) | OS frameworks and X11 are linked by the target that calls them, not handed to every consumer | Portability | S | **ready** | — |
 | [WO-064](WO-064-keyboard-from-events.md) | The keyboard snapshot is built from key events, not about 315 key polls a frame | Providers & modules | S | **ready** | input-source |
 | [WO-065](WO-065-job-pool-idle-cost.md) | The job pool costs nothing when there is no work, measured, and starts as small as the work | Providers & modules | S | **ready** | — |
+| [WO-066](WO-066-shipping-build-absent-not-disabled.md) | Shipping build — development machinery absent from the binary, not switched off | Process & context | L | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
@@ -61,6 +62,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-031](WO-031-shader-hot-reload.md) | Shader hot-reload — the runtime picks up a re-cooked shader | Renderer & RHI | M | **ready** | render-pipeline |
 | [WO-034](WO-034-frustum-near-plane-homogeneous-depth.md) | Frustum near plane is wrong under homogeneous depth (OpenGL) | Renderer & RHI | S | **ready** | — |
 | [WO-060](WO-060-ozz-out-of-engine-headers.md) | ozz stays in the animation .cpp files; engine headers show engine types | Asset import & cooking | S | **ready** | — |
+| [WO-067](WO-067-game-ui-on-libgui.md) | Game UI (HUD, menus, cockpit panels) on libgui, never on editor code | Providers & modules | L | **ready** | game-ui (new) |
 
 ## Parked — on purpose, with what would unpark it
 
