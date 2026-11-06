@@ -1,0 +1,33 @@
+diff --git a/include/bx/inline/uint32_t.inl b/include/bx/inline/uint32_t.inl
+index 1509637..cd0b2bf 100644
+--- a/include/bx/inline/uint32_t.inl
++++ b/include/bx/inline/uint32_t.inl
+@@ -89,19 +89,25 @@ namespace bx
+ 		return _a | ~_b;
+ 	}
+ 
++	// Shift amounts are masked to 0..31, which is what ARM64 and x86 shift
++	// instructions do anyway. Branch-free code here (halfFromFloat, the
++	// half/float conversions) computes every case and keeps one, so a discarded
++	// case may shift by a negative or >= 32 amount: undefined in C++, and UBSan
++	// stops on it (bx::halfFromFloat(1.0f) shifts by -14; WO-070). Masking
++	// keeps every selected result bit-identical and removes the UB.
+ 	inline BX_CONSTEXPR_FUNC uint32_t uint32_sll(uint32_t _a, int32_t _sa)
+ 	{
+-		return _a << _sa;
++		return _a << (_sa & 31);
+ 	}
+ 
+ 	inline BX_CONSTEXPR_FUNC uint32_t uint32_srl(uint32_t _a, int32_t _sa)
+ 	{
+-		return _a >> _sa;
++		return _a >> (_sa & 31);
+ 	}
+ 
+ 	inline BX_CONSTEXPR_FUNC uint32_t uint32_sra(uint32_t _a, int32_t _sa)
+ 	{
+-		return ( (int32_t)_a) >> _sa;
++		return ( (int32_t)_a) >> (_sa & 31);
+ 	}
+ 
+ 	inline BX_CONSTEXPR_FUNC uint32_t uint32_rol(uint32_t _a, int32_t _sa)

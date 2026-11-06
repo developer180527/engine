@@ -52,15 +52,14 @@ delete the patch once a release contains it.
   divergence this directory exists to prevent. Worth upstreaming (or bumping the
   bgfx pin to a commit that has it), after which this file can go.
 
-- **`bgfx.cmake+bgfx__mtl-null-vertex-attributes.patch`** — bgfx's Metal
-  renderer calls `vertexAttributes()->count()` on a program's vertex function,
-  and on GitHub's macOS runners (the paravirtual "Apple Virtual" device) Metal
-  returns NULL for one of bgfx's own programs at init. Messaging nil returns 0
-  in practice, so normal builds pass, but a member call on a null pointer is
-  undefined in C++ and the UBSan job stopped on it (`renderer_mtl.cpp:3175`)
-  the first time a sanitizer test created a real window (`eng_window_test`,
-  WO-070). The patch treats NULL as no attributes. Worth upstreaming to
-  bkaradzic/bgfx, after which this file can go.
+- **`bgfx.cmake+bgfx__mtl-null-pointers.patch`** — two member calls on null
+  pointers in bgfx's Metal renderer, harmless in practice (messaging nil does
+  nothing) but undefined in C++, so UBSan stopped on them the first time a
+  sanitizer test rendered through a real Metal device (`eng_window_test`,
+  WO-070): `vertexAttributes()->count()` when Metal returns no attribute list
+  (GitHub's macOS runners, the virtual "Apple Virtual" GPU), and the render
+  encoder at the end of `submit()` when a frame drew nothing (the frame bgfx
+  renders inside `init()`, on every device). Worth upstreaming.
 
 - **`bgfx.cmake+bgfx__mtl-timer-query-race.patch`** — bgfx's Metal GPU timer
   writes each frame's begin and end timestamps from Metal's scheduled and
@@ -71,6 +70,14 @@ delete the patch once a release contains it.
   makes the write a release store and the reads acquire loads. The handlers'
   own invocation is a TSan blind spot, not a race, and is suppressed
   (`tests/tsan_suppressions.cpp`). Worth upstreaming.
+
+- **`bgfx.cmake+bx__shift-amount-in-range.patch`** — bx's 32-bit shift
+  helpers mask the shift amount to 0..31. Its branch-free conversions
+  (`halfFromFloat` and friends) compute every case and keep one, so a discarded
+  case can shift by a negative amount (`halfFromFloat(1.0f)` shifts by -14):
+  undefined in C++, found by UBSan in the engine's LUT upload (WO-070). ARM64
+  and x86 shift instructions mask the same way, so every selected result is
+  unchanged. Worth upstreaming.
 
 - **`bgfx.cmake__shaderc-optimization-genex.patch`** — fixes a malformed CMake
   generator expression in `bgfx_compile_shaders`: `$<IF:$<CONFIG:Debug>:0,3>`

@@ -1,0 +1,57 @@
+diff --git a/src/renderer_mtl.cpp b/src/renderer_mtl.cpp
+index c4da6d70f..e9eee70c0 100644
+--- a/src/renderer_mtl.cpp
++++ b/src/renderer_mtl.cpp
+@@ -3172,7 +3172,11 @@ static_assert(BX_COUNTOF(s_accessNames) == Access::Count, "Invalid s_accessNames
+ 		{
+ 			NS::Array* vertexAttribs = _vsh->m_function->vertexAttributes();
+ 
+-			for (NS::UInteger ai = 0, ac = vertexAttribs->count(); ai < ac; ++ai)
++			// NULL on some Metal drivers (seen on GitHub's macOS runners, the
++			// paravirtual "Apple Virtual" device) for a function with no
++			// vertex input. Messaging nil returns 0 in practice, but a member
++			// call on a null pointer is undefined in C++ and UBSan stops on it.
++			for (NS::UInteger ai = 0, ac = NULL != vertexAttribs ? vertexAttribs->count() : 0; ai < ac; ++ai)
+ 			{
+ 				MTL::VertexAttribute* attrib = (MTL::VertexAttribute*)vertexAttribs->object(ai);
+ 
+@@ -5611,11 +5620,17 @@ static_assert(BX_COUNTOF(s_accessNames) == Access::Count, "Invalid s_accessNames
+ 		perfStats.gpuMemoryMax  = -INT64_MAX;
+ 		perfStats.gpuMemoryUsed = -INT64_MAX;
+ 
+-		rce->setTriangleFillMode(MTL::TriangleFillModeFill);
++		// No render item, no encoder: the frame bgfx renders inside init() has
++		// none, so rce is NULL here on every device. Messaging nil did nothing,
++		// but a member call on a null pointer is undefined (UBSan, WO-070).
++		if (NULL != rce)
++		{
++			rce->setTriangleFillMode(MTL::TriangleFillModeFill);
++		}
+ 
+ 		if (_render->m_debug & (BGFX_DEBUG_IFH|BGFX_DEBUG_STATS) )
+ 		{
+-			rce->pushDebugGroup(nsstr("debugstats") );
++			if (NULL != rce) { rce->pushDebugGroup(nsstr("debugstats") ); }
+ 
+ 			TextVideoMem& tvm = m_textVideoMem;
+ 
+@@ -5701,16 +5716,16 @@ static_assert(BX_COUNTOF(s_accessNames) == Access::Count, "Invalid s_accessNames
+ 			dbgTextSubmit(this, _textVideoMemBlitter, tvm);
+ 			rce = m_renderCommandEncoder;
+ 
+-			rce->popDebugGroup();
++			if (NULL != rce) { rce->popDebugGroup(); }
+ 		}
+ 		else if (_render->m_debug & BGFX_DEBUG_TEXT)
+ 		{
+-			rce->pushDebugGroup(nsstr("debugtext") );
++			if (NULL != rce) { rce->pushDebugGroup(nsstr("debugtext") ); }
+ 
+ 			dbgTextSubmit(this, _textVideoMemBlitter, _render->m_textVideoMem);
+ 			rce = m_renderCommandEncoder;
+ 
+-			rce->popDebugGroup();
++			if (NULL != rce) { rce->popDebugGroup(); }
+ 		}
+ 
+ 		endEncoding();

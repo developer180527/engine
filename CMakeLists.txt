@@ -194,6 +194,16 @@ if(ENGINE_WITH_RUST)
 endif()
 
 add_subdirectory(third_party/bgfx.cmake)
+# UBSan's alignment check cannot pass metal-cpp: it wraps every Objective-C
+# object as a C++ pointer, and the Objective-C runtime packs small strings into
+# TAGGED pointers that are not aligned objects at all, so every member call on
+# one is reported as misaligned (eng_window_test under UBSan, WO-070). Only
+# bgfx's Metal renderer uses metal-cpp, so only that file loses the one check.
+if(APPLE AND ENGINE_SANITIZE MATCHES "undefined")
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/bgfx.cmake/bgfx/src/renderer_mtl.cpp
+        TARGET_DIRECTORY bgfx PROPERTIES COMPILE_OPTIONS "-fno-sanitize=alignment")
+endif()
 
 # bgfx sizes its per-frame tables (draw records, the matrix cache, ...) for
 # BGFX_CONFIG_MAX_DRAW_CALLS, 65 535 by default, allocated at init whatever is
