@@ -52,6 +52,26 @@ delete the patch once a release contains it.
   divergence this directory exists to prevent. Worth upstreaming (or bumping the
   bgfx pin to a commit that has it), after which this file can go.
 
+- **`bgfx.cmake+bgfx__mtl-null-vertex-attributes.patch`** — bgfx's Metal
+  renderer calls `vertexAttributes()->count()` on a program's vertex function,
+  and on GitHub's macOS runners (the paravirtual "Apple Virtual" device) Metal
+  returns NULL for one of bgfx's own programs at init. Messaging nil returns 0
+  in practice, so normal builds pass, but a member call on a null pointer is
+  undefined in C++ and the UBSan job stopped on it (`renderer_mtl.cpp:3175`)
+  the first time a sanitizer test created a real window (`eng_window_test`,
+  WO-070). The patch treats NULL as no attributes. Worth upstreaming to
+  bkaradzic/bgfx, after which this file can go.
+
+- **`bgfx.cmake+bgfx__mtl-timer-query-race.patch`** — bgfx's Metal GPU timer
+  writes each frame's begin and end timestamps from Metal's scheduled and
+  completed handlers (Metal's thread) and reads them in `TimerQueryMtl::get()`
+  (the render thread) with nothing ordering the two: a real data race, found by
+  the TSan job when `eng_window_test` first rendered through a real device
+  (WO-070). Only bgfx's own `elapsedGpuMs` statistic reads these. The patch
+  makes the write a release store and the reads acquire loads. The handlers'
+  own invocation is a TSan blind spot, not a race, and is suppressed
+  (`tests/tsan_suppressions.cpp`). Worth upstreaming.
+
 - **`bgfx.cmake__shaderc-optimization-genex.patch`** — fixes a malformed CMake
   generator expression in `bgfx_compile_shaders`: `$<IF:$<CONFIG:Debug>:0,3>`
   uses `:` where `$<IF:cond,true,false>` requires a comma, so the shader

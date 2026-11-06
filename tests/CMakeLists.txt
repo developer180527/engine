@@ -13,6 +13,14 @@
 #   cmake -B build-tsan -DENGINE_SANITIZE=thread            && ctest
 # (option lives in the root CMakeLists; it instruments engine + third_party.)
 
+# Thread-sanitizer builds: every test executable defined below links the
+# suppressions TSan reads at start (tsan_suppressions.cpp). Only proven false
+# positives belong there.
+if(ENGINE_SANITIZE MATCHES "thread")
+    add_library(engine_tsan_suppressions OBJECT tsan_suppressions.cpp)
+    link_libraries(engine_tsan_suppressions)
+endif()
+
 # engine_test(<name> [LIB <lib>...] [EXPORTS]
 #   LIB: engine_core, engine_runtime and/or engine_cooking (the cook stack).
 #   engine_cooking exists only in dev trees (WO-017); a test naming it is

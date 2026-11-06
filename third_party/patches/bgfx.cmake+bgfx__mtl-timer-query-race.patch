@@ -1,0 +1,31 @@
+diff --git a/src/renderer_mtl.cpp b/src/renderer_mtl.cpp
+index c4da6d70f..3e000b7b3 100644
+--- a/src/renderer_mtl.cpp
++++ b/src/renderer_mtl.cpp
+@@ -4295,9 +4299,14 @@ static_assert(BX_COUNTOF(s_accessNames) == Access::Count, "Invalid s_accessNames
+ 		BX_UNUSED(_idx);
+ 	}
+ 
++	// Written by Metal's scheduled/completed handlers on Metal's own thread and
++	// read by TimerQueryMtl::get() on the render thread, with nothing ordering
++	// the two: a data race (ThreadSanitizer, WO-070). A release store here and
++	// acquire loads in get() make it defined; get() may still read the
++	// previous frame's value, which is what it did before in practice.
+ 	static void setTimestamp(void* _data)
+ 	{
+-		*( (int64_t*)_data) = bx::getHPCounter();
++		__atomic_store_n( (int64_t*)_data, bx::getHPCounter(), __ATOMIC_RELEASE);
+ 	}
+ 
+ 	void TimerQueryMtl::addHandlers(MTL::CommandBuffer*& _commandBuffer)
+@@ -4323,8 +4332,8 @@ static_assert(BX_COUNTOF(s_accessNames) == Access::Count, "Invalid s_accessNames
+ 		if (0 != m_control.getNumUsed() )
+ 		{
+ 			uint32_t offset = m_control.m_read;
+-			m_begin = m_result[offset].m_begin;
+-			m_end   = m_result[offset].m_end;
++			m_begin = __atomic_load_n(&m_result[offset].m_begin, __ATOMIC_ACQUIRE);
++			m_end   = __atomic_load_n(&m_result[offset].m_end,   __ATOMIC_ACQUIRE);
+ 			m_elapsed = m_end - m_begin;
+ 
+ 			m_control.consume(1);
