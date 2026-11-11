@@ -33,6 +33,11 @@
 
 namespace fs = std::filesystem;
 
+#if defined(ENG_SHARED_BUILD)
+// libeng: global new is not routed to the engine's heaps (mem_counters.cpp says why).
+extern "C" { extern const int engine_mem_route_global_new = 0; }
+#endif
+
 namespace {
 
 thread_local std::string t_lastError = "no error";
@@ -61,6 +66,15 @@ template <class T>
 void writeOut(T* out, T full) {
     full.struct_size = out->struct_size;
     std::memcpy(out, &full, std::min<size_t>(out->struct_size, sizeof(T)));
+}
+
+// A struct the engine fills must say how big the caller's copy is. An unset
+// struct_size (0) would get nothing written while the call reported success.
+template <class T>
+bool badOut(const T* out) {
+    if (out->struct_size >= sizeof(uint32_t)) return false;
+    t_lastError = "the output struct's struct_size is not set (start it with ENG_INIT)";
+    return true;
 }
 
 // Read a struct the caller fills: only struct_size bytes, the rest zero.
@@ -241,10 +255,16 @@ const char* modeName(EngWindowMode m) {
          : m == ENG_WINDOW_MODE_EXCLUSIVE_FULLSCREEN  ? "exclusive fullscreen" : "windowed";
 }
 
-// Pixels from a monitor's content scale; display modes cross the C API in pixels.
+// Display modes cross the C API in pixels; the platform says what one of its
+// modes is measured in. Monitor 0 means "the one the window is on".
 float monitorScale(EngEngine* e, uint32_t id) {
-    for (const MonitorDesc& m : e->plat->monitors())
-        if (m.id == id) return m.contentScale > 0 ? m.contentScale : 1.0f;
+    const std::vector<MonitorDesc> ms = e->plat->monitors();
+    if (id == 0) {
+        WindowState s;
+        if (e->plat->windowState(s)) id = s.monitor;
+    }
+    for (const MonitorDesc& m : ms)
+        if (m.id == id || (id == 0 && m.primary)) return m.modePixelScale > 0 ? m.modePixelScale : 1.0f;
     return 1.0f;
 }
 
@@ -256,7 +276,7 @@ EngResult applyMode(EngEngine* e, EngWindowMode mode, EngMonitor monitor, const 
     DisplayModeDesc d{};
     const DisplayModeDesc* dp = nullptr;
     if (ex && ex->width_pixels > 0) {
-        const float s = monitorScale(e, monitor ? monitor : 0);
+        const float s = monitorScale(e, monitor);
         d.width  = (int)std::lround(ex->width_pixels / s);
         d.height = (int)std::lround(ex->height_pixels / s);
         d.refreshMilliHz = (int)ex->refresh_millihertz;
@@ -309,6 +329,8 @@ EngResult engCreateEngine(const EngEngineDesc* in, EngEngine** out) {
         auto e = std::make_unique<EngEngine>();
         if (d.app_name) e->appName = d.app_name;
         e->pacing = d.pacing;
+        if (d.provider_count && !d.providers)
+            return fail(ENG_ERROR_INVALID_ARGUMENT, "provider_count is not zero but providers is NULL");
         for (uint32_t i = 0; i < d.provider_count; ++i) {
             const EngProviderChoice& c = d.providers[i];
             const std::string kind = c.kind ? c.kind : "", name = c.name ? c.name : "";
@@ -395,7 +417,9 @@ EngResult engWaitEvents(EngEngine* e, double timeout) {
 EngResult engStepWithDelta(EngEngine* e, double dt, EngStepInfo* out) {
     return guard<EngResult>(ENG_ERROR_INTERNAL, [&]() -> EngResult {
         if (!e) return fail(ENG_ERROR_INVALID_ARGUMENT, "engine is NULL");
-        if (!(dt >= 0.0)) return fail(ENG_ERROR_INVALID_ARGUMENT, "delta_seconds must be zero or positive");
+        if (!(dt >= 0.0) || !std::isfinite(dt))
+            return fail(ENG_ERROR_INVALID_ARGUMENT, "delta_seconds must be zero or positive, and finite");
+        if (out && badOut(out)) return ENG_ERROR_INVALID_ARGUMENT;
         if (e->quit) return fail(ENG_ERROR_REFUSED, "the engine has quit (engRequestQuit)");
         if (!e->started) {
             if (EngResult r = start(e, nullptr); r != ENG_OK) return r;
@@ -466,7 +490,7 @@ EngResult engRun(EngEngine* e, EngFrameFn frame_fn, void* user) {
 
 void engGetWindowCapabilities(EngEngine* e, EngWindowCapabilities* out) {
     guard<int>(0, [&] {
-        if (!e || !out) return 0;
+        if (!e || !out || badOut(out)) return 0;
         EngWindowCapabilities c{};
         const bool display = e->plat && e->plat->windowControl() && !e->plat->monitors().empty() &&
                              !(e->started && e->headless);
@@ -497,6 +521,7 @@ EngResult engGetMonitors(EngEngine* e, EngMonitor* out, uint32_t* count) {
 EngResult engGetMonitorInfo(EngEngine* e, EngMonitor monitor, EngMonitorInfo* out) {
     return guard<EngResult>(ENG_ERROR_INTERNAL, [&]() -> EngResult {
         if (!e || !out) return fail(ENG_ERROR_INVALID_ARGUMENT, "engine or out is NULL");
+        if (badOut(out)) return ENG_ERROR_INVALID_ARGUMENT;
         for (const MonitorDesc& m : e->plat->monitors()) {
             if (m.id != monitor) continue;
             EngMonitorInfo i{};
@@ -505,8 +530,8 @@ EngResult engGetMonitorInfo(EngEngine* e, EngMonitor monitor, EngMonitorInfo* ou
             i.width = (uint32_t)m.width; i.height = (uint32_t)m.height;
             i.content_scale = m.contentScale;
             i.hdr_headroom = 0.0f;   // unknown per monitor in this version
-            i.current_mode.width_pixels  = (uint32_t)std::lround(m.currentMode.width * m.contentScale);
-            i.current_mode.height_pixels = (uint32_t)std::lround(m.currentMode.height * m.contentScale);
+            i.current_mode.width_pixels  = (uint32_t)std::lround(m.currentMode.width * m.modePixelScale);
+            i.current_mode.height_pixels = (uint32_t)std::lround(m.currentMode.height * m.modePixelScale);
             i.current_mode.refresh_millihertz = (uint32_t)m.currentMode.refreshMilliHz;
             std::snprintf(i.name, sizeof i.name, "%s", m.name.c_str());
             writeOut(out, i);
@@ -613,6 +638,7 @@ EngResult engGetWindowInfo(EngEngine* e, EngWindow w, EngWindowInfo* out) {
     return guard<EngResult>(ENG_ERROR_INTERNAL, [&]() -> EngResult {
         if (EngResult r = checkWindow(e, w); r != ENG_OK) return r;
         if (!out) return fail(ENG_ERROR_INVALID_ARGUMENT, "out is NULL");
+        if (badOut(out)) return ENG_ERROR_INVALID_ARGUMENT;
         WindowState s;
         if (!e->plat->windowState(s)) return fail(ENG_ERROR_UNSUPPORTED, "this platform cannot report the window's state");
         EngWindowInfo i{};
@@ -720,7 +746,7 @@ EngResult engFocusWindow(EngEngine* e, EngWindow w) {
 
 EngBool engNextEvent(EngEngine* e, EngEvent* out) {
     return guard<EngBool>(ENG_FALSE, [&]() -> EngBool {
-        if (!e || !out) return ENG_FALSE;
+        if (!e || !out || badOut(out)) return ENG_FALSE;   // the event stays queued
         if (e->dropped) {   // the oldest news first: something was lost
             EngEvent ev = blankEvent(e, ENG_EVENT_OVERFLOWED, 0);
             ev.a = (int32_t)e->dropped;

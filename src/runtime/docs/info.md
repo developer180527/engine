@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-06
+verified: 2026-11-11
 parses-external-input: true
 covers:
   - src/runtime/
@@ -364,6 +364,8 @@ pieces itself, because it must never pump or wait (DR-0030):
 `tick(dt)` or `tickNoRender(dt)` (the simulation keeps its rate while nothing
 can be shown), then `frameEnd(present)` (`present=false` resets the frame's
 lists without presenting). `simulationTicks()` counts fixed steps.
+Display modes cross the C API in pixels: the platform's `MonitorDesc::modePixelScale`
+says what one of its modes is measured in (`platform.h`).
 `eng_step_test` holds `engStepWithDelta` to the same ticks and world hash as
 this loop.
 

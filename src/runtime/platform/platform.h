@@ -42,6 +42,9 @@ struct MonitorDesc {
     int             x = 0, y = 0;      // on the virtual desktop
     int             width = 0, height = 0;
     float           contentScale = 1.0f;
+    // Multiply a display mode's size by this to get pixels. Not contentScale:
+    // a backend reports modes in points on macOS and in pixels elsewhere.
+    float           modePixelScale = 1.0f;
     DisplayModeDesc currentMode;
 };
 

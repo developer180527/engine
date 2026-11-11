@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-10-06
+verified: 2026-11-11
 covers:
   - src/core/
 tests:
@@ -152,6 +152,16 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   is what the heap sanitizers need: the root CMakeLists sets it automatically
   under ASan/LSan so allocations keep SYSTEM provenance. ENGINE_MEM_COUNT adds
   the counters independently; read per-frame deltas via runtime's MemoryChannel.
+
+  **Not routed inside a shared library.** A shared library cannot replace
+  `operator new` for the process: the system's libc++ keeps its own, so an
+  object made by `new` inside the library and deleted outside it (a
+  `std::thread`'s bookkeeping, at thread exit) was freed by the wrong
+  allocator and the process aborted. `libeng` sets
+  `engine_mem_route_global_new` to 0 (a weak constant, overridden in
+  `eng_capi.cpp` under `ENG_SHARED_BUILD`), and global new there uses the
+  system allocator; `mem::` calls stay tagged, and `mem::free` already forwards
+  a pointer it does not own to `std::free`. Test: `eng_shared_test`.
 
   **The alignment contract is the part to get right.** The plain
   `operator new(size_t)` must return storage aligned to

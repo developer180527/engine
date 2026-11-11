@@ -223,6 +223,17 @@ add_executable(eng_window_manual eng_window_manual.c)
 target_link_libraries(eng_window_manual PRIVATE engine_capi)
 set_target_properties(eng_window_manual PROPERTIES LINKER_LANGUAGE CXX
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} C_STANDARD 99 C_STANDARD_REQUIRED ON)
+# The SHARED library, loaded by a plain C program: a headless engine stepped
+# and destroyed. Nothing else loads libeng, and it aborted at the first thread
+# exit while every static-linked test passed (memory crossing allocators).
+if(TARGET eng)
+    add_executable(eng_shared_test eng_shared_test.c)
+    target_link_libraries(eng_shared_test PRIVATE eng)
+    set_target_properties(eng_shared_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+                          C_STANDARD 99 C_STANDARD_REQUIRED ON)
+    add_test(NAME eng_shared_test COMMAND eng_shared_test)
+    set_tests_properties(eng_shared_test PROPERTIES LABELS unit TIMEOUT 120)
+endif()
 add_library(eng_header_check OBJECT eng_header_check.c)
 target_include_directories(eng_header_check PRIVATE ${CMAKE_SOURCE_DIR}/include)
 set_target_properties(eng_header_check PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)

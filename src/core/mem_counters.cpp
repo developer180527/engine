@@ -52,9 +52,36 @@ MemCounters& memCounters() {
 // unaligned NEON stores. Three green platforms hid a real bug on the fourth.
 static constexpr std::size_t kDefaultNewAlign = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
 
+// ── Not routed inside a shared library (libeng) ─────────────────────────────
+// A shared library cannot replace operator new for the process: the system's
+// libc++ keeps its own. So an object made by `new` in here and deleted in there
+// (a std::thread's bookkeeping, at thread exit) was freed by the system
+// allocator, and the process aborted with "pointer being freed was not
+// allocated". libeng therefore defines this as 0 (eng_capi.cpp, ENG_SHARED_BUILD)
+// and global new uses the system allocator, which both sides agree on. mem::
+// calls are still tagged, and mem::free already forwards a pointer it does not
+// own to std::free. A constant, so it is set before any allocation runs.
+// Test: eng_shared_test.
+#if defined(__GNUC__) || defined(__clang__)
+extern "C" { __attribute__((weak)) extern const int engine_mem_route_global_new = 1; }
+#else
+static const int engine_mem_route_global_new = 1;
+#endif
+
 static inline void* engine_global_alloc(std::size_t n, std::size_t align) {
 #if ENGINE_MEM_ROUTE
-    void* p = mem::alloc(n ? n : 1, align);
+    void* p = nullptr;
+    if (engine_mem_route_global_new) {
+        p = mem::alloc(n ? n : 1, align);
+    } else if (align <= kDefaultNewAlign) {
+        p = std::malloc(n ? n : 1);
+    } else {
+  #if defined(_WIN32)
+        p = nullptr;   // libeng is not built shared on Windows; unreachable
+  #else  // any OS: POSIX posix_memalign, whose blocks std::free releases
+        if (posix_memalign(&p, align, n ? n : 1) != 0) p = nullptr;
+  #endif
+    }
 #else
     (void)align;   // over-aligned types don't take this path when not routing
     void* p = std::malloc(n ? n : 1);

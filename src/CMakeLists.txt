@@ -664,6 +664,9 @@ if(APPLE)
     target_include_directories(eng PUBLIC ${CMAKE_SOURCE_DIR}/include)
     set_target_properties(eng PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
     target_link_options(eng PRIVATE "LINKER:-exported_symbol,_eng[A-Z]*")
+    # Inside a shared library global new must use the system allocator
+    # (mem_counters.cpp, engine_mem_route_global_new). Test: eng_shared_test.
+    target_compile_definitions(eng PRIVATE ENG_SHARED_BUILD)
 endif()
 
 # ── engine_player — the shipped-game runtime ─────────────────────────────────

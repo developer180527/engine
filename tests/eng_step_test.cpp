@@ -8,7 +8,9 @@
 //   3. Refusals, each by name (DR-0035): an unset or mismatched api_version,
 //      an unknown provider kind or name, modules, a log callback, stepping
 //      after quit, a window after a headless start, a stale window handle,
-//      NULL arguments, and a struct written only up to its struct_size.
+//      NULL arguments, a provider count with no array, an infinite delta,
+//      an output struct with no struct_size, and a struct written only up to
+//      its struct_size.
 #include <eng/engine.h>
 
 #include "capi/eng_internal.h"
@@ -176,6 +178,8 @@ int main() {
         d = desc(); d.project_path = "/no/such/project";
         refused(engCreateEngine(&d, &e), ENG_ERROR_NOT_FOUND, "project.json", "a missing project");
         refused(engCreateEngine(nullptr, &e), ENG_ERROR_INVALID_ARGUMENT, "NULL", "a NULL desc");
+        d = desc(); d.provider_count = 1; d.providers = nullptr;
+        refused(engCreateEngine(&d, &e), ENG_ERROR_INVALID_ARGUMENT, "providers is NULL", "a provider count with no array");
     }
     {
         EngEngineDesc d = desc();
@@ -187,6 +191,25 @@ int main() {
                 "a window after a headless start");
         refused(engSetWindowSize(e, 0x101, 10, 10), ENG_ERROR_STALE_HANDLE, "no longer exists", "a window that never was");
         refused(engStepWithDelta(e, -1.0, nullptr), ENG_ERROR_INVALID_ARGUMENT, "delta", "a negative delta");
+        refused(engStepWithDelta(e, 1.0 / 0.0, nullptr), ENG_ERROR_INVALID_ARGUMENT, "finite", "an infinite delta");
+
+        // An output struct whose struct_size was never set: refused, not a
+        // success that wrote nothing.
+        EngStepInfo unset;
+        std::memset(&unset, 0xAB, sizeof unset);
+        unset.struct_size = 0;
+        refused(engStepWithDelta(e, kDt, &unset), ENG_ERROR_INVALID_ARGUMENT, "struct_size", "an EngStepInfo with no struct_size");
+        EngEvent noSize;
+        std::memset(&noSize, 0, sizeof noSize);
+        CHECK(engNextEvent(e, &noSize) == ENG_FALSE &&
+              std::string(engGetLastErrorMessage()).find("struct_size") != std::string::npos,
+              "engNextEvent into an event with no struct_size takes nothing: %s", engGetLastErrorMessage());
+        EngWindowCapabilities caps;
+        std::memset(&caps, 0xAB, sizeof caps);
+        caps.struct_size = 0;
+        engGetWindowCapabilities(e, &caps);
+        CHECK(std::string(engGetLastErrorMessage()).find("struct_size") != std::string::npos,
+              "engGetWindowCapabilities with no struct_size says so: %s", engGetLastErrorMessage());
 
         // A struct the engine fills is written only up to the caller's size.
         unsigned char raw[sizeof(EngStepInfo) + 8];

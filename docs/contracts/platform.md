@@ -12,7 +12,7 @@ implementations:
 covers:
   - src/runtime/platform/platform.h
   - src/runtime/platform/ui_input.h
-verified: 2026-11-06
+verified: 2026-11-11
 ---
 
 # platform — the OS window, events, and everything a GUI needs from them
@@ -22,7 +22,9 @@ for torn-off panels), and UI input (`ui_input.h`: pointer, wheel, keys, text,
 IME, focus; clipboard, cursor, text-input area; keyboard convention), and
 main-window control (WO-070: mode, monitors, size, position, limits, aspect,
 flags, show, focus, window events), which is what the C API's `eng_window.h`
-stands on. A new OS implements `IPlatform` once; every GUI and the renderer come
+stands on. A monitor reports `modePixelScale`, the factor from one of its display
+modes to pixels (the content scale on macOS, 1 elsewhere), because backends do
+not agree on what a mode is measured in. A new OS implements `IPlatform` once; every GUI and the renderer come
 along.
 
 ## Nothing

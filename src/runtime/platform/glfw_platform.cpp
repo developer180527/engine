@@ -491,6 +491,11 @@ std::vector<MonitorDesc> GlfwPlatform::monitors() {
         float sx = 1.0f, sy = 1.0f;
         glfwGetMonitorContentScale(all[i], &sx, &sy);
         d.contentScale = sx;
+        // GLFW video modes are in screen coordinates: points on macOS, already
+        // pixels on Windows, X11 and Wayland.
+#if defined(__APPLE__)
+        d.modePixelScale = sx > 0 ? sx : 1.0f;
+#endif
         d.currentMode = toDesc(glfwGetVideoMode(all[i]));
         d.width = d.currentMode.width; d.height = d.currentMode.height;
         out.push_back(d);
