@@ -50,6 +50,7 @@ constexpr uintptr_t kBlockMask  = ~uintptr_t(kBlockSize - 1);
 constexpr size_t    kHeaderSize = 64;                        // one cache line
 constexpr size_t    kLargeMin   = kBlockSize / 2;            // >=1MB: direct map
 constexpr uint32_t  kMagic      = 0x4D454D42;                // 'BMEM'
+constexpr size_t    kMaxAlloc   = SIZE_MAX / 4;              // far past any real request
 
 struct Shard;
 
@@ -301,14 +302,18 @@ void regErase(uintptr_t base) {
     }
 }
 
+// Bounded like regInsert: with no empty slot left (live entries plus
+// tombstones filling the table) a miss never met a 0 and looped forever, on the
+// foreign-pointer path of free().
 inline bool regHas(uintptr_t base) {
     size_t i = regHash(base);
-    for (;;) {
+    for (size_t probes = 0; probes < kRegSlots; ++probes) {
         const uintptr_t v = g_registry[i].load(std::memory_order_acquire);
         if (v == base) return true;
         if (v == 0)    return false;
         i = (i + 1) & (kRegSlots - 1);
     }
+    return false;
 }
 
 struct TagHeap;
@@ -482,6 +487,14 @@ inline BlockHeader* headerOf(void* p) {
         std::fflush(stderr);
         std::abort();
     }
+    // ── The 2MB window is not all ours when the mapping is shorter ──────────
+    // A large block between 1 and 2 MB maps only what it needs; the rest of its
+    // 2MB window goes back to the OS, which may hand it to anyone (the system
+    // allocator's regions fit there). A foreign pointer in that tail masked
+    // down to OUR base, passed the registry, and free() then unmapped the
+    // engine's large block out from under its owner. Pool blocks are a whole
+    // window, so this only ever rejects that tail.
+    if ((uintptr_t)p - base >= h->mapBytes) return nullptr;
     return h;
 }
 
@@ -534,6 +547,12 @@ void* alloc(size_t size, size_t align, Tag tag) {
         return nullptr;
     }
     if (align < 8) align = 8;
+    // A size no machine can satisfy is refused before any arithmetic on it.
+    // `size + align` and largeAlloc's rounding both wrapped: SIZE_MAX-4 came
+    // back as a 24-byte block reported as success, and SIZE_MAX-100 crashed
+    // inside the allocator. Reachable from a kit (engineMemAlloc) and from
+    // operator new, which must fail, not hand out a short block.
+    if (size > kMaxAlloc) return nullptr;
     if (size + align >= kLargeMin) return largeAlloc(tag, size, align);
     return heap(tag).shards[myShard()].allocate(tag, size, align);
 }

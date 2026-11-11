@@ -153,15 +153,18 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   under ASan/LSan so allocations keep SYSTEM provenance. ENGINE_MEM_COUNT adds
   the counters independently; read per-frame deltas via runtime's MemoryChannel.
 
-  **Not routed inside a shared library.** A shared library cannot replace
-  `operator new` for the process: the system's libc++ keeps its own, so an
-  object made by `new` inside the library and deleted outside it (a
-  `std::thread`'s bookkeeping, at thread exit) was freed by the wrong
-  allocator and the process aborted. `libeng` sets
-  `engine_mem_route_global_new` to 0 (a weak constant, overridden in
-  `eng_capi.cpp` under `ENG_SHARED_BUILD`), and global new there uses the
-  system allocator; `mem::` calls stay tagged, and `mem::free` already forwards
-  a pointer it does not own to `std::free`. Test: `eng_shared_test`.
+  **What the system's C++ library frees must not come from here.** `std::thread`
+  makes a bookkeeping object with `new` that libc++ deletes at thread exit, with
+  the system allocator. Linked statically the engine's `operator delete`
+  replaces the system's and it works; in a shared library (`libeng`) nothing can
+  replace it, and the process aborted. So the engine starts threads in one
+  place, `engine::threads::start` (`thread_start.h`), which holds a
+  `mem::SystemNewScope`: on that thread, for that call, global new is the system
+  allocator. Everything else stays in the tagged heaps, in `libeng` too.
+  `jobs::init` holds the same scope around enkiTS's start-up (its workers are
+  `std::thread`s), and the raw-input source around the hid module's. Audit rule
+  THREAD-01 keeps `std::thread(` out of the rest of `src/`. Tests:
+  `eng_shared_test` (fails without the scope), `mem_test`.
 
   **The alignment contract is the part to get right.** The plain
   `operator new(size_t)` must return storage aligned to

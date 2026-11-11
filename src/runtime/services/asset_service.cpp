@@ -1,3 +1,4 @@
+#include "core/thread_start.h"
 #include "runtime/services/asset_service.h"
 
 #include <assetlib/material_asset.h>
@@ -1017,7 +1018,7 @@ TextureHandle AssetService::resolveTexture(
 void AssetService::ensureWorker() {
     if (m_async) return;
     m_async = std::make_unique<AsyncState>();
-    m_async->worker = std::thread([this] { workerLoop(); });
+    m_async->worker = engine::threads::start([this] { workerLoop(); });
 }
 
 void AssetService::workerLoop() {

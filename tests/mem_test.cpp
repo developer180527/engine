@@ -10,7 +10,11 @@
 #include <cstdlib>
 #include <cstddef>
 #include <cstring>
+#include <new>
 #include <thread>
+#if !defined(_WIN32)
+#include <sys/mman.h>
+#endif
 #include <vector>
 
 #include "core/memory/mem.h"
@@ -134,6 +138,57 @@ int main() {
         CHECK(((uintptr_t)c % 64) == 0, "and a shrink keeps it too");
         mem::free(a); mem::free(b); mem::free(c);
     }
+
+    // ── A foreign pointer beside a short large block is still foreign ───────
+    // A 1.2 MB large block maps only what it needs; the rest of its 2MB window
+    // belongs to the OS. Memory mapped there masked down to the block's base,
+    // passed the registry, and freeing it unmapped the engine's block.
+#if !defined(_WIN32)
+    {
+        const size_t sz = 1200 * 1024;
+        char* big = (char*)mem::alloc(sz, 16, mem::Tag::Assets);
+        const uintptr_t base = (uintptr_t)big & ~uintptr_t((1u << 21) - 1);
+        void* want = (void*)(base + (1u << 21) - 64 * 1024);
+        void* other = mmap(want, 64 * 1024, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
+        CHECK(other == want, "someone else's pages mapped in the large block's 2MB window");
+        CHECK(!mem::owns((char*)other + 128), "a pointer in that tail is foreign");
+        CHECK(mem::allocSize((char*)other + 128) == 0, "and has no engine size");
+        CHECK(mem::owns(big) && mem::allocSize(big) == sz, "the large block itself is still owned");
+        big[0] = 1; big[sz - 1] = 2;
+        munmap(other, 64 * 1024);
+        mem::free(big);
+    }
+#endif
+
+    // ── Sizes nothing can satisfy are refused, not wrapped ─────────────────
+    {
+        CHECK(mem::alloc(SIZE_MAX - 4, 8, mem::Tag::Core) == nullptr,
+              "alloc(SIZE_MAX-4) is refused (it returned a 24-byte block)");
+        CHECK(mem::alloc(SIZE_MAX - 100, 8, mem::Tag::Core) == nullptr,
+              "alloc(SIZE_MAX-100) is refused (it crashed in the allocator)");
+#if !defined(ENGINE_MEM_ROUTE) || ENGINE_MEM_ROUTE   // a heap sanitizer owns new and aborts on this
+        bool threw = false;
+        try { volatile size_t n = SIZE_MAX - 64; char* p = new char[n]; (void)p; }
+        catch (const std::bad_alloc&) { threw = true; }
+        CHECK(threw, "new char[SIZE_MAX-64] throws std::bad_alloc");
+#endif
+    }
+
+    // ── mem::SystemNewScope: what the system's C++ library will free ────────
+#if !defined(ENGINE_MEM_ROUTE) || ENGINE_MEM_ROUTE   // not routed under a heap sanitizer
+    {
+        int* mine = new int(1);
+        CHECK(mem::owns(mine), "global new is the engine's heap");
+        int* theirs = nullptr;
+        { mem::SystemNewScope s; theirs = new int(2); CHECK(mem::systemNewActive(), "scope is active"); }
+        CHECK(!mem::owns(theirs), "inside SystemNewScope global new is the system allocator");
+        CHECK(!mem::systemNewActive(), "and the scope ends");
+        int* again = new int(3);
+        CHECK(mem::owns(again), "after it, the engine's heap again");
+        delete mine; delete theirs; delete again;   // delete handles both
+    }
+#endif
 
     // ── Foreign pointers: the kit / pre-routing safety net ──────────────────
     {

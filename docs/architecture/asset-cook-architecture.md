@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-10-06
+verified: 2026-11-11
 covers:
   - modules/assetlib/src/cook/*.cpp
   - modules/assetlib/src/ddc/*.cpp
@@ -607,3 +607,6 @@ Remaining roadmap beyond §6: remote execution / build farm (the
 `dispatchCook()` seam plus the worker file protocol is where it plugs in), an
 HTTP/S3 shared-DDC backend behind the same key space, and out-of-core cooking
 for single assets larger than RAM.
+
+**2026-11-11.** `CookService`'s cook thread starts through `engine::threads::start`
+(`src/core/thread_start.h`), like every engine thread; nothing else about it changed.

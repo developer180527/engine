@@ -142,7 +142,13 @@ void init(uint32_t numWorkers) {
         };
     cfg.customAllocator.free =
         [](void* p, size_t, void*, const char*, int) { mem::free(p); };
-    g_ts.Initialize(cfg);
+    {
+        // enkiTS makes its workers with std::thread: their bookkeeping must come
+        // from the system allocator (mem::SystemNewScope). Its own arrays still
+        // come from Tag::Jobs through the allocator above.
+        mem::SystemNewScope systemNew;
+        g_ts.Initialize(cfg);
+    }
 
     g_init.store(true);
     LOG_INFO("Jobs", "worker pool up: %u task threads (workers + main), spawned once",

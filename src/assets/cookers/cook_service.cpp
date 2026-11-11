@@ -1,3 +1,4 @@
+#include "core/thread_start.h"
 #include "assets/cookers/cook_service.h"
 #include "assets/cookers/mesh/mesh_cooker.h"
 #include "assets/cookers/texture/texture_cooker.h"
@@ -48,7 +49,7 @@ CookService::~CookService() {
 }
 
 void CookService::start() {
-    m_thread = std::thread([this] { cookLoop(); });
+    m_thread = engine::threads::start([this] { cookLoop(); });
 }
 
 void CookService::requestCook(const std::string& sourcePath) {

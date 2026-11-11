@@ -14,7 +14,7 @@ tests:
   - tests/input_test.cpp
 covers:
   - src/runtime/input/input_sources.h
-verified: 2026-09-27
+verified: 2026-11-11
 ---
 
 # input-source — where raw input events come from
@@ -30,7 +30,9 @@ Not yet written.
 Not yet written.
 
 ## Threading
-Not yet written.
+Not yet written, except: the raw (hid) source starts the hid module's thread
+under a `mem::SystemNewScope` (`input_sources.h`), as `engine::threads::start`
+does for the engine's own threads (`src/core/info.md`).
 
 ## Timing
 Not yet written.

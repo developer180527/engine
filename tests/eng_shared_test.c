@@ -2,8 +2,11 @@
  *
  * Links libeng (not the static engine_capi) the way a Python, Swift or C host
  * would: create a headless engine, step it, destroy it. The engine starts and
- * joins threads on the way, which is what aborted when global new inside the
- * library used the engine's heap and libc++ outside freed with the system's. Passing means the process exits 0. */
+ * joins threads on the way. That aborted ("pointer being freed was not
+ * allocated"): std::thread's bookkeeping came from the engine's heap and the
+ * system's C++ library freed it. The engine's heap is still what global new
+ * uses in here; only thread creation asks the system allocator
+ * (engine::threads::start, mem::SystemNewScope). Passing means exit 0. */
 #include <eng/engine.h>
 
 #include <stdio.h>

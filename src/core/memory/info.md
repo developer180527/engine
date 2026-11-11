@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-30
+verified: 2026-11-11
 covers:
   - src/core/memory/
 tests:
@@ -195,3 +195,21 @@ top-level CMakeLists (suppressing a macro is safe to force on anyone);
 brings in and forcing a reduced header on third-party code broke bgfx's vendored
 PIX headers. Each translation unit that includes `<windows.h>` states its own
 choice, which is where that decision is visible.
+
+**Review of 2026-11-11: three defects in `mem.cpp`, fixed, each with a test in `mem_test`.**
+- **A foreign pointer beside a short large block was "owned".** A large block
+  between 1 and 2 MB maps only what it needs; the rest of its 2MB window goes
+  back to the OS. Memory the OS put there masked down to the block's base and
+  passed the registry, so `mem::free` of a foreign pointer unmapped the engine's
+  large block out from under its owner (reproduced: a crash on the next touch).
+  `headerOf` now also requires the pointer to lie inside the mapping.
+- **Sizes that wrap.** `alloc(SIZE_MAX-4)` returned a 24-byte block as success
+  and `alloc(SIZE_MAX-100)` crashed inside the allocator: `size + align` and
+  `largeAlloc`'s rounding both wrapped. Sizes above `SIZE_MAX/4` are refused
+  first, so `operator new` throws `bad_alloc`. `FrameArena::alloc` had the same
+  wrap and checks `bytes <= capacity` first.
+- **`regHas` could loop forever** on a miss once no slot in the registry was 0
+  (live entries plus tombstones). It is bounded like `regInsert`.
+
+`mem::SystemNewScope` (what the system's C++ library will free, `mem.h`) is
+described in `src/core/info.md`.

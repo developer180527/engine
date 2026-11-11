@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-10-01
+verified: 2026-11-11
 covers:
   - src/core/jobs/
 tests:
@@ -179,3 +179,9 @@ Default run is a CI smoke size (~0.5 s). `./stress_jobs 5000` is the soak.
 - Renderer extraction/culling tasks.
 - C API surface for kits (`engineJobs*`) once a use case appears.
 - Per-task memory tags once the memory manager lands.
+
+**2026-11-11.** `jobs::init` holds a `mem::SystemNewScope` around the
+scheduler's start-up: enkiTS makes its workers with `std::thread`, whose
+bookkeeping the system's C++ library frees at thread exit, so it must not come
+from the engine's heap (`src/core/info.md`, `eng_shared_test`). enkiTS's own
+arrays still come from `Tag::Jobs`.

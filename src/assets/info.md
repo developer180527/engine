@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-10-01
+verified: 2026-11-11
 parses-external-input: true
 covers:
   - src/assets/
@@ -412,3 +412,6 @@ cost three CI round-trips one error at a time, because a build stops at the firs
 failure. `scripts/check_std_includes.py` now finds them all in one local pass and
 runs as the `std_includes` unit test — it caught two of its author's own the
 moment they were written.
+
+**2026-11-11.** `CookService`'s cook thread starts through `engine::threads::start`
+(`src/core/thread_start.h`), like every engine thread; nothing else about it changed.

@@ -57,7 +57,8 @@ public:
         const uintptr_t cur     = (uintptr_t)(m_base + m_offset);
         const uintptr_t aligned = (cur + (align - 1)) & ~(uintptr_t)(align - 1);
         const size_t    newOff  = (size_t)(aligned - (uintptr_t)m_base) + bytes;
-        if (m_base && newOff <= m_capacity) {
+        // bytes <= capacity first: a huge `bytes` wraps newOff to a small number.
+        if (m_base && bytes <= m_capacity && newOff <= m_capacity) {
             m_offset = newOff;
             if (m_offset > m_highWater) m_highWater = m_offset;
             return (void*)aligned;

@@ -705,6 +705,27 @@ def render_porting() -> str:
     return "\n".join(out) + "\n"
 
 
+THREAD_START = re.compile(r"std::(?:thread|jthread)\s*[({]|std::async\s*\(")
+
+
+def rule_threads_start_in_one_place() -> Rule:
+    r = Rule("THREAD-01", "the engine starts threads in one place",
+             "src/core/thread_start.h; src/core/memory/mem.h (SystemNewScope).",
+             "std::thread's bookkeeping is freed by the system's C++ library. "
+             "Made outside engine::threads::start it comes from the engine's "
+             "heap, and a shared-library build aborts at that thread's exit "
+             "(eng_shared_test).")
+    for rel in tracked("src/*"):
+        if not rel.endswith(SRC_EXT) or rel == "src/core/thread_start.h":
+            continue
+        for n, line in enumerate(read(rel).splitlines(), 1):
+            code = line.split("//", 1)[0]
+            if THREAD_START.search(code):
+                r.findings.append(Finding(r.id, f"{rel}:{code.strip()[:60]}",
+                    f"{rel}:{n} starts a thread directly — use engine::threads::start"))
+    return r
+
+
 def rule_unknown_os_is_an_error() -> Rule:
     r = Rule("OS-01", "an unknown OS is a compile error, not silently POSIX",
              "src/core/os_family.h; docs/work/WO-006.",
@@ -811,6 +832,7 @@ RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
          rule_abi_compat_coverage, rule_component_hash_membership,
          rule_fuzz_corpus, rule_tests_registered, rule_sim_determinism,
          rule_c_abi_header_purity, rule_bx_creep, rule_unknown_os_is_an_error,
+         rule_threads_start_in_one_place,
          rule_one_camera_convention, rule_assimp_only_in_front_end,
          rule_doc_coverage)
 

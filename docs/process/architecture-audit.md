@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-11-06
+verified: 2026-11-11
 covers:
   - scripts/engine_audit.py
   - scripts/audit_cron.sh
@@ -62,6 +62,7 @@ rule nobody agreed to.
 | `IMP-01` | Assimp is included only by the Assimp front end (`src/assets/import/frontend_assimp*`); no debt since WO-018 deleted the two runtime importers | `docs/plans/imported-scene.md` §2 |
 | `CAM-01` | no `bx::mtxLookAt` / `mtxProj` / `mtxOrtho` outside `src/render/view_math.h`: one handedness for every camera | `src/render/view_math.h` |
 | `OS-01` | in `src/core` and `src/runtime`, an `#else` after an OS check is `#error "port: …"` or marked `// any OS: <why>`; `docs/process/porting.md` is current | `src/core/os_family.h` |
+| `THREAD-01` | `std::thread(`, `std::jthread` and `std::async(` appear nowhere in `src/` but `src/core/thread_start.h`: the engine starts threads through `engine::threads::start` | `src/core/thread_start.h`, `src/core/memory/mem.h` |
 | `DOC-01` | every directory of code is covered by some document | `engineering-standards.md` §1 |
 
 `bx` is **not** treated as a graphics dependency, matching `check_gpu_seam.py`'s

@@ -17,6 +17,7 @@
 // All sources speak hid::Event so everything above (election, snapshots,
 // actions) is identical regardless of origin.
 
+#include "core/memory/mem.h"
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -51,7 +52,12 @@ public:
     // source exists to protect — and polluted InputLatencyChannel's numbers
     // with events nobody consumes. Re-enable gamepad when curation lands
     // (backlog #13).
-    bool init() { return m_ctx.init({.keyboard = false, .gamepad = false}); }
+    bool init() {
+        // The hid module starts its own std::thread and cannot include the
+        // engine: hold the scope engine::threads::start would (thread_start.h).
+        mem::SystemNewScope systemNew;
+        return m_ctx.init({.keyboard = false, .gamepad = false});
+    }
     const char* lastError() const { return m_ctx.lastError(); }
 
     const char* name() const override { return "hid(raw)"; }

@@ -33,11 +33,6 @@
 
 namespace fs = std::filesystem;
 
-#if defined(ENG_SHARED_BUILD)
-// libeng: global new is not routed to the engine's heaps (mem_counters.cpp says why).
-extern "C" { extern const int engine_mem_route_global_new = 0; }
-#endif
-
 namespace {
 
 thread_local std::string t_lastError = "no error";

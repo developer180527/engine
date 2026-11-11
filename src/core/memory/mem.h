@@ -104,6 +104,27 @@ struct ScopedTag {
 #define MEM_SCOPE_CONCAT(a, b)  MEM_SCOPE_CONCAT2(a, b)
 #define MEM_SCOPE(tag) ::mem::ScopedTag MEM_SCOPE_CONCAT(_memScope, __LINE__)(tag)
 
+// ── Memory the SYSTEM's C++ library will free ───────────────────────────────
+// Routed global new hands out engine memory. That is right for everything the
+// engine's own code frees. A few objects are made by `new` in inline library
+// code here and deleted INSIDE the system's C++ library, which uses the system
+// allocator: the bookkeeping std::thread makes for each thread, freed at
+// thread exit. In a program that links the engine statically the engine's
+// operator delete replaces the system's and it works. In a shared library
+// (libeng) nothing can replace it, and the process aborted with "pointer being
+// freed was not allocated".
+//
+// While one of these is alive on a thread, global new on THAT thread uses the
+// system allocator. Everything else stays in the engine's heaps. Use it through
+// engine::threads::start (core/thread_start.h), not directly.
+struct SystemNewScope {
+    SystemNewScope();
+    ~SystemNewScope();
+    SystemNewScope(const SystemNewScope&)            = delete;
+    SystemNewScope& operator=(const SystemNewScope&) = delete;
+};
+bool systemNewActive();
+
 // ── Telemetry ───────────────────────────────────────────────────────────────
 struct TagStats {
     uint64_t currentBytes;   // live user bytes
