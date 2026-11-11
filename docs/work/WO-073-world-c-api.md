@@ -4,7 +4,7 @@ id: WO-073
 title: The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary
 program: providers
 priority: P1
-rank: 4
+rank: 5
 size: L
 state: todo
 depends: [WO-071, WO-072]

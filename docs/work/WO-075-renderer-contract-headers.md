@@ -4,7 +4,7 @@ id: WO-075
 title: The renderer contract as headers, with a conformance suite the null renderer passes first
 program: renderer
 priority: P1
-rank: 6
+rank: 7
 size: M
 state: todo
 depends: [WO-073]
@@ -22,7 +22,7 @@ source: docs/plans/renderer-contract.md §5 steps 1-2; roadmap §2.8
 - [ ] a decision record superseding `IRenderer`'s shape (not DR-0006), after the owner answers `renderer-contract.md` §6
 - [ ] the contract as headers: selection and capabilities, input as the read-only world plus the change stream (WO-072), CPU assets in the engine and GPU residency in the renderer, surfaces from the engine, optional parts by query, frame and error rules
 - [ ] a conformance suite every renderer must pass, and the null renderer passes it
-- [ ] the renderer chosen by name in `project.json` through WO-074's registry, refused by name when unknown
+- [ ] the renderer chosen by name in `project.json` through the provider registry (WO-076), refused by name when unknown
 - [ ] the editor-viewport question (how a renderer's output reaches the editor's UI across APIs) settled by a short study before the bgfx renderer moves
 
 ## Contract

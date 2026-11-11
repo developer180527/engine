@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-071](WO-071-schema-registry-and-generic-serializer.md) **A component schema registry and one generic scene serializer, with unknown components kept** · P1 · size L — Every later step names components by registered schema: the change stream, the C world API, provider-namespaced components, migrations. Today the scene serializer is a hand-written list (`entity_serializer.h`, 11 schemas hard-coded in `meta_registry.h`) that drops any component it does not know, and `MeshRenderer` saves the bgfx renderer's registry ids.
-2. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
-3. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
+1. [WO-076](WO-076-provider-registry.md) **A provider registry — providers chosen by name from one list, an unknown name refused** · P1 · size M — Providers are chosen by an if-chain in `stock_plugins.h`, and the same names are written a second time in `eng_capi.cpp`. A misspelled name in `project.json` silently runs Jolt or Lua instead (DR-0035 says refuse). The renderer is not chosen by name at all (`runtime_boot.cpp`). A new provider means editing engine code in two places. One registry fixes all four, and it needs nothing from the world API, so it does not have to wait for WO-073 as WO-074 does.
+2. [WO-071](WO-071-schema-registry-and-generic-serializer.md) **A component schema registry and one generic scene serializer, with unknown components kept** · P1 · size L — Every later step names components by registered schema: the change stream, the C world API, provider-namespaced components, migrations. Today the scene serializer is a hand-written list (`entity_serializer.h`, 11 schemas hard-coded in `meta_registry.h`) that drops any component it does not know, and `MeshRenderer` saves the bgfx renderer's registry ids.
+3. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,10 +35,11 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-070](WO-070-engstep-and-main-window.md) | `engStep` and main-window control on today's internals — the C API's first, usable step | Providers & modules | M | **active** 6/7 | — |
+| [WO-076](WO-076-provider-registry.md) | A provider registry — providers chosen by name from one list, an unknown name refused | Providers & modules | M | **ready** | engine-plugin |
 | [WO-071](WO-071-schema-registry-and-generic-serializer.md) | A component schema registry and one generic scene serializer, with unknown components kept | Asset import & cooking | L | **ready** | scene-service |
 | [WO-072](WO-072-change-stream.md) | One change stream per registered component — free without subscribers, merged per read | Renderer & RHI | M | blocked by WO-071 | render-scene |
 | [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | blocked by WO-071, WO-072 | kit-abi |
-| [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API — and providers chosen from a registry that refuses by name | Providers & modules | M | blocked by WO-073 | engine-plugin |
+| [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API | Providers & modules | M | blocked by WO-073, WO-076 | engine-plugin |
 | [WO-075](WO-075-renderer-contract-headers.md) | The renderer contract as headers, with a conformance suite the null renderer passes first | Renderer & RHI | M | blocked by WO-073 | renderer |
 | [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | **ready** | kit-abi, engine-plugin, script-services |
 | [WO-053](WO-053-bone-maps-per-section.md) | Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128 | Asset import & cooking | L | **ready** | cooker, kit-abi |
@@ -62,6 +63,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-066](WO-066-shipping-build-absent-not-disabled.md) | Shipping build — development machinery absent from the binary, not switched off | Process & context | L | **ready** | — |
 | [WO-068](WO-068-nothing-cooked-at-runtime.md) | Nothing is cooked or compiled at runtime — shaders' final driver step is the only exception | Asset import & cooking | L | blocked by WO-069 | — |
 | [WO-069](WO-069-engine-owned-animation-and-audio-formats.md) | Cooked animation and audio in the engine's own formats, so changing a provider never changes them | Asset import & cooking | L | **ready** | audio-provider |
+| [WO-077](WO-077-swap-providers-at-dev-time.md) | Swap a provider at development time — loaded by name, changed when the simulation stops | Providers & modules | L | blocked by WO-076 | engine-plugin, audio-provider |
 
 ## P3 — later. Real, but nothing is waiting on it.
 

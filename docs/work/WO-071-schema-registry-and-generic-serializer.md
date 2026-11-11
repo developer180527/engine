@@ -4,7 +4,7 @@ id: WO-071
 title: A component schema registry and one generic scene serializer, with unknown components kept
 program: assets
 priority: P1
-rank: 2
+rank: 3
 size: L
 state: todo
 depends: []

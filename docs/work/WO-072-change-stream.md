@@ -4,7 +4,7 @@ id: WO-072
 title: One change stream per registered component — free without subscribers, merged per read
 program: renderer
 priority: P1
-rank: 3
+rank: 4
 size: M
 state: todo
 depends: [WO-071]
