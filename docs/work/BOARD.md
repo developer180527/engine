@@ -48,6 +48,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-061](WO-061-the-engine-paces-its-own-frames.md) | The engine paces its own frames, and draws none without a reason | Providers & modules | M | **ready** | — |
 | [WO-062](WO-062-bgfx-sized-for-what-the-host-draws.md) | bgfx is sized for what the host draws, not for its defaults (about 49 MB down to about 21 MB) | Renderer & RHI | S | **ready** | — |
 | [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
+| [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -65,6 +66,10 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-069](WO-069-engine-owned-animation-and-audio-formats.md) | Cooked animation and audio in the engine's own formats, so changing a provider never changes them | Asset import & cooking | L | **ready** | audio-provider |
 | [WO-077](WO-077-swap-providers-at-dev-time.md) | Swap a provider at development time — loaded by name, changed when the simulation stops | Providers & modules | L | blocked by WO-076 | engine-plugin, audio-provider |
 | [WO-079](WO-079-job-system-follow-ups.md) | Job system follow-ups — the last private threads, a frame-start wake, other platforms, retiring enkiTS | Process & context | M | **ready** | — |
+| [WO-081](WO-081-farm-phase-0.md) | The home server, phase 0 — pulls main, builds four trees, quiet enough to measure, noise floor known | Process & context | M | blocked by WO-080 | — |
+| [WO-082](WO-082-farm-results-db.md) | The farm's results database, A/B statistics and nightly report | Process & context | M | blocked by WO-081 | — |
+| [WO-083](WO-083-farm-engine-benchmarks.md) | Engine benchmarks and profiling on the farm — headless workloads through the C API, instructions retired, flame graphs | Process & context | L | blocked by WO-082 | — |
+| [WO-084](WO-084-farm-soak-fuzz-determinism.md) | Days-long soak, fuzzing at scale and the determinism lane on the farm | Process & context | L | blocked by WO-082 | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 

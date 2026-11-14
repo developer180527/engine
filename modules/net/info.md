@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: prototype
-verified: 2026-07-31
+verified: 2026-11-14
 covers:
   - modules/net/
 tests:
@@ -69,7 +69,8 @@ a static library, so the rest of the tree sees an ordinary CMake target.
   by hand still uses `modules/net/target/` (gitignored).
 - Rust staticlibs do **not** carry their std dependencies — the C++ link step
   supplies them (CoreFoundation/Security on macOS, pthread/dl/m on Linux,
-  ws2_32/userenv/ntdll/bcrypt/advapi32 on Windows). A missing one appears as
+  ws2_32/userenv/ntdll/bcrypt/advapi32/synchronization on Windows; the last since
+  Rust 1.91's `std` locks use `WaitOnAddress`, 2026-11-14). A missing one appears as
   undefined symbols that never mention Rust, so they are listed explicitly.
 
 ## Testing

@@ -169,7 +169,10 @@ int main() {
               "alloc(SIZE_MAX-100) is refused (it crashed in the allocator)");
 #if !defined(ENGINE_MEM_ROUTE) || ENGINE_MEM_ROUTE   // a heap sanitizer owns new and aborts on this
         bool threw = false;
-        try { volatile size_t n = SIZE_MAX - 64; char* p = new char[n]; (void)p; }
+        // The pointer escapes to a volatile: an unused `new` may be removed by
+        // the optimiser (it was, in Release), and then nothing throws.
+        static char* volatile g_sink = nullptr;
+        try { volatile size_t n = SIZE_MAX - 64; g_sink = new char[n]; }
         catch (const std::bad_alloc&) { threw = true; }
         CHECK(threw, "new char[SIZE_MAX-64] throws std::bad_alloc");
 #endif

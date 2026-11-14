@@ -1,0 +1,221 @@
+name: Perf
+
+# The job system and memory manager, MEASURED and FUZZED on every platform the
+# engine targets: Windows and Linux on x64 and arm64, macOS on arm64, and
+# Android (x64 on an emulator, arm64 built). ci.yml says whether the engine
+# builds and passes; this says how fast the core is and whether it holds under
+# random use.
+#
+# It builds tests/corebench, a standalone project of six engine sources plus TLSF,
+# not the engine: about a minute per leg instead of ten, and it builds with the
+# Android NDK as is.
+#
+# HOW TO READ THE NUMBERS. GitHub's runners are shared virtual machines with 2
+# to 4 cores, and two runs of the same leg can differ by 30% or more. So every
+# leg runs BOTH backends, interleaved, five times each, on the one machine it
+# got, and the summary reports native as a fraction of enkiTS. That ratio is the
+# result. An absolute number from here is never a baseline, and never compared
+# with another leg's. Baselines live on the home server (docs/plans/
+# farm-and-perf-ci.md), which is quiet and always the same machine.
+
+on:
+  workflow_dispatch:
+    inputs:
+      fuzz_seeds:
+        description: "Fuzz seeds per leg on the native backend"
+        default: "300"
+  # Weekly, so a drift on a platform nobody builds locally still shows.
+  schedule:
+    - cron: '0 3 * * 0'
+  push:
+    branches: [main]
+    paths:
+      - 'src/core/jobs/**'
+      - 'src/core/memory/**'
+      - 'src/core/mem_counters.*'
+      - 'src/core/frame_arena.h'
+      - 'src/core/thread_*'
+      - 'tests/jobs_*.cpp'
+      - 'tests/mem_test.cpp'
+      - 'tests/corebench/**'
+      - '.github/workflows/perf.yml'
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  desktop:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "macOS arm64",   slug: macos-arm64,   os: macos-latest }
+          - { name: "Linux x64",     slug: linux-x64,     os: ubuntu-latest }
+          - { name: "Linux arm64",   slug: linux-arm64,   os: ubuntu-24.04-arm }
+          - { name: "Windows x64",   slug: windows-x64,   os: windows-latest,  msvc_arch: x64 }
+          - { name: "Windows arm64", slug: windows-arm64, os: windows-11-arm,  msvc_arch: arm64 }
+    steps:
+      - name: Disable git line-ending conversion (Windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # Only the two submodules this project uses, not bgfx and Assimp.
+      - name: Submodules (TLSF, enkiTS)
+        shell: bash
+        run: git submodule update --init --depth 1 third_party/tlsf third_party/enkiTS
+
+      - name: Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - name: Configure and build
+        shell: bash
+        run: |
+          cmake -S tests/corebench -B build-corebench -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-corebench --parallel
+
+      - name: Machine
+        shell: bash
+        run: |
+          {
+            echo "### ${{ matrix.name }}"
+            echo '```'
+            case "$RUNNER_OS" in
+              Linux)   nproc; lscpu | grep -E 'Model name|^CPU\(s\)' || true ;;
+              macOS)   sysctl -n machdep.cpu.brand_string hw.ncpu ;;
+              Windows) echo "$NUMBER_OF_PROCESSORS cores, $PROCESSOR_IDENTIFIER" ;;
+            esac
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Correctness first: a benchmark of a broken scheduler measures nothing.
+      - name: Fuzz (both backends) and mem_test
+        shell: bash
+        env:
+          SEEDS: ${{ github.event.inputs.fuzz_seeds || '300' }}
+        run: |
+          set -e
+          b=build-corebench
+          [ -f "$b/jobs_fuzz_test_native.exe" ] && x=.exe || x=
+          "$b/jobs_fuzz_test_native$x" "$SEEDS" 1 | tail -n 3
+          "$b/jobs_fuzz_test_enkits$x" 60 1 | tail -n 3
+          "$b/mem_test_native$x" | tail -n 2
+
+      - name: Benchmark (interleaved, 5 runs per backend)
+        shell: bash
+        run: |
+          set -e
+          mkdir -p perf-out
+          b=build-corebench
+          [ -f "$b/jobs_bench_native.exe" ] && x=.exe || x=
+          for i in 1 2 3 4 5; do
+            for k in native enkits; do
+              "$b/jobs_bench_$k$x" --json perf-out/${{ matrix.slug }}-$k-$i.json > perf-out/${{ matrix.slug }}-$k-$i.txt 2>&1
+            done
+          done
+          tail -n 14 perf-out/${{ matrix.slug }}-native-5.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-${{ matrix.slug }}
+          path: perf-out/
+          retention-days: 90
+
+  android:
+    name: Android (x64 emulator, arm64 built)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # A rung on the ladder, as ci.yml's `experimental` legs are: flip to false
+    # once it has been green for a week.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Submodules (TLSF, enkiTS)
+        run: git submodule update --init --depth 1 third_party/tlsf third_party/enkiTS
+      - name: Ninja
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+
+      # The NDK ships on the runner image. arm64-v8a is what phones run; it is
+      # built here and run nowhere, because GitHub has no arm64 Android host.
+      # x86_64 runs on the emulator below.
+      - name: Build (arm64-v8a and x86_64, API 29)
+        run: |
+          for abi in arm64-v8a x86_64; do
+            cmake -S tests/corebench -B build-android-$abi -G Ninja -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" \
+              -DANDROID_ABI=$abi -DANDROID_PLATFORM=android-29
+            cmake --build build-android-$abi --parallel
+          done
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          target: default
+          cores: 4
+          disable-animations: true
+          script: |
+            adb push build-android-x86_64/jobs_bench_native build-android-x86_64/jobs_bench_enkits build-android-x86_64/jobs_fuzz_test_native build-android-x86_64/mem_test_native /data/local/tmp/
+            adb shell chmod 755 /data/local/tmp/jobs_bench_native /data/local/tmp/jobs_bench_enkits /data/local/tmp/jobs_fuzz_test_native /data/local/tmp/mem_test_native
+            adb shell /data/local/tmp/jobs_fuzz_test_native 60 1 | tail -n 3
+            adb shell /data/local/tmp/mem_test_native | tail -n 2
+            mkdir -p perf-out
+            for i in 1 2 3; do for k in native enkits; do adb shell /data/local/tmp/jobs_bench_$k --quick --json /data/local/tmp/android-x64-$k-$i.json > /dev/null; adb pull /data/local/tmp/android-x64-$k-$i.json perf-out/; done; done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-android-x64
+          path: perf-out/
+          retention-days: 90
+
+  summary:
+    name: Summary
+    needs: [desktop, android]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: perf-*
+          path: all
+      - name: Table
+        run: |
+          python3 tests/corebench/summarise.py all --out summary.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perf-summary
+          path: summary.md
+          retention-days: 90

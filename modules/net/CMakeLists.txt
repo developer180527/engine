@@ -76,8 +76,11 @@ if(APPLE)
 elseif(UNIX)
     target_link_libraries(engine_net INTERFACE pthread dl m)
 elseif(WIN32)
+    # synchronization: WaitOnAddress / WakeByAddress*, which Rust's std uses for
+    # its locks from 1.91 (the 2026-11-13 nightly: three unresolved externals in
+    # rust_ffi_test on both Windows legs when the toolchain moved).
     target_link_libraries(engine_net INTERFACE
-        ws2_32 userenv ntdll bcrypt advapi32)
+        ws2_32 userenv ntdll bcrypt advapi32 synchronization)
 endif()
 
 message(STATUS "engine_net: Rust module ENABLED (${CARGO_EXECUTABLE})")

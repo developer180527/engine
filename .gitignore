@@ -18,6 +18,9 @@ build-prof/
 build-rel/
 build-rel-enki/
 build-tsan/
+build-perf/
+build-corebench/
+build-android-*/
 .buildlog/
 
 # Linux container build tree + ccache (docker/linux-build.Dockerfile)

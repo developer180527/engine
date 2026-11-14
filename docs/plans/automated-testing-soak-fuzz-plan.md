@@ -3,6 +3,11 @@ status: unreviewed
 ---
 # Automated Engine Testing Suite — Seeded Fuzzing, Soak Farm & Profiling
 
+> **2026-11-14:** how to run this on the home server today, with what exists
+> now (the C API, the core benchmarks, CI on six platforms), is
+> [`farm-and-perf-ci.md`](farm-and-perf-ci.md). This document stays the source
+> for the database schema (Part 5) and benchmark statistics (Part 7).
+>
 > **STATUS (2026-07-29).** Partially built, and the rollout order at the bottom
 > of this document was **deliberately inverted** — read this box first.
 >
