@@ -265,9 +265,9 @@ protected:
     static bool& flushing() { static thread_local bool f = false; return f; }
 
     // RAII, NOT `busy = false` at the end, and the difference is not stylistic.
-    // submit() -> jobs::run heap-allocates (make_shared<RunTask>, plus the
-    // std::function), exceptions are on in this build, and nothing here
-    // catches. A single bad_alloc escaping the loop would leave the flag SET
+    // submit() -> jobs::run can allocate (a job block when the thread's cache
+    // is empty; always, on the enkiTS backend), exceptions are on in this
+    // build, and nothing here catches. A single bad_alloc escaping the loop would leave the flag SET
     // for the life of the thread, turning every later flushDeferred() on it
     // into a silent no-op — deferred jobs would fall back to the step barrier
     // forever. A transient failure becoming permanent silent degradation is a

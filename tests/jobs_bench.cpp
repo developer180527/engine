@@ -14,8 +14,10 @@
 //   pfor.scale        sum of 4M floats, parallelFor against the same loop serially
 //   frame.mix         a frame's shape: 6 parallelFors (cull, extract, animate...)
 //                     while 200 small jobs (physics) are in flight
-//   allocs            global-new allocations made per run() job
+//   allocs            global-new allocations made per run() job, 20000 held at once
+//   allocs.steady     the same over frames of 200 jobs whose handles are dropped
 //   frame.paced       frame.mix once every 4 ms, with the CPU the whole process used
+//   frame.prewake.*   the same after 50 µs of main-thread work, without and with frameBegin()
 //   idle              CPU used in half a second with nothing submitted
 #include "core/jobs/jobs.h"
 #include "core/mem_counters.h"
@@ -153,8 +155,29 @@ int main(int argc, char** argv) {
         const uint64_t after = mem::stats(mem::Tag::Core).allocCount + mem::stats(mem::Tag::Jobs).allocCount;
         for (auto& h : hs) h = {};
         jobs::pumpMain();
-        std::printf("allocs            %8.2f per run() job\n", double(after - before) / N);
+        std::printf("allocs            %8.2f per run() job   (a burst: %d handles held at once)\n", double(after - before) / N, N);
         rec("allocs.per_run", double(after - before) / N, "count");
+    }
+    // ── allocs per run, steady state ────────────────────────────────────────
+    // What a frame does: a couple of hundred jobs, waited on, handles dropped.
+    // After warm-up the job blocks come back from the per-thread caches, so
+    // this should read 0 on the native backend.
+    {
+        const int kJobs = 200, kWarm = 20, kFrames = 200;
+        std::vector<jobs::JobHandle> hs(kJobs);
+        std::atomic<int> ran{0};
+        uint64_t before = 0;
+        for (int f = 0; f < kWarm + kFrames; ++f) {
+            if (f == kWarm) before = mem::stats(mem::Tag::Core).allocCount + mem::stats(mem::Tag::Jobs).allocCount;
+            for (int i = 0; i < kJobs; ++i) hs[i] = jobs::run("bench", [&ran] { ran.fetch_add(1, std::memory_order_relaxed); });
+            for (int i = 0; i < kJobs; ++i) jobs::wait(hs[i]);
+            for (auto& h : hs) h = {};
+            jobs::pumpMain();
+        }
+        const uint64_t after = mem::stats(mem::Tag::Core).allocCount + mem::stats(mem::Tag::Jobs).allocCount;
+        const double per = double(after - before) / (double(kJobs) * kFrames);
+        std::printf("allocs.steady     %8.3f per run() job   (%d frames of %d jobs, handles dropped)\n", per, kFrames, kJobs);
+        rec("allocs.steady", per, "count");
     }
     // ── run.dispatch.mt ─────────────────────────────────────────────────────
     {
@@ -237,34 +260,72 @@ int main(int argc, char** argv) {
     // Back-to-back frames flatter a scheduler that spins. Here the pool idles
     // between frames, so this is where sleeping too eagerly (slow frames) and
     // spinning too long (CPU burned doing nothing) both show.
-    {
+    //
+    // frame.prewake.off / .on: the same, but each frame starts with 50 µs of
+    // main-thread work before its first job (input, scripts), with and without
+    // jobs::frameBegin() at the top. The time is the jobs part only, so the
+    // difference is the wake-up the first job no longer waits for.
+    auto paced = [&](const char* key, bool prewake, int preworkMicros) {
         const uint32_t N = 200000;
         std::vector<float> v(N, 1.0f);
-        std::vector<double> times;
+        std::vector<double> times, firstWorker;
+        int alone = 0;   // frames no worker took part in: a lost wake-up looks like this
+        const jobs::Stats st0 = jobs::stats();
         const std::clock_t c0 = std::clock();
         const auto w0 = Clock::now();
         const int frames = g_quick ? 40 : 150;
+        const std::thread::id mainId = std::this_thread::get_id();
         for (int f = 0; f < frames; ++f) {
             std::atomic<int> small{0};
+            // When a worker (not this thread) first starts one of this frame's
+            // jobs: the wake-up the frame waited for, measured directly.
+            std::atomic<int64_t> firstStart{0};
+            auto mark = [&firstStart, mainId] {
+                if (std::this_thread::get_id() == mainId || firstStart.load(std::memory_order_relaxed) != 0) return;
+                int64_t zero = 0;
+                firstStart.compare_exchange_strong(zero, Clock::now().time_since_epoch().count());
+            };
             std::vector<jobs::JobHandle> hs(200);
+            if (prewake) jobs::frameBegin();
+            if (preworkMicros > 0) {
+                const auto until = Clock::now() + std::chrono::microseconds(preworkMicros);
+                while (Clock::now() < until) {}
+            }
             const auto a = Clock::now();
-            for (auto& h : hs) h = jobs::run("phys", [&small] { volatile double x = 0; for (int i = 0; i < 2000; ++i) x = x + std::sqrt((double)i); small.fetch_add(1); });
+            for (auto& h : hs) h = jobs::run("phys", [&small, &mark] { mark(); volatile double x = 0; for (int i = 0; i < 2000; ++i) x = x + std::sqrt((double)i); small.fetch_add(1); });
             for (int pass = 0; pass < 6; ++pass)
-                jobs::parallelFor("pass", N, 2048, [&](uint32_t b, uint32_t e) { for (uint32_t i = b; i < e; ++i) v[i] = std::sqrt(v[i] + 1.0f); });
+                jobs::parallelFor("pass", N, 2048, [&](uint32_t b, uint32_t e) { mark(); for (uint32_t i = b; i < e; ++i) v[i] = std::sqrt(v[i] + 1.0f); });
             for (auto& h : hs) jobs::wait(h);
             times.push_back(ms(a, Clock::now()));
+            const int64_t t0 = firstStart.load();
+            if (!t0) ++alone;
+            if (const int64_t t = t0) firstWorker.push_back((double)(t - a.time_since_epoch().count()) * 1e-3 * Clock::period::num * 1e9 / Clock::period::den);
             for (auto& h : hs) h = {};
             jobs::pumpMain();
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
         }
         std::sort(times.begin(), times.end());
+        std::sort(firstWorker.begin(), firstWorker.end());
+        const double fw = firstWorker.empty() ? 0.0 : firstWorker[firstWorker.size() / 2];
         const double cpu = double(std::clock() - c0) / CLOCKS_PER_SEC, wall = ms(w0, Clock::now()) / 1000.0;
-        std::printf("frame.paced       %8.3f ms median, %.3f ms worst of %d; CPU %.0f%% of one core over the run\n",
-                    times[times.size() / 2], times.back(), frames, 100.0 * cpu / wall);
-        rec("frame.paced.median", times[times.size() / 2], "ms");
-        rec("frame.paced.worst", times.back(), "ms");
-        rec("frame.paced.cpu", 100.0 * cpu / wall, "% of a core");
-    }
+        // How much of that CPU was workers awake looking for work and finding
+        // none: the share a spin policy can save (0 on enkiTS, which does not say).
+        const double spin = double(jobs::stats().spinNanos - st0.spinNanos) * 1e-9;
+        std::printf("%-17s %8.3f ms median, %.3f ms worst of %d; CPU %.0f%% of one core, %.0f%% spinning (%.2f ms a frame)\n",
+                    key, times[times.size() / 2], times.back(), frames, 100.0 * cpu / wall,
+                    100.0 * spin / wall, 1000.0 * spin / frames);
+        std::printf("%-17s %8.1f us median from the first job queued to a worker starting one; %d frames with no worker\n", "", fw, alone);
+        const std::string k = key;
+        rec((k + ".first_worker").c_str(), fw, "us");
+        rec((k + ".alone").c_str(), alone, "frames");
+        rec((k + ".spin").c_str(), 100.0 * spin / wall, "% of a core");
+        rec((k + ".median").c_str(), times[times.size() / 2], "ms");
+        rec((k + ".worst").c_str(), times.back(), "ms");
+        rec((k + ".cpu").c_str(), 100.0 * cpu / wall, "% of a core");
+    };
+    paced("frame.paced", false, 0);
+    paced("frame.prewake.off", false, 50);
+    paced("frame.prewake.on", true, 50);
     // ── idle: nothing submitted for half a second ──────────────────────────
     {
         const std::clock_t c0 = std::clock();

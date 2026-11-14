@@ -43,6 +43,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <atomic>
+#include <utility>
+#include <type_traits>
+#include <new>
 #include <memory>
 
 namespace jobs {
@@ -50,16 +54,45 @@ namespace jobs {
 // Opaque completion counter. Copyable; all copies refer to the same counter.
 // A default-constructed handle is "already complete".
 //
-// LIFETIME: the handle shares ownership of the backend's completion object,
+// LIFETIME: the handle holds a reference to the backend's job block,
 // so it is safe to stash across frames — wait() on an old handle returns
 // immediately once the job completed, never dereferences freed memory.
 // (Audit C.5: the previous raw-pointer handle dangled after pumpMain()'s
 // sweep freed completed jobs; wait() on a stashed handle was a UAF.) A held
-// handle pins a small control block, so drop handles when done with them.
+// handle pins the job's block, so drop handles when done with them.
+namespace detail {
+// What a handle points at: a completion flag and a reference count, at the
+// front of the backend's own job block. INTRUSIVE, so a job is one block with
+// no separate control block, and a handle costs one atomic increment and one
+// decrement (it was a std::shared_ptr). destroy() frees the block when the
+// last reference (the queue's or a handle's) goes.
+struct JobRef {
+    std::atomic<uint32_t> refs{1};
+    std::atomic<bool>     done{false};
+    void (*destroy)(JobRef*) = nullptr;
+    void retain() { refs.fetch_add(1, std::memory_order_relaxed); }
+    void release() { if (refs.fetch_sub(1, std::memory_order_acq_rel) == 1) destroy(this); }
+};
+} // namespace detail
+
 struct JobHandle {
-    std::shared_ptr<void> opaque;   // backend completion object (type-erased)
-    uint8_t               lane = 0; // 0: the pool, 1: the I/O lane (backend use)
-    bool valid() const { return opaque != nullptr; }
+    detail::JobRef* ref  = nullptr;   // the backend's job block, or null
+    uint8_t         lane = 0;         // 0: the pool, 1: the I/O lane (backend use)
+
+    JobHandle() = default;
+    JobHandle(detail::JobRef* r, uint8_t l) : ref(r), lane(l) {}   // takes a reference
+    JobHandle(const JobHandle& o) : ref(o.ref), lane(o.lane) { if (ref) ref->retain(); }
+    JobHandle(JobHandle&& o) noexcept : ref(o.ref), lane(o.lane) { o.ref = nullptr; }
+    JobHandle& operator=(const JobHandle& o) {
+        if (this != &o) { if (o.ref) o.ref->retain(); if (ref) ref->release(); ref = o.ref; lane = o.lane; }
+        return *this;
+    }
+    JobHandle& operator=(JobHandle&& o) noexcept {
+        if (this != &o) { if (ref) ref->release(); ref = o.ref; lane = o.lane; o.ref = nullptr; }
+        return *this;
+    }
+    ~JobHandle() { if (ref) ref->release(); }
+    bool valid() const { return ref != nullptr; }
 };
 
 // What runs first when there is more work than workers. A worker always takes
@@ -87,8 +120,35 @@ uint32_t workerCount();
 // ── Fire-and-track ──────────────────────────────────────────────────────────
 // Schedule fn on the pool. The returned handle completes when fn returns.
 // `name` feeds the profiler; use a string literal (not copied until traced).
-JobHandle run(const char* name, std::function<void()> fn,
-              Priority priority = Priority::Frame);
+//
+// Any callable. It is moved into the job's own block (inline up to 64 bytes;
+// larger ones go to the engine heap), so run() builds no std::function and, in
+// steady state, reaches no allocator. With no pool it runs inline.
+namespace detail {
+struct CallableOps {
+    void (*invoke)(void* self);
+    void (*relocate)(void* dst, void* src);   // move-construct at dst, destroy src
+    void (*destroy)(void* self);
+};
+template <class T> struct CallableOpsFor {
+    static void invoke(void* p) { (*static_cast<T*>(p))(); }
+    static void relocate(void* d, void* s) { new (d) T(std::move(*static_cast<T*>(s))); static_cast<T*>(s)->~T(); }
+    static void destroy(void* p) { static_cast<T*>(p)->~T(); }
+    static constexpr CallableOps ops{&invoke, &relocate, &destroy};
+};
+// The backend's half: move the callable out of `callable` (it is left
+// destroyed) into a job and queue it. Defined per backend.
+JobHandle runErased(const char* name, void* callable, size_t size, size_t align,
+                    const CallableOps& ops, Priority priority);
+} // namespace detail
+
+template <class F>
+JobHandle run(const char* name, F&& fn, Priority priority = Priority::Frame) {
+    using T = std::decay_t<F>;
+    alignas(T) unsigned char storage[sizeof(T)];
+    T* c = new (storage) T(std::forward<F>(fn));
+    return detail::runErased(name, c, sizeof(T), alignof(T), detail::CallableOpsFor<T>::ops, priority);
+}
 
 // ── Blocking work ───────────────────────────────────────────────────────────
 // Runs fn on the I/O lane: a few dedicated threads that exist to be blocked
@@ -110,6 +170,14 @@ void parallelFor(const char* name, uint32_t count, uint32_t grain,
 // Block until h completes. The calling thread executes other jobs meanwhile.
 // Rules above apply: nothing thread-identity-dependent may straddle this call.
 void wait(JobHandle h);
+
+// ── Frame boundary ──────────────────────────────────────────────────────────
+// Call at the top of each frame, on the main thread, before the frame's own
+// main-thread work. Wakes as many sleeping workers as ran jobs in the previous
+// frame, so the frame's first job does not wait for a wake-up. A frame that ran
+// no jobs wakes nobody (an idle game stays idle). Optional: without it nothing
+// breaks, the first job is only later. No-op on enkiTS.
+void frameBegin();
 
 // ── Main-thread channel ─────────────────────────────────────────────────────
 // Queue fn to run on the main thread during the next pumpMain(). Safe from
@@ -163,6 +231,8 @@ struct Stats {
     uint64_t wakes;         // wake-ups asked of the OS
     uint64_t inlineRuns;    // jobs run by the submitter because a queue was full
     uint64_t ioJobs;        // jobs run on the I/O lane
+    uint64_t spinNanos;     // time workers spent awake looking for work and finding
+                            // none (the CPU an idle pool burns); 0 on enkiTS
 };
 Stats stats();
 const char* backendName();  // "native" or "enkits"

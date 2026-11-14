@@ -6,7 +6,9 @@
 // Run under the ASan lane to prove the UAF stays dead. Exits non-zero on
 // first failure.
 #include <atomic>
+#include <array>
 #include <functional>
+#include <memory>
 #include <chrono>
 #include <cstdio>
 #include <thread>
@@ -51,6 +53,45 @@ int main() {
         jobs::JobHandle copy = stash;                    // copies share the block
         jobs::wait(copy);
         CHECK(copy.valid(), "handle copies stay valid after sweeps");
+    }
+
+    // ── 2b. The callable lives in the job block, not in a std::function ───
+    // Move-only captures work (std::function needed copyable ones), a capture
+    // over the 64-byte inline size takes the heap path, and every capture is
+    // destroyed exactly once, on the thread that ran the job.
+    {
+        struct Counted {
+            std::atomic<int>* dtors;
+            bool live = true;
+            explicit Counted(std::atomic<int>* d) : dtors(d) {}
+            Counted(Counted&& o) noexcept : dtors(o.dtors) { o.live = false; }
+            ~Counted() { if (live) dtors->fetch_add(1); }
+        };
+        std::atomic<int> dtors{0}, ran{0};
+        std::unique_ptr<int> owned(new int(41));
+        jobs::JobHandle a = jobs::run("t.moveonly", [p = std::move(owned), c = Counted(&dtors), &ran] {
+            ran.fetch_add(*p + 1 == 42 ? 1 : 0);
+        });
+        unsigned char big[200];
+        for (int i = 0; i < 200; ++i) big[i] = (unsigned char)i;
+        jobs::JobHandle b = jobs::run("t.big", [arr = std::to_array(big), c = Counted(&dtors), &ran] {
+            int sum = 0;
+            for (unsigned char v : arr) sum += v;
+            ran.fetch_add(sum == 199 * 200 / 2 ? 1 : 0);
+        });
+        jobs::wait(a);
+        jobs::wait(b);
+        CHECK(ran.load() == 2, "a move-only capture and a 200-byte capture both run with their values");
+        CHECK(dtors.load() == 2, "each capture destroyed exactly once when its job finished (%d)", dtors.load());
+    }
+
+    // ── 2c. frameBegin after a frame with no jobs wakes nobody ────────────
+    // The idle-cost rule: an empty game must not pay for a pool it never uses.
+    {
+        jobs::frameBegin();   // takes in everything the tests above ran
+        const uint64_t w0 = jobs::stats().wakes;
+        for (int i = 0; i < 4; ++i) jobs::frameBegin();
+        CHECK(jobs::stats().wakes == w0, "frameBegin after job-free frames asks the OS for no wake-up");
     }
 
     // ── 3. Default handle is 'already complete' ──────────────────────────

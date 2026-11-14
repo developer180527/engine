@@ -68,16 +68,21 @@ bool ensureThreadRegistered() {
     return slot.held;
 }
 
-// run() control block. Shared between the in-flight registry below and any
-// caller-held JobHandles: pumpMain()'s sweep drops the REGISTRY's reference
-// once complete, but a stashed handle keeps the block alive, so wait() on
-// an old handle is always safe (audit C.5 — the raw-pointer handle was a
-// use-after-free once the sweep freed the block).
-struct RunTask final : public enki::ITaskSet {
-    const char*           name;
-    std::function<void()> fn;
-    RunTask(const char* n, std::function<void()> f)
-        : enki::ITaskSet(1), name(n), fn(std::move(f)) {}
+// run() job block. The in-flight registry below and any caller-held JobHandles
+// each hold a reference: pumpMain()'s sweep drops the REGISTRY's once complete,
+// but a stashed handle keeps the block alive, so wait() on an old handle is
+// always safe (audit C.5 — the raw-pointer handle was a use-after-free once the
+// sweep freed the block).
+struct RunTask final : public enki::ITaskSet, detail::JobRef {
+    const char*            name;
+    detail::InlineCallable fn;
+    explicit RunTask(const char* n) : enki::ITaskSet(1), name(n) {
+        destroy = [](detail::JobRef* r) {
+            RunTask* t = static_cast<RunTask*>(r);
+            t->~RunTask();
+            mem::free(t);
+        };
+    }
     void ExecuteRange(enki::TaskSetPartition, uint32_t) override {
         // NO profiler scope here, on purpose: run() jobs are ASYNC and may
         // span profiler frame boundaries, but TimerChannel::beginFrame
@@ -86,14 +91,16 @@ struct RunTask final : public enki::ITaskSet {
         // racing that clear corrupts the vectors — multi-second clear()
         // stalls and an unresponsive app. parallelFor keeps its scope: it
         // BLOCKS, so its scopes always close within the frame.
-        ScratchScope scratch;
-        fn();
+        {
+            ScratchScope scratch;
+            fn.invoke();
+        }
+        fn.reset();
     }
 };
 
-std::mutex                            g_inflightMu;
-std::vector<std::shared_ptr<RunTask>> g_inflight;
-
+std::mutex            g_inflightMu;
+std::vector<RunTask*> g_inflight;   // each holds the registry's reference
 
 // Blocking parallelFor task — lives on the caller's stack, so no registry.
 struct ForTask final : public enki::ITaskSet {
@@ -165,6 +172,7 @@ void shutdown() {
     g_init.store(false);
     {
         std::lock_guard<std::mutex> lk(g_inflightMu);
+        for (RunTask* t : g_inflight) t->release();
         g_inflight.clear();
     }
     LOG_INFO("Jobs", "worker pool down");
@@ -176,18 +184,22 @@ uint32_t workerCount() {
     return g_init.load() ? g_ts.GetNumTaskThreads() : 1u;
 }
 
-JobHandle run(const char* name, std::function<void()> fn, Priority priority) {
-    // No pool (headless tools, early boot): run inline. A default handle is
-    // "already complete", so callers' wait() is still correct.
-    if (!g_init.load()) { fn(); return {}; }
+JobHandle detail::runErased(const char* name, void* callable, size_t size, size_t align,
+                            const CallableOps& ops, Priority priority) {
+    // No pool (headless tools, early boot), or an unregistered external thread
+    // that would share slot 0 with the main thread: run inline. The work still
+    // happens, on this thread, and a default handle reads as already-complete.
+    if (!g_init.load() || !ensureThreadRegistered()) {
+        ops.invoke(callable);
+        ops.destroy(callable);
+        return {};
+    }
 
-    // An unregistered external thread would share slot 0 with the main thread.
-    // Running inline is the honest degradation: the work still happens, on this
-    // thread, and a default handle reads as already-complete.
-    if (!ensureThreadRegistered()) { fn(); return {}; }
-
-    auto task = std::make_shared<RunTask>(name, std::move(fn));
+    RunTask* task = new (mem::alloc(sizeof(RunTask), alignof(RunTask) < 16 ? 16 : alignof(RunTask),
+                                    mem::Tag::Jobs)) RunTask(name);
+    task->fn.take(callable, size, align, ops);
     task->m_Priority = (enki::TaskPriority)priority;
+    task->retain();   // the handle's; the registry holds the first
 
     // ── PIPE FIRST, THEN REGISTER, and the order is the whole fix ───────────
     // enkiTS's GetIsComplete() is `m_RunningCount == 0`, and m_RunningCount
@@ -206,15 +218,15 @@ JobHandle run(const char* name, std::function<void()> fn, Priority priority) {
     //
     // Adding to the pipe first closes it: after this call the task either has a
     // non-zero running count or has genuinely finished, so the sweep's
-    // completion test means what the registry assumes it means. The local
-    // shared_ptr above keeps the block alive across both steps, and pushing an
+    // completion test means what the registry assumes it means. The handle's
+    // reference keeps the block alive across both steps, and pushing an
     // already-finished task is harmless — the next sweep removes it.
-    g_ts.AddTaskSetToPipe(task.get());
+    g_ts.AddTaskSetToPipe(task);
     {
         std::lock_guard<std::mutex> lk(g_inflightMu);
         g_inflight.push_back(task);
     }
-    return {task};   // handle co-owns the block — stashing is safe
+    return JobHandle(task, 0);   // the handle co-owns the block — stashing is safe
 }
 
 void parallelFor(const char* name, uint32_t count, uint32_t grain,
@@ -240,22 +252,24 @@ void parallelFor(const char* name, uint32_t count, uint32_t grain,
 void wait(JobHandle h) {
     if (!h.valid() || !g_init.load()) return;
     if (h.lane == 1) {   // an I/O lane job: not an enkiTS task
-        auto* s = static_cast<detail::JobState*>(h.opaque.get());
-        detail::helpUntil([s] { return s->done.load(std::memory_order_acquire); });
+        detail::JobRef* r = h.ref;
+        detail::helpUntil([r] { return r->done.load(std::memory_order_acquire); });
         return;
     }
     // WaitforTask makes the calling thread help run tasks, so it needs a slot
     // for the same reason. Without one, spin here rather than corrupt slot 0.
     if (!ensureThreadRegistered()) {
-        auto* t = static_cast<RunTask*>(h.opaque.get());
+        auto* t = static_cast<RunTask*>(h.ref);
         while (!t->GetIsComplete()) std::this_thread::yield();
         return;
     }
     // h co-owns the RunTask: even if pumpMain() swept it from g_inflight
     // long ago, the block is alive and WaitforTask on a completed task
     // returns immediately.
-    g_ts.WaitforTask(static_cast<RunTask*>(h.opaque.get()));
+    g_ts.WaitforTask(static_cast<RunTask*>(h.ref));
 }
+
+void frameBegin() {}   // enkiTS wakes its own threads
 
 // ── What jobs_shared.cpp needs from a backend ───────────────────────────────
 // enkiTS has no "run one job" call, so a thread waiting on an I/O job does not
@@ -270,7 +284,8 @@ void detail::backendSweep() {
     std::lock_guard<std::mutex> lk(g_inflightMu);
     for (size_t i = g_inflight.size(); i-- > 0;) {
         if (g_inflight[i]->GetIsComplete()) {
-            g_inflight[i] = std::move(g_inflight.back());
+            g_inflight[i]->release();
+            g_inflight[i] = g_inflight.back();
             g_inflight.pop_back();
         }
     }

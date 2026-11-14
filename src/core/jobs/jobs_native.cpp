@@ -36,13 +36,20 @@
 //     producer feeding short jobs paid for a wake-up on every submission:
 //     800 000 of them in the benchmark.)
 //
-// NO LOST WAKE-UP. A sleeper increments g_sleepers and THEN reads g_pending; a
-// pusher increments g_pending and THEN reads g_sleepers. Both are seq_cst, so
-// at least one of them sees the other. The sleeper holds g_sleepMu from its
+// NO LOST WAKE-UP. A sleeper increments g_sleepers, fences, and THEN looks at
+// every queue (anyQueued); a pusher publishes the job in its queue, fences
+// (wake() starts with the fence), and THEN reads g_sleepers. With a seq_cst
+// fence on both sides at least one of them sees the other: the sleeper sees the
+// job, or the pusher sees the sleeper. The sleeper holds g_sleepMu from its
 // check until it is inside wait(); the pusher takes and releases that mutex
 // before it notifies, so the notify cannot land in between. A searcher stops
 // being one (g_searching--) BEFORE that check, so a pusher that skipped the
 // wake because it saw a searcher is seen by that searcher's check.
+//
+// NO SHARED COUNT OF QUEUED JOBS. There was one (g_pending): a seq_cst add on
+// every push and a seq_cst subtract on every take, one cache line that every
+// core wrote. The queues already say whether they hold anything, so the
+// sleeper asks them instead; the cost moved to the side that is about to sleep.
 //
 // parallelFor ALLOCATES NOTHING. The job lives on the caller's stack; what is
 // queued are "tickets" that point at it. Whoever holds a ticket claims ranges
@@ -152,7 +159,8 @@ struct Deque {
         return t;
     }
     // nullptr when empty, and also when another thief won the race: the caller
-    // looks elsewhere and comes back, which g_pending makes it do.
+    // looks elsewhere and comes back: anyQueued() still sees the job, so it
+    // does not park.
     Task* steal() {
         int64_t tp = top.load(std::memory_order_acquire);
         std::atomic_thread_fence(std::memory_order_seq_cst);
@@ -170,7 +178,8 @@ constexpr uint32_t kInjectStripes = 4;   // injection queues per priority, picke
 struct alignas(64) Slot {
     Deque    deques[kPriorities];
     // Counters: written by the owning thread only, read by stats().
-    std::atomic<uint64_t> jobsRun{0}, steals{0}, parks{0}, inlineRuns{0};
+    std::atomic<uint64_t> jobsRun{0}, steals{0}, parks{0}, inlineRuns{0}, spinNanos{0};
+    uint64_t              lastFrameRun = 0;   // jobsRun at the last frameBegin (main thread only)
     uint32_t rng = 0x9E3779B9u;
 };
 
@@ -184,9 +193,20 @@ Ring*                    g_inject = nullptr;       // [kInjectStripes * kPriorit
 std::vector<std::thread> g_threads;
 int                      g_spinMicros = kDefaultSpinMicros;
 
-std::atomic<int>         g_pending{0};             // queued and not yet taken, all queues
 std::atomic<int>         g_sleepers{0};
 std::atomic<int>         g_searching{0};           // workers awake with nothing to run
+// Two phases of looking for work (workerMain). Measured on an M-series Mac,
+// jobs_bench frame.paced, 2026-11-14, against everyone looking for the full
+// spinMicros: spin 20-23% of a core -> 8-9% (1.3-1.6 ms -> 0.5 ms a frame),
+// pfor.small unchanged (4.4-4.9x), worst paced frame lower in every run. A cap
+// with no short phase cut pfor.small to 2.8x; a longer short phase (20, 30 µs)
+// or a cap of 3 spent more and gained nothing.
+constexpr int            g_maxSearchers = 2;       // how many may keep searching past the short phase
+constexpr int            g_shortSpinMicros = 10;   // how long every worker looks first
+// frameBegin() sets this: until then (steady_clock nanoseconds) the searcher
+// cap does not apply, so workers woken ahead of the frame's first job are still
+// looking when it arrives instead of parking again after the short phase.
+std::atomic<int64_t>     g_primedUntil{0};
 std::mutex               g_sleepMu;
 std::condition_variable  g_sleepCv;
 std::atomic<uint64_t>    g_wakes{0};
@@ -204,6 +224,9 @@ inline int mySlot() {
 
 // n new jobs were queued: wake sleepers for the ones no searcher will take.
 void wake(int n) {
+    // The job is in its queue; this fence orders that before the reads below
+    // (see NO LOST WAKE-UP). It used to come free with g_pending's seq_cst add.
+    std::atomic_thread_fence(std::memory_order_seq_cst);
     const int need = n - g_searching.load(std::memory_order_seq_cst);
     if (need > 0) {
         const int asleep = g_sleepers.load(std::memory_order_seq_cst);
@@ -227,13 +250,28 @@ inline uint32_t myStripe() {
 bool push(Task* t, Priority pr, int slot) {
     const bool ok = slot >= 0 ? g_slots[slot].deques[(int)pr].push(t)
                               : g_inject[myStripe() * kPriorities + (int)pr].push(t);
-    if (!ok) return false;
-    g_pending.fetch_add(1, std::memory_order_seq_cst);
-    return true;
+    return ok;
+}
+
+// Whether any queue holds a job. Loads only. A queue mid-pop by its owner can
+// read as empty for a moment, which is harmless: that owner is awake and will
+// run the job or put it back and see it. Callers that need the no-lost-wake-up
+// guarantee fence (seq_cst) before calling.
+bool anyQueued() {
+    for (uint32_t i = 0; i < g_slotCount; ++i)
+        for (int p = 0; p < kPriorities; ++p) {
+            const Deque& d = g_slots[i].deques[p];
+            if (d.bottom.load(std::memory_order_relaxed) > d.top.load(std::memory_order_relaxed)) return true;
+        }
+    for (uint32_t r = 0; r < kInjectStripes * kPriorities; ++r)
+        if (g_inject[r].size.load(std::memory_order_relaxed) > 0) return true;
+    return false;
 }
 
 Task* findTask(int slot) {
-    if (g_pending.load(std::memory_order_relaxed) <= 0) return nullptr;
+    // Loads only, so a spinning worker's empty round costs no fences (a steal
+    // attempt has one, and there is one per deque).
+    if (!anyQueued()) return nullptr;
     uint32_t seed;
     if (slot >= 0) { uint32_t& s = g_slots[slot].rng; s ^= s << 13; s ^= s >> 17; s ^= s << 5; seed = s; }
     else {
@@ -256,10 +294,7 @@ Task* findTask(int slot) {
                 else           g_foreignSteals.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        if (t) {
-            g_pending.fetch_sub(1, std::memory_order_seq_cst);
-            return t;
-        }
+        if (t) return t;
     }
     return nullptr;
 }
@@ -274,42 +309,86 @@ void workerMain(uint32_t slot, uint32_t generation) {
     t_slot = (int)slot;
     t_slotGeneration = generation;
     using clock = std::chrono::steady_clock;
-    bool searching = false;
+    bool searching = false, longPhase = false;
     clock::time_point searchStart;
     int rounds = 0;
     for (;;) {
         if (Task* t = findTask((int)slot)) {
             if (searching) {
                 searching = false;
+                g_slots[slot].spinNanos.fetch_add(
+                    (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - searchStart).count(),
+                    std::memory_order_relaxed);
                 // The last searcher is about to be busy: if more is queued,
                 // someone has to keep looking.
-                if (g_searching.fetch_sub(1, std::memory_order_seq_cst) == 1 &&
-                    g_pending.load(std::memory_order_seq_cst) > 0)
-                    wake(1);
+                // A pusher that saw this searcher skipped its wake; the fence
+                // makes this look at the queues see that pusher's job.
+                const bool last = g_searching.fetch_sub(1, std::memory_order_seq_cst) == 1;
+                std::atomic_thread_fence(std::memory_order_seq_cst);
+                if (last && anyQueued()) wake(1);
             }
             runTask(t, (int)slot);
             continue;
         }
-        if (g_stop.load(std::memory_order_acquire) && g_pending.load(std::memory_order_acquire) <= 0) break;
+        if (g_stop.load(std::memory_order_acquire) && !anyQueued()) break;
 
         // Look for a while before sleeping. The clock is read every 32 rounds,
         // not every round: reading it is the expensive part of an empty loop.
+        // ONLY A FEW SEARCH AT ONCE. When a parallelFor ends, every worker runs
+        // dry together; if all of them searched for the full spinMicros, a
+        // frame of six parallelFors on eleven workers would burn 6.6 ms of CPU
+        // per frame doing nothing (measured: 207% of a core on a Ryzen for a
+        // 0.76 ms frame every 4 ms). The rest park at once; a push wakes them
+        // when the searchers cannot keep up (wake() counts searchers).
+        //
+        // TWO PHASES. Everyone looks for a short while (g_shortSpinMicros), which
+        // catches work that arrives back to back (a frame's parallelFors, tens
+        // of µs apart) without a wake-up. After that only g_maxSearchers keep
+        // looking for the full spinMicros; the rest park. A cap alone, without
+        // the short phase, cost back-to-back small parallelFors 4.5x -> 2.8x.
         if (g_spinMicros > 0) {
             if (!searching) {
                 searching = true;
                 g_searching.fetch_add(1, std::memory_order_seq_cst);
                 searchStart = clock::now();
                 rounds = 0;
+                longPhase = false;
             }
             ++rounds;
             if ((rounds & 31) != 0) { cpuRelax(); continue; }
-            if (clock::now() - searchStart < std::chrono::microseconds(g_spinMicros)) { cpuRelax(); continue; }
+            const auto elapsed = clock::now() - searchStart;
+            if (!longPhase && elapsed >= std::chrono::microseconds(g_shortSpinMicros)) {
+                // Too many still looking: this one stops, unless leaving would
+                // take the count to or below the cap.
+                int n = g_searching.load(std::memory_order_relaxed);
+                bool leave = false;
+                const bool primed = clock::now().time_since_epoch().count() < g_primedUntil.load(std::memory_order_relaxed);
+                while (!primed && n > g_maxSearchers) {
+                    if (g_searching.compare_exchange_weak(n, n - 1, std::memory_order_seq_cst)) { leave = true; break; }
+                }
+                if (leave) {
+                    searching = false;
+                    g_slots[slot].spinNanos.fetch_add(
+                        (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count(),
+                        std::memory_order_relaxed);
+                } else {
+                    longPhase = true;
+                }
+            }
+            if (searching && elapsed < std::chrono::microseconds(g_spinMicros)) { cpuRelax(); continue; }
         }
-        if (searching) { searching = false; g_searching.fetch_sub(1, std::memory_order_seq_cst); }
+        if (searching) {
+            searching = false;
+            g_slots[slot].spinNanos.fetch_add(
+                (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - searchStart).count(),
+                std::memory_order_relaxed);
+            g_searching.fetch_sub(1, std::memory_order_seq_cst);
+        }
 
         std::unique_lock<std::mutex> lk(g_sleepMu);
         g_sleepers.fetch_add(1, std::memory_order_seq_cst);
-        if (g_pending.load(std::memory_order_seq_cst) <= 0 && !g_stop.load(std::memory_order_acquire)) {
+        std::atomic_thread_fence(std::memory_order_seq_cst);   // see NO LOST WAKE-UP
+        if (!anyQueued() && !g_stop.load(std::memory_order_acquire)) {
             g_slots[slot].parks.fetch_add(1, std::memory_order_relaxed);
             g_sleepCv.wait(lk);
         }
@@ -320,8 +399,8 @@ void workerMain(uint32_t slot, uint32_t generation) {
 
 // ── run() ───────────────────────────────────────────────────────────────────
 // One block per job, from a per-thread free list (the engine heap, Tag::Jobs,
-// only when the list is empty), holding the shared_ptr control block and the
-// job together. In steady state run() does not reach the allocator.
+// only when the list is empty), holding the reference count and the callable
+// together. In steady state run() does not reach the allocator.
 struct BlockCache {
     static constexpr int kMax = 256;
     void*  head = nullptr;
@@ -398,21 +477,29 @@ struct BlockAlloc {
     template <class U> bool operator!=(const BlockAlloc<U>&) const { return false; }
 };
 
-struct RunJob final : Task, detail::JobState {
-    std::function<void()>   fn;
-    std::shared_ptr<RunJob> self;   // keeps the block alive while it is queued
+// One block per run() job: the queue entry, the handle's target and the
+// callable, together. Fixed size, so the per-thread block cache recycles it and
+// steady-state run() reaches no allocator (a callable over 64 bytes is the one
+// exception: InlineCallable puts it on the engine heap).
+struct RunJob final : Task, detail::JobRef {
+    detail::InlineCallable fn;
 
     static void execute(Task* t) {
         RunJob* j = static_cast<RunJob*>(t);
         {
             ScratchScope scratch;
-            j->fn();
+            j->fn.invoke();
         }
-        j->fn = nullptr;                                // captures die on the thread that ran them
-        std::shared_ptr<RunJob> keep = std::move(j->self);
+        j->fn.reset();                                  // captures die on the thread that ran them
         j->done.store(true, std::memory_order_release);
         detail::notifyWaiters();
-    }   // `keep` goes: the block is freed here unless a handle still holds it
+        j->release();   // the queue's reference: the block goes here unless a handle holds it
+    }
+    static void free(detail::JobRef* r) {
+        RunJob* j = static_cast<RunJob*>(r);
+        j->~RunJob();
+        BlockAlloc<RunJob>().deallocate(j, 1);
+    }
 };
 
 // ── parallelFor ─────────────────────────────────────────────────────────────
@@ -453,7 +540,7 @@ bool tryRunOne() {
     runTask(t, slot);
     return true;
 }
-bool hasPending() { return g_pending.load(std::memory_order_seq_cst) > 0; }
+bool hasPending() { return anyQueued(); }   // parkWaiter fences before it asks
 int  spinMicros() { return g_spinMicros; }
 } // namespace detail
 
@@ -464,7 +551,6 @@ void init(uint32_t numWorkers, int spinMicros) {
     g_mainThread = std::this_thread::get_id();
     g_spinMicros = spinMicros < 0 ? kDefaultSpinMicros : spinMicros;
     g_stop.store(false);
-    g_pending.store(0);
     g_searching.store(0);
 
     uint32_t hw = std::thread::hardware_concurrency();
@@ -526,27 +612,32 @@ bool initialized() { return g_init.load(); }
 
 uint32_t workerCount() { return g_init.load() ? g_slotCount : 1u; }
 
-JobHandle run(const char* /*name*/, std::function<void()> fn, Priority priority) {
+JobHandle detail::runErased(const char* /*name*/, void* callable, size_t size, size_t align,
+                            const CallableOps& ops, Priority priority) {
     // No pool (headless tools, early boot): run inline. A default handle is
     // "already complete", so callers' wait() is still correct.
-    if (!g_init.load(std::memory_order_acquire)) { fn(); return {}; }
+    if (!g_init.load(std::memory_order_acquire)) {
+        ops.invoke(callable);
+        ops.destroy(callable);
+        return {};
+    }
 
-    std::shared_ptr<RunJob> job = std::allocate_shared<RunJob>(BlockAlloc<RunJob>());
-    job->exec = &RunJob::execute;
-    job->fn   = std::move(fn);
-    job->self = job;
-    JobHandle h;
-    h.opaque = std::shared_ptr<detail::JobState>(job, static_cast<detail::JobState*>(job.get()));
+    RunJob* job = new (BlockAlloc<RunJob>().allocate(1)) RunJob();
+    job->exec    = &RunJob::execute;
+    job->destroy = &RunJob::free;
+    job->fn.take(callable, size, align, ops);
+    job->retain();              // the handle's; the queue holds the first
+    JobHandle h(job, 0);
 
     const int slot = mySlot();
-    if (push(job.get(), priority, slot)) {
+    if (push(job, priority, slot)) {
         wake(1);
     } else {
         // The queue is full: the submitter runs it. The work still happens, and
         // a producer that outruns the pool is slowed down, which is the point.
         if (slot >= 0) g_slots[slot].inlineRuns.fetch_add(1, std::memory_order_relaxed);
         else           g_foreignInline.fetch_add(1, std::memory_order_relaxed);
-        RunJob::execute(job.get());
+        RunJob::execute(job);
     }
     return h;
 }
@@ -584,7 +675,6 @@ void parallelFor(const char* name, uint32_t count, uint32_t grain,
             if (!d.push(&job)) break;
             ++pushed;
         }
-        if (pushed) g_pending.fetch_add(pushed, std::memory_order_seq_cst);
     } else {
         for (uint32_t i = 0; i < want; ++i) {
             if (!push(&job, priority, slot)) break;
@@ -604,7 +694,6 @@ void parallelFor(const char* name, uint32_t count, uint32_t grain,
         while (job.tickets.load(std::memory_order_acquire) > 0) {
             Task* t = d.pop();
             if (!t) break;
-            g_pending.fetch_sub(1, std::memory_order_seq_cst);
             if (t == &job) job.tickets.fetch_sub(1, std::memory_order_acq_rel);
             else           runTask(t, slot);
         }
@@ -612,10 +701,43 @@ void parallelFor(const char* name, uint32_t count, uint32_t grain,
     detail::helpUntil([&job] { return job.tickets.load(std::memory_order_acquire) <= 0; });
 }
 
+// ── frameBegin ──────────────────────────────────────────────────────────────
+// Wake, ahead of the frame's first job, as many workers as did work in the
+// previous frame. A paced game idles between frames long enough for the whole
+// pool to park, so its first parallelFor otherwise pays a wake-up (tens of µs)
+// on its critical path; called at the top of the frame, that wake-up overlaps
+// the main thread's own work (input, scripts) instead.
+//
+// Sized by last frame, so the cost follows the content: a frame that ran no
+// jobs wakes nobody, and an empty game pays one pass over the slot counters.
+// A woken worker that finds nothing spins out spinMicros and parks again;
+// that spin is counted in Stats::spinNanos like any other.
+void frameBegin() {
+    if (!g_init.load(std::memory_order_acquire) || g_spinMicros <= 0) return;
+    const int self = mySlot();
+    int busy = 0;
+    for (uint32_t i = 0; i < g_slotCount; ++i) {
+        const uint64_t r = g_slots[i].jobsRun.load(std::memory_order_relaxed);
+        if ((int)i != self && r != g_slots[i].lastFrameRun) ++busy;
+        g_slots[i].lastFrameRun = r;
+    }
+    if (busy == 0) return;
+    using clock = std::chrono::steady_clock;
+    g_primedUntil.store((clock::now() + std::chrono::microseconds(g_spinMicros)).time_since_epoch().count(),
+                        std::memory_order_relaxed);
+    const int asleep = g_sleepers.load(std::memory_order_seq_cst);
+    const int need = busy - g_searching.load(std::memory_order_seq_cst);
+    if (asleep <= 0 || need <= 0) return;
+    { std::lock_guard<std::mutex> lk(g_sleepMu); }
+    if (need >= asleep) g_sleepCv.notify_all();
+    else for (int i = 0; i < need; ++i) g_sleepCv.notify_one();
+    g_wakes.fetch_add(1, std::memory_order_relaxed);
+}
+
 void wait(JobHandle h) {
     if (!h.valid()) return;
-    auto* s = static_cast<detail::JobState*>(h.opaque.get());
-    detail::helpUntil([s] { return s->done.load(std::memory_order_acquire); });
+    detail::JobRef* r = h.ref;
+    detail::helpUntil([r] { return r->done.load(std::memory_order_acquire); });
 }
 
 bool detail::onMainThread() {
@@ -630,6 +752,7 @@ Stats stats() {
         s.steals     += g_slots[i].steals.load(std::memory_order_relaxed);
         s.parks      += g_slots[i].parks.load(std::memory_order_relaxed);
         s.inlineRuns += g_slots[i].inlineRuns.load(std::memory_order_relaxed);
+        s.spinNanos  += g_slots[i].spinNanos.load(std::memory_order_relaxed);
     }
     s.jobsRun    += g_foreignRun.load(std::memory_order_relaxed);
     s.steals     += g_foreignSteals.load(std::memory_order_relaxed);

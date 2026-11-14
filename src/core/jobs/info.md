@@ -42,13 +42,28 @@ per-thread scratch, and waiter parking. The job system is compiled into
   `Frame`, which is what all of them had before.
 - **Waking:** a push wakes only as many sleepers as it added jobs, and nobody
   while another worker is already looking for work. An idle worker looks for
-  `spinMicros` (100 µs) before it sleeps.
+  10 µs; after that only two keep looking, for up to `spinMicros` (100 µs), and
+  the rest sleep. `jobs::frameBegin()`, called by the runtime at the top of
+  each frame, wakes as many workers as ran jobs last frame, so a frame's first
+  job does not wait for a wake-up (a frame with no jobs wakes nobody).
+- **No shared count of queued jobs.** A worker about to sleep announces itself
+  and then looks at every queue; a pusher publishes its job and then reads the
+  sleeper count. A seq_cst fence on each side means one of them sees the other.
+  (There was a counter that every push and every take wrote, one cache line for
+  all cores.)
 - **`parallelFor` allocates nothing:** the job is on the caller's stack, and
   what is queued are tickets pointing at it. Ticket holders claim ranges from a
   shared counter. The caller claims too, takes back unstarted tickets, then
   helps until the rest finish.
-- **`run`:** one block per job from a two-level free list (per thread, then a
-  shared depot), so steady state does not reach the allocator.
+- **`run`:** a template that takes any callable, move-only ones included. The
+  callable is moved into the job's own block (inline up to 64 bytes, else the
+  engine heap), the block comes from a two-level free list (per thread, then a
+  shared depot), and `JobHandle` holds an intrusive reference count on it: no
+  `std::function`, no `shared_ptr`, and in steady state no allocation
+  (`allocs.steady` reads 0.000 per job).
+- **Waiters** (`wait`, `parallelFor`'s caller) help, spin briefly, then sleep
+  until a job finishes or one is queued. No timeout: the same fenced handshake
+  as the workers, against `notifyWaiters`.
 - **The I/O lane (`runIo`):** 2 to 4 threads that exist to be blocked, started
   on first use. The asset loader and the audio device start use it; they were
   on the pool, where a blocked read took a core from the frame.
@@ -85,20 +100,41 @@ cores than work.
   on the main thread), plus a liveness check where nobody helps. 60 seeds in
   the unit lane, 1 500 in the stress lane. It passes on both backends.
 - ThreadSanitizer: `jobs_test` and 190 fuzz seeds, no report.
+- A watchdog fails the fuzz run if nothing progresses for 20 s, naming the
+  phase, and a waiter-liveness phase (a thread in `wait` with one worker) runs
+  after the worker one. A planted lost notify in `notifyWaiters` hung the run
+  before the watchdog existed; with it, it is reported in 20 s.
 - Two planted bugs, both caught: a thief keeping a job it lost the race for
   (crash), and a worker sleeping without re-checking for work (the liveness
   check; the random rounds alone did not see it, and neither did liveness with
   three workers, which is why it runs with one).
 - `stress_jobs` (300 rounds) and the whole unit lane on the native backend.
 
+**The 2026-11-14 review** (Mac, after the review's fixes; same bench, medians
+of four runs):
+
+| | before | after |
+|---|---|---|
+| `run` from one thread | 433 ns/job | 377 ns/job (the shared counter's cost) |
+| `run` from 4 threads | 316 to 350 ns/job | 200 to 237 ns/job |
+| allocations per `run`, steady state | 1 (`std::function` + control block) | 0 |
+| spinning on paced frames | 20 to 23% of a core | 7 to 8% |
+| first job queued to a worker starting it, paced | 20 µs | 1.5 to 1.9 µs with `frameBegin` |
+| frames in which no worker took part | | 0 of 1 800 |
+
+`pfor.small` stayed 4.4x to 5.3x throughout. The paced frame's median moves
+±15% between runs on this machine, more than any of these changes, so it is
+not the number to judge them by; `first_worker` and `spin` are.
+
 **Known limits**
 - Helping in `wait` runs other jobs on the waiter's stack, as enkiTS did: deep
   chains of waits inside jobs can run a worker's stack out.
 - `Background` work can wait forever while `Frame` work saturates the pool.
-- The first frame after an idle period pays to wake the workers (the paced
-  median is 0.54 ms against 0.15 to 0.28 back to back).
-- `run` still takes a `std::function`: a capture over about 24 bytes allocates
-  in the caller.
+- A frame that calls `frameBegin` and then does more than `spinMicros` of
+  main-thread work before its first job gets nothing from it: the woken
+  workers have gone back to sleep.
+- Workers are not pinned and stealing ignores topology (CCX/cluster); DR-0036
+  has why. Revisit with measurements from a machine where it matters.
 
 The sections below were written for the enkiTS backend and still describe it.
 

@@ -5,6 +5,7 @@
 // NO <bgfx/bgfx.h> — frame flip and caps queries go through Renderer.
 #include "runtime/runtime.h"
 #include "core/logger.h"
+#include "core/jobs/jobs.h"
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
 #include "components/mesh_renderer.h"
@@ -70,6 +71,9 @@ void EngineRuntime::tickNoRender(float dt) {
 
 void EngineRuntime::frameHousekeeping() {
     prof::Profiler::get().beginFrame();
+    // First, so the workers last frame used are awake by the time this frame's
+    // first job is queued; the wake-up overlaps the main-thread work below.
+    jobs::frameBegin();
     m_frameArena.reset();   // last frame's transient allocations are freed here
     m_debugDraw.clear();    // debug lines are per-frame — kits re-queue each frame
 

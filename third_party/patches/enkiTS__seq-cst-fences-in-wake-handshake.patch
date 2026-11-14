@@ -1,0 +1,47 @@
+diff --git a/src/TaskScheduler.cpp b/src/TaskScheduler.cpp
+index e76f184..3fe0220 100644
+--- a/src/TaskScheduler.cpp
++++ b/src/TaskScheduler.cpp
+@@ -569,6 +569,13 @@ void TaskScheduler::WaitForNewTasks( uint32_t threadNum_ )
+     ThreadState prevThreadState = m_pThreadDataStore[threadNum_].threadState.load( std::memory_order_relaxed );
+     m_pThreadDataStore[threadNum_].threadState.store( ENKI_THREAD_STATE_WAIT_NEW_TASKS, std::memory_order_seq_cst );
+ 
++    // The registration above must be visible before the check below reads
++    // the pipes, and a pusher's task before its read of the count
++    // (WakeThreadsForNewTasks): a store then a load on each side, which only a
++    // seq_cst fence on BOTH sides orders. Without it ARM lost a wake-up
++    // (perf.yml, Linux arm64: a job never ran); x86 does not reorder this.
++    std::atomic_thread_fence( std::memory_order_seq_cst );
++
+     if( HaveTasks( threadNum_ ) )
+     {
+         m_NumThreadsWaitingForNewTasks.fetch_sub( 1, std::memory_order_release );
+@@ -598,6 +605,10 @@ void TaskScheduler::WaitForTaskCompletion( const ICompletable* pCompletable_, ui
+     ThreadState prevThreadState = m_pThreadDataStore[threadNum_].threadState.load( std::memory_order_relaxed );
+     m_pThreadDataStore[threadNum_].threadState.store( ENKI_THREAD_STATE_WAIT_TASK_COMPLETION, std::memory_order_seq_cst );
+ 
++    // As in WaitForNewTasks: registration before the checks, ordered against
++    // WakeThreadsForTaskCompletion's fence.
++    std::atomic_thread_fence( std::memory_order_seq_cst );
++
+     // do not wait on semaphore if task in gc_TaskAlmostCompleteCount state.
+     if( gc_TaskAlmostCompleteCount >= pCompletable_->m_RunningCount.load( std::memory_order_acquire ) || HaveTasks( threadNum_ ) )
+     {
+@@ -623,6 +634,9 @@ void TaskScheduler::WaitForTaskCompletion( const ICompletable* pCompletable_, ui
+ 
+ void TaskScheduler::WakeThreadsForNewTasks()
+ {
++    // The task just added must be visible before the count is read (see
++    // WaitForNewTasks): the other half of the fence pair.
++    std::atomic_thread_fence( std::memory_order_seq_cst );
+     int32_t waiting = m_NumThreadsWaitingForNewTasks.load( std::memory_order_relaxed );
+     while( waiting > 0 && !m_NumThreadsWaitingForNewTasks.compare_exchange_weak(waiting, 0, std::memory_order_release, std::memory_order_relaxed ) ) {}
+ 
+@@ -639,6 +653,7 @@ void TaskScheduler::WakeThreadsForTaskCompletion()
+ {
+     // m_NumThreadsWaitingForTaskCompletion can go negative as this indicates that
+     // we signalled more threads than the number which ended up waiting
++    std::atomic_thread_fence( std::memory_order_seq_cst );   // pairs with WaitForTaskCompletion's
+     int32_t waiting = m_NumThreadsWaitingForTaskCompletion.load( std::memory_order_relaxed );
+     while( waiting > 0 && !m_NumThreadsWaitingForTaskCompletion.compare_exchange_weak(waiting, 0, std::memory_order_release, std::memory_order_relaxed ) ) {}
+ 

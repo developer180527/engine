@@ -32,6 +32,32 @@
 static int g_failures = 0;
 #define CHECK(c, ...) do { if (!(c)) { std::printf("  FAIL  " __VA_ARGS__); std::printf("\n"); ++g_failures; } } while (0)
 
+// ── The watchdog: a hang anywhere is a failure that names its phase ──────────
+// A lost wake-up or a lost notify does not crash, it hangs. Every phase calls
+// progress() as it goes; if nothing moves for 20 s the test fails, says where,
+// and exits (a stuck job would hang shutdown too). Found necessary when a
+// planted lost notify slipped past the waiter check and hung a fuzz round.
+static std::atomic<uint64_t>    g_progress{0};
+static std::atomic<const char*> g_phase{"start"};
+static void progress() { g_progress.fetch_add(1, std::memory_order_relaxed); }
+static void setPhase(const char* what) { g_phase.store(what, std::memory_order_relaxed); progress(); }
+static void startWatchdog() {
+    std::thread([] {
+        uint64_t last = g_progress.load();
+        auto since = std::chrono::steady_clock::now();
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            const uint64_t now = g_progress.load(std::memory_order_relaxed);
+            if (now != last) { last = now; since = std::chrono::steady_clock::now(); continue; }
+            if (std::chrono::steady_clock::now() - since > std::chrono::seconds(20)) {
+                std::printf("  FAIL  no progress for 20 s in: %s\n", g_phase.load());
+                std::fflush(stdout);
+                std::_Exit(1);
+            }
+        }
+    }).detach();
+}
+
 struct Rng {
     uint64_t s;
     explicit Rng(uint64_t seed) : s(seed * 0x9E3779B97F4A7C15ull + 0x1234567ull) {}
@@ -189,10 +215,35 @@ static void runRound(uint64_t seed) {
 // helps. Workers are told to sleep the moment they are idle (spin 0), one job
 // is submitted, and the submitter only watches a flag. If the wake-up is lost
 // the job never runs. Many rounds, because the window is a few instructions.
+// A thread parked in wait() is woken by the job's completion, with no timer to
+// rescue a missed notify (waiters used to wake every 100 µs to 2 ms). One worker
+// takes the job (the main thread spins until it has started, so it cannot run
+// it itself), then the main thread waits with spinning off, so it parks at
+// once. A lost notify hangs; the watchdog turns that into a failure.
+static void waiterLiveness(int rounds) {
+    jobs::init(1, 0);
+    setPhase("waiter liveness: a thread parked in wait() was never woken (a lost notify)");
+    for (int i = 0; i < rounds; ++i) {
+        progress();
+        std::atomic<bool> started{false};
+        const int spinNs = (i % 5) * 20000;   // 0 to 80 µs, so the finish lands anywhere around the park
+        jobs::JobHandle h = jobs::run("fuzz.waiter", [&started, spinNs] {
+            started.store(true, std::memory_order_release);
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::nanoseconds(spinNs)) {}
+        });
+        while (!started.load(std::memory_order_acquire)) {}
+        jobs::wait(h);
+    }
+    jobs::shutdown();
+}
+
 static void liveness(uint32_t workers, int rounds) {
     jobs::init(workers, 0);
+    setPhase("worker liveness");
     int lost = 0;
     for (int i = 0; i < rounds && !lost; ++i) {
+        progress();
         std::atomic<bool> ran{false};
         jobs::run("fuzz.live", [&ran] { ran.store(true, std::memory_order_release); });
         const auto start = std::chrono::steady_clock::now();
@@ -213,19 +264,26 @@ int main(int argc, char** argv) {
     const uint64_t first = argc > 2 ? std::strtoull(argv[2], nullptr, 10) : 1;
     std::printf("jobs_fuzz_test: backend %s, %d rounds from seed %llu\n", jobs::backendName(), rounds,
                 (unsigned long long)first);
+    startWatchdog();
     // One worker is the sharp case: with more, another sleeper takes the wake-up
     // and hides a lost one (found by planting the bug: three workers passed).
     liveness(1, rounds * 400);
     liveness(2, rounds * 100);
+    waiterLiveness(rounds * 100);
     for (int i = 0; i < rounds; ++i) {
         const uint64_t seed = first + (uint64_t)i;
         // Pool shape is part of the fuzz: 1 worker, few, or the default, and
         // with or without the idle spin. Init and shutdown every round, which
         // also exercises starting a pool twice in one process.
         Rng shape(seed);
-        const uint32_t workers = (uint32_t[]){0, 1, 2, 3, 7}[shape.below(5)];
-        const int spin = (int[]){-1, 0, 20}[shape.below(3)];
+        // Named arrays, not compound literals: `(uint32_t[]){...}` is C99, a
+        // GCC/Clang extension in C++, and MSVC refuses it (C4576, perf.yml).
+        static const uint32_t kWorkers[] = {0, 1, 2, 3, 7};
+        static const int      kSpins[]   = {-1, 0, 20};
+        const uint32_t workers = kWorkers[shape.below(5)];
+        const int spin = kSpins[shape.below(3)];
         std::printf("  seed %llu (workers %u, spin %d)\n", (unsigned long long)seed, workers, spin);
+        setPhase("a fuzz round (a wait or a job that never finished)");
         jobs::init(workers, spin);
         runRound(seed);
         jobs::shutdown();

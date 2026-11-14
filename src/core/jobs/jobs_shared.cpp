@@ -19,9 +19,13 @@
 namespace jobs {
 
 // ── Waiters ─────────────────────────────────────────────────────────────────
-// A thread in wait() helps first and parks last. A lost notify costs at most
-// the timeout (it starts at 100 µs and backs off to 2 ms), never a hang, so
-// the notify side stays a single atomic load when nobody is parked.
+// A thread in wait() helps first and parks last, with no timeout. The
+// handshake is the same store-then-load on both sides as the workers' park
+// (and as enkiTS's, which lost a wake-up on ARM without fences): the waiter
+// increments g_waiters then reads its condition; a completer stores its result
+// then reads g_waiters. A seq_cst fence on each side guarantees one of them
+// sees the other, and the mutex makes the notify land after the waiter is in
+// wait(). When nobody is parked, notify costs a fence and one load.
 namespace {
 std::atomic<int>        g_waiters{0};
 std::mutex              g_waitMu;
@@ -29,19 +33,19 @@ std::condition_variable g_waitCv;
 }
 
 void detail::notifyWaiters() {
-    if (g_waiters.load(std::memory_order_seq_cst) <= 0) return;
+    std::atomic_thread_fence(std::memory_order_seq_cst);   // the completer's half
+    if (g_waiters.load(std::memory_order_relaxed) <= 0) return;
     { std::lock_guard<std::mutex> lk(g_waitMu); }
     g_waitCv.notify_all();
 }
 
-void detail::parkWaiter(int& backoff) {
+void detail::parkWaiter(bool (*done)(void*), void* ctx) {
     std::unique_lock<std::mutex> lk(g_waitMu);
     g_waiters.fetch_add(1, std::memory_order_seq_cst);
-    if (!hasPending()) {
-        const int us = backoff < 5 ? (100 << backoff) : 2000;
-        g_waitCv.wait_for(lk, std::chrono::microseconds(us));
-        if (backoff < 5) ++backoff;
-    }
+    std::atomic_thread_fence(std::memory_order_seq_cst);   // the waiter's half
+    // One wait, then back to helpUntil, which re-checks and helps: a spurious
+    // wake-up costs a loop, never a missed completion.
+    if (!done(ctx) && !hasPending()) g_waitCv.wait(lk);
     g_waiters.fetch_sub(1, std::memory_order_seq_cst);
 }
 
@@ -102,13 +106,14 @@ void drainMain(int maxRounds) {
 // these jobs take milliseconds, so the queue's cost does not matter, and its
 // simplicity does.
 namespace {
-struct IoJob final : detail::JobState {
+struct IoJob final : detail::JobRef {
     std::function<void()> fn;
+    IoJob() { destroy = [](detail::JobRef* r) { delete static_cast<IoJob*>(r); }; }
 };
 struct IoLane {
     std::mutex                          mu;
     std::condition_variable             cv;
-    std::deque<std::shared_ptr<IoJob>>  queue;
+    std::deque<IoJob*>                  queue;   // each holds the queue's reference
     std::vector<std::thread>            threads;
     bool                                stop = false;
     bool                                closed = true;   // no pool: runIo runs inline
@@ -118,7 +123,7 @@ std::atomic<uint64_t> g_ioRun{0};
 
 void ioMain() {
     for (;;) {
-        std::shared_ptr<IoJob> job;
+        IoJob* job = nullptr;
         {
             std::unique_lock<std::mutex> lk(g_io.mu);
             g_io.cv.wait(lk, [] { return g_io.stop || !g_io.queue.empty(); });
@@ -131,19 +136,19 @@ void ioMain() {
         g_ioRun.fetch_add(1, std::memory_order_relaxed);
         job->done.store(true, std::memory_order_release);
         detail::notifyWaiters();
+        job->release();   // the queue's reference; a handle may still hold one
     }
 }
 }  // namespace
 
 JobHandle runIo(const char* /*name*/, std::function<void()> fn) {
     if (!initialized()) { fn(); return {}; }
-    auto job = std::make_shared<IoJob>();
-    job->fn = std::move(fn);
+    IoJob* job = nullptr;
     {
         std::unique_lock<std::mutex> lk(g_io.mu);
         if (g_io.closed) {   // shutting down: the lane takes no more, the caller runs it
             lk.unlock();
-            job->fn();
+            fn();
             return {};
         }
         if (g_io.threads.empty()) {
@@ -155,13 +160,26 @@ JobHandle runIo(const char* /*name*/, std::function<void()> fn) {
             for (uint32_t i = 0; i < n; ++i)
                 g_io.threads.push_back(engine::threads::start(engine::qos::Class::Utility, [] { ioMain(); }));
         }
+        job = new IoJob();
+        job->fn = std::move(fn);
+        job->retain();   // the handle's reference
         g_io.queue.push_back(job);
     }
     g_io.cv.notify_one();
-    JobHandle h;
-    h.opaque = std::shared_ptr<detail::JobState>(job, static_cast<detail::JobState*>(job.get()));
-    h.lane = 1;
-    return h;
+    return JobHandle(job, 1);
+}
+
+void detail::InlineCallable::take(void* src, size_t size, size_t align, const CallableOps& o) {
+    ops = &o;
+    fn  = (size <= kInline && align <= 16) ? (void*)inl
+                                           : mem::alloc(size, align < 16 ? 16 : align, mem::Tag::Jobs);
+    o.relocate(fn, src);
+}
+void detail::InlineCallable::reset() {
+    if (!ops) return;
+    ops->destroy(fn);
+    if (fn != (void*)inl) mem::free(fn);
+    ops = nullptr; fn = nullptr;
 }
 
 uint64_t detail::ioJobsRun() { return g_ioRun.load(std::memory_order_relaxed); }
