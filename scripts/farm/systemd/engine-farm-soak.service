@@ -1,0 +1,21 @@
+[Unit]
+Description=Engine farm: days-long soak (soak_engine), stops and keeps evidence on a finding
+After=engine-farm-update.service
+# A finding (exit 1) leaves the unit failed until a person looks; a finished run
+# or a newer build (exit 0) starts the next run. Exit 2 = no build yet: retry.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@FARM_USER@
+Nice=10
+ExecStart=@FARM_HOME@/repo/scripts/farm/farm-soak.sh
+Restart=on-success
+RestartSec=60
+RestartForceExitStatus=2
+LimitCORE=infinity
+TimeoutStopSec=120
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

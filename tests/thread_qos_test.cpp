@@ -16,9 +16,9 @@
 //   * a thread we classify stays classified;
 //   * external threads — a kit's, a provider's — are NOT touched.
 //
-// The last one matters most and is the easiest to break: enkiTS's threadStart
-// fires only inside TaskingThreadFunction, so registering an external thread
-// must leave that thread's class alone. If a future backend swap started
+// The last one matters most and is the easiest to break: the scheduler
+// classifies only the workers it starts (engine::threads::start), so a thread
+// that merely calls into jobs must keep its own class. If a future backend swap started
 // classifying registered threads too, the engine would begin silently
 // reclassifying threads it does not own.
 //
@@ -193,9 +193,8 @@ int main() {
     // ── 4. External threads are left alone ─────────────────────────────────
     // kExternalThreadSlots exists so a kit or a provider can hand the engine a
     // thread it already owns; registration happens lazily inside the first jobs
-    // call from that thread (ensureThreadRegistered, the BUG-0003 fix). It must
-    // not reclassify: enkiTS's threadStart fires only inside
-    // TaskingThreadFunction, which a registered external thread never enters.
+    // call from that thread. It must not reclassify: only threads the pool
+    // starts are classified, and an external thread is never one of them.
     //
     // Asserting it means a future backend swap that broke the property fails
     // loudly instead of silently retuning somebody else's scheduler hint —

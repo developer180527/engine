@@ -1,0 +1,11 @@
+[Unit]
+Description=Engine farm: fetch main anonymously and build what is new
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=@FARM_USER@
+Nice=5
+ExecStart=@FARM_HOME@/repo/scripts/farm/farm-update.sh
+TimeoutStartSec=4h

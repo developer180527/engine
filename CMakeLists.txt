@@ -385,16 +385,9 @@ if(MSVC)
     endforeach()
 endif()
 
-# ── enkiTS — task scheduler backing engine::jobs ──────────────────────────
-# Built directly (imgui-style) — its own CMakeLists declares a minimum too
-# old for CMake 4. The engine never includes enkiTS headers outside
-# src/core/jobs/ — the facade contract (jobs.h) is written so the backend
-# can be swapped for FiberTaskingLib without touching call sites.
-add_library(enkiTS STATIC third_party/enkiTS/src/TaskScheduler.cpp)
-target_include_directories(enkiTS PUBLIC third_party/enkiTS/src)
-target_compile_features(enkiTS PUBLIC cxx_std_11)
+# The job system is the engine's own (src/core/jobs/, DR-0036); it needs only
+# the platform's threads. enkiTS was removed on 2026-11-14 (WO-079).
 find_package(Threads REQUIRED)
-target_link_libraries(enkiTS PUBLIC Threads::Threads)
 
 # ImGui — editor-only UI library. The runtime never links this.
 add_library(imgui STATIC

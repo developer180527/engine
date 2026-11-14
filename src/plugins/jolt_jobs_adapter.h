@@ -185,9 +185,9 @@ public:
 protected:
     void QueueJob(Job* job) override {
         // ── jobs::run IS NOT ALWAYS ASYNCHRONOUS, and that is the bug ────────
-        // enkiTS's SplitAndAddTask runs a task INLINE on the submitting thread
-        // when that thread's pipe is full (TaskScheduler.cpp: the
-        // WriterTryWriteFront failure path). Jolt spawns collision jobs from
+        // jobs::run runs a job INLINE on the submitting thread when that
+        // thread's queue is full (jobs_native.cpp, run: "the submitter runs
+        // it"; enkiTS, the backend before, did the same). Jolt spawns collision jobs from
         // INSIDE a collision job — TrySpawnJobFindCollisions, called from
         // JobFindCollisions — so under contention the inline path started a
         // Jolt job on a thread already running one.
@@ -218,8 +218,8 @@ protected:
         submit(job);
     }
 
-    // Hand a job to the pool. Only ever called with depth() == 0, so enkiTS's
-    // inline path can run it on this thread without nesting.
+    // Hand a job to the pool. Only ever called with depth() == 0, so the
+    // full-queue inline path can run it on this thread without nesting.
     void submit(Job* job) {
         // Ref held for the queue (released after execution), exactly like
         // JobSystemThreadPool. Execute() no-ops if the barrier wait already
@@ -247,7 +247,7 @@ protected:
     //
     // ── ITERATIVE, AND THE RE-ENTRY GUARD IS WHY ────────────────────────────
     // submit() -> jobs::run can run the job INLINE on this thread — the very
-    // enkiTS behaviour that made QueueJob defer in the first place — and that
+    // behaviour that made QueueJob defer in the first place — and that
     // inline job ends by calling flushDeferred() again. Written as a plain
     // loop, this therefore recursed into itself once per still-deferred job,
     // with a depth bounded only by the free list (thousands) and reached
@@ -266,8 +266,8 @@ protected:
 
     // RAII, NOT `busy = false` at the end, and the difference is not stylistic.
     // submit() -> jobs::run can allocate (a job block when the thread's cache
-    // is empty; always, on the enkiTS backend), exceptions are on in this
-    // build, and nothing here catches. A single bad_alloc escaping the loop would leave the flag SET
+    // is empty), exceptions are on in this build, and nothing here catches.
+    // A single bad_alloc escaping the loop would leave the flag SET
     // for the life of the thread, turning every later flushDeferred() on it
     // into a silent no-op — deferred jobs would fall back to the step barrier
     // forever. A transient failure becoming permanent silent degradation is a

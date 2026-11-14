@@ -11,12 +11,14 @@ name: Perf
 # Android NDK as is.
 #
 # HOW TO READ THE NUMBERS. GitHub's runners are shared virtual machines with 2
-# to 4 cores, and two runs of the same leg can differ by 30% or more. So every
-# leg runs BOTH backends, interleaved, five times each, on the one machine it
-# got, and the summary reports native as a fraction of enkiTS. That ratio is the
-# result. An absolute number from here is never a baseline, and never compared
-# with another leg's. Baselines live on the home server (docs/plans/
-# farm-and-perf-ci.md), which is quiet and always the same machine.
+# to 4 cores, and two runs of the same leg can differ by 30% or more. Every leg
+# runs the benchmark five times and the summary shows the median and the spread.
+# Read it for "does it work and is it in the right range on this platform", not
+# for small changes: an absolute number from here is never a baseline, and never
+# compared with another leg's. Baselines live on the home server (docs/plans/
+# farm-and-perf-ci.md), which is quiet and always the same machine. (Until
+# 2026-11-14 each leg also ran enkiTS and the summary was a ratio; enkiTS was
+# removed, WO-079.)
 
 on:
   workflow_dispatch:
@@ -68,9 +70,9 @@ jobs:
           fetch-depth: 1
 
       # Only the two submodules this project uses, not bgfx and Assimp.
-      - name: Submodules (TLSF, enkiTS)
+      - name: Submodules (TLSF)
         shell: bash
-        run: git submodule update --init --depth 1 third_party/tlsf third_party/enkiTS
+        run: git submodule update --init --depth 1 third_party/tlsf
 
       - name: Ninja (Linux)
         if: runner.os == 'Linux'
@@ -107,31 +109,28 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # Correctness first: a benchmark of a broken scheduler measures nothing.
-      - name: Fuzz (both backends) and mem_test
+      - name: Fuzz and mem_test
         shell: bash
         env:
           SEEDS: ${{ github.event.inputs.fuzz_seeds || '300' }}
         run: |
           set -e
           b=build-corebench
-          [ -f "$b/jobs_fuzz_test_native.exe" ] && x=.exe || x=
-          "$b/jobs_fuzz_test_native$x" "$SEEDS" 1 | tail -n 3
-          "$b/jobs_fuzz_test_enkits$x" 60 1 | tail -n 3
-          "$b/mem_test_native$x" | tail -n 2
+          [ -f "$b/jobs_fuzz_test.exe" ] && x=.exe || x=
+          "$b/jobs_fuzz_test$x" "$SEEDS" 1 | tail -n 3
+          "$b/mem_test$x" | tail -n 2
 
-      - name: Benchmark (interleaved, 5 runs per backend)
+      - name: Benchmark (5 runs)
         shell: bash
         run: |
           set -e
           mkdir -p perf-out
           b=build-corebench
-          [ -f "$b/jobs_bench_native.exe" ] && x=.exe || x=
+          [ -f "$b/jobs_bench.exe" ] && x=.exe || x=
           for i in 1 2 3 4 5; do
-            for k in native enkits; do
-              "$b/jobs_bench_$k$x" --json perf-out/${{ matrix.slug }}-$k-$i.json > perf-out/${{ matrix.slug }}-$k-$i.txt 2>&1
-            done
+            "$b/jobs_bench$x" --json perf-out/${{ matrix.slug }}-$i.json > perf-out/${{ matrix.slug }}-$i.txt 2>&1
           done
-          tail -n 14 perf-out/${{ matrix.slug }}-native-5.txt
+          tail -n 20 perf-out/${{ matrix.slug }}-5.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -151,8 +150,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Submodules (TLSF, enkiTS)
-        run: git submodule update --init --depth 1 third_party/tlsf third_party/enkiTS
+      - name: Submodules (TLSF)
+        run: git submodule update --init --depth 1 third_party/tlsf
       - name: Ninja
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
 
@@ -183,12 +182,12 @@ jobs:
           cores: 4
           disable-animations: true
           script: |
-            adb push build-android-x86_64/jobs_bench_native build-android-x86_64/jobs_bench_enkits build-android-x86_64/jobs_fuzz_test_native build-android-x86_64/mem_test_native /data/local/tmp/
-            adb shell chmod 755 /data/local/tmp/jobs_bench_native /data/local/tmp/jobs_bench_enkits /data/local/tmp/jobs_fuzz_test_native /data/local/tmp/mem_test_native
-            adb shell /data/local/tmp/jobs_fuzz_test_native 60 1 | tail -n 3
-            adb shell /data/local/tmp/mem_test_native | tail -n 2
+            adb push build-android-x86_64/jobs_bench build-android-x86_64/jobs_fuzz_test build-android-x86_64/mem_test /data/local/tmp/
+            adb shell chmod 755 /data/local/tmp/jobs_bench /data/local/tmp/jobs_fuzz_test /data/local/tmp/mem_test
+            adb shell /data/local/tmp/jobs_fuzz_test 60 1 | tail -n 3
+            adb shell /data/local/tmp/mem_test | tail -n 2
             mkdir -p perf-out
-            for i in 1 2 3; do for k in native enkits; do adb shell /data/local/tmp/jobs_bench_$k --quick --json /data/local/tmp/android-x64-$k-$i.json > /dev/null; adb pull /data/local/tmp/android-x64-$k-$i.json perf-out/; done; done
+            for i in 1 2 3; do adb shell /data/local/tmp/jobs_bench --quick --json /data/local/tmp/android-x64-$i.json > /dev/null; adb pull /data/local/tmp/android-x64-$i.json perf-out/; done
 
       - uses: actions/upload-artifact@v4
         if: always()

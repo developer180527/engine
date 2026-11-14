@@ -85,15 +85,3 @@ delete the patch once a release contains it.
   optimization level argument expands to garbage instead of `0` in Debug and
   `3` otherwise. Upstream bug, not a local preference — worth a PR to
   bkaradzic/bgfx.cmake, after which this file can go.
-
-- **`enkiTS__seq-cst-fences-in-wake-handshake.patch`** — a lost wake-up on
-  ARM. A thread about to sleep stores "I am waiting" and then looks for tasks;
-  a thread adding a task stores it and then reads the waiting count with a
-  RELAXED load. That is store-then-load on both sides, which needs a seq_cst
-  fence on each: x86 never reorders it, ARM does, and a worker slept with a task
-  queued. Found by the fuzz test's liveness check on GitHub's Linux arm64
-  runner (perf.yml, WO-078); it does not reproduce on Apple silicon. The patch
-  adds the four fences (`WaitForNewTasks`, `WaitForTaskCompletion`, and both
-  wake functions). Upstream master still has the relaxed load: worth a PR to
-  dougbinks/enkiTS. The native backend has the same handshake and its own
-  fences (`jobs_native.cpp`, NO LOST WAKE-UP).

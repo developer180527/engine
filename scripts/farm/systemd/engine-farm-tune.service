@@ -1,0 +1,10 @@
+[Unit]
+Description=Engine farm: quiet-machine settings (governor, turbo, perf, cores)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=@FARM_HOME@/repo/scripts/farm/farm-tune.sh
+
+[Install]
+WantedBy=multi-user.target

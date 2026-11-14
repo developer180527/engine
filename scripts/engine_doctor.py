@@ -573,6 +573,11 @@ def check_bugs() -> list[Finding]:
                 path = item.split("::", 1)[0].strip()   # allow file::case
                 if not path:
                     continue
+                # `where: path (removed 2026-11-14; WO-079)`: the code the bug
+                # lived in has since been deleted, and the entry says so. Only
+                # for `where` — a removed regression proof is still orphaned.
+                if field == "where" and "(removed" in path:
+                    continue
                 if not (REPO / path).exists():
                     lvl = "error" if field == "pinned-by" else "warn"
                     f.append(Finding(lvl, rel,

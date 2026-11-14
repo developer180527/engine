@@ -74,12 +74,12 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   literal against it. Here, not in `animation/`, because `SkinnedMesh` is a
   component and components depend on core only (WO-040).
 - **`jobs/`** — the job system (`jobs.h`; since 2026-11-14 the engine's own
-  scheduler behind it, compiled into `engine_core`, enkiTS kept as a second
-  backend: DR-0036); see
+  scheduler behind it, compiled into `engine_core`, DR-0036; enkiTS, kept as a
+  second backend for comparison, was removed the same day, WO-079); see
   `jobs/info.md`. Moved from `src/runtime/jobs` on 2026-10-01 (WO-046): it
   depends on core alone, and the renderer, systems and audio including it
   from `runtime/` made them depend on the orchestration layer. It is still
-  compiled into `engine_runtime`, so the cook tools gain no enkiTS.
+  compiled into `engine_core`.
 - **`lod_limit.h`** — `kMaxLodLevels` (4), for the `LodMesh` component and the
   render world's selection alike. Moved from `render/world/lod.h` (WO-046), so
   components need not include render.
@@ -163,9 +163,8 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   place, `engine::threads::start` (`thread_start.h`), which holds a
   `mem::SystemNewScope`: on that thread, for that call, global new is the system
   allocator. Everything else stays in the tagged heaps, in `libeng` too.
-  The job pool's and the I/O lane's threads start the same way (the enkiTS
-  backend holds the scope around enkiTS's start-up instead, since its workers are
-  `std::thread`s), and the raw-input source around the hid module's. Audit rule
+  The job pool's and the I/O lane's threads start the same way, and the
+  raw-input source around the hid module's. Audit rule
   THREAD-01 keeps `std::thread(` out of the rest of `src/`. Tests:
   `eng_shared_test` (fails without the scope), `mem_test`.
 

@@ -54,7 +54,6 @@ bool tryRunOne();      // run one queued pool job on this thread, if it may and 
 bool hasPending();     // is anything queued (a waiter should not sleep if so)
 int  spinMicros();     // how long an idle thread looks for work before parking
 bool onMainThread();   // is this the thread that called init()
-void backendSweep();   // per-pump housekeeping (enkiTS frees finished run() blocks here)
 
 // ── Provided by jobs_shared.cpp ─────────────────────────────────────────────
 void notifyWaiters();              // something a waiter may be waiting for happened

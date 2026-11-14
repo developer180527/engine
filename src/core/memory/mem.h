@@ -65,7 +65,7 @@ enum class Tag : uint8_t {
     Scripting,    // Lua states + script host
     ECS,          // flecs
     Audio,        // miniaudio
-    Jobs,         // enkiTS + job control blocks
+    Jobs,         // the scheduler's queues, job blocks and scratch
     Editor,       // ImGui + editor-only state
     Nav,          // Recast bake scratch + the Detour navmesh and query
     Sim,          // the tick's command/intent buffers and the command ring

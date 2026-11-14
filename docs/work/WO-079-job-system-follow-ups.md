@@ -12,6 +12,9 @@ touches:
   - src/core/jobs/jobs_native.cpp
   - src/core/jobs/jobs_shared.cpp
   - src/runtime/runtime_frame.cpp
+  - src/CMakeLists.txt
+  - tests/corebench/CMakeLists.txt
+  - .github/workflows/perf.yml
   - src/runtime/services/asset_service.cpp
   - src/assets/cookers/cook_service.cpp
 source: WO-078's findings; review of 2026-11-11; review of 2026-11-14
@@ -27,7 +30,7 @@ WO-078 built and proved the scheduler on one machine. What it found and left is 
 - [ ] a rule or a guard for waits nested inside jobs (stack depth), decided from a measurement of how deep the engine's real job graphs go
 - [ ] `Background` work cannot starve forever: an age limit or a reserved share, with a test
 - [ ] the profiler shows the scheduler's stats (`jobs::stats()`: steals, parks, wakes, jobs run by their submitter)
-- [ ] enkiTS removed (the backend file, the submodule, the option) once the native backend has been the default through one release with no scheduler defect
+- [x] enkiTS removed (the backend file, the submodule, the option) once the native backend has been the default through one release with no scheduler defect
 
 ## Contract
 Nothing: every item is behind `jobs.h` as it stands, except `frameBegin`, which is new and optional.
@@ -44,4 +47,4 @@ Fibers (DR-0036 says what would reopen that).
   - **`frameBegin`: the frame's first job reaches a worker in 1.5 to 1.9 µs instead of 20 µs.** The paced median did NOT measurably move: it varies ±15% between runs here, more than a 20 µs wake-up is worth on a 0.8 ms frame. The item is ticked on the direct measure (`frame.prewake.*.first_worker`); a machine with slower wake-ups (Linux, Windows) should show it in the median too. Costs about 0.1 ms a frame of spinning; a frame that ran no jobs wakes nobody (unit-tested).
   - **The shared pending counter is gone.** Sleepers check the queues instead. `run` 433 to 377 ns/job from one thread, 316 to 350 to 200 to 237 from four. Fuzzed 2 000 seeds; `jobs_test`, 60 fuzz seeds and `stress_jobs` under TSan with no report; a planted sleep-without-looking was caught by the liveness check. A new bench figure, frames in which no worker took part (`.alone`), read 0 of 1 800.
   - **Not done, on purpose:** topology-aware stealing (threads are not pinned; the cost is Zen-specific and needs OS calls, DR-0036), and a different `parallelFor` range size (ranges are claimed dynamically, about eight per thread, which is what the reviewer's fixed-size concern is about).
-
+- 2026-11-14 (later): **enkiTS removed, early, on the owner's call.** The "one release" wait was a way back in case the native backend proved wrong; `git revert` is that way back, and carrying enkiTS cost a submodule, a patch of our own (the arm64 fences), a second implementation of every `jobs.h` change, and a CI leg per platform. Gone: `jobs_enkits.cpp`, `third_party/enkiTS`, its patch, `ENGINE_JOBS_BACKEND` (a stale `enkits` cache entry now fails configure with the fix), `backendSweep`. corebench builds `jobs_bench`, `jobs_fuzz_test`, `mem_test` (no suffix); perf.yml runs them five times and the summary shows median and spread per platform instead of a ratio, so CI no longer has a same-machine reference and the home server's baseline (WO-081) is what catches a small regression. `backendName()` still says `native`, so result files stay comparable. Checked: engine build with no enkiTS in the compile database, unit lane 108 of 108 (`check_gpu_seam.py` now skips tracked-but-deleted files, which it crashed on mid-removal), `jobs_test` and fuzz under TSan clean, corebench fuzz 300 seeds.

@@ -1,0 +1,11 @@
+[Unit]
+Description=Engine farm: nightly build of main (01:00), and an hourly check for new commits
+
+[Timer]
+OnCalendar=*-*-* 01:00
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

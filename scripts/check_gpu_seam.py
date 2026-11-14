@@ -54,7 +54,10 @@ def tracked_sources() -> list[str]:
         ["git", "-C", str(REPO), "ls-files", "src", "include", "tests"],
         capture_output=True, text=True, check=False,
     ).stdout.split()
-    return [p for p in out if p.endswith((".h", ".hpp", ".cpp", ".mm", ".c"))]
+    # Tracked but deleted in the working tree (a removal not yet staged) is
+    # skipped: there is nothing left in it to check.
+    return [p for p in out if p.endswith((".h", ".hpp", ".cpp", ".mm", ".c"))
+            and (REPO / p).exists()]
 
 
 def main() -> int:

@@ -9,6 +9,7 @@ state: todo
 depends: [WO-082]
 touches:
   - tests/jobs_fuzz_test.cpp
+  - scripts/farm/
 source: docs/plans/farm-and-perf-ci.md §5.3-5.5; automated-testing-soak-fuzz-plan.md Parts 2 and 6.3
 ---
 ## Why
@@ -22,3 +23,6 @@ Leaks, slow growth and rare races show up over days, not in a test lane's minute
 
 ## Contract
 Nothing.
+
+## Log
+- 2026-11-14: **a soak runner for the existing `soak_engine`**, ahead of the C-API soak program this order asks for (WO-081's scripts build it). `scripts/farm/farm-soak.sh` runs it for `FARM_SOAK_MINUTES` (2 880) from `bin/release/current`, samples resident memory, peak, threads and descriptors each minute (`metrics.csv`), and stops with the evidence on a `FAIL` line, a crash or sanitizer report, no output for 10 minutes (SIGABRT, so the core has every stack), resident growth over 8 MB/h after the first hour, or descriptor growth over 32. A finished run or a newer build starts the next; a finding leaves the unit stopped until someone looks (`farm-soak-status.sh`). Not ticked: it is `soak_engine`, not the C-API program, and it has not run on the box.

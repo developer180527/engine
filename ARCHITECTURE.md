@@ -89,7 +89,7 @@ contract.
 | Part | Built | Planned |
 |---|---|---|
 | Memory | `mem::` over TLSF: tagged heaps, a per-frame arena | |
-| Jobs | `engine::jobs` over enkiTS | idle cost of the pool (WO-065) |
+| Jobs | `engine::jobs`, the engine's own scheduler (DR-0036) | idle cost of the pool (WO-065) |
 | World | flecs, used directly inside core | an engine-owned world API; no flecs at the boundary (engine-architecture.md §3) |
 | Scenes | a hand-written serializer for a fixed list of components | a schema registry, one generic serializer, unknown components kept (§4) |
 | Change stream | the renderer's retained-scene table (WO-019) | one per component type, free without subscribers (§5) |

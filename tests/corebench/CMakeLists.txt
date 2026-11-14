@@ -8,11 +8,10 @@
 #
 #   cmake -S tests/corebench -B build-corebench -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build-corebench
-#   build-corebench/jobs_bench_native --json native.json
+#   build-corebench/jobs_bench --json bench.json
 #
-# Builds each benchmark twice, once per job-system backend (native and enkiTS),
-# so one machine can compare them in one job: across machines, only the ratio
-# means anything.
+# One build of each: the job system has one backend since enkiTS was removed
+# (2026-11-14, WO-079). Binaries are jobs_bench, jobs_fuzz_test, mem_test.
 cmake_minimum_required(VERSION 3.21)
 project(engine_perf LANGUAGES C CXX)
 
@@ -25,8 +24,6 @@ endif()
 
 get_filename_component(ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 find_package(Threads REQUIRED)
-
-option(ENGINE_PERF_ENKITS "Also build the enkiTS backend, for comparison" ON)
 
 if(MSVC)
     add_compile_options(/W3 /permissive- /Zc:__cplusplus /utf-8)
@@ -42,31 +39,14 @@ set(CORE_SOURCES
     ${ROOT}/src/core/thread_qos.cpp
     ${ROOT}/src/core/jobs/jobs_shared.cpp)
 
-function(perf_core name backend)
-    add_library(${name} STATIC ${CORE_SOURCES} ${ROOT}/src/core/jobs/jobs_${backend}.cpp)
-    target_include_directories(${name} PUBLIC ${ROOT}/src)
-    target_link_libraries(${name} PUBLIC perf_tlsf Threads::Threads)
-    if(ANDROID)
-        target_link_libraries(${name} PUBLIC log)
-    endif()
-endfunction()
-
-perf_core(perf_core_native native)
-set(BACKENDS native)
-
-if(ENGINE_PERF_ENKITS AND EXISTS ${ROOT}/third_party/enkiTS/src/TaskScheduler.cpp)
-    add_library(perf_enkits STATIC ${ROOT}/third_party/enkiTS/src/TaskScheduler.cpp)
-    target_include_directories(perf_enkits PUBLIC ${ROOT}/third_party/enkiTS/src)
-    target_link_libraries(perf_enkits PUBLIC Threads::Threads)
-    perf_core(perf_core_enkits enkits)
-    target_link_libraries(perf_core_enkits PUBLIC perf_enkits)
-    list(APPEND BACKENDS enkits)
+add_library(perf_core STATIC ${CORE_SOURCES} ${ROOT}/src/core/jobs/jobs_native.cpp)
+target_include_directories(perf_core PUBLIC ${ROOT}/src)
+target_link_libraries(perf_core PUBLIC perf_tlsf Threads::Threads)
+if(ANDROID)
+    target_link_libraries(perf_core PUBLIC log)
 endif()
 
-foreach(b ${BACKENDS})
-    foreach(t jobs_bench jobs_fuzz_test mem_test)
-        add_executable(${t}_${b} ${ROOT}/tests/${t}.cpp)
-        target_link_libraries(${t}_${b} PRIVATE perf_core_${b})
-    endforeach()
+foreach(t jobs_bench jobs_fuzz_test mem_test)
+    add_executable(${t} ${ROOT}/tests/${t}.cpp)
+    target_link_libraries(${t} PRIVATE perf_core)
 endforeach()
-message(STATUS "engine_perf: backends ${BACKENDS}")

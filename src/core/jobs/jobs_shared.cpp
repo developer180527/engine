@@ -21,7 +21,7 @@ namespace jobs {
 // ── Waiters ─────────────────────────────────────────────────────────────────
 // A thread in wait() helps first and parks last, with no timeout. The
 // handshake is the same store-then-load on both sides as the workers' park
-// (and as enkiTS's, which lost a wake-up on ARM without fences): the waiter
+// (enkiTS, the backend before, lost a wake-up on ARM without them): the waiter
 // increments g_waiters then reads its condition; a completer stores its result
 // then reads g_waiters. A seq_cst fence on each side guarantees one of them
 // sees the other, and the mutex makes the notify land after the waiter is in
@@ -74,7 +74,6 @@ size_t pumpMain() {
     const size_t ran = g_mainScratch.size();
     for (auto& fn : g_mainScratch) fn();
     g_mainScratch.clear();
-    detail::backendSweep();
     return ran;
 }
 

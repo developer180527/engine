@@ -6,18 +6,13 @@
 // subsystem that wants parallelism schedules through this header: animation,
 // Jolt (via the JPH::JobSystem adapter), extraction and culling, loading.
 //
-// TWO BACKENDS behind this one header, chosen at configure time
-// (ENGINE_JOBS_BACKEND):
-//   native  (default) jobs_native.cpp. Work-stealing, written for this engine,
-//           standard C++ only: no OS call, so the platform layer can supply
-//           threads and parking later without touching it. Wakes only as many
-//           workers as there is new work, and workers spin briefly before they
-//           sleep, which is where it beats enkiTS (docs: src/core/jobs/info.md
-//           has the measurements).
-//   enkits  jobs_enkits.cpp. The previous backend, kept so the two can be
-//           compared on the same tests and the same benchmark.
+// ONE BACKEND, jobs_native.cpp: work-stealing, written for this engine,
+// standard C++ only (no OS call), so the platform layer can supply threads and
+// parking later without touching it. Wakes only as many workers as there is new
+// work, and workers spin briefly before they sleep (src/core/jobs/info.md has
+// the measurements). enkiTS backed this header until 2026-11-14 (WO-079).
 // tests/stress_jobs.cpp and tests/jobs_fuzz_test.cpp are written against this
-// header only, and both backends must pass them.
+// header only, so a future backend (fibers, DR-0036) must pass them too.
 //
 // RULES FOR CODE THAT RUNS IN JOBS (they hold for both backends, and for a
 // fiber backend if there ever is one):
@@ -176,7 +171,7 @@ void wait(JobHandle h);
 // main-thread work. Wakes as many sleeping workers as ran jobs in the previous
 // frame, so the frame's first job does not wait for a wake-up. A frame that ran
 // no jobs wakes nobody (an idle game stays idle). Optional: without it nothing
-// breaks, the first job is only later. No-op on enkiTS.
+// breaks, the first job is only later.
 void frameBegin();
 
 // ── Main-thread channel ─────────────────────────────────────────────────────
@@ -232,9 +227,9 @@ struct Stats {
     uint64_t inlineRuns;    // jobs run by the submitter because a queue was full
     uint64_t ioJobs;        // jobs run on the I/O lane
     uint64_t spinNanos;     // time workers spent awake looking for work and finding
-                            // none (the CPU an idle pool burns); 0 on enkiTS
+                            // none (the CPU an idle pool burns)
 };
 Stats stats();
-const char* backendName();  // "native" or "enkits"
+const char* backendName();  // "native" (recorded in benchmark results)
 
 } // namespace jobs

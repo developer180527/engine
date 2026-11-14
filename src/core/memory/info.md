@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-11
+verified: 2026-11-14
 covers:
   - src/core/memory/
 tests:
@@ -41,7 +41,6 @@ std::free/std::realloc.
 | Lua                        | lua_newstate alloc fn                    | Scripting |
 | flecs                      | ecs_os_set_api at static init (runtime.cpp) | ECS |
 | ozz                        | SetDefaulAllocator [sic] at runtime init | Animation |
-| enkiTS                     | TaskSchedulerConfig.customAllocator      | Jobs |
 | miniaudio                  | engine config allocationCallbacks        | Audio |
 | ImGui                      | SetAllocatorFunctions (imgui_bgfx.cpp)   | Editor |
 | Recast/Detour              | rc/dtAllocSetCustom (nav_service.cpp)     | Nav |

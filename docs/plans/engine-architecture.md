@@ -26,7 +26,7 @@ public surface uses only the engine's own types.**
 - **Providers** are the parts a game may choose: rendering, physics, audio,
   networking, scripting. Each kind has a contract (`docs/contracts/`), a null
   implementation, and a conformance test suite every implementation passes.
-- **Inside core**, code may call its own libraries directly (flecs, enkiTS,
+- **Inside core**, code may call its own libraries directly (flecs, ozz,
   TLSF). **At the boundary** that games, kits and providers see, it may not.
 - **The kinds are open, not a list** (§6a): rendering, physics, audio,
   networking and scripting are the kinds that exist today, not the only kinds
@@ -121,7 +121,7 @@ swap nobody wants. What changes is the boundary:
 4. **An audit rule**: no flecs include in `include/engine/` or `src/plugins/`,
    with today's findings as a baseline that can only shrink.
 
-The same rule is already met by jobs (`engine::jobs` over enkiTS) and memory
+The same rule is already met by jobs (`engine::jobs`, the engine's own scheduler) and memory
 (`mem::` over TLSF). The ECS is the one core library that leaks today.
 
 ## 4. A scene no provider owns

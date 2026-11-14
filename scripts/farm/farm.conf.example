@@ -1,0 +1,33 @@
+# /etc/engine-farm.conf — read by every scripts/farm/ script (shell syntax).
+# Copy this file there and edit. Nothing in it is secret: the box has no
+# GitHub credentials and needs none (the repository is public).
+
+# Where everything lives. The farm user owns it.
+FARM_HOME=/srv/engine-farm
+FARM_USER=farm
+
+# The repository, fetched anonymously over HTTPS. Never an SSH URL, never a token.
+FARM_REPO_URL=https://github.com/developer180527/engine.git
+FARM_BRANCH=main
+
+# Trees to build, space-separated: release asan tsan (relprof comes with WO-081's
+# profiling work). The soak runs from release.
+FARM_TREES="release asan tsan"
+
+# Build parallelism. Leave the benchmark cores alone once isolcpus is set.
+FARM_JOBS=8
+
+# The soak: how long one run lasts (minutes), and how long without a line of
+# output counts as a hang (soak_engine prints every 10 cycles).
+FARM_SOAK_MINUTES=2880
+FARM_SOAK_HANG_MINUTES=10
+# Which tree the soak runs from: release (trends) or tsan (races, ~10x slower).
+FARM_SOAK_TREE=release
+# Cores the soak may use (taskset list), empty for any. Keep it OFF the
+# benchmark cores once those are isolated.
+FARM_SOAK_CPUS=
+
+# Leak gates over the run, after the first hour (checked every minute):
+# resident memory growth per hour, and open file descriptors growth over the run.
+FARM_SOAK_MAX_RSS_MB_PER_HOUR=8
+FARM_SOAK_MAX_FD_GROWTH=32

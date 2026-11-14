@@ -17,9 +17,9 @@ covers:
 | | GitHub CI (`perf.yml`) | The home server |
 |---|---|---|
 | Machines | Windows x64 and arm64, Linux x64 and arm64, macOS arm64, Android | one x86-64 Debian box, headless |
-| Answers | does it work on every platform, and is native faster than enkiTS **there** | is this commit slower than last week's; does the engine survive three days |
+| Answers | does it work on every platform, and is the job system in range **there** | is this commit slower than last week's; does the engine survive three days |
 | Noise | high: shared VMs, 2 to 4 cores, different hardware each run | low, once tuned (§4) |
-| So it reports | ratios, measured inside one job | absolute numbers, against a baseline |
+| So it reports | medians and spread inside one job, never baselines | absolute numbers, against a baseline |
 | Runs | on changes to core, weekly, on demand | every night, and a soak that never stops |
 
 Neither replaces the other. A number from CI is never a baseline; a number from
@@ -34,8 +34,9 @@ the server is never assumed to hold on ARM or Windows.
 - **`jobs_bench --json`** writes every measurement with its unit and the run's
   identity (backend, OS, CPU architecture, compiler, threads). Both CI and the
   server read this one format.
-- **`perf.yml`**, per platform: fuzz both backends (300 seeds native, 60 enkiTS),
-  run `mem_test`, then benchmark both backends **interleaved, five runs each**.
+- **`perf.yml`**, per platform: fuzz (300 seeds), run `mem_test`, then benchmark
+  five times. (Until 2026-11-14 it also ran enkiTS and reported a ratio; enkiTS
+  was removed, WO-079.)
   A summary job turns all legs into one table (`tests/corebench/summarise.py`) on the
   run page.
 - **Android:** arm64-v8a is built; x86_64 runs on an emulator (fuzz, `mem_test`,

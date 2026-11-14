@@ -19,17 +19,16 @@ threading syscalls (workers spin-then-park only when truly idle).
 
 ## The scheduler (2026-11-14, DR-0036)
 
-`jobs.h` has two backends, chosen by `ENGINE_JOBS_BACKEND`:
+`jobs.h` has one backend, `jobs_native.cpp`: the engine's own work-stealing
+scheduler, standard C++ only (no OS call), any number of foreign threads with
+no registration. enkiTS was the backend until 2026-11-14 and was kept beside it
+for comparison; with the comparison made (the table below) it was removed the
+same day (WO-079: the submodule, its patch, `jobs_enkits.cpp` and the
+`ENGINE_JOBS_BACKEND` option; a stale `enkits` cache entry is refused at
+configure time). The comparison numbers stay below as the record.
 
-| | `native` (default) | `enkits` |
-|---|---|---|
-| File | `jobs_native.cpp` | `jobs_enkits.cpp` |
-| What it is | the engine's own work-stealing scheduler | the previous one, kept for comparison |
-| OS calls | none: standard C++ only | OS semaphores inside enkiTS |
-| Foreign threads | any number, no registration | 8 slots (BUG-0003, below) |
-
-Shared by both, in `jobs_shared.cpp`: the main-thread queue, the I/O lane,
-per-thread scratch, and waiter parking. The job system is compiled into
+In `jobs_shared.cpp`, apart from the scheduler: the main-thread queue, the I/O
+lane, per-thread scratch, and waiter parking. The job system is compiled into
 `engine_core` (it was in `engine_runtime` while living in `src/core`).
 
 **How the native backend works**
@@ -136,7 +135,10 @@ not the number to judge them by; `first_worker` and `spin` are.
 - Workers are not pinned and stealing ignores topology (CCX/cluster); DR-0036
   has why. Revisit with measurements from a machine where it matters.
 
-The sections below were written for the enkiTS backend and still describe it.
+**The sections below were written for the enkiTS backend, removed on
+2026-11-14.** They are kept for what they found (BUG-0003, BUG-0056, the QoS
+measurement, the fiber contract); the code they cite is gone. What still holds
+for the native backend is said in each.
 
 ## External threads must claim a slot (BUG-0003)
 
@@ -216,10 +218,9 @@ this fires in every configuration — verified in
 `third_party/enkiTS/src/TaskScheduler.cpp:258`.
 
 ## Backend & the FTL swap contract
-Current backend: **enkiTS** (`jobs_enkits.cpp` — the only TU in the engine
-that includes enkiTS; built directly in the root CMakeLists, imgui-style,
-because its own CMakeLists predates CMake 4 minimums). The facade (`jobs.h`)
-is written so **FiberTaskingLib** could replace it with one sibling .cpp:
+Backend: **native** (`jobs_native.cpp`; until 2026-11-14 enkiTS). The facade
+(`jobs.h`) is written so **FiberTaskingLib** could replace it with one sibling
+.cpp:
 
 **What FTL would and would not change.** Worth stating precisely, because it is
 easy to get backwards:

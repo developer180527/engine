@@ -26,10 +26,11 @@
 // that fails names the property it broke instead of surfacing as a hang in
 // animation three weeks later.
 //
-// ── What actually differs between the two backends, and what does not ───────
-// Worth stating precisely, because it is easy to get backwards.
+// ── What a fiber backend would change, and what it would not ─────────────────
+// Written when enkiTS was the backend (removed 2026-11-14, WO-079); the native
+// backend behaves the same way on both points.
 //
-//   * WORK STEALING IS NOT THE DIFFERENCE. enkiTS already steals:
+//   * WORK STEALING IS NOT THE DIFFERENCE. enkiTS already stole:
 //     `TaskScheduler::TryRunTask` reads its own pipe front, then walks every
 //     other thread's pipe back-to-front, and keeps a `hintPipeToCheck` so a
 //     thread that stole successfully looks there first next time. Case 4 below

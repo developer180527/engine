@@ -991,7 +991,6 @@ target_include_directories(headless_include_probe PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/stb
     ${CMAKE_SOURCE_DIR}/third_party/tlsf
     ${CMAKE_SOURCE_DIR}/third_party/flecs/distr
-    ${CMAKE_SOURCE_DIR}/third_party/enkiTS/src
     ${CMAKE_SOURCE_DIR}/third_party/ozz-animation/include
     ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bx/include
     ${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bx/include/compat/${_bx_compat}

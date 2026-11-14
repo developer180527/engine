@@ -114,7 +114,7 @@ the second active slot. Game UI waits until a game needs a HUD.
   with no stripping infrastructure (`src/assets/cookers/shader/info.md`).
 - **PSO baking.** bgfx exposes no PSO API, and every backend already caches
   internally. Revisit with the custom RHI, not before.
-- **A fiber job system.** enkiTS is sufficient at this scale.
+- **A fiber job system.** The engine's own scheduler (DR-0036) is sufficient at this scale.
 - **A frozen ABI for third-party renderers.** Swap the backend below the
   renderer, never the renderer through an ABI
   ([`docs/rhi/swappability.md`](../rhi/swappability.md)).

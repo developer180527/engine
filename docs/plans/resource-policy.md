@@ -41,7 +41,7 @@ Everything else is a default nobody chose:
 
 | resource | today | chosen? |
 |---|---|---|
-| worker threads | `jobs::init()` with no argument → enkiTS default, `cores - 1` | no |
+| worker threads | `jobs::init()` with no argument → `cores - 1` workers | no |
 | **thread QoS / priority** | ~~never set~~ **set, as of 2026-09-04** (§3.1) | **yes** |
 | core affinity (P vs E, big.LITTLE) | none | no |
 | frame cap | none | no |
@@ -121,7 +121,7 @@ wrong:
 | thread | class | state |
 |---|---|---|
 | main / sim | `USER_INTERACTIVE` | already correct — the OS gives it, measured at 33 |
-| enkiTS workers | `USER_INITIATED` | **done**, via `cfg.profilerCallbacks.threadStart` |
+| job pool workers | `USER_INITIATED` | **done**, via `engine::threads::start` (was enkiTS's `threadStart` callback) |
 | ~~async loader~~ | — | **there is no such thread** (see below) |
 | `CookService::cookLoop` | `UTILITY` | **done** — and it was never set, despite a comment claiming it was |
 | cook worker (child process) | `UTILITY` | already correct (`engine_cook_worker.cpp:163`) |

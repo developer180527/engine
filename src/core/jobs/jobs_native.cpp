@@ -27,7 +27,7 @@
 //     before it sleeps, so work that arrives within a frame finds it awake.
 //   * When nothing is submitted, every worker is asleep on a condition variable
 //     and the pool costs nothing (DR-0011).
-//   The measurements against enkiTS are in info.md.
+//   The measurements (and those against enkiTS, the backend it replaced) are in info.md.
 //
 //   * Nobody is woken while a worker is already LOOKING for work (g_searching):
 //     that worker will find the new job sooner than a sleeper could be woken.
@@ -743,7 +743,6 @@ void wait(JobHandle h) {
 bool detail::onMainThread() {
     return !g_init.load() || std::this_thread::get_id() == g_mainThread;
 }
-void detail::backendSweep() {}   // run() blocks free themselves
 
 Stats stats() {
     Stats s{};

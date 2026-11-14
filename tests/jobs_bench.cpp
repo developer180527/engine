@@ -309,7 +309,7 @@ int main(int argc, char** argv) {
         const double fw = firstWorker.empty() ? 0.0 : firstWorker[firstWorker.size() / 2];
         const double cpu = double(std::clock() - c0) / CLOCKS_PER_SEC, wall = ms(w0, Clock::now()) / 1000.0;
         // How much of that CPU was workers awake looking for work and finding
-        // none: the share a spin policy can save (0 on enkiTS, which does not say).
+        // none: the share a spin policy can save .
         const double spin = double(jobs::stats().spinNanos - st0.spinNanos) * 1e-9;
         std::printf("%-17s %8.3f ms median, %.3f ms worst of %d; CPU %.0f%% of one core, %.0f%% spinning (%.2f ms a frame)\n",
                     key, times[times.size() / 2], times.back(), frames, 100.0 * cpu / wall,
