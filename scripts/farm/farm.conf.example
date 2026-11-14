@@ -16,6 +16,8 @@ FARM_TREES="release asan tsan"
 
 # Build parallelism. Leave the benchmark cores alone once isolcpus is set.
 FARM_JOBS=8
+# Builds refuse to start with less free disk than this on FARM_HOME's drive.
+FARM_MIN_FREE_GB=20
 
 # The soak: how long one run lasts (minutes), and how long without a line of
 # output counts as a hang (soak_engine prints every 10 cycles).

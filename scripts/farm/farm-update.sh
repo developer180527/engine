@@ -32,7 +32,7 @@ if [ ! -d "$REPO/.git" ]; then
   log "first run: cloning $FARM_REPO_URL"
   git clone --quiet --branch "$FARM_BRANCH" "$FARM_REPO_URL" "$REPO"
 fi
-cd "$REPO"
+cd "$REPO" || exit 2
 case "$(git remote get-url origin)" in
   https://*) ;;
   *) log "origin is not an https URL; refusing (the farm fetches anonymously)"; exit 2 ;;
@@ -40,6 +40,15 @@ esac
 git fetch --quiet origin "$FARM_BRANCH"
 SHA=$(git rev-parse FETCH_HEAD)
 SHORT=${SHA:0:10}
+
+# Disk: three trees of the whole engine with debug info filled a 69 GB root
+# (2026-11-14: the TSan build died in the assembler and ar with the disk full).
+# Builds now make only RUN_BINARIES, and refuse to start below FARM_MIN_FREE_GB.
+free_gb=$(df -Pk "$FARM_HOME" | awk 'NR==2{print int($4/1048576)}')
+if [ "$free_gb" -lt "${FARM_MIN_FREE_GB:-20}" ]; then
+  log "only ${free_gb} GB free on $FARM_HOME (need ${FARM_MIN_FREE_GB:-20}); not building. Free space or move FARM_HOME."
+  exit 1
+fi
 
 todo=""
 for t in $FARM_TREES; do
@@ -73,7 +82,7 @@ for t in $todo; do
   if cmake -S "$REPO" -B "$b" -G Ninja $f \
         -DENGINE_BUILD_EDITOR=OFF -DENGINE_BUILD_SAMPLES=OFF -DENGINE_WITH_RUST=OFF \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >"$logf" 2>&1 \
-     && cmake --build "$b" --parallel "$FARM_JOBS" >>"$logf" 2>&1; then
+     && cmake --build "$b" --parallel "$FARM_JOBS" --target $RUN_BINARIES >>"$logf" 2>&1; then
     out="$BIN/$t/$SHORT"; mkdir -p "$out"
     for x in $RUN_BINARIES; do [ -x "$b/$x" ] && cp "$b/$x" "$out/"; done
     "$REPO/scripts/farm/farm-state.sh" >"$out/machine.txt"
