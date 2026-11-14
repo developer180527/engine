@@ -143,4 +143,19 @@ void operator delete(void* p, std::align_val_t, const std::nothrow_t&) noexcept 
 void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcept { engine_global_free(p); }
 #endif // ENGINE_MEM_ROUTE
 
+#else // neither: a heap sanitizer owns allocations (ENGINE_MEM_ROUTE=0)
+
+// ── mem::SystemNewScope still has to exist ───────────────────────────────────
+// Every thread the engine starts goes through engine::threads::start, which
+// opens one, sanitizer build or not. With no routing there is nothing for it to
+// switch, but it must link: since the job pool started its workers that way
+// (2026-11-14), the ASan build failed to link jobs_native.cpp on Linux. It
+// still counts, so systemNewActive() stays truthful.
+static thread_local int t_systemNew = 0;
+namespace mem {
+SystemNewScope::SystemNewScope()  { ++t_systemNew; }
+SystemNewScope::~SystemNewScope() { --t_systemNew; }
+bool systemNewActive() { return t_systemNew > 0; }
+}
+
 #endif // ENGINE_MEM_COUNT || ENGINE_MEM_ROUTE
