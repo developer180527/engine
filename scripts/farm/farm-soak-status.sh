@@ -18,6 +18,7 @@ fi
 echo "past runs:"
 for d in $(ls -1dt "$RESULTS"/soak/2*/ 2>/dev/null | head -n "$n"); do
   v=$(grep -m1 '^verdict=' "$d/verdict.txt" 2>/dev/null | cut -d= -f2); r=$(grep -m1 '^reason=' "$d/verdict.txt" 2>/dev/null | cut -d= -f2-)
+  [ -z "$v" ] && r="$(( $(wc -l <"$d/metrics.csv" 2>/dev/null || echo 1) - 1 )) minutes so far"
   printf '  %-40s %-10s %s\n' "$(basename "$d")" "${v:-running}" "$r"
 done
 echo "after a 'fail': read soak.log in the run folder, 'coredumpctl list soak_engine' for a core,"

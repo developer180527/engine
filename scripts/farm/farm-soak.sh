@@ -26,7 +26,7 @@ RUN="$RESULTS/soak/$(date -u +%Y%m%d-%H%M%S)-$TREE-$BUILD"
 mkdir -p "$RUN"
 cp "$CUR/machine.txt" "$CUR/commit" "$RUN/" 2>/dev/null || true
 "$REPO/scripts/farm/farm-state.sh" >"$RUN/machine-at-start.txt"
-ln -sfn "$RUN" "$RESULTS/soak/latest"
+ln -sfn "$(basename "$RUN")" "$RESULTS/soak/latest"   # relative: survives moving FARM_HOME
 
 finish() {   # verdict, reason
   printf 'verdict=%s\nreason=%s\nbuild=%s\ntree=%s\nended=%s\n' \
