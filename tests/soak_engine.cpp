@@ -45,14 +45,23 @@ static uint64_t totalLiveBytes() {
     return sum;
 }
 
-// Least-squares slope of y over sample index (bytes per cycle).
-static double slopePerCycle(const std::vector<uint64_t>& y) {
-    const size_t n = y.size();
+// ── Memory samples: a FIXED buffer, thinned as the run grows ────────────────
+// One sample per cycle in a growing vector was the harness's own leak: 8 bytes
+// a cycle, counted in the very live-bytes total it was judging. On the home
+// server's 48-hour soak (2026-11-14) that read as resident memory climbing
+// 4 MB/h with the engine's heap flat. Now: at most kMaxSamples, reserved up
+// front; when full, every other one is dropped and the stride doubles, so the
+// buffer always spans the whole run and never allocates after the start.
+struct MemSample { uint64_t cycle, bytes; };
+constexpr size_t kMaxSamples = 4096;
+
+// Least-squares slope of bytes over cycle number (bytes per cycle).
+static double slopePerCycle(const MemSample* s, size_t n) {
     if (n < 2) return 0.0;
     double sx = 0, sy = 0, sxx = 0, sxy = 0;
     for (size_t i = 0; i < n; ++i) {
-        sx += (double)i; sy += (double)y[i];
-        sxx += (double)i * (double)i; sxy += (double)i * (double)y[i];
+        const double x = (double)s[i].cycle, y = (double)s[i].bytes;
+        sx += x; sy += y; sxx += x * x; sxy += x * y;
     }
     const double denom = (double)n * sxx - sx * sx;
     return denom != 0.0 ? ((double)n * sxy - sx * sy) / denom : 0.0;
@@ -81,7 +90,10 @@ int main(int argc, char** argv) {
                         + std::chrono::duration<double>(minutes * 60.0);
     const float dt = 1.0f / 60.0f;
 
-    std::vector<uint64_t> memSamples;
+    std::vector<MemSample> memSamples;
+    memSamples.reserve(kMaxSamples);
+    uint64_t sampleStride = 1;
+    uint64_t liveNow = 0;
     int64_t  entityBaseline = -1;
     uint64_t cycles = 0, totalJobs = 0, totalEntities = 0;
     double   worstCanaryMs = 0.0;
@@ -166,11 +178,20 @@ int main(int argc, char** argv) {
                 "edit world back to baseline (%lld vs %lld, cycle %" PRIu64 ")",
                 (long long)edit, (long long)entityBaseline, cycles);
 
-        memSamples.push_back(totalLiveBytes());
+        liveNow = totalLiveBytes();
+        if (cycles % sampleStride == 0) {
+            if (memSamples.size() == kMaxSamples) {   // thin: keep every other, double the stride
+                size_t w = 0;
+                for (size_t r = 1; r < memSamples.size(); r += 2) memSamples[w++] = memSamples[r];
+                memSamples.resize(w);
+                sampleStride *= 2;
+            }
+            if (cycles % sampleStride == 0) memSamples.push_back({cycles, liveNow});
+        }
         if (cycles % 10 == 1)
             std::printf("  cycle %-5" PRIu64 " live=%.2f MB canary=%.2fms "
                         "entities=%" PRIu64 " jobs=%" PRIu64 "\n",
-                        cycles, memSamples.back() / (1024.0 * 1024.0),
+                        cycles, liveNow / (1024.0 * 1024.0),
                         worstCanaryMs, totalEntities, totalJobs);
     }
 
@@ -183,21 +204,26 @@ int main(int argc, char** argv) {
         // Skip the first quarter: caches legitimately warm up (flecs tables,
         // TLSF pools, query caches). After warmup the slope must be flat.
         const size_t skip = memSamples.size() / 4;
-        std::vector<uint64_t> settled(memSamples.begin() + skip, memSamples.end());
-        const double slope = slopePerCycle(settled);
-        const double total = slope * (double)settled.size();
-        std::printf("  memory: %.2f MB live, slope %+.1f KB/cycle "
-                    "(%+.2f MB over %zu settled cycles)\n",
-                    memSamples.back() / (1024.0 * 1024.0), slope / 1024.0,
-                    total / (1024.0 * 1024.0), settled.size());
-        // A real leak compounds: sustained positive slope AND material total.
-        REQUIRE(!(slope > 64.0 * 1024.0 && total > 8.0 * 1024.0 * 1024.0),
-                "memory slope indicates a leak (%.1f KB/cycle)", slope / 1024.0);
+        const MemSample* settled = memSamples.data() + skip;
+        const size_t n = memSamples.size() - skip;
+        const double slope = slopePerCycle(settled, n);
+        const double span = (double)(settled[n - 1].cycle - settled[0].cycle);
+        const double total = slope * span;
+        std::printf("  memory: %.2f MB live, slope %+.3f KB/cycle "
+                    "(%+.2f MB over %.0f settled cycles)\n",
+                    liveNow / (1024.0 * 1024.0), slope / 1024.0,
+                    total / (1024.0 * 1024.0), span);
+        // A leak is growth that ADDS UP: judged on the total over the settled
+        // span, not per cycle. The old rule (over 64 KB a cycle) suited the
+        // 1-minute CI run and let a 1 KB-a-cycle leak, ~25 GB over a 48-hour
+        // soak, pass.
+        REQUIRE(!(total > 16.0 * 1024.0 * 1024.0),
+                "memory grew %.1f MB over the settled run (%.3f KB/cycle): a leak",
+                total / (1024.0 * 1024.0), slope / 1024.0);
     } else {
         std::printf("  memory: %.2f MB live (too few cycles for trend — "
                     "run longer for leak detection)\n",
-                    memSamples.empty() ? 0.0
-                    : memSamples.back() / (1024.0 * 1024.0));
+                    liveNow / (1024.0 * 1024.0));
     }
 
     engine.shutdown();
