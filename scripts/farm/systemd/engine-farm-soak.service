@@ -1,6 +1,8 @@
 [Unit]
 Description=Engine farm: days-long soak (soak_engine), stops and keeps evidence on a finding
-After=engine-farm-update.service
+# No After=engine-farm-update.service: that made a start wait for every tree
+# (ASan, TSan) to build, when the soak needs only bin/release/current. With no
+# build yet it exits 2 and retries a minute later.
 # A finding (exit 1) leaves the unit failed until a person looks; a finished run
 # or a newer build (exit 0) starts the next run. Exit 2 = no build yet: retry.
 StartLimitIntervalSec=0
