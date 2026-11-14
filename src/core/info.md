@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-11
+verified: 2026-11-14
 covers:
   - src/core/
 tests:
@@ -73,7 +73,9 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   refuses a larger rig by name; `render_pipeline_test` checks the shaders'
   literal against it. Here, not in `animation/`, because `SkinnedMesh` is a
   component and components depend on core only (WO-040).
-- **`jobs/`** — the job system (`jobs.h` facade, enkiTS behind it); see
+- **`jobs/`** — the job system (`jobs.h`; since 2026-11-14 the engine's own
+  scheduler behind it, compiled into `engine_core`, enkiTS kept as a second
+  backend: DR-0036); see
   `jobs/info.md`. Moved from `src/runtime/jobs` on 2026-10-01 (WO-046): it
   depends on core alone, and the renderer, systems and audio including it
   from `runtime/` made them depend on the orchestration layer. It is still
@@ -161,7 +163,8 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   place, `engine::threads::start` (`thread_start.h`), which holds a
   `mem::SystemNewScope`: on that thread, for that call, global new is the system
   allocator. Everything else stays in the tagged heaps, in `libeng` too.
-  `jobs::init` holds the same scope around enkiTS's start-up (its workers are
+  The job pool's and the I/O lane's threads start the same way (the enkiTS
+  backend holds the scope around enkiTS's start-up instead, since its workers are
   `std::thread`s), and the raw-input source around the hid module's. Audit rule
   THREAD-01 keeps `std::thread(` out of the rest of `src/`. Tests:
   `eng_shared_test` (fails without the scope), `mem_test`.
@@ -182,7 +185,10 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   reset() frees everything in O(1). Opt-in/explicit (our code uses it, it
   intercepts nothing). Lifetime: valid only within the frame; trivial
   destruction only; one arena per thread. EngineRuntime owns one (4 MB),
-  reset each frameBegin; reach it via `engine.frameArena()`.
+  reset each frameBegin; reach it via `engine.frameArena()`. Since 2026-11-14
+  its block and overflow come from the engine heap under a tag (they were
+  `malloc`, invisible to the memory telemetry), and `mark()`/`rewind()` make it
+  a stack, which is what `jobs::ScratchScope` stands on.
 - **`json_read.h`** — bounds- and type-safe reads out of `nlohmann::json`.
   Exists because the SAME bug was written four times: nlohmann's CONST
   `operator[](size_type)` is UNDEFINED BEHAVIOUR out of range (it is not

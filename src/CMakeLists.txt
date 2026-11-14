@@ -128,6 +128,15 @@ else()
                    "dev-only targets skipped")
 endif()
 
+# The job system's backend (src/core/jobs/jobs.h). `native` is the engine's own
+# work-stealing scheduler; `enkits` is the previous one, kept for comparison.
+# Both pass the same tests (jobs_test, jobs_fuzz_test, stress_jobs).
+set(ENGINE_JOBS_BACKEND "native" CACHE STRING "Job system backend: native or enkits")
+set_property(CACHE ENGINE_JOBS_BACKEND PROPERTY STRINGS native enkits)
+if(NOT ENGINE_JOBS_BACKEND MATCHES "^(native|enkits)$")
+    message(FATAL_ERROR "ENGINE_JOBS_BACKEND must be native or enkits, not '${ENGINE_JOBS_BACKEND}'")
+endif()
+
 add_library(engine_core STATIC
     # NO cook stack here (WO-017): the cookers, import front ends and encoders
     # are the engine_cooking library below, and engine_core links none of them.
@@ -148,6 +157,12 @@ add_library(engine_core STATIC
     # global new/delete that feeds it
     core/memory/mem.cpp
     core/mem_counters.cpp
+    # The job system. In engine_core, with memory: both are what every other
+    # part stands on, and a tool that links only engine_core (the cooker) gets
+    # the same pool as the runtime. It was compiled into engine_runtime while
+    # living in src/core.
+    core/jobs/jobs_shared.cpp
+    core/jobs/jobs_${ENGINE_JOBS_BACKEND}.cpp
     core/thread_qos.cpp
     core/thread_stack.cpp
     ${CMAKE_SOURCE_DIR}/third_party/tlsf/tlsf.c
@@ -168,6 +183,7 @@ target_include_directories(engine_core PUBLIC
 
 target_link_libraries(engine_core PUBLIC
     assetlib
+    enkiTS                                # task scheduler behind engine::jobs (facade-only include)
     ozz_animation ozz_animation_offline   # skinned-mesh cooker (skeleton/clip archives)
 )
 # Same policy for the single-header decode/parse TUs: stb decodes 4K PNGs,
@@ -404,7 +420,6 @@ add_library(engine_runtime STATIC
     runtime/services/async_loader/upload.cpp
     runtime/scripting/engine_api.cpp
     runtime/scripting/engine_api_table.cpp
-    core/jobs/jobs_enkits.cpp
     runtime/input/input_manager.cpp
 
     # Cooked-binary loaders

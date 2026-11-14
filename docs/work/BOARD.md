@@ -64,6 +64,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-068](WO-068-nothing-cooked-at-runtime.md) | Nothing is cooked or compiled at runtime — shaders' final driver step is the only exception | Asset import & cooking | L | blocked by WO-069 | — |
 | [WO-069](WO-069-engine-owned-animation-and-audio-formats.md) | Cooked animation and audio in the engine's own formats, so changing a provider never changes them | Asset import & cooking | L | **ready** | audio-provider |
 | [WO-077](WO-077-swap-providers-at-dev-time.md) | Swap a provider at development time — loaded by name, changed when the simulation stops | Providers & modules | L | blocked by WO-076 | engine-plugin, audio-provider |
+| [WO-079](WO-079-job-system-follow-ups.md) | Job system follow-ups — the last private threads, a frame-start wake, other platforms, retiring enkiTS | Process & context | M | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
@@ -90,6 +91,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-078](WO-078-the-engines-own-job-scheduler.md) | The engine's own job scheduler — work stealing, priorities, an I/O lane, scratch memory; measured and fuzzed | 2026-11-14 | tests/jobs_fuzz_test.cpp (60 seeds in the unit lane, 1 500 passed; both backends; ThreadSanitizer clean on 190 seeds; two planted bugs caught); tests/jobs_bench.cpp (a paced frame 0.54 ms against enkiTS's 2.03 ms at half the CPU, numbers in src/core/jobs/info.md); unit, audit and docs lanes on the native backend |
 | [WO-056](WO-056-rhi-g2-prerequisites.md) | RHI G2 prerequisites — the reading and decisions the first triangle needs | 2026-10-12 | studies 001, 002, 007, 008 concluded (008 by docs/rhi/studies/008-spike/spike.sh, Metal runs mutation-checked); design-api.md §4.5-4.7; DR-0013 |
 | [WO-051](WO-051-kit-abi-meaning-revisions.md) | A kit-ABI component that changes meaning refuses old kits, instead of loading them | 2026-10-06 | tests/module_abi/tests/gate.rs (old_revision fixture refused, named); ctest kit_abi_headers; mutations in the log |
 | [WO-033](WO-033-the-image-is-mirrored.md) | Every camera renders the world mirrored left-to-right | 2026-10-06 | checked by eye by the owner 2026-10-06, editor and player screenshots of a text-textured single-sided quad (READ ME, LEFT, RIGHT +X): text reads, +X on the right, back face culled, gizmo and fly camera move the way they point |

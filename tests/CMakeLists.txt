@@ -246,7 +246,19 @@ endif()
 engine_test(event_test)
 engine_test(input_test)
 engine_test(script_host_test)
-engine_test(jobs_test)
+engine_test(jobs_test LIB engine_core)
+# Random use of every jobs:: entry point from engine and foreign threads, checked
+# exactly (every body once, waits honest, scratch intact). 60 seeds in the unit
+# lane; the stress lane runs 1500. Written against jobs.h only, so it gates
+# either backend.
+engine_test(jobs_fuzz_test LIB engine_core TIMEOUT 300)
+add_test(NAME jobs_fuzz_long COMMAND jobs_fuzz_test 1500 1000)
+set_tests_properties(jobs_fuzz_long PROPERTIES LABELS stress TIMEOUT 1800)
+# Measurements, not a test: built everywhere so it cannot rot, run by hand from an
+# optimised tree (the file says how). Not registered with ctest.
+add_executable(jobs_bench jobs_bench.cpp)
+target_link_libraries(jobs_bench PRIVATE engine_core)
+set_target_properties(jobs_bench PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 # Thread scheduling classes. Every engine::qos call site is fire-and-forget, so
 # a deleted or never-fired hook produces a build that is merely slower on a
 # machine we do not own — the profile of a call site that quietly stops running.

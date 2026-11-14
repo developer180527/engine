@@ -92,7 +92,7 @@ public:
                         st.sampleRate, st.bufferFrames);
         };
 
-        if (jobs::initialized()) m_openJob = jobs::run("audio.deviceStart", open);
+        if (jobs::initialized()) m_openJob = jobs::runIo("audio.deviceStart", open);   // blocks ~0.5 s in the OS
         else                     open();   // tools and tests: same behaviour
     }
 

@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-11
+verified: 2026-11-14
 parses-external-input: true
 covers:
   - src/runtime/
@@ -1095,3 +1095,8 @@ cost three CI round-trips one error at a time, because a build stops at the firs
 failure. `scripts/check_std_includes.py` now finds them all in one local pass and
 runs as the `std_includes` unit test — it caught two of its author's own the
 moment they were written.
+
+**2026-11-14.** `AsyncLoader::dispatch` submits to the job system's I/O lane
+(`jobs::runIo`): a load reads files, and a pool worker blocked in a read is a
+core the frame does not have. Requests were already chained one at a time, so
+the lane's few threads lose no throughput.

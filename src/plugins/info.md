@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-11-06
+verified: 2026-11-14
 covers:
   - src/plugins/
 tests:
@@ -99,7 +99,9 @@ Both run through the same `PluginRegistry` broadcasts.
 - **`JoltJobsAdapter`** (`jolt_jobs_adapter.h`) — Jolt's `JobSystem` on the
   engine worker pool, so physics does not oversubscribe cores against
   animation and loading. Three things about it are load-bearing:
-  - **`jobs::run` is not always asynchronous.** enkiTS runs a task inline on
+  - **`jobs::run` is not always asynchronous.** (The native scheduler has the
+    same property: a full queue makes the submitter run the job. What follows
+    was found on enkiTS and holds for both.) enkiTS runs a task inline on
     the submitting thread when that thread's pipe is full, and Jolt spawns
     collision jobs from inside collision jobs, so under contention a Jolt job
     started on a thread already running one — tripping `JPH::BodyAccess`'s
@@ -225,3 +227,6 @@ the feet.
 Reaches Lua (`entity:teleport`) and the C++ `ScriptHost`. **Not the frozen C
 ABI** — `EngineApiPhysicsV1` is layout-frozen, so a native kit cannot teleport
 until `EngineApiPhysics2V1` is appended in stage 3b.
+
+**2026-11-14.** The audio device start runs on the job system's I/O lane
+(`jobs::runIo`), not the pool: it blocks for about half a second in the OS.

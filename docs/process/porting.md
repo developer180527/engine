@@ -12,12 +12,10 @@ with this list instead of compiling and misbehaving. Windows, macOS and
 Linux implement all of it. An OS that really is POSIX-family is one line in
 `src/core/os_family.h`.
 
-**16 item(s)**
+**14 item(s)**
 
 | file | the port must provide |
 |---|---|
-| `src/core/frame_arena.h` | FrameArena overflow needs an aligned heap allocation (and its matching free) |
-| `src/core/frame_arena.h` | FrameArena overflow needs the free that matches its aligned allocation |
 | `src/core/memory/mem.cpp` | core/memory needs a 2 MB-aligned reserve+commit of address space (mapAligned) |
 | `src/core/memory/mem.cpp` | core/memory needs a mutex that is trivially destructible and statically initialisable (ImmortalMutex) |
 | `src/core/memory/mem.cpp` | core/memory needs page mapping, a page-size query and a trivially destructible mutex |

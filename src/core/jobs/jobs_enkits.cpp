@@ -4,6 +4,7 @@
 // a FiberTaskingLib backend would be a sibling .cpp mapping the same contract
 // onto ftl::TaskScheduler + WaitForCounter, selected in src/CMakeLists.txt.
 #include "core/jobs/jobs.h"
+#include "core/jobs/jobs_shared.h"
 
 #include <TaskScheduler.h>
 
@@ -85,6 +86,7 @@ struct RunTask final : public enki::ITaskSet {
         // racing that clear corrupts the vectors — multi-second clear()
         // stalls and an unresponsive app. parallelFor keeps its scope: it
         // BLOCKS, so its scopes always close within the frame.
+        ScratchScope scratch;
         fn();
     }
 };
@@ -92,9 +94,6 @@ struct RunTask final : public enki::ITaskSet {
 std::mutex                            g_inflightMu;
 std::vector<std::shared_ptr<RunTask>> g_inflight;
 
-std::mutex                         g_mainMu;
-std::vector<std::function<void()>> g_mainQueue;
-std::vector<std::function<void()>> g_mainScratch;   // drained copy (run unlocked)
 
 // Blocking parallelFor task — lives on the caller's stack, so no registry.
 struct ForTask final : public enki::ITaskSet {
@@ -102,13 +101,16 @@ struct ForTask final : public enki::ITaskSet {
     const std::function<void(uint32_t, uint32_t)>* fn;
     void ExecuteRange(enki::TaskSetPartition r, uint32_t) override {
         ENGINE_PROFILE_SCOPE(name);
+        ScratchScope scratch;
         (*fn)(r.start, r.end);
     }
 };
 
 } // namespace
 
-void init(uint32_t numWorkers) {
+const char* backendName() { return "enkits"; }
+
+void init(uint32_t numWorkers, int /*spinMicros: enkiTS fixes its own*/) {
     if (g_init.load()) return;
     g_mainThread = std::this_thread::get_id();
 
@@ -149,6 +151,7 @@ void init(uint32_t numWorkers) {
         mem::SystemNewScope systemNew;
         g_ts.Initialize(cfg);
     }
+    detail::startShared();
 
     g_init.store(true);
     LOG_INFO("Jobs", "worker pool up: %u task threads (workers + main), spawned once",
@@ -157,15 +160,12 @@ void init(uint32_t numWorkers) {
 
 void shutdown() {
     if (!g_init.load()) return;
+    detail::shutdownShared();   // the I/O lane first, while the pool still takes work
     g_ts.WaitforAllAndShutdown();
     g_init.store(false);
     {
         std::lock_guard<std::mutex> lk(g_inflightMu);
         g_inflight.clear();
-    }
-    {
-        std::lock_guard<std::mutex> lk(g_mainMu);
-        g_mainQueue.clear();
     }
     LOG_INFO("Jobs", "worker pool down");
 }
@@ -176,7 +176,7 @@ uint32_t workerCount() {
     return g_init.load() ? g_ts.GetNumTaskThreads() : 1u;
 }
 
-JobHandle run(const char* name, std::function<void()> fn) {
+JobHandle run(const char* name, std::function<void()> fn, Priority priority) {
     // No pool (headless tools, early boot): run inline. A default handle is
     // "already complete", so callers' wait() is still correct.
     if (!g_init.load()) { fn(); return {}; }
@@ -187,6 +187,7 @@ JobHandle run(const char* name, std::function<void()> fn) {
     if (!ensureThreadRegistered()) { fn(); return {}; }
 
     auto task = std::make_shared<RunTask>(name, std::move(fn));
+    task->m_Priority = (enki::TaskPriority)priority;
 
     // ── PIPE FIRST, THEN REGISTER, and the order is the whole fix ───────────
     // enkiTS's GetIsComplete() is `m_RunningCount == 0`, and m_RunningCount
@@ -217,7 +218,7 @@ JobHandle run(const char* name, std::function<void()> fn) {
 }
 
 void parallelFor(const char* name, uint32_t count, uint32_t grain,
-                 const std::function<void(uint32_t, uint32_t)>& fn) {
+                 const std::function<void(uint32_t, uint32_t)>& fn, Priority priority) {
     if (count == 0) return;
     const uint32_t g = grain > 0 ? grain : 1;
     // Not worth a dispatch (or no pool): run the whole range inline.
@@ -231,12 +232,18 @@ void parallelFor(const char* name, uint32_t count, uint32_t grain,
     t.fn         = &fn;
     t.m_SetSize  = count;
     t.m_MinRange = g;
+    t.m_Priority = (enki::TaskPriority)priority;
     g_ts.AddTaskSetToPipe(&t);
     g_ts.WaitforTask(&t);   // caller works on ranges too — never idles
 }
 
 void wait(JobHandle h) {
     if (!h.valid() || !g_init.load()) return;
+    if (h.lane == 1) {   // an I/O lane job: not an enkiTS task
+        auto* s = static_cast<detail::JobState*>(h.opaque.get());
+        detail::helpUntil([s] { return s->done.load(std::memory_order_acquire); });
+        return;
+    }
     // WaitforTask makes the calling thread help run tasks, so it needs a slot
     // for the same reason. Without one, spin here rather than corrupt slot 0.
     if (!ensureThreadRegistered()) {
@@ -250,64 +257,25 @@ void wait(JobHandle h) {
     g_ts.WaitforTask(static_cast<RunTask*>(h.opaque.get()));
 }
 
-void onMain(std::function<void()> fn) {
-    std::lock_guard<std::mutex> lk(g_mainMu);
-    g_mainQueue.push_back(std::move(fn));
-}
-
-size_t pumpMain() {
-    // Frame-loop only, main thread only (facade-level pinning — see jobs.h).
-    if (std::this_thread::get_id() != g_mainThread && g_init.load()) {
-        LOG_ERROR("Jobs", "pumpMain() off the main thread — ignoring");
-        return 0;
-    }
-    {
-        std::lock_guard<std::mutex> lk(g_mainMu);
-        g_mainScratch.swap(g_mainQueue);
-    }
-    const size_t ran = g_mainScratch.size();
-    for (auto& fn : g_mainScratch) fn();
-    g_mainScratch.clear();
-
-    // Sweep finished run() tasks: drop the registry's reference. Blocks
-    // whose handles were discarded die here; stashed handles keep theirs
-    // alive (shared ownership — see jobs.h lifetime note).
-    {
-        std::lock_guard<std::mutex> lk(g_inflightMu);
-        for (size_t i = g_inflight.size(); i-- > 0;) {
-            if (g_inflight[i]->GetIsComplete()) {
-                g_inflight[i] = std::move(g_inflight.back());
-                g_inflight.pop_back();
-            }
+// ── What jobs_shared.cpp needs from a backend ───────────────────────────────
+// enkiTS has no "run one job" call, so a thread waiting on an I/O job does not
+// help the pool here; it relaxes and parks.
+bool detail::tryRunOne()    { return false; }
+bool detail::hasPending()   { return false; }
+int  detail::spinMicros()   { return 50; }
+bool detail::onMainThread() { return !g_init.load() || std::this_thread::get_id() == g_mainThread; }
+void detail::backendSweep() {
+    // Drop the registry's reference to finished run() tasks. Blocks whose
+    // handles were discarded die here; stashed handles keep theirs alive.
+    std::lock_guard<std::mutex> lk(g_inflightMu);
+    for (size_t i = g_inflight.size(); i-- > 0;) {
+        if (g_inflight[i]->GetIsComplete()) {
+            g_inflight[i] = std::move(g_inflight.back());
+            g_inflight.pop_back();
         }
     }
-    return ran;
 }
 
-void drainMain(int maxRounds) {
-    // Rounds, not one pass: pumpMain() swaps the queue before running anything,
-    // so a callback that queues more work leaves that work behind — and "behind"
-    // means "still queued when the dylib it points into is unloaded".
-    for (int i = 0; i < maxRounds; ++i)
-        if (pumpMain() == 0) return;
-    // DROPPED, not merely reported. The first version of this logged "dropping
-    // them" and then returned with the queue intact — so the next pumpMain()
-    // still ran the callback, which is the very thing draining before an unload
-    // exists to prevent. Caught by tests/jobs_test.cpp, which pumps afterwards
-    // and asserts nothing is left.
-    std::vector<std::function<void()>> abandoned;
-    {
-        std::lock_guard<std::mutex> lk(g_mainMu);
-        abandoned.swap(g_mainQueue);
-    }
-    if (!abandoned.empty())
-        LOG_WARN("Jobs", "%zu main-thread callback(s) still queued after %d "
-                 "drain rounds — DROPPED. Something re-queues itself every "
-                 "round; that work will not run.", abandoned.size(), maxRounds);
-    // Destroyed here, outside the lock: a callback's captures may run arbitrary
-    // destructors, and holding the queue lock through them invites a deadlock
-    // against a worker calling onMain.
-    abandoned.clear();
-}
+Stats stats() { Stats s{}; s.ioJobs = detail::ioJobsRun(); return s; }
 
 } // namespace jobs

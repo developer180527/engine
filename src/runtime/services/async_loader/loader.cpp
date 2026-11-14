@@ -151,7 +151,9 @@ void AsyncLoader::armWorker() {
 }
 
 void AsyncLoader::dispatch(LoadRequest req) {
-    jobs::run("io.assetLoad", [this, req = std::move(req)]() mutable {
+    // The I/O lane, not the pool: this reads files, and a worker blocked in a
+    // read is a core the frame does not have (jobs.h).
+    jobs::runIo("io.assetLoad", [this, req = std::move(req)]() mutable {
         // Asset work allocates under the Assets tag (Assimp scenes, vertex
         // staging, ozz scratch) regardless of which pool thread runs it.
         MEM_SCOPE(mem::Tag::Assets);

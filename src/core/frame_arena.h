@@ -1,5 +1,5 @@
 #pragma once
-#include "core/os_family.h"
+#include "core/memory/mem.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -23,7 +23,13 @@
 //   • NOT THREAD-SAFE: one arena per thread. v1 = one main-thread arena;
 //     per-thread arenas arrive with the job system.
 //
-// Lives in core/ — pure std, zero engine deps (engine_core).
+// BACKING: the block and any overflow come from the engine's heap (mem::alloc)
+// under the tag given to init(), so arenas show up in the memory telemetry.
+// They used to come from malloc and were invisible to it.
+//
+// mark()/rewind() make it a STACK: a scope takes a mark, allocates, and rewinds,
+// freeing only what it allocated. jobs::ScratchScope uses this so a job that
+// runs inside another job's wait does not free the outer job's scratch.
 namespace mem {
 
 class FrameArena {
@@ -33,18 +39,18 @@ public:
     FrameArena(const FrameArena&)            = delete;
     FrameArena& operator=(const FrameArena&) = delete;
 
-    // Reserve the backing block once. (malloc for v1 — a single large block;
-    // mmap with lazy commit is a later option for very large arenas.)
-    void init(size_t bytes) {
+    // Reserve the backing block once, from the engine's heap.
+    void init(size_t bytes, Tag tag = Tag::Frame) {
         shutdown();
-        m_base     = (uint8_t*)std::malloc(bytes);
+        m_tag      = tag;
+        m_base     = (uint8_t*)mem::alloc(bytes, 64, tag);
         m_capacity = m_base ? bytes : 0;
         m_offset   = 0;
         m_highWater = 0;
     }
     void shutdown() {
-        freeOverflow();
-        std::free(m_base);
+        freeOverflow(0);
+        mem::free(m_base);
         m_base = nullptr; m_capacity = m_offset = m_highWater = 0;
     }
 
@@ -75,8 +81,18 @@ public:
     // Frees everything allocated since the last reset (call once per frame).
     void reset() {
         m_offset = 0;
-        freeOverflow();
+        freeOverflow(0);
     }
+
+    // A position to come back to. rewind(m) frees everything allocated since
+    // mark() returned m, and nothing allocated before it.
+    struct Mark { size_t offset; size_t overflowCount; };
+    Mark mark() const { return { m_offset, m_overflow.size() }; }
+    void rewind(Mark m) {
+        if (m.offset <= m_offset) m_offset = m.offset;
+        freeOverflow(m.overflowCount);
+    }
+    bool initialised() const { return m_base != nullptr; }
 
     size_t used()          const { return m_offset; }
     size_t capacity()      const { return m_capacity; }
@@ -86,31 +102,17 @@ public:
 private:
     void* overflowAlloc(size_t bytes, size_t align) {
         warnOverflowOnce();
-        void* p = nullptr;
-#if defined(_WIN32)
-        p = _aligned_malloc(bytes, align < sizeof(void*) ? sizeof(void*) : align);
-#elif ENGINE_OS_POSIX
-        if (align < sizeof(void*)) align = sizeof(void*);
-        // size must be a multiple of alignment for aligned_alloc
-        size_t sz = (bytes + align - 1) & ~(align - 1);
-        if (posix_memalign(&p, align, sz) != 0) p = nullptr;
-#else
-#  error "port: FrameArena overflow needs an aligned heap allocation (and its matching free)"
-#endif
-        if (p) { m_overflow.push_back(p); m_overflowBytes += bytes; }
+        void* p = mem::alloc(bytes, align, m_tag);
+        if (p) { m_overflow.push_back({p, bytes}); m_overflowBytes += bytes; }
         return p;
     }
-    void freeOverflow() {
-        for (void* p : m_overflow)
-#if defined(_WIN32)
-            _aligned_free(p);
-#elif ENGINE_OS_POSIX
-            std::free(p);
-#else
-#  error "port: FrameArena overflow needs the free that matches its aligned allocation"
-#endif
-        m_overflow.clear();
-        m_overflowBytes = 0;
+    // Frees overflow blocks from index `keep` on (0: all of them).
+    void freeOverflow(size_t keep) {
+        while (m_overflow.size() > keep) {
+            m_overflowBytes -= m_overflow.back().bytes;
+            mem::free(m_overflow.back().p);
+            m_overflow.pop_back();
+        }
     }
     static void warnOverflowOnce() {
         static bool warned = false;
@@ -123,7 +125,9 @@ private:
 
     uint8_t*           m_base = nullptr;
     size_t             m_capacity = 0, m_offset = 0, m_highWater = 0;
-    std::vector<void*> m_overflow;          // tracked fallback blocks
+    struct Overflow { void* p; size_t bytes; };
+    std::vector<Overflow> m_overflow;       // tracked fallback blocks
+    Tag                m_tag = Tag::Frame;
     size_t             m_overflowBytes = 0;
 };
 

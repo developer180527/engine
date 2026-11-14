@@ -1,46 +1,46 @@
 #pragma once
-// ── engine::jobs — the engine-wide task scheduler facade ────────────────────
+// ── engine::jobs — the engine-wide task scheduler ───────────────────────────
 //
 // ONE worker pool for the whole engine. Threads are spawned once at init and
-// die at shutdown — thread creation is a boot event, never a frame event
-// (syscall minimization). Every subsystem that wants parallelism schedules
-// through this facade: animation sampling, Jolt physics steps (via the
-// JPH::JobSystem adapter), async loading, cooking.
+// die at shutdown: thread creation is a boot event, never a frame event. Every
+// subsystem that wants parallelism schedules through this header: animation,
+// Jolt (via the JPH::JobSystem adapter), extraction and culling, loading.
 //
-// BACKEND CONTRACT (why this header looks the way it does)
-// The current backend is enkiTS (jobs_enkits.cpp). The API is deliberately
-// shaped so the backend can be swapped for a fiber scheduler
-// (FiberTaskingLib) by writing one new .cpp — no call-site changes:
+// TWO BACKENDS behind this one header, chosen at configure time
+// (ENGINE_JOBS_BACKEND):
+//   native  (default) jobs_native.cpp. Work-stealing, written for this engine,
+//           standard C++ only: no OS call, so the platform layer can supply
+//           threads and parking later without touching it. Wakes only as many
+//           workers as there is new work, and workers spin briefly before they
+//           sleep, which is where it beats enkiTS (docs: src/core/jobs/info.md
+//           has the measurements).
+//   enkits  jobs_enkits.cpp. The previous backend, kept so the two can be
+//           compared on the same tests and the same benchmark.
+// tests/stress_jobs.cpp and tests/jobs_fuzz_test.cpp are written against this
+// header only, and both backends must pass them.
 //
-//   * Dependencies are COUNTER-based, not task-object-based. run() returns a
-//     JobHandle that behaves like FTL's AtomicCounter: wait(h) blocks until
-//     every job scheduled on h has finished. enkiTS maps this onto
-//     ICompletable; FTL maps it onto WaitForCounter.
-//   * wait() HELPS: the waiting thread executes other jobs (enkiTS) or the
-//     fiber yields and the thread picks up other work (FTL). Either way,
-//     waiting never idles a core — but it also means the code AFTER wait()
-//     may resume on a DIFFERENT OS thread under fibers. Hence the rules:
-//       - do NOT cache thread-local state across a wait()/parallelFor() call
+// RULES FOR CODE THAT RUNS IN JOBS (they hold for both backends, and for a
+// fiber backend if there ever is one):
+//   * wait() and parallelFor() HELP: the calling thread runs other jobs while
+//     it waits, so waiting never idles a core. Therefore:
 //       - do NOT hold a mutex across a wait()/parallelFor() call
-//       - do NOT call OS TLS-dependent APIs (OpenGL contexts, etc.) around
-//         waits inside jobs
-//     Code that follows these rules is correct under both backends.
-//   * Main-thread work is a FACADE-level queue (onMain/pumpMain), not a
-//     backend pinned task — fiber schedulers have no clean pinned-task
-//     notion, and bgfx/GLFW calls must land on the real main thread.
-//   * Job functions are std::function; the facade preallocates nothing per
-//     job today (enkiTS allocates once at init). Keep job bodies coarse —
-//     this is a task scheduler, not an instruction-level parallelizer.
-//   * PROFILER RULE: run() bodies must NOT open ENGINE_PROFILE_SCOPEs —
-//     async jobs span profiler frame boundaries, and TimerChannel's
-//     beginFrame clears per-thread buffers assuming every scope closed
-//     (open scope vs clear = data race, corrupted vectors, seconds-long
-//     stalls). parallelFor bodies MAY scope: it blocks, so its scopes
-//     always close inside the frame.
+//       - do NOT cache thread-local state across one
+//       - do NOT call OS-TLS-dependent APIs (GL contexts) around waits
+//   * Main-thread work goes through onMain/pumpMain: window and GPU calls must
+//     land on the real main thread.
+//   * Keep job bodies coarse: this is a task scheduler, not an
+//     instruction-level parallelizer. One range should be >= ~10 µs of work.
+//   * BLOCKING work (file reads, decompression, anything that sleeps in the OS)
+//     goes to runIo(), never run(): a blocked pool worker is a core the frame
+//     does not have.
+//   * PROFILER RULE: run() bodies must NOT open ENGINE_PROFILE_SCOPEs. They are
+//     async and may span profiler frame boundaries, and TimerChannel's
+//     beginFrame clears per-thread buffers assuming every scope closed.
+//     parallelFor bodies MAY scope: it blocks, so its scopes close in the frame.
 //
-// See docs/guides/engine-api.md (Jobs) — kits do NOT get this header; parallelism
-// inside kits goes through the C API once that surface exists.
+// Kits do NOT get this header; they reach the pool through the C API.
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -58,13 +58,25 @@ namespace jobs {
 // handle pins a small control block, so drop handles when done with them.
 struct JobHandle {
     std::shared_ptr<void> opaque;   // backend completion object (type-erased)
+    uint8_t               lane = 0; // 0: the pool, 1: the I/O lane (backend use)
     bool valid() const { return opaque != nullptr; }
 };
+
+// What runs first when there is more work than workers. A worker always takes
+// the highest priority it can find, its own queue first, then anyone's.
+//   Frame       on this frame's critical path. The default, and what every
+//               caller had before priorities existed.
+//   Normal      wanted soon, but a frame must not wait behind it.
+//   Background  streaming, precomputation: runs when nothing else wants a core.
+enum class Priority : uint8_t { Frame = 0, Normal = 1, Background = 2 };
 
 // Spawn the worker pool (hardware_concurrency - 1 workers + the calling
 // thread participates in waits). Call once from EngineRuntime::init on the
 // main thread. numWorkers == 0 picks the default.
-void init(uint32_t numWorkers = 0);
+// spinMicros: how long an idle worker keeps looking for work before it sleeps.
+// Sleeping costs a wake-up (tens of microseconds) the next time work arrives;
+// spinning costs power. < 0 picks the default (see jobs_native.cpp).
+void init(uint32_t numWorkers = 0, int spinMicros = -1);
 void shutdown();
 bool initialized();
 
@@ -75,14 +87,24 @@ uint32_t workerCount();
 // ── Fire-and-track ──────────────────────────────────────────────────────────
 // Schedule fn on the pool. The returned handle completes when fn returns.
 // `name` feeds the profiler; use a string literal (not copied until traced).
-JobHandle run(const char* name, std::function<void()> fn);
+JobHandle run(const char* name, std::function<void()> fn,
+              Priority priority = Priority::Frame);
+
+// ── Blocking work ───────────────────────────────────────────────────────────
+// Runs fn on the I/O lane: a few dedicated threads that exist to be blocked
+// (file reads, decompression, a device opening). They never run pool jobs, and
+// pool workers never run these, so a slow disk cannot take a core from the
+// frame. The threads start on the first call. wait() on the handle helps the
+// pool meanwhile.
+JobHandle runIo(const char* name, std::function<void()> fn);
 
 // ── Data parallelism ────────────────────────────────────────────────────────
 // Split [0, count) across the pool; fn(begin, end) runs on ranges. BLOCKS
 // until every range is done (the calling thread works too). grain is the
 // minimum range size worth a task — pick it so one range is >= ~10µs of work.
 void parallelFor(const char* name, uint32_t count, uint32_t grain,
-                 const std::function<void(uint32_t begin, uint32_t end)>& fn);
+                 const std::function<void(uint32_t begin, uint32_t end)>& fn,
+                 Priority priority = Priority::Frame);
 
 // ── Waiting ─────────────────────────────────────────────────────────────────
 // Block until h completes. The calling thread executes other jobs meanwhile.
@@ -113,5 +135,36 @@ size_t pumpMain();
 // after the cap is a runaway, reported and dropped — dropping work is bad, and
 // calling into a freed library is worse.
 void drainMain(int maxRounds = 8);
+
+// ── Scratch memory for a job ────────────────────────────────────────────────
+// Each thread has its own bump arena (engine heap, Tag::Jobs, created on first
+// use). scratchAlloc is a pointer bump with no lock. Memory lasts until the
+// enclosing ScratchScope ends; every run() and parallelFor range runs inside
+// one, so a job just allocates and returns. Trivially destructible data only.
+// Never hand scratch memory to another job or keep it past the scope.
+void* scratchAlloc(size_t bytes, size_t align = alignof(std::max_align_t));
+template <class T> T* scratchAlloc(size_t count = 1) {
+    return static_cast<T*>(scratchAlloc(sizeof(T) * count, alignof(T)));
+}
+struct ScratchScope {
+    ScratchScope();
+    ~ScratchScope();
+    ScratchScope(const ScratchScope&)            = delete;
+    ScratchScope& operator=(const ScratchScope&) = delete;
+private:
+    size_t m_offset, m_overflow;
+};
+
+// ── What the scheduler has done since init (for tests and the profiler) ─────
+struct Stats {
+    uint64_t jobsRun;       // run() bodies and parallelFor tickets executed
+    uint64_t steals;        // jobs taken from another thread's queue
+    uint64_t parks;         // times a worker went to sleep
+    uint64_t wakes;         // wake-ups asked of the OS
+    uint64_t inlineRuns;    // jobs run by the submitter because a queue was full
+    uint64_t ioJobs;        // jobs run on the I/O lane
+};
+Stats stats();
+const char* backendName();  // "native" or "enkits"
 
 } // namespace jobs

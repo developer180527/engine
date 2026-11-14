@@ -15,6 +15,9 @@ build-sdl3/
 
 # RelWithDebInfo + -DENGINE_PROFILE=1 — the frame-time measurement tree
 build-prof/
+build-rel/
+build-rel-enki/
+build-tsan/
 .buildlog/
 
 # Linux container build tree + ccache (docker/linux-build.Dockerfile)

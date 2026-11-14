@@ -1,12 +1,13 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-11
+verified: 2026-11-14
 covers:
   - src/core/jobs/
 tests:
   - tests/jobs_test.cpp
   - tests/stress_jobs.cpp
+  - tests/jobs_fuzz_test.cpp
   - tests/thread_qos_test.cpp
 ---
 # engine::jobs — the engine-wide task scheduler
@@ -15,6 +16,91 @@ One worker pool for the whole engine, spawned once at `EngineRuntime::init`
 (`jobs::init`), torn down in `shutdown()`. Thread creation is a boot event,
 never a frame event — this subsystem exists so the frame loop makes no
 threading syscalls (workers spin-then-park only when truly idle).
+
+## The scheduler (2026-11-14, DR-0036)
+
+`jobs.h` has two backends, chosen by `ENGINE_JOBS_BACKEND`:
+
+| | `native` (default) | `enkits` |
+|---|---|---|
+| File | `jobs_native.cpp` | `jobs_enkits.cpp` |
+| What it is | the engine's own work-stealing scheduler | the previous one, kept for comparison |
+| OS calls | none: standard C++ only | OS semaphores inside enkiTS |
+| Foreign threads | any number, no registration | 8 slots (BUG-0003, below) |
+
+Shared by both, in `jobs_shared.cpp`: the main-thread queue, the I/O lane,
+per-thread scratch, and waiter parking. The job system is compiled into
+`engine_core` (it was in `engine_runtime` while living in `src/core`).
+
+**How the native backend works**
+- **Queues:** one lock-free deque (Chase-Lev) per pool thread and priority.
+  The owner pushes and pops the newest job without a lock; thieves take the
+  oldest with one compare-and-swap. Threads the engine did not start push to a
+  few shared, locked injection queues.
+- **Priorities:** `Frame`, `Normal`, `Background`. A worker takes the highest
+  it can find anywhere before looking lower. Every caller that passes none gets
+  `Frame`, which is what all of them had before.
+- **Waking:** a push wakes only as many sleepers as it added jobs, and nobody
+  while another worker is already looking for work. An idle worker looks for
+  `spinMicros` (100 µs) before it sleeps.
+- **`parallelFor` allocates nothing:** the job is on the caller's stack, and
+  what is queued are tickets pointing at it. Ticket holders claim ranges from a
+  shared counter. The caller claims too, takes back unstarted tickets, then
+  helps until the rest finish.
+- **`run`:** one block per job from a two-level free list (per thread, then a
+  shared depot), so steady state does not reach the allocator.
+- **The I/O lane (`runIo`):** 2 to 4 threads that exist to be blocked, started
+  on first use. The asset loader and the audio device start use it; they were
+  on the pool, where a blocked read took a core from the frame.
+- **Scratch (`scratchAlloc`, `ScratchScope`):** a bump arena per thread, from
+  the engine heap (`Tag::Jobs`), created on first use. Every job runs inside a
+  scope, and scopes nest, so a job that runs other jobs while it waits keeps
+  its own scratch.
+
+**Measured** (`tests/jobs_bench.cpp`, Release, Apple M-series, 12 threads,
+medians; three interleaved runs of each backend agreed to about 15%):
+
+| | enkiTS | native |
+|---|---|---|
+| `run` from one thread | 2 500 to 10 000 ns/job | 550 ns/job |
+| `run` from 4 threads | 450 to 1 570 ns/job | 320 to 380 ns/job |
+| `parallelFor`, 64 items of ~2.5 µs | 37 to 40 µs (2.2x) | 16.5 to 18 µs (4.8x) |
+| `parallelFor`, 4M floats | 0.28 to 0.31 ms | 0.25 to 0.37 ms |
+| a frame (6 `parallelFor`s + 200 jobs), back to back | 1.9 to 3.3 ms | 0.15 to 0.28 ms |
+| the same frame every 4 ms, median | 2.03 ms | 0.54 ms |
+| CPU over that paced run | 138% of a core | 67% of a core |
+| CPU in 500 ms idle | 0.02 ms | 0.02 ms |
+
+The gap is the wake policy: enkiTS wakes every sleeping worker on every
+submission. The large `parallelFor` is level because there the work dominates.
+`spinMicros` was swept from 0 to 500: 0 loses the small `parallelFor` (1.9x),
+200 and up burn CPU (108% to 149%) for nothing, 50 to 100 are equal; 100 is the
+default. **Not measured:** Windows, Linux, phones, or a machine with fewer
+cores than work.
+
+**Proven by**
+- `jobs_fuzz_test`: random use of every entry point from engine and foreign
+  threads, with pool size and spin varied per seed, checked exactly (every body
+  once, every `parallelFor` index once, waits honest, scratch intact, `onMain`
+  on the main thread), plus a liveness check where nobody helps. 60 seeds in
+  the unit lane, 1 500 in the stress lane. It passes on both backends.
+- ThreadSanitizer: `jobs_test` and 190 fuzz seeds, no report.
+- Two planted bugs, both caught: a thief keeping a job it lost the race for
+  (crash), and a worker sleeping without re-checking for work (the liveness
+  check; the random rounds alone did not see it, and neither did liveness with
+  three workers, which is why it runs with one).
+- `stress_jobs` (300 rounds) and the whole unit lane on the native backend.
+
+**Known limits**
+- Helping in `wait` runs other jobs on the waiter's stack, as enkiTS did: deep
+  chains of waits inside jobs can run a worker's stack out.
+- `Background` work can wait forever while `Frame` work saturates the pool.
+- The first frame after an idle period pays to wake the workers (the paced
+  median is 0.54 ms against 0.15 to 0.28 back to back).
+- `run` still takes a `std::function`: a capture over about 24 bytes allocates
+  in the caller.
+
+The sections below were written for the enkiTS backend and still describe it.
 
 ## External threads must claim a slot (BUG-0003)
 
