@@ -1,3 +1,9 @@
+---
+status: as-built
+verified: 2026-11-14
+covers:
+  - scripts/farm/
+---
 # scripts/farm — the home server
 
 The headless Debian box that builds `main` by itself and runs the engine for

@@ -118,7 +118,15 @@ jobs:
           b=build-corebench
           [ -f "$b/jobs_fuzz_test.exe" ] && x=.exe || x=
           "$b/jobs_fuzz_test$x" "$SEEDS" 1 | tail -n 3
-          "$b/mem_test$x" | tail -n 2
+          # mem_test passed and then crashed on exit on Linux arm64 (2026-11-14,
+          # exit 139, after "PASS"). Under gdb on Linux so a crash prints the
+          # stack; the step still fails with the program's own exit code.
+          if [ "$RUNNER_OS" = Linux ]; then
+            command -v gdb >/dev/null || sudo apt-get install -y -qq --no-install-recommends gdb >/dev/null
+            gdb -q -batch -return-child-result -ex run -ex "thread apply all bt" "$b/mem_test" | tail -n 60
+          else
+            "$b/mem_test$x" | tail -n 2
+          fi
 
       - name: Benchmark (5 runs)
         shell: bash
