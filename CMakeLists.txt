@@ -163,6 +163,15 @@ if(ENGINE_SANITIZE)
     add_compile_options(-fsanitize=${ENGINE_SANITIZE} -fno-omit-frame-pointer -g)
     add_link_options(-fsanitize=${ENGINE_SANITIZE})
     message(STATUS "engine: sanitizer lane active: ${ENGINE_SANITIZE}")
+    # UBSan's vptr check needs RTTI for every polymorphic base, and Recast is
+    # built -fno-rtti (third_party/recastnavigation/CMakeLists.txt), so a
+    # Linux GCC ASan+UBSan build failed to link nav_service.cpp ("undefined
+    # reference to typeinfo for rcContext"; the home server, 2026-11-15).
+    # Only that one check goes; the rest of UBSan stays.
+    if(ENGINE_SANITIZE MATCHES "undefined")
+        add_compile_options(-fno-sanitize=vptr)
+        add_link_options(-fno-sanitize=vptr)
+    endif()
     # Heap sanitizers need allocations to keep SYSTEM provenance — the tagged
     # TLSF pools would hide use-after-free/overflow inside recycled pool
     # memory. mem_counters.cpp documents this switch; flip it automatically.
