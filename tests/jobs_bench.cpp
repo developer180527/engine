@@ -32,6 +32,15 @@
 #include <cstring>
 #include <string>
 #include <ctime>
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#endif
 #include <thread>
 #include <vector>
 
@@ -40,6 +49,23 @@
 // (backend, OS, CPU architecture, compiler, thread count). CI uploads these and
 // tests/corebench/summarise.py turns a set of them into a table; the home server's
 // results database reads the same file (docs/plans/farm-and-perf-ci.md).
+// CPU time this process has used, in seconds: user + system, every thread.
+// NOT std::clock() on Windows: MSVC's clock() is elapsed WALL time, so the
+// "CPU while idle" row read 500 ms per 500 ms there (a full core, apparently)
+// on every Windows leg of perf.yml until 2026-11-15.
+static double cpuSeconds() {
+#if defined(_WIN32)
+    FILETIME create, exit, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), &create, &exit, &kernel, &user)) return 0.0;
+    auto secs = [](const FILETIME& f) {
+        return double((uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime) * 1e-7;   // 100 ns units
+    };
+    return secs(kernel) + secs(user);
+#else
+    return double(std::clock()) / CLOCKS_PER_SEC;
+#endif
+}
+
 struct Result { std::string key; double value; const char* unit; };
 static std::vector<Result> g_results;
 static void rec(const char* key, double value, const char* unit) { g_results.push_back({key, value, unit}); }
@@ -119,7 +145,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--quick")) g_quick = true;
         else spin = std::atoi(argv[i]);
     }
-    const std::clock_t cpu0 = std::clock();
+    const double cpu0 = cpuSeconds();
     const auto wall0 = Clock::now();
     jobs::init(0, spin);
     const uint32_t threads = jobs::workerCount();
@@ -271,7 +297,7 @@ int main(int argc, char** argv) {
         std::vector<double> times, firstWorker;
         int alone = 0;   // frames no worker took part in: a lost wake-up looks like this
         const jobs::Stats st0 = jobs::stats();
-        const std::clock_t c0 = std::clock();
+        const double c0 = cpuSeconds();
         const auto w0 = Clock::now();
         const int frames = g_quick ? 40 : 150;
         const std::thread::id mainId = std::this_thread::get_id();
@@ -307,7 +333,7 @@ int main(int argc, char** argv) {
         std::sort(times.begin(), times.end());
         std::sort(firstWorker.begin(), firstWorker.end());
         const double fw = firstWorker.empty() ? 0.0 : firstWorker[firstWorker.size() / 2];
-        const double cpu = double(std::clock() - c0) / CLOCKS_PER_SEC, wall = ms(w0, Clock::now()) / 1000.0;
+        const double cpu = (cpuSeconds() - c0), wall = ms(w0, Clock::now()) / 1000.0;
         // How much of that CPU was workers awake looking for work and finding
         // none: the share a spin policy can save .
         const double spin = double(jobs::stats().spinNanos - st0.spinNanos) * 1e-9;
@@ -328,11 +354,11 @@ int main(int argc, char** argv) {
     paced("frame.prewake.on", true, 50);
     // ── idle: nothing submitted for half a second ──────────────────────────
     {
-        const std::clock_t c0 = std::clock();
+        const double c0 = cpuSeconds();
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         std::printf("idle              %8.2f ms of CPU in 500 ms with nothing to do\n",
-                    1000.0 * double(std::clock() - c0) / CLOCKS_PER_SEC);
-        rec("idle.cpu", 1000.0 * double(std::clock() - c0) / CLOCKS_PER_SEC, "ms per 500 ms");
+                    1000.0 * (cpuSeconds() - c0));
+        rec("idle.cpu", 1000.0 * (cpuSeconds() - c0), "ms per 500 ms");
     }
     (void)cpu0; (void)wall0;
     const jobs::Stats st = jobs::stats();
