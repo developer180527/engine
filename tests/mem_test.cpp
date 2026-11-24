@@ -149,14 +149,23 @@ int main() {
         char* big = (char*)mem::alloc(sz, 16, mem::Tag::Assets);
         const uintptr_t base = (uintptr_t)big & ~uintptr_t((1u << 21) - 1);
         void* want = (void*)(base + (1u << 21) - 64 * 1024);
-        void* other = mmap(want, 64 * 1024, PROT_READ | PROT_WRITE,
-                           MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
-        CHECK(other == want, "someone else's pages mapped in the large block's 2MB window");
-        CHECK(!mem::owns((char*)other + 128), "a pointer in that tail is foreign");
-        CHECK(mem::allocSize((char*)other + 128) == 0, "and has no engine size");
+        // A HINT, not MAP_FIXED. MAP_FIXED replaces whatever is already mapped
+        // there without saying so, and on Linux arm64 that address often held
+        // the process's own memory: the test clobbered it, then unmapped it,
+        // and the process crashed at exit about one run in three (nightly
+        // 2026-11-20 on; reproduced in a Debian arm64 container). With a hint
+        // the kernel gives that address only if it is free.
+        void* other = mmap(want, 64 * 1024, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (other == MAP_FAILED) other = nullptr;
+        if (other == want) {
+            CHECK(!mem::owns((char*)other + 128), "a pointer in that tail is foreign");
+            CHECK(mem::allocSize((char*)other + 128) == 0, "and has no engine size");
+        } else {
+            std::printf("  skip  the large block's tail was not free to map here; the foreign-tail check did not run\n");
+        }
         CHECK(mem::owns(big) && mem::allocSize(big) == sz, "the large block itself is still owned");
         big[0] = 1; big[sz - 1] = 2;
-        munmap(other, 64 * 1024);
+        if (other) munmap(other, 64 * 1024);
         mem::free(big);
     }
 #endif

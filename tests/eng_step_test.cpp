@@ -26,6 +26,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -191,7 +192,7 @@ int main() {
                 "a window after a headless start");
         refused(engSetWindowSize(e, 0x101, 10, 10), ENG_ERROR_STALE_HANDLE, "no longer exists", "a window that never was");
         refused(engStepWithDelta(e, -1.0, nullptr), ENG_ERROR_INVALID_ARGUMENT, "delta", "a negative delta");
-        refused(engStepWithDelta(e, 1.0 / 0.0, nullptr), ENG_ERROR_INVALID_ARGUMENT, "finite", "an infinite delta");
+        refused(engStepWithDelta(e, std::numeric_limits<double>::infinity(), nullptr), ENG_ERROR_INVALID_ARGUMENT, "finite", "an infinite delta");
 
         // An output struct whose struct_size was never set: refused, not a
         // success that wrote nothing.
