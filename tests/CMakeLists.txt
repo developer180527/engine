@@ -254,6 +254,13 @@ engine_test(jobs_test LIB engine_core)
 engine_test(jobs_fuzz_test LIB engine_core TIMEOUT 300)
 add_test(NAME jobs_fuzz_long COMMAND jobs_fuzz_test 1500 1000)
 set_tests_properties(jobs_fuzz_long PROPERTIES LABELS stress TIMEOUT 1800)
+# The job system's edges, one case each (huge ranges, a queue flood, a deep job
+# tree, nesting, oversubscription, foreign-thread churn, init/shutdown churn,
+# wake latency, memory over 10M jobs, priority under contention, exceptions).
+# Quick in the unit lane; full in the stress lane.
+engine_test(jobs_torture_test LIB engine_core TIMEOUT 300 ARGS quick)
+add_test(NAME jobs_torture_full COMMAND jobs_torture_test)
+set_tests_properties(jobs_torture_full PROPERTIES LABELS stress TIMEOUT 1800)
 # Measurements, not a test: built everywhere so it cannot rot, run by hand from an
 # optimised tree (the file says how). Not registered with ctest.
 add_executable(jobs_bench jobs_bench.cpp)

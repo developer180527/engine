@@ -61,6 +61,8 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -158,17 +160,21 @@ struct Deque {
         }
         return t;
     }
-    // nullptr when empty, and also when another thief won the race: the caller
-    // looks elsewhere and comes back: anyQueued() still sees the job, so it
-    // does not park.
-    Task* steal() {
+    // nullptr when empty or when another thief won the race; `lost` says which.
+    // A lost race is NOT an empty queue: the caller must try that priority
+    // again before looking at a lower one, or under contention a thief that
+    // lost on a Frame job takes a Background job instead (jobs_torture_test
+    // priority: 106 of 200 Background jobs ran before the Frame jobs).
+    Task* steal(bool& lost) {
         int64_t tp = top.load(std::memory_order_acquire);
         std::atomic_thread_fence(std::memory_order_seq_cst);
         const int64_t b = bottom.load(std::memory_order_acquire);
         if (tp >= b) return nullptr;
         Task* t = items[tp & kRingMask].load(std::memory_order_relaxed);
-        if (!top.compare_exchange_strong(tp, tp + 1, std::memory_order_seq_cst, std::memory_order_relaxed))
+        if (!top.compare_exchange_strong(tp, tp + 1, std::memory_order_seq_cst, std::memory_order_relaxed)) {
+            lost = true;
             return nullptr;
+        }
         return t;
     }
 };
@@ -283,16 +289,24 @@ Task* findTask(int slot) {
         if (slot >= 0) t = g_slots[slot].deques[p].pop();
         for (uint32_t i = 0; i < kInjectStripes && !t; ++i)
             t = g_inject[((seed + i) % kInjectStripes) * kPriorities + p].popTop();
-        if (!t) {
-            for (uint32_t i = 0; i < g_slotCount && !t; ++i) {
-                const uint32_t v = (seed + i) % g_slotCount;
-                if ((int)v == slot) continue;
-                t = g_slots[v].deques[p].steal();
-            }
-            if (t) {
-                if (slot >= 0) g_slots[slot].steals.fetch_add(1, std::memory_order_relaxed);
-                else           g_foreignSteals.fetch_add(1, std::memory_order_relaxed);
-            }
+        // Victims at this priority, one pass. A lost race means this priority
+        // still has work, so the thread must not fall through to a lower one:
+        // it gives up this pass instead and comes back after its usual pause.
+        // (Falling through, eleven thieves on one queue ran 2 410 Background
+        // jobs ahead of queued Frame jobs in 30 rounds of jobs_torture_test
+        // priority. Retrying on the spot fixed that but made single-producer
+        // submission 19% slower: the losers hammered the cache line the
+        // producer reads on every push.)
+        bool lost = false;
+        for (uint32_t i = 0; i < g_slotCount && !t; ++i) {
+            const uint32_t v = (seed + i) % g_slotCount;
+            if ((int)v == slot) continue;
+            t = g_slots[v].deques[p].steal(lost);
+        }
+        if (!t && lost) return nullptr;
+        if (t) {
+            if (slot >= 0) g_slots[slot].steals.fetch_add(1, std::memory_order_relaxed);
+            else           g_foreignSteals.fetch_add(1, std::memory_order_relaxed);
         }
         if (t) return t;
     }
@@ -486,9 +500,18 @@ struct RunJob final : Task, detail::JobRef {
 
     static void execute(Task* t) {
         RunJob* j = static_cast<RunJob*>(t);
-        {
+        try {
             ScratchScope scratch;
             j->fn.invoke();
+        } catch (const std::exception& e) {
+            // run() has nowhere to deliver an exception (wait() returns void, and
+            // most handles are discarded), so it is a bug in the job. Said by
+            // name, then the same end an escaping exception would have had.
+            std::fprintf(stderr, "[Jobs] a run() job threw: %s. Jobs must not throw; terminating.\n", e.what());
+            std::terminate();
+        } catch (...) {
+            std::fprintf(stderr, "[Jobs] a run() job threw a non-std exception. Jobs must not throw; terminating.\n");
+            std::terminate();
         }
         j->fn.reset();                                  // captures die on the thread that ran them
         j->done.store(true, std::memory_order_release);
@@ -507,16 +530,32 @@ struct ForJob final : Task {
     const std::function<void(uint32_t, uint32_t)>* fn = nullptr;
     const char*           name = nullptr;
     uint32_t              count = 0, chunk = 1;
-    std::atomic<uint32_t> next{0};
+    // 64-bit on purpose. Every thread adds one chunk past the end before it
+    // sees the end, so a 32-bit counter over a count near 2^32 wrapped back to
+    // small values and ranges ran again, forever (jobs_torture_test huge).
+    std::atomic<uint64_t> next{0};
     std::atomic<int>      tickets{0};    // queued or running, not counting the caller
+    // The first exception a range threw, on any thread. The rest of the ranges
+    // are abandoned, the caller waits for every ticket (they point at its stack
+    // frame), then rethrows it. Thrown on a worker it used to end the process;
+    // thrown on the caller, it unwound past tickets still queued.
+    std::atomic<bool>     failed{false};
+    std::exception_ptr    error;          // written once, by whoever set `failed`
 
     void claim() {
         ENGINE_PROFILE_SCOPE(name);
         for (;;) {
-            const uint32_t b = next.fetch_add(chunk, std::memory_order_relaxed);
+            const uint64_t b = next.fetch_add(chunk, std::memory_order_relaxed);
             if (b >= count) return;
-            ScratchScope scratch;
-            (*fn)(b, b + chunk < count ? b + chunk : count);
+            const uint64_t e = b + chunk < count ? b + chunk : count;
+            try {
+                ScratchScope scratch;
+                (*fn)((uint32_t)b, (uint32_t)e);
+            } catch (...) {
+                if (!failed.exchange(true, std::memory_order_acq_rel)) error = std::current_exception();
+                next.store(count, std::memory_order_relaxed);   // nobody starts another range
+                return;
+            }
         }
     }
     static void execute(Task* t) {
@@ -699,6 +738,8 @@ void parallelFor(const char* name, uint32_t count, uint32_t grain,
         }
     }
     detail::helpUntil([&job] { return job.tickets.load(std::memory_order_acquire) <= 0; });
+    // Every ticket has finished, so nothing points at `job` any more.
+    if (job.failed.load(std::memory_order_acquire)) std::rethrow_exception(job.error);
 }
 
 // ── frameBegin ──────────────────────────────────────────────────────────────

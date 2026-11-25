@@ -157,6 +157,11 @@ JobHandle runIo(const char* name, std::function<void()> fn);
 // Split [0, count) across the pool; fn(begin, end) runs on ranges. BLOCKS
 // until every range is done (the calling thread works too). grain is the
 // minimum range size worth a task — pick it so one range is >= ~10µs of work.
+//
+// EXCEPTIONS: if a range throws, on any thread, no further range starts, the
+// call still waits for the ranges already running, then rethrows the first
+// exception to the caller. (A run() job that throws ends the process with a
+// message: there is nobody to deliver it to.)
 void parallelFor(const char* name, uint32_t count, uint32_t grain,
                  const std::function<void(uint32_t begin, uint32_t end)>& fn,
                  Priority priority = Priority::Frame);

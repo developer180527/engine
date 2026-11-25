@@ -1,0 +1,11 @@
+## BUG-0073 — parallelFor over a count near 2^32 ran ranges again, forever
+- found:     2026-11-26
+- status:    fixed
+- class:     numeric
+- where:     src/core/jobs/jobs_native.cpp
+- symptom:   `jobs::parallelFor` with a count near `UINT32_MAX` never returned, and ranges ran more than once.
+- cause:     ranges are claimed with `next.fetch_add(chunk)`, and every thread adds one chunk past the end before it sees the end. With a 32-bit `next` and a count near 2^32, those extra adds wrapped it back to small values, which read as unclaimed ranges.
+- pinned-by: tests/jobs_torture_test.cpp
+- lane:      unit (quick) and stress (full)
+- proof:     case `huge` (counts 0xFFFFFFFF, 0xFFFFFF00 and 0x80000001, every item exactly once). before the fix the case did not finish within 300 s; after, it covers every item exactly once on macOS arm64 and Linux arm64 (GCC, and under TSan).
+- note:      found by reading the claim loop during the 2026-11-26 review, then confirmed by the test written for it. No caller in the engine passes counts this large today.

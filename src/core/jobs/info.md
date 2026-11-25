@@ -1,13 +1,14 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-14
+verified: 2026-11-26
 covers:
   - src/core/jobs/
 tests:
   - tests/jobs_test.cpp
   - tests/stress_jobs.cpp
   - tests/jobs_fuzz_test.cpp
+  - tests/jobs_torture_test.cpp
   - tests/thread_qos_test.cpp
 ---
 # engine::jobs — the engine-wide task scheduler
@@ -125,7 +126,38 @@ of four runs):
 ±15% between runs on this machine, more than any of these changes, so it is
 not the number to judge them by; `first_worker` and `spin` are.
 
+**Torture test (2026-11-26).** `tests/jobs_torture_test.cpp`, one case per edge:
+a count near 2^32, a flood of 1 000 000 `run()`s, a 317 810-job recursive tree
+(every node a `run` and a `wait`), 4-deep nested `parallelFor`, 3x as many CPU
+hogs as cores, 2 000 short-lived foreign threads, 200 init/shutdown cycles with
+work queued, wake latency, memory over 10 000 000 jobs, priority under
+contention, and exceptions. It found three defects (BUG-0073, BUG-0074,
+BUG-0075), all fixed. Since: all cases pass on macOS arm64 (release, TSan,
+ASan+UBSan) and Linux arm64 (GCC release and GCC TSan, in a container), and a
+20-minute loop of the full suite plus 200 fresh fuzz seeds per iteration ran 126
+iterations with no failure. The fixes measured against the commit before them,
+interleaved, 7 runs each: every benchmark within noise.
+
+**Wake latency is the OS's, not the scheduler's.** A job to a fully parked pool
+starts after p50 15 to 18 µs on macOS with a tail of several milliseconds, and a
+bare `std::condition_variable` with no job system shows the same tail (p99 100 to
+230 µs, worst 1.5 to 5.9 ms). On Linux arm64: p50 24 µs, p99 57 µs, worst 0.8 ms.
+The defences are the idle spin and `frameBegin`, which keep workers awake across
+a frame instead of waking them on its critical path.
+
 **Known limits**
+- `findTask` checks every queue before every steal attempt (`anyQueued`): reads
+  of one cache line per thread per priority. Fine at 12 to 16 threads; on 32 to
+  64 it is cache traffic every idle round. Not measured on such a machine.
+- One steal takes one job. A single producer of many small `run()` jobs has
+  every thief racing on its queue; stealing half would cut that.
+- `parallelFor` takes a `const std::function&`, so each call builds a
+  `std::function` (which may allocate for large captures). `run()` already takes
+  any callable without one.
+- `scratchAlloc` outside any `ScratchScope` (main-thread code outside a job) is
+  never rewound: past the arena it allocates and keeps every block.
+- Calling into the job system from a thread while another thread runs
+  `shutdown()` is undefined: nothing guards it.
 - Helping in `wait` runs other jobs on the waiter's stack, as enkiTS did: deep
   chains of waits inside jobs can run a worker's stack out.
 - `Background` work can wait forever while `Frame` work saturates the pool.

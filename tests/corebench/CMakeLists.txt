@@ -11,7 +11,7 @@
 #   build-corebench/jobs_bench --json bench.json
 #
 # One build of each: the job system has one backend since enkiTS was removed
-# (2026-11-14, WO-079). Binaries are jobs_bench, jobs_fuzz_test, mem_test.
+# (2026-11-14, WO-079). Binaries are jobs_bench, jobs_fuzz_test, jobs_torture_test, mem_test.
 cmake_minimum_required(VERSION 3.21)
 project(engine_perf LANGUAGES C CXX)
 
@@ -46,7 +46,7 @@ if(ANDROID)
     target_link_libraries(perf_core PUBLIC log)
 endif()
 
-foreach(t jobs_bench jobs_fuzz_test mem_test)
+foreach(t jobs_bench jobs_fuzz_test jobs_torture_test mem_test)
     add_executable(${t} ${ROOT}/tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE perf_core)
 endforeach()

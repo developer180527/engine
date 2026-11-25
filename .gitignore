@@ -80,3 +80,5 @@ tests/module_abi/target/
 # shell redirect that recreates it does not show up as a repo change.
 /empty
 build-repro/
+build-cb-tsan/
+build-cb-asan/

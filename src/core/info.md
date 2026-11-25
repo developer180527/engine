@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-14
+verified: 2026-11-26
 covers:
   - src/core/
 tests:
@@ -73,7 +73,8 @@ it is the math library, the same exclusion `check_gpu_seam.py` makes.
   refuses a larger rig by name; `render_pipeline_test` checks the shaders'
   literal against it. Here, not in `animation/`, because `SkinnedMesh` is a
   component and components depend on core only (WO-040).
-- **`jobs/`** — the job system (`jobs.h`; since 2026-11-14 the engine's own
+- **`jobs/`** — (2026-11-26: a torture test found and fixed three defects, BUG-0073 to
+  BUG-0075; `jobs/info.md` has the results.) The job system (`jobs.h`; since 2026-11-14 the engine's own
   scheduler behind it, compiled into `engine_core`, DR-0036; enkiTS, kept as a
   second backend for comparison, was removed the same day, WO-079); see
   `jobs/info.md`. Moved from `src/runtime/jobs` on 2026-10-01 (WO-046): it

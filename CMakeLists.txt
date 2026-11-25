@@ -273,6 +273,11 @@ set(ASSIMP_NO_EXPORT          ON  CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_TESTS        OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_INSTALL            OFF CACHE BOOL "" FORCE)
+# Always Assimp's own minizip. Otherwise it asks pkg-config for a system one, and
+# a Homebrew `minizip` 1.4 (headers under include/minizip/, not include/) broke
+# every local macOS build on that machine with "'unzip.h' file not found"
+# (2026-11-26). The build must not change with what else is installed.
+set(ASSIMP_BUILD_MINIZIP      ON  CACHE BOOL "" FORCE)
 if(WIN32)
     set(ASSIMP_BUILD_ZLIB ON  CACHE BOOL "" FORCE)  # no system zlib on Windows
 else()

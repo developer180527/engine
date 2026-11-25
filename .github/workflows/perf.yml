@@ -118,6 +118,7 @@ jobs:
           b=build-corebench
           [ -f "$b/jobs_fuzz_test.exe" ] && x=.exe || x=
           "$b/jobs_fuzz_test$x" "$SEEDS" 1 | tail -n 3
+          "$b/jobs_torture_test$x" | tail -n 14
           # mem_test passed and then crashed on exit on Linux arm64 (2026-11-14,
           # exit 139, after "PASS"). Under gdb on Linux so a crash prints the
           # stack; the step still fails with the program's own exit code.
@@ -190,9 +191,10 @@ jobs:
           cores: 4
           disable-animations: true
           script: |
-            adb push build-android-x86_64/jobs_bench build-android-x86_64/jobs_fuzz_test build-android-x86_64/mem_test /data/local/tmp/
-            adb shell chmod 755 /data/local/tmp/jobs_bench /data/local/tmp/jobs_fuzz_test /data/local/tmp/mem_test
+            adb push build-android-x86_64/jobs_bench build-android-x86_64/jobs_fuzz_test build-android-x86_64/jobs_torture_test build-android-x86_64/mem_test /data/local/tmp/
+            adb shell chmod 755 /data/local/tmp/jobs_bench /data/local/tmp/jobs_fuzz_test /data/local/tmp/jobs_torture_test /data/local/tmp/mem_test
             adb shell /data/local/tmp/jobs_fuzz_test 60 1 | tail -n 3
+            adb shell /data/local/tmp/jobs_torture_test quick | tail -n 14
             adb shell /data/local/tmp/mem_test | tail -n 2
             mkdir -p perf-out
             for i in 1 2 3; do adb shell /data/local/tmp/jobs_bench --quick --json /data/local/tmp/android-x64-$i.json > /dev/null; adb pull /data/local/tmp/android-x64-$i.json perf-out/; done
