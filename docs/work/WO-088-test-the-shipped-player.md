@@ -36,4 +36,8 @@ Nothing for users. CI gets slower by two packaging runs per leg; record the time
 - **Found on the first local run:** `NullRenderer` is in every player, because the runtime installs it at construction so that calls before `init()` are safe. So renderer `none` has no symbol marker. Its presence is not a sign of the choice.
 - **engine_build on Windows:** never run before. It now copies `engine_player.exe` and configures a new shipping tree with the dev tree's generator (Ninja), not CMake's default (Visual Studio).
 - **Local (macOS):** 121 s cold, 15 s warm per package. The CI time is recorded in the step summary once it runs.
+- **CI's first run (3c24dee), every leg red, two causes:**
+  - The script started the players by a relative path from inside their `dist/`, so the path no longer named them (macOS, Linux). The paths are now made absolute.
+  - On Windows the cook never started. `engine_build` runs its commands through `std::system`, that is `cmd.exe /c`, and cmd strips the first and last quote of a command that starts with one and holds more. `"…\engine_cook" "…\project"` became a broken command. `engine_build` had never run on Windows before; it now wraps the whole command in one more pair of quotes there.
+  - Before the failure, macOS and Linux packaged the default game: about 15 minutes for the first package, almost all of it the cold Release build of the engine. A cached compiler (sccache) should cut that on later runs.
 - **Open:** the first item, until CI has run the step green on all six legs.

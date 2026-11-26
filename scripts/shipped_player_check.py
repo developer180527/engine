@@ -145,6 +145,9 @@ def main() -> int:
 
     if not a.build or not a.work:
         ap.error("--build and --work are required")
+    # Absolute: the players are started with their dist/ as the working
+    # directory, where a relative path no longer names them (CI's first run).
+    a.build, a.work = a.build.resolve(), a.work.resolve()
     a.work.mkdir(parents=True, exist_ok=True)
     failures: list[str] = []
     summary = ["| selection | engine_build | providers | symbols | run |", "|---|---|---|---|---|"]

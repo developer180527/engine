@@ -94,7 +94,16 @@ namespace fs = std::filesystem;
 
 static int run(const std::string& cmd) {
     std::printf("[engine_build] $ %s\n", cmd.c_str());
+#if defined(_WIN32)
+    // std::system runs `cmd.exe /c <command>`, and cmd strips the first and the
+    // last quote of a command that starts with one and holds more, so
+    // "C:\...\engine_cook" "C:\...\project" became a different, broken command
+    // (the cook failed on Windows CI's first run, WO-088). One more pair of
+    // quotes around the whole command is what cmd removes instead.
+    return std::system(("\"" + cmd + "\"").c_str());
+#else
     return std::system(cmd.c_str());
+#endif
 }
 static std::string q(const fs::path& p) { return "\"" + p.string() + "\""; }
 
