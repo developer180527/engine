@@ -71,6 +71,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-084](WO-084-farm-soak-fuzz-determinism.md) | Days-long soak, fuzzing at scale and the determinism lane on the farm | Process & context | L | blocked by WO-082 | — |
 | [WO-088](WO-088-test-the-shipped-player.md) | Test what ships — the static shipped player built and run in CI, per platform and selection | Providers & modules | M | **ready** | — |
 | [WO-089](WO-089-rhi-backend-order-and-capabilities.md) | librhi's backend order from project.json, and device capabilities refused by name | Renderer & RHI | M | **ready** | — |
+| [WO-093](WO-093-conformance-in-the-shipped-player.md) | Conformance suites run against the providers a shipped player links | Providers & modules | M | blocked by WO-088 | audio-provider |
 
 ## P3 — later. Real, but nothing is waiting on it.
 

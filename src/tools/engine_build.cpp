@@ -519,7 +519,15 @@ int main(int argc, char** argv) {
     g_report.record("STEP", "cook ok");
 
     // ── 2. Shipping player (Assimp-free posture, Release) ────────────────
-    if (run("cmake -S " + q(engineRoot) + " -B " + q(shipTree) +
+    // The dev tree's generator for a new shipping tree: CMake's default on
+    // Windows is Visual Studio, which puts the player in Release/ and is not
+    // what the dev tree (or CI) builds with. An existing tree keeps its own.
+    std::string generator;
+#ifdef ENGINE_CMAKE_GENERATOR
+    if (!fs::exists(shipTree / "CMakeCache.txt") && std::string(ENGINE_CMAKE_GENERATOR).size())
+        generator = " -G \"" + std::string(ENGINE_CMAKE_GENERATOR) + "\"";
+#endif
+    if (run("cmake -S " + q(engineRoot) + " -B " + q(shipTree) + generator +
             " -DENGINE_WITH_SOURCE_IMPORTERS=OFF -DCMAKE_BUILD_TYPE=Release" +
             " \"-DENGINE_PROVIDERS_SELECTED=" + selected + "\"") != 0)
         return failed("configuring the shipping tree failed");
@@ -595,8 +603,12 @@ int main(int argc, char** argv) {
     fs::remove_all(dist / ".kitbuild", ec);
 
     // ── 4. Assemble ───────────────────────────────────────────────────────
-    fs::copy_file(shipTree / "engine_player", dist / "engine_player",
-                  fs::copy_options::overwrite_existing, ec);
+#if defined(_WIN32)
+    const char* kPlayer = "engine_player.exe";
+#else
+    const char* kPlayer = "engine_player";
+#endif
+    fs::copy_file(shipTree / kPlayer, dist / kPlayer, fs::copy_options::overwrite_existing, ec);
     if (ec) return failed("player copy failed: " + ec.message());
     g_report.record("STEP", "kits ok");
 

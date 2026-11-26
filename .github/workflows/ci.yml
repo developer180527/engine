@@ -104,6 +104,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.pick.outputs.matrix }}
+      full: ${{ steps.pick.outputs.full }}
     steps:
       - id: pick
         shell: bash
@@ -173,6 +174,7 @@ jobs:
           echo "selected $n leg(s) for event '${{ github.event_name }}':"
           printf '%s' "$sel" | jq -r '.[].name | "  " + .'
           echo "matrix={\"include\":$sel}" >> "$GITHUB_OUTPUT"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
 
   build:
     name: ${{ matrix.name }}
@@ -288,6 +290,7 @@ jobs:
           done
           if [ -n "$tool" ]; then
             echo "flags=-DCMAKE_C_COMPILER_LAUNCHER=$tool -DCMAKE_CXX_COMPILER_LAUNCHER=$tool" >> "$GITHUB_OUTPUT"
+            echo "tool=$tool" >> "$GITHUB_OUTPUT"
             echo "Using compiler launcher: $tool"
           else
             echo "flags=" >> "$GITHUB_OUTPUT"
@@ -413,6 +416,30 @@ jobs:
       # has been describing this step since before it existed.
       - name: Test (fuzz regression corpus)
         run: ctest --test-dir build -L fuzz-regress --output-on-failure --timeout 600
+
+      # ── The shipped player (WO-088) ──────────────────────────────────────
+      # The build players get links its providers statically, chosen by
+      # engine_build; the tests above run the development build, which has them
+      # all. So package a game twice (the engine's default choices, and a
+      # headless one with no renderer or audio), check each player's symbols
+      # against its providers.lock.json, run the headless one for 120 frames and
+      # check the default one refuses, by name, with no display.
+      # scripts/shipped_player_check.py. Two Release builds of the engine, so
+      # only when every leg runs (nightly, on demand, portability-sensitive
+      # pushes); its step summary records how long each took.
+      - name: Shipped player (WO-088)
+        if: needs.plan.outputs.full == '1'
+        shell: bash
+        env:
+          ENGINE_BUILD_JOBS: '4'
+        run: |
+          set -e
+          if [ -n "${{ steps.launcher.outputs.tool }}" ]; then
+            export CMAKE_C_COMPILER_LAUNCHER="${{ steps.launcher.outputs.tool }}"
+            export CMAKE_CXX_COMPILER_LAUNCHER="${{ steps.launcher.outputs.tool }}"
+          fi
+          PY=$(command -v python3 || command -v python)
+          "$PY" scripts/shipped_player_check.py --build build --work build/shipped
 
       # ── The determinism gate — the FULL run reports, --gating GATES ───────
       # The --gating half now runs in the `unit` step above, so a regression in

@@ -175,11 +175,16 @@ available:
 
 ## 8. Testing what ships (R7)
 
-- **CI builds the shipped player** (static providers, `ENGINE_SHIPPING`) for each
-  platform leg, for the default and `server` selections of a sample. It runs
-  the conformance suites and a headless smoke scene on that binary.
-- **The symbol check covers providers:** the shipped binary contains the chosen
-  providers and no others.
+- **CI packages a game twice on every leg** whenever every leg runs (WO-088,
+  `scripts/shipped_player_check.py`): with the engine's default choices, and
+  with no renderer and no audio. It checks each `providers.lock.json` and each
+  player's symbols: the chosen providers are in it, no other provider is, and the
+  resolver is not. It runs the headless package for 120 frames. The default
+  package must refuse, by name, to start with no display, because CI has none.
+  "Headless" stands where this plan said `server`, until a server player
+  exists to package.
+- **Conformance in the shipped player** is WO-093: the one suite (audio) loads
+  a provider as a shared library, which a static player does not have.
 - **The home server keeps the A/B number** (`provider-abi.md` §3): the default
   provider linked direct against the same provider through its table.
   C function tables cannot be devirtualised by LTO, so this is the only honest

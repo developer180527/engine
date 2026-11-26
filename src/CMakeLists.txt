@@ -785,6 +785,7 @@ endif()
 add_executable(engine_build tools/engine_build.cpp)
 target_link_libraries(engine_build PRIVATE engine_cooking)   # the packaging closure
 target_compile_definitions(engine_build PRIVATE
+    ENGINE_CMAKE_GENERATOR="${CMAKE_GENERATOR}"
     ENGINE_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 set_target_properties(engine_build PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}

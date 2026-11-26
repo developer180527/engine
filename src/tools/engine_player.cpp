@@ -2,6 +2,7 @@
 //
 //   engine_player [project-dir]        (default: auto-detect from cwd)
 //   engine_player --list-providers [--json]   the providers this build has
+//   engine_player [project-dir] --headless --frames N   no window: a smoke run
 //
 // What a PLAYER ships and engine_host doesn't: nothing. What engine_host
 // carries and this deliberately does not: dev-module hot-reload + watching,
@@ -45,6 +46,7 @@ int main(int argc, char** argv) {
     long frameLimit = 0;      // --frames N: stop after N frames (repeatable)
     bool gpuStats   = false;  // --gpu-stats: VRAM / draws / handle churn
     const char* budgetTier = nullptr;   // --budget low|mid|high: PASS/OVER
+    bool headless   = false;  // --headless: no window; with --frames, a smoke run (WO-088)
     std::string projectArg;
     // --list-providers [--json]: the providers this build has, by kind, and
     // nothing else (WO-076). No project, no window.
@@ -62,6 +64,7 @@ int main(int argc, char** argv) {
         if (a == "--frames" && i + 1 < argc)  frameLimit = std::strtol(argv[++i], nullptr, 10);
         else if (a == "--gpu-stats")          gpuStats   = true;
         else if (a == "--budget" && i + 1 < argc) { budgetTier = argv[++i]; gpuStats = true; }
+        else if (a == "--headless")           headless   = true;
         else if (projectArg.empty() && a[0] != '-') projectArg = a;
     }
 
@@ -98,6 +101,29 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "engine_player: %s\n", why.c_str());
         if (why.find("project.json") != std::string::npos) return 2;   // as before: no project
         return 3;                                                      // as before: no cooked scene
+    }
+    // --headless: no window, so the engine starts with no display. A packaged
+    // game whose renderer draws is refused then, by name; one built with no
+    // renderer (a server's choices) runs. CI runs packaged players this way,
+    // having no display (WO-088). It needs --frames, or it would run forever.
+    if (headless) {
+        if (frameLimit <= 0) {
+            std::fprintf(stderr, "engine_player: --headless needs --frames N\n");
+            engDestroyEngine(engine);
+            return 2;
+        }
+        long frame = 0;
+        while (engIsRunning(engine) && frame < frameLimit) {
+            if (engStep(engine, nullptr) != ENG_OK) {
+                std::fprintf(stderr, "engine_player: %s\n", engGetLastErrorMessage());
+                engDestroyEngine(engine);
+                return 1;
+            }
+            ++frame;
+        }
+        std::printf("engine_player: %ld frames headless, no errors\n", frame);
+        engDestroyEngine(engine);
+        return 0;
     }
     EngWindowDesc wd = ENG_INIT(EngWindowDesc);   // the project's name, 1280x720, windowed
     EngWindow window = 0;

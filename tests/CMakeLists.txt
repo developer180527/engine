@@ -982,6 +982,15 @@ if(Python3_Interpreter_FOUND)
             PASS_REGULAR_EXPRESSION "unknown platform 'playstation'")
     endif()
 
+    # The shipped-player symbol check fails on a player carrying providers its
+    # game did not choose (WO-088): run on this build's player, which has every
+    # provider, against a lock that chose fewer. The passing run is CI's
+    # "Shipped player" step, which packages real games.
+    add_test(NAME shipped_player_check_refuses_extra_providers
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/shipped_player_check.py
+                     --mutation $<TARGET_FILE:engine_player>)
+    set_tests_properties(shipped_player_check_refuses_extra_providers PROPERTIES LABELS unit TIMEOUT 120)
+
     # The shipped player lists the providers this build has, by kind (WO-076).
     add_test(NAME player_lists_providers
              COMMAND engine_player --list-providers --json)
