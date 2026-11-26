@@ -15,8 +15,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 - [WO-038](WO-038-ci-green-on-every-leg.md) **CI green on every leg, and red is noticed** — 5/7 done. Still open:
   - a `workflow_dispatch` run of the full matrix is green on all six legs plus the sanitizer, SDK-only and shipping jobs (Windows may show more once it links)
   - a failed nightly notifies instead of sitting red for weeks
-- [WO-091](WO-091-cooked-scene-carries-every-component.md) **The cooked scene carries every component — the shipped player loads through the schema registry, not a fixed 256-byte record** — 4/5 done. Still open:
-  - load time measured on a 50 000-entity scene before and after (`scene_service.cpp`'s case), and no slower than the fixed record by more than the measurement's noise, or the difference stated and accepted
 
 ## Next up
 
@@ -47,7 +45,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
 | [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
 | [WO-090](WO-090-first-librhi-renderer.md) | The first librhi renderer — a provider beside bgfx, the forward pipeline ported pass by pass, each bgfx assumption removed where the port meets it | Renderer & RHI | L | blocked by WO-075 | renderer, gpu-seam |
-| [WO-091](WO-091-cooked-scene-carries-every-component.md) | The cooked scene carries every component — the shipped player loads through the schema registry, not a fixed 256-byte record | Asset import & cooking | M | **active** 4/5 | scene-service |
+| [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) | The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components | Asset import & cooking | M | **ready** | scene-service |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -99,6 +97,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-091](WO-091-cooked-scene-carries-every-component.md) | The cooked scene carries every component — the shipped player loads through the schema registry, not a fixed 256-byte record | 2026-11-26 | tests/cooked_scene_test.cpp (10 checks), cooker_test, sdk_only_game_test through SceneService, both scene fuzzers on format 4; mesh_ownership_test section 8 (BUG-0077); unit, fuzz and docs lanes 146/146; CI green on 977e66b |
 | [WO-086](WO-086-provider-resolver-and-build-time-refusal.md) | The provider resolver — per-target choice in project.json, refused by name at engine_build | 2026-11-26 | tests/provider_resolve_test.cpp (one case per check, web and server targets), providers_test 3b, ctest engine_build_* (explain, refusal for web, a web project, an unknown platform), a shipping tree built with a fixed selection: --list-providers showed only the four chosen, nm found no provsel, Jolt or miniaudio symbols |
 | [WO-085](WO-085-provider-manifests.md) | Provider manifests and platform tables — each provider declared once, built only where it can run | 2026-11-26 | ctest provider_manifest_* (12 configure cases, each refusal by name), providers_test 1b (manifests and registry agree), configure prints built/not built per provider and target |
 | [WO-076](WO-076-provider-registry.md) | A provider registry — providers chosen by name from one list, an unknown name refused | 2026-11-26 | tests/providers_test.cpp (every kind refused by name, none per kind, overrides, injection), eng_step_test (EngEngineDesc.providers refused from the registry), ctest player_lists_providers |

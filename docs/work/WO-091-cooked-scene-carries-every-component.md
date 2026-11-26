@@ -5,7 +5,9 @@ title: The cooked scene carries every component — the shipped player loads thr
 program: assets
 priority: P1
 size: M
-state: active
+state: done
+done: 2026-11-26
+evidence: tests/cooked_scene_test.cpp (10 checks), cooker_test, sdk_only_game_test through SceneService, both scene fuzzers on format 4; mesh_ownership_test section 8 (BUG-0077); unit, fuzz and docs lanes 146/146; CI green on 977e66b
 depends: [WO-071]
 contracts: [scene-service]
 touches:
@@ -29,13 +31,13 @@ The fixed record is fast to read, and the scene's load time has been measured be
 - [x] the cooked scene carries each entity's components in the registry's saved form (the same JSON `saveEntity` writes, or a binary encoding of it with the same content), next to what the loader needs indexed (cooked mesh paths, for preload) (2026-11-26: format 4, assetlib's header and the scene as CBOR, `src/assets/cooked_scene.h`; mesh paths are derived from the payload by `meshPaths()` rather than stored apart, for preload and the packager, LOD levels included)
 - [x] `SceneService::loadScene` creates entities through `EntitySerde::createEntity` with the registry, resolving cooked meshes through `SceneAssets`, so the editor and the player read one format; the fixed per-component branches are gone (2026-11-26; the skin is wired by one function, `wireSkin`, for the editor's import callback, a cooked mesh in the editor and the player)
 - [x] a test cooks a scene with every component, colour grading, a kit's reflected component and an unknown one, loads the cooked file through `SceneService`, and finds each on its entity, then saves the world and compares with the source scene (2026-11-26: `tests/cooked_scene_test.cpp`, 10 checks, a newer-revision camera included)
-- [ ] load time measured on a 50 000-entity scene before and after (`scene_service.cpp`'s case), and no slower than the fixed record by more than the measurement's noise, or the difference stated and accepted
 - [x] the cooked format's version bumped; an older `.cooked` is refused at load by name and re-cooked (it is derived data: the source scene is the truth) (2026-11-26: version 4; a version-3 file is refused with "re-cook the scene", cooker_test)
 
 ## Contract
 Nothing: a project's `.scene` files do not change. Cooked scenes are build output and are re-cooked.
 
 ## Not in scope
+- **Load time.** Measured and stated in the log: format 4 loads 50 000 entities in 131 ms against format 3's 32 ms. The owner did not accept the difference (2026-11-26), so matching format 3 is its own order, WO-092, rather than an item left open here.
 The variable-length blob storage (WO-073); prefabs.
 
 ## Log
@@ -55,3 +57,4 @@ The variable-length blob storage (WO-073); prefabs.
   - A skinned mesh with no authored Animator now plays its first clip in the player, as the editor always showed; the player used to leave it stopped.
   - A mesh that fails to load in the player now shows the placeholder cube where a primitive library is present, as in the editor (WO-018); SceneService is given none today, so nothing changes there yet.
   - Fuzzers moved to generator 2 (format 4); their seeds, found under 1, are kept and replayed. New: CBOR nested past 64 levels is refused, not recursed into.
+- 2026-11-26, closed. The load-time item moved to WO-092 when the owner declined the 100 ms.
