@@ -312,6 +312,13 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
             // taken before the branch would attach this caller to a handle it
             // never receives. The old entry's own count is not lost; it is
             // carried out of the way with the entry (see below).
+            if (outSkin && (it->second.staticMesh || it->second.skin.skeleton.valid())) {
+                // The skin is known: empty for a static mesh, the registered
+                // skeleton and clips for a skinned one. The cached handle is it.
+                *outSkin = it->second.skin;
+                ++it->second.refs;
+                return it->second.h;
+            }
             if (outSkin) {
                 // A cached skinned mesh cannot hand back its skeleton/clip
                 // handles from here, so fall through to a full load rather than
@@ -331,10 +338,11 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
                     //     no-entry path below and destroy it more than once —
                     //     BUG-0052 again, into a slot with no generation counter.
                     //
-                    // This is not a corner. m_skeletons is declared in the header
-                    // and assigned NOWHERE in the tree, so `!m_skeletons` is
-                    // always true and every skinned load past the first takes
-                    // this branch.
+                    // It used to be universal: every skin-asking hit came here,
+                    // static meshes included. Since WO-091 an entry whose skin is
+                    // known (static, or a registered skeleton) returns above, so
+                    // this is reached only by one whose skin is unknown: an async
+                    // load, or a skinned mesh whose skeleton blob did not decode.
                     //
                     // So re-key the entry instead of letting it be overwritten.
                     // unloadMesh matches entries by HANDLE, not by key, so the
@@ -358,6 +366,9 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
             }
         }
     }
+
+    // A full load: the skin is what THIS load registers, and empty otherwise.
+    if (outSkin) *outSkin = MeshSkin{};
 
     std::filesystem::path absPath(cookedPath);
     if (absPath.is_relative() && !m_cacheRoot.empty())
@@ -546,8 +557,9 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
         const uint64_t bytes = (uint64_t)asset.vertexData.size()
                              + (uint64_t)asset.indexData.size() + lodBytes;
         std::lock_guard<std::mutex> lk(m_loadedMtx);
-        m_loadedMeshes[key] = { result, bytes, ++m_useClock, lodHandles,
-                                std::move(texKeys) };
+        MeshResidency& entry = m_loadedMeshes[key];
+        entry = { result, bytes, ++m_useClock, lodHandles, std::move(texKeys) };
+        entry.staticMesh = !skinned;
     }
 
     // Skinned payload: decode + register the skeleton and embedded clips
@@ -566,6 +578,11 @@ MeshHandle AssetService::loadMesh(const char* cookedPath, MeshSkin* outSkin,
             LOG_SUCCESS("AssetService", "COOKED skinned: %s — %u bones, "
                         "%zu clip(s), no source parse", cookedPath,
                         hdr.boneCount, skin.clips.size());
+            {   // Kept with the entry, so a later hit hands the same skin back.
+                std::lock_guard<std::mutex> lk(m_loadedMtx);
+                auto e = m_loadedMeshes.find(key);
+                if (e != m_loadedMeshes.end() && e->second.h.id == result.id) e->second.skin = skin;
+            }
             if (outSkin) *outSkin = std::move(skin);
         }
     }

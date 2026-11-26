@@ -1,251 +1,168 @@
 // ── fuzz_scene_loader_test — cooked-scene deserializer ───────────────────────
-// `assetlib::loadScene` parses a .scene binary whose 32-byte header declares an
-// entity count and a string-table size that the file must actually contain, and
-// whose 256-byte entity records address strings by (offset, length) into that
-// table. Three separate places where a header field is trusted before it is
-// checked.
+// A cooked scene is assetlib's 32-byte header and a payload whose size the
+// header declares; since WO-091 (format 4) the payload is the scene itself,
+// CBOR-encoded, decoded by `cooked_scene::decode` (src/assets/cooked_scene.h).
+// Both halves read a file from a player's disk, so both are fuzzed here.
 //
-// This target exists because the SAME two bugs were already found and fixed in
-// the mesh deserializer by `fuzz_mesh_loader_test` — unbounded allocation from a
-// header count, and `return f.good() || f.eof()` accepting a truncated file as
-// success — and the scene loader carried both verbatim. A hardening that lands
-// in one deserializer and not its sibling is not hardening; it is a coincidence.
-// The scene path is the more exposed of the two, since a shipped dist loads
-// scenes with no registry and no source assets to fall back on.
+// Format 3 was a fixed record per entity with strings addressed by (offset,
+// length); its three bugs (truncation accepted, allocation from the header, a
+// 32-bit offset+length wrap) are pinned in the corpus, found under generator 1.
+// The same three questions are asked of format 4: does a short or long file get
+// through, can 32 bytes size an allocation, can the payload's own structure
+// (CBOR lengths, nesting) do what the record's offsets did.
 //
 // Properties asserted per case:
-//   1. Never crashes, hangs, or reads out of bounds. Run under ASan/UBSan for
-//      the last clause to mean anything — the string-table reads below are
-//      heap overreads that a non-instrumented build will happily return.
-//   2. BOUNDED WORK: a 32-byte header must never be able to ask for gigabytes.
-//   3. INTERNAL CONSISTENCY on success: if loadScene returns true, the entity
-//      vector and string table match the header, and every string offset a
-//      caller would dereference is inside the table.
-//   4. Round-trip: anything saveScene writes, loadScene reads back intact.
-//      Rejecting our own valid output is silent content loss.
+//   1. Never crashes, hangs, or reads out of bounds (run under ASan/UBSan for the
+//      last clause to mean anything). Includes nesting deep enough that an
+//      unbounded recursive reader would overflow the stack.
+//   2. BOUNDED WORK: what loadScene allocates is backed by bytes the file has.
+//   3. CONSISTENCY on success: the payload is exactly what the header declared
+//      and the file held, and a decoded payload is a scene object.
+//   4. Round-trip: anything the cook writes loads and decodes to the same scene.
 #include <cstdio>
 #include "fuzz/fuzz.h"
 
 #include <assetlib/scene_asset.h>
+#include <nlohmann/json.hpp>
+
+#include "assets/cooked_scene.h"
 
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 
 namespace fs = std::filesystem;
+using json = nlohmann::json;
 
-static constexpr uint32_t kGeneratorVersion = 1;
+// 2: format 4 (WO-091). The seeds in the corpus were found under 1 (format 3).
+static constexpr uint32_t kGeneratorVersion = 2;
 
 namespace {
 
-// Every string-table field a consumer actually dereferences. Kept as one list
-// so a new field added to SceneEntity gets fuzzed by being added here, rather
-// than by someone remembering to widen an assertion.
-struct StrField { const char* name; uint32_t off; uint32_t len; bool zTerm; };
-
-std::vector<StrField> stringFieldsOf(const assetlib::SceneEntity& e) {
-    return {
-        { "name",         e.nameOffset,          e.nameLength,          false },
-        { "meshCooked",   e.meshCookedOffset,    e.meshCookedLength,    false },
-        { "meshSource",   e.meshSourceOffset,    e.meshSourceLength,    false },
-        { "scriptPath",   e.scriptPathOffset,    e.scriptPathLength,    false },
-        { "animClipPath", e.animClipPathOffset,  e.animClipPathLength,  false },
-        // v3: null-terminated, no length field — there is no room in the 256
-        // bytes. Read through stringTableReadZ instead.
-        { "materialName", e.materialNameOffset,  0,                     true  },
-    };
-}
-
-// Build a structurally plausible scene, then corrupt it. Starting from valid
-// data is the point: random bytes die on the magic check in the first four
-// bytes and never reach the code that has the bugs.
-assetlib::SceneAsset buildPlausible(fuzz::Rng& rng) {
-    using namespace assetlib;
-    SceneAsset s;
-
-    const uint32_t n = rng.range(0, 24);
-    for (uint32_t i = 0; i < n; ++i) {
-        SceneEntity e{};
-        e.entityId = rng.next();
-        // A real parent sometimes, a dangling one sometimes, self-parent
-        // occasionally — the reparent guard is a consumer-side concern but the
-        // loader must hand the bytes over without caring.
-        e.parentId = rng.chance(40) ? (i ? s.entities[rng.below(i)].entityId : 0)
-                   : rng.chance(50) ? e.entityId
-                                    : rng.next();
-
-        uint32_t mask = 0;
-        if (rng.chance(95)) mask |= kComp_Transform;
-        if (rng.chance(70)) mask |= kComp_Name;
-        if (rng.chance(60)) mask |= kComp_MeshRenderer;
-        if (rng.chance(15)) mask |= kComp_Camera;
-        if (rng.chance(25)) mask |= kComp_RigidBody;
-        if (rng.chance(20)) mask |= kComp_Script;
-        if (rng.chance(10)) mask |= kComp_CharacterController;
-        if (rng.chance(20)) mask |= kComp_Light;
-        if (rng.chance(15)) mask |= kComp_Animator;
-        // Bits with no component behind them: a v4 file read by a v3 consumer.
-        if (rng.chance(10)) mask |= (1u << rng.range(9, 31));
-        e.componentMask = mask;
-
-        auto putStr = [&](uint32_t& off, uint32_t& len) {
-            const uint32_t chars = rng.range(0, rng.chance(8) ? 300 : 40);
-            std::string v;
-            for (uint32_t k = 0; k < chars; ++k)
-                v.push_back((char)rng.range(32, 126));
-            const auto [o, l] = stringTableAppend(s.stringTable, v);
-            off = o; len = l;
-        };
-        if (mask & kComp_Name)         putStr(e.nameOffset, e.nameLength);
-        if (mask & kComp_MeshRenderer) {
-            putStr(e.meshCookedOffset, e.meshCookedLength);
-            if (rng.chance(50)) putStr(e.meshSourceOffset, e.meshSourceLength);
-            if (rng.chance(50)) {
-                uint32_t o, l;
-                putStr(o, l);
-                e.materialNameOffset = o;   // z-terminated, length discarded
-            }
-            e.meshSourceType = (uint8_t)rng.below(2);
+json junkValue(fuzz::Rng& rng, int depth = 0) {
+    switch (depth > 3 ? rng.below(4) : rng.below(7)) {
+        case 0:  return json(nullptr);
+        case 1:  return json(rng.chance(50));
+        case 2:  return json((int64_t)rng.interestingU32() - (rng.chance(30) ? 1ll << 32 : 0));
+        case 3: {
+            std::string s;
+            const uint32_t n = rng.range(0, 30);
+            for (uint32_t i = 0; i < n; ++i) s.push_back((char)rng.range(1, 255));
+            return json(s);
         }
-        if (mask & kComp_Script)   putStr(e.scriptPathOffset, e.scriptPathLength);
-        if (mask & kComp_Animator) {
-            if (rng.chance(50)) putStr(e.animClipPathOffset, e.animClipPathLength);
-            e.animClipIndex = (int16_t)rng.next();
-            e.animPlaying   = (uint8_t)rng.below(2);
+        case 4:  return json((double)rng.next() / 7.0);
+        case 5: {
+            json a = json::array();
+            const uint32_t n = rng.range(0, 4);
+            for (uint32_t i = 0; i < n; ++i) a.push_back(junkValue(rng, depth + 1));
+            return a;
         }
-        e.lightType   = (uint8_t)rng.below(4);
-        e.rbBodyType  = (uint8_t)rng.below(4);
-        e.rbShape     = (uint8_t)rng.below(4);
-        s.entities.push_back(e);
+        default: {
+            json o = json::object();
+            const uint32_t n = rng.range(0, 4);
+            for (uint32_t i = 0; i < n; ++i) o["k" + std::to_string(i)] = junkValue(rng, depth + 1);
+            return o;
+        }
     }
-    s.header.entityCount     = (uint32_t)s.entities.size();
-    s.header.stringTableSize = (uint32_t)s.stringTable.size();
-    return s;
 }
 
-enum class Corruption {
-    None, Truncate, HeaderOnly, Empty, BadMagic, BadVersion,
-    InflateEntityCount, InflateStringTableSize, HugeCounts,
-    // The string-table field corruptions: the offsets and lengths a consumer
-    // dereferences. `OverflowOffsetLen` is the specific shape that makes
-    // `offset + length` wrap in 32-bit arithmetic.
-    BadStringOffset, BadStringLength, OverflowOffsetLen,
-    BitFlips, COUNT
+// A scene of the shape the cook writes: entities with ids, parents and the
+// engine's component keys, plus a kit's reflected block and unknown keys.
+json buildPlausible(fuzz::Rng& rng) {
+    json scene = { {"version", 1}, {"entities", json::array()} };
+    const uint32_t n = rng.range(0, 40);
+    for (uint32_t i = 0; i < n; ++i) {
+        json e = json::object();
+        e["id"] = (uint64_t)rng.next();
+        if (rng.chance(30)) e["parentId"] = (uint64_t)rng.next();
+        if (rng.chance(80)) e["name"] = "e" + std::to_string(i);
+        if (rng.chance(90))
+            e["transform"] = { {"position", {1.0, 2.0, 3.0}}, {"rotation", {0, 0, 0, 1}},
+                               {"scale", {1, 1, 1}} };
+        if (rng.chance(50))
+            e["meshRenderer"] = { {"cookedPath", "meshs/m" + std::to_string(rng.below(8)) + ".cooked"},
+                                  {"path", "assets/m.glb"} };
+        if (rng.chance(10))
+            e["lodMesh"] = { {"levels", json::array({ { {"cookedPath", "meshs/l1.cooked"} } })},
+                             {"coarsenBelow", {0.3}} };
+        if (rng.chance(20)) e["light"] = { {"type", 1}, {"intensity", 4.0} };
+        if (rng.chance(10)) e["colourGrading"] = { {"exposureEV", -1.0}, {"lutPath", "l.cube"} };
+        if (rng.chance(10)) e["reflected"] = { {"combat::Health", { {"current", 3} }} };
+        if (rng.chance(15)) e["k" + std::to_string(rng.below(5))] = junkValue(rng);
+        scene["entities"].push_back(std::move(e));
+    }
+    return scene;
+}
+
+enum class Corruption : uint32_t {
+    None, Truncate, Extend, HeaderByte, PayloadSize, Version, Encoding, PayloadBits,
+    DeepNesting, LongLength, NotAScene, COUNT
 };
 
-void writeCorrupted(const fs::path& p, const assetlib::SceneAsset& src,
-                    Corruption c, fuzz::Rng& rng) {
-    using namespace assetlib;
-    SceneAsset s = src;
-
-    auto anyEntity = [&]() -> SceneEntity* {
-        return s.entities.empty() ? nullptr
-                                  : &s.entities[rng.below((uint32_t)s.entities.size())];
-    };
-
+void writeCorrupted(const fs::path& p, const json& scene, Corruption c, fuzz::Rng& rng) {
+    assetlib::SceneAsset s;
+    cooked_scene::encode(scene, s);
     switch (c) {
-        case Corruption::InflateEntityCount:
-            s.header.entityCount = rng.interestingU32(); break;
-        case Corruption::InflateStringTableSize:
-            s.header.stringTableSize = rng.interestingU32(); break;
-        case Corruption::HugeCounts:
-            s.header.entityCount     = 0xFFFFFFFFu;
-            s.header.stringTableSize = 0xFFFFFFFFu; break;
-        case Corruption::BadStringOffset:
-            if (auto* e = anyEntity()) {
-                uint32_t v = rng.interestingU32();
-                switch (rng.below(6)) {
-                    case 0: e->nameOffset         = v; break;
-                    case 1: e->meshCookedOffset   = v; break;
-                    case 2: e->meshSourceOffset   = v; break;
-                    case 3: e->scriptPathOffset   = v; break;
-                    case 4: e->animClipPathOffset = v; break;
-                    default: e->materialNameOffset = v; break;
-                }
-            }
+        case Corruption::DeepNesting: {
+            // An array nested far past the cap: 0x81 is "array of 1 item". An
+            // unbounded recursive reader overflows the stack on this.
+            const uint32_t depth = rng.chance(50) ? rng.range(60, 70) : rng.range(1000, 200000);
+            s.payload.assign(depth, 0x81);
+            s.payload.push_back(0xF6);   // null
             break;
-        case Corruption::BadStringLength:
-            if (auto* e = anyEntity()) {
-                uint32_t v = rng.interestingU32();
-                switch (rng.below(5)) {
-                    case 0: e->nameLength         = v; break;
-                    case 1: e->meshCookedLength   = v; break;
-                    case 2: e->meshSourceLength   = v; break;
-                    case 3: e->scriptPathLength   = v; break;
-                    default: e->animClipPathLength = v; break;
-                }
-            }
+        }
+        case Corruption::LongLength: {
+            // A byte string (0x5B, 8-byte length) declaring far more than follows.
+            s.payload = { 0x5B, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 'x' };
             break;
-        case Corruption::OverflowOffsetLen:
-            // offset + length must WRAP: both fields are uint32_t, so a bounds
-            // check written as `offset + length > table.size()` computes in
-            // 32-bit and passes for a pair that addresses far past the end.
-            if (auto* e = anyEntity()) {
-                const uint32_t off = 0xFFFFFFFFu - rng.range(1, 64);
-                const uint32_t len = (uint32_t)(0x100000000ULL - off) + rng.range(1, 64);
-                switch (rng.below(5)) {
-                    case 0: e->nameOffset = off;         e->nameLength = len; break;
-                    case 1: e->meshCookedOffset = off;   e->meshCookedLength = len; break;
-                    case 2: e->meshSourceOffset = off;   e->meshSourceLength = len; break;
-                    case 3: e->scriptPathOffset = off;   e->scriptPathLength = len; break;
-                    default: e->animClipPathOffset = off; e->animClipPathLength = len; break;
-                }
-            }
+        }
+        case Corruption::NotAScene:
+            s.payload = json::to_cbor(rng.chance(50) ? junkValue(rng) : json{{"entities", 5}});
             break;
         default: break;
     }
+    s.header.payloadSize = s.payload.size();
+    std::vector<uint8_t> bytes(sizeof(assetlib::SceneHeader));
+    std::memcpy(bytes.data(), &s.header, sizeof(assetlib::SceneHeader));
+    bytes.insert(bytes.end(), s.payload.begin(), s.payload.end());
 
-    // Serialize through the real writer, then damage the bytes on disk. Writing
-    // through saveScene keeps the layout honest rather than hand-rolling a
-    // second encoder that could drift from the real one.
-    if (!saveScene(s, p)) return;
-
-    // saveScene overwrites the header counts from the vectors, so the count
-    // corruptions have to be re-applied to the bytes after the fact.
-    const bool patchHeader = c == Corruption::InflateEntityCount
-                          || c == Corruption::InflateStringTableSize
-                          || c == Corruption::HugeCounts
-                          || c == Corruption::BadVersion;
-    const bool patchBytes  = c == Corruption::BadMagic || c == Corruption::BitFlips
-                          || c == Corruption::Truncate || c == Corruption::Empty
-                          || c == Corruption::HeaderOnly;
-    if (!patchHeader && !patchBytes) return;
-
-    std::vector<uint8_t> bytes;
-    { std::ifstream in(p, std::ios::binary);
-      bytes.assign(std::istreambuf_iterator<char>(in),
-                   std::istreambuf_iterator<char>()); }
-
-    if (patchHeader && bytes.size() >= sizeof(SceneHeader)) {
-        SceneHeader h{};
-        std::memcpy(&h, bytes.data(), sizeof(SceneHeader));
-        if (c == Corruption::BadVersion)              h.version = rng.interestingU32();
-        else if (c == Corruption::InflateEntityCount) h.entityCount = s.header.entityCount;
-        else if (c == Corruption::InflateStringTableSize)
-                                                      h.stringTableSize = s.header.stringTableSize;
-        else { h.entityCount = 0xFFFFFFFFu; h.stringTableSize = 0xFFFFFFFFu; }
-        std::memcpy(bytes.data(), &h, sizeof(SceneHeader));
+    switch (c) {
+        case Corruption::Truncate:
+            bytes.resize(rng.below((uint32_t)bytes.size() + 1)); break;
+        case Corruption::Extend:
+            for (uint32_t i = rng.range(1, 64); i > 0; --i) bytes.push_back((uint8_t)rng.next()); break;
+        case Corruption::HeaderByte:
+            bytes[rng.below(sizeof(assetlib::SceneHeader))] ^= (uint8_t)(1u << rng.below(8)); break;
+        case Corruption::PayloadSize: {
+            uint64_t v = rng.chance(50) ? (uint64_t)rng.interestingU32() : ~0ull - rng.below(16);
+            std::memcpy(bytes.data() + offsetof(assetlib::SceneHeader, payloadSize), &v, 8);
+            break;
+        }
+        case Corruption::Version: {
+            const uint32_t v = rng.chance(50) ? 3u : rng.interestingU32();
+            std::memcpy(bytes.data() + offsetof(assetlib::SceneHeader, version), &v, 4);
+            break;
+        }
+        case Corruption::Encoding: {
+            const uint32_t v = rng.interestingU32();
+            std::memcpy(bytes.data() + offsetof(assetlib::SceneHeader, encoding), &v, 4);
+            break;
+        }
+        case Corruption::PayloadBits:
+            if (bytes.size() > sizeof(assetlib::SceneHeader))
+                for (uint32_t i = rng.range(1, 8); i > 0; --i)
+                    bytes[sizeof(assetlib::SceneHeader)
+                          + rng.below((uint32_t)(bytes.size() - sizeof(assetlib::SceneHeader)))]
+                        ^= (uint8_t)(1u << rng.below(8));
+            break;
+        default: break;
     }
-    if (c == Corruption::BadMagic && bytes.size() >= 4) {
-        for (int i = 0; i < 4; ++i) bytes[i] = rng.byte();
-    } else if (c == Corruption::Truncate && !bytes.empty()) {
-        bytes.resize(rng.below((uint32_t)bytes.size()));
-    } else if (c == Corruption::HeaderOnly) {
-        if (bytes.size() > sizeof(SceneHeader)) bytes.resize(sizeof(SceneHeader));
-    } else if (c == Corruption::Empty) {
-        bytes.clear();
-    } else if (c == Corruption::BitFlips) {
-        const uint32_t flips = rng.range(1, 24);
-        for (uint32_t i = 0; i < flips && !bytes.empty(); ++i)
-            bytes[rng.below((uint32_t)bytes.size())] ^= (uint8_t)(1u << rng.below(8));
-    }
-
     std::ofstream out(p, std::ios::binary | std::ios::trunc);
     out.write((const char*)bytes.data(), (std::streamsize)bytes.size());
 }
 
 void oneCase(uint64_t masterSeed, fuzz::Report& rep) {
-    using namespace assetlib;
     fuzz::ReproKey key;
     key.masterSeed       = masterSeed;
     key.generatorVersion = kGeneratorVersion;
@@ -253,111 +170,66 @@ void oneCase(uint64_t masterSeed, fuzz::Report& rep) {
 
     fuzz::Rng shapeRng(fuzz::deriveSeed(masterSeed, "scene_shape"));
     fuzz::Rng corruptRng(fuzz::deriveSeed(masterSeed, "scene_corrupt"));
-
     fuzz::Scratch scratch("sceneload");
-    const fs::path file = scratch.path() / "fuzz.scene";
+    const fs::path file = scratch.path() / "fuzz.cooked";
 
-    const SceneAsset original = buildPlausible(shapeRng);
+    const json original = buildPlausible(shapeRng);
     const auto corruption = (Corruption)corruptRng.below((uint32_t)Corruption::COUNT);
     writeCorrupted(file, original, corruption, corruptRng);
 
     std::error_code ec;
-    const auto onDisk = (size_t)std::filesystem::file_size(file, ec);
-    const size_t onDiskSize = ec ? 0 : onDisk;
+    const uint64_t onDisk = (uint64_t)fs::file_size(file, ec);
 
-    // ── The call under test ─────────────────────────────────────────────────
-    SceneAsset loaded;
-    const bool ok = loadScene(loaded, file);
+    // ── The calls under test ────────────────────────────────────────────────
+    assetlib::SceneAsset loaded;
+    std::string why;
+    const bool ok = assetlib::loadScene(loaded, file, &why);
 
     // ── Property 2: bounded work, whether it succeeded or not ───────────────
-    // A rejection that allocates a terabyte first is not a rejection. The
-    // header is 32 bytes; nothing it says may cost more than the file could
-    // plausibly justify. (This is checked on the OUT param because a failed
-    // load still leaves whatever it allocated behind.)
-    const size_t entityBytes = loaded.entities.size() * sizeof(SceneEntity);
-    const size_t tableBytes  = loaded.stringTable.size();
-    if (entityBytes + tableBytes > onDiskSize + 64 * 1024) {
-        rep.fail(key, "allocated " + std::to_string(entityBytes + tableBytes)
-                 + " B from a " + std::to_string(onDiskSize) + " B file — a "
-                 "32-byte header must not be able to size an allocation the "
-                 "file cannot back");
+    if (loaded.payload.size() > onDisk) {
+        rep.fail(key, "allocated a " + std::to_string(loaded.payload.size())
+                 + " B payload from a " + std::to_string(onDisk) + " B file");
+        return;
+    }
+    if (!ok) {
+        if (why.empty()) rep.fail(key, "refused without a reason");
+        return;   // a clean rejection with a reason is always acceptable
+    }
+
+    // ── Property 3: a successful load is consistent ─────────────────────────
+    if (loaded.payload.size() != loaded.header.payloadSize
+        || sizeof(assetlib::SceneHeader) + loaded.payload.size() != onDisk) {
+        rep.fail(key, "accepted a scene whose payload (" + std::to_string(loaded.payload.size())
+                 + " B) is not what the header declared ("
+                 + std::to_string(loaded.header.payloadSize) + " B) and the file held ("
+                 + std::to_string(onDisk) + " B)");
         return;
     }
 
-    if (!ok) return;    // a clean rejection is always an acceptable outcome
-
-    // ── Property 3: a successful load is internally consistent ──────────────
-    if (loaded.entities.size() != loaded.header.entityCount) {
-        rep.fail(key, "accepted a scene whose entity vector ("
-                 + std::to_string(loaded.entities.size()) + ") != header "
-                 "entityCount (" + std::to_string(loaded.header.entityCount) + ")");
+    json scene;
+    bool decoded = false;
+    try {
+        decoded = cooked_scene::decode(loaded, scene, why);
+    } catch (const std::exception& e) {
+        rep.fail(key, std::string("decode threw: ") + e.what());
         return;
     }
-    if (loaded.stringTable.size() != loaded.header.stringTableSize) {
-        rep.fail(key, "accepted a scene whose string table ("
-                 + std::to_string(loaded.stringTable.size()) + " B) != header "
-                 "stringTableSize (" + std::to_string(loaded.header.stringTableSize)
-                 + " B)");
+    if (!decoded) {
+        if (why.empty()) rep.fail(key, "decode refused without a reason");
         return;
     }
-    // The file must actually have contained what the header claimed. This is
-    // the truncation property: `f.good() || f.eof()` returns true for a short
-    // read, handing back zero-filled records the file never contained.
-    const size_t declared = sizeof(SceneHeader)
-                          + (size_t)loaded.header.entityCount * sizeof(SceneEntity)
-                          + (size_t)loaded.header.stringTableSize;
-    if (declared > onDiskSize) {
-        rep.fail(key, "accepted a TRUNCATED scene: header declares "
-                 + std::to_string(declared) + " B but the file is "
-                 + std::to_string(onDiskSize) + " B — the tail is zero-filled "
-                 "and indistinguishable from real content");
+    if (!scene.is_object() || !scene.contains("entities") || !scene["entities"].is_array()) {
+        rep.fail(key, "decode accepted a payload that is not a scene");
         return;
     }
-
-    // ── Property 1 (the memory-safety half): every read a consumer makes ────
-    // SceneService dereferences these for real. Calling them here is what puts
-    // the overread under the sanitizer; the length assertion is what catches it
-    // on a build without one.
-    for (const auto& e : loaded.entities) {
-        for (const auto& f : stringFieldsOf(e)) {
-            if (f.zTerm) {
-                const std::string v = stringTableReadZ(loaded.stringTable, f.off);
-                if (v.size() > loaded.stringTable.size()) {
-                    rep.fail(key, std::string(f.name) + ": stringTableReadZ "
-                             "returned more bytes than the table holds");
-                    return;
-                }
-                continue;
-            }
-            const std::string v = stringTableRead(loaded.stringTable, f.off, f.len);
-            if (v.empty()) continue;
-            // A non-empty result must lie wholly inside the table. Computed in
-            // 64-bit deliberately — the bug being hunted is a bounds check that
-            // wrapped because it was computed in 32.
-            const uint64_t end = (uint64_t)f.off + (uint64_t)f.len;
-            if (end > (uint64_t)loaded.stringTable.size()) {
-                rep.fail(key, std::string(f.name) + ": returned a "
-                         + std::to_string(v.size()) + "-byte string from offset "
-                         + std::to_string(f.off) + " length " + std::to_string(f.len)
-                         + " in a " + std::to_string(loaded.stringTable.size())
-                         + "-byte table — offset+length wrapped in 32-bit and the "
-                           "read ran off the heap");
-                return;
-            }
-            if (v.size() != f.len) {
-                rep.fail(key, std::string(f.name) + ": returned "
-                         + std::to_string(v.size()) + " bytes for a declared "
-                         "length of " + std::to_string(f.len));
-                return;
-            }
-        }
-    }
+    // What the player does next with a decoded scene, and the packager too.
+    (void)cooked_scene::meshPaths(scene);
+    if (corruption == Corruption::None && scene != original)
+        rep.fail(key, "an uncorrupted file decoded to a different scene");
 }
 
 // ── Property 4: round-trip ───────────────────────────────────────────────────
-// Separate from the corruption case so a generator bug cannot make it vacuous.
 void roundTripCase(uint64_t masterSeed, fuzz::Report& rep) {
-    using namespace assetlib;
     fuzz::ReproKey key;
     key.masterSeed       = masterSeed;
     key.generatorVersion = kGeneratorVersion;
@@ -365,37 +237,27 @@ void roundTripCase(uint64_t masterSeed, fuzz::Report& rep) {
 
     fuzz::Rng rng(fuzz::deriveSeed(masterSeed, "scene_roundtrip"));
     fuzz::Scratch scratch("sceneround");
-    const fs::path file = scratch.path() / "rt.scene";
+    const fs::path file = scratch.path() / "rt.cooked";
 
-    const SceneAsset original = buildPlausible(rng);
-    if (!saveScene(original, file)) {
+    const json original = buildPlausible(rng);
+    assetlib::SceneAsset out;
+    cooked_scene::encode(original, out);
+    if (!assetlib::saveScene(out, file)) {
         rep.fail(key, "saveScene failed on a scene it generated itself");
         return;
     }
-    SceneAsset back;
-    if (!loadScene(back, file)) {
-        rep.fail(key, "loadScene REJECTED valid saveScene output — silent "
-                      "content loss for every scene of this shape");
+    assetlib::SceneAsset back;
+    json scene;
+    std::string why;
+    if (!assetlib::loadScene(back, file, &why) || !cooked_scene::decode(back, scene, why)) {
+        rep.fail(key, "REJECTED valid cooked output (" + why + ") — silent content loss "
+                      "for every scene of this shape");
         return;
     }
-    if (back.entities.size() != original.entities.size()) {
-        rep.fail(key, "round-trip lost entities: wrote "
-                 + std::to_string(original.entities.size()) + ", read "
-                 + std::to_string(back.entities.size()));
-        return;
-    }
-    if (back.stringTable != original.stringTable) {
-        rep.fail(key, "round-trip corrupted the string table");
-        return;
-    }
-    if (!original.entities.empty() &&
-        std::memcmp(back.entities.data(), original.entities.data(),
-                    original.entities.size() * sizeof(SceneEntity)) != 0) {
-        rep.fail(key, "round-trip changed an entity record byte-for-byte");
-    }
+    if (scene != original) rep.fail(key, "round-trip changed the scene");
 }
 
-} // namespace
+}  // namespace
 
 int main(int argc, char** argv) {
     // Unbuffered: ctest redirects stdout, which makes it block-buffered,

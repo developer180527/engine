@@ -43,7 +43,7 @@ struct FakeHost {
     }
     SceneAssets hooks(bool withMaterials = true, bool canStream = true) {
         SceneAssets a;
-        a.loadCookedMesh = [this](const char*, std::vector<MeshHandle>* lods) {
+        a.loadCookedMesh = [this](const char*, std::vector<MeshHandle>* lods, StreamedMesh*) {
             if (lods) lods->push_back(addMesh("lod1"));
             return addMesh("assets/models/house.fbx");
         };

@@ -320,6 +320,21 @@ private:
         // load/unload PAIRS and gates destruction only on that path. The two
         // coexist deliberately; see evictOverBudget for the other half.
         uint32_t refs = 1;
+
+        // What a hit that asks for the skin hands back (WO-091). Before this a
+        // skin-asking hit could not, so it fell through to a full reload: every
+        // static mesh was re-read per entity when a scene load asked for skins
+        // (50 000 entities over one mesh read its file 50 000 times), and a
+        // skinned one returned the cached handle with NO skin when the
+        // registries were wired, so every instance after the first of a shared
+        // character was drawn in bind pose. `staticMesh`: the sync load read the
+        // header and found no skeleton, so the skin is empty. `skin`: the
+        // skeleton and clips that load registered, shared by every holder
+        // (registered skeletons and clips are never released by unloadMesh, so
+        // sharing them changes no lifetime). Neither known (an async load, an
+        // unreadable skeleton blob): the hit falls through as before.
+        bool     staticMesh = false;
+        MeshSkin skin;
     };
     mutable std::mutex                             m_loadedMtx;
     // `mutable` alongside m_useClock: queryMesh() is const and must still

@@ -174,7 +174,13 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
     std::vector<PendingMesh> pending;
     SerdeContext ctx;
     ctx.mode         = SerdeMode::Disk;
-    ctx.sceneAssets  = &sceneAssets;
+    // The host's hooks, with clip binding from the library this load was given
+    // when the host supplied none (a cooked skinned mesh binds its standalone
+    // clip at the end of its entity, entity_serializer.h's finishSkin).
+    SceneAssets assetsHere = sceneAssets;
+    if (!assetsHere.bindClip)
+        assetsHere.bindClip = clipBinder(clipLib, storage.skeletons, storage.clips);
+    ctx.sceneAssets  = &assetsHere;
     ctx.storage      = &storage;
     ctx.primitives   = primitives;
     ctx.pendingAsync = &pending;
@@ -234,41 +240,9 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
                 e.set<MeshRenderer>({r.mesh, mat});
                 e.remove<UnresolvedMesh>();
                 e.remove<MeshPlaceholder>();
-                // Restore skeletal animation if the asset has bones.
-                // Handles are session-local — the scene file stores identity
-                // only (Animator::clipPath asset ref, or legacy clipIndex);
-                // handles are resolved HERE, from this import, never from disk.
-                if (r.skeleton.valid()) {
-                    SkinnedMesh sm;
-                    sm.skeleton = r.skeleton;
-                    e.set<SkinnedMesh>(sm);
-
-                    Animator anim;
-                    bool hadAnimator = false;
-                    if (const Animator* a = e.try_get<Animator>()) {
-                        anim = *a;
-                        hadAnimator = true;
-                    }
-                    if (!anim.clipPath.empty() && clipLib && skels && clipsReg) {
-                        // Standalone clip asset: bind by bone name to THIS
-                        // entity's freshly imported skeleton.
-                        if (const Skeleton* sk = skels->get(r.skeleton)) {
-                            AnimClipHandle h = clipLib->load(anim.clipPath,
-                                                             r.skeleton, *sk, *clipsReg);
-                            if (h.valid()) {
-                                anim.clip = h;
-                                if (!hadAnimator) anim.playing = true;
-                            }
-                        }
-                    } else if (!r.clips.empty()) {   // legacy: clip inside the mesh file
-                        int idx = anim.clipIndex;
-                        if (idx < 0 || idx >= (int)r.clips.size()) idx = 0;
-                        anim.clipIndex = idx;
-                        anim.clip      = r.clips[idx];
-                        if (!hadAnimator) anim.playing = true; // sensible default
-                    }
-                    e.set<Animator>(anim);
-                }
+                // The skin: the same wiring the cooked path uses (WO-091).
+                EntitySerde::wireSkin(e, r.skeleton, r.clips,
+                                      clipBinder(clipLib, skels, clipsReg));
             });
     }
 

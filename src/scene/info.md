@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-10-01
+verified: 2026-11-26
 parses-external-input: true
 covers:
   - src/scene/
@@ -13,6 +13,7 @@ tests:
   - tests/scene_material_roundtrip_test.cpp  # a material override survives save + load (BUG-0072)
   - tests/scene_schema_test.cpp       # the format byte for byte; unknown kept; migrations; field types (WO-071)
   - tests/scene_extensions_test.cpp   # a project's required extensions refuse Play by name (WO-071)
+  - tests/cooked_scene_test.cpp       # the shipped player gets every component (WO-091)
 ---
 # Scene
 
@@ -92,8 +93,12 @@ way. Scene save, the Play snapshot and the undo stack all walk the registry.
   `combat::Health`) that the project lists in project.json as `required` or
   `used`. Checked at simulation start, after kits attach: a missing required one
   refuses Play and the player, naming it and what is available.
-- **Not yet in the shipped player.** It reads cooked scenes, a fixed record of
-  nine components (`assetlib::SceneEntity`): WO-091.
+- **The shipped player too** (WO-091). A cooked scene is the scene itself
+  (`cooked_scene.h`: assetlib's header, a CBOR payload); `SceneService::loadScene`
+  creates its entities through `createEntity`, so the editor and the game read one
+  format. A cooked mesh's skin is wired at the end of its entity (`PendingSkin`,
+  `wireSkin`), after the authored Animator is read; the editor's import callback
+  uses the same function.
 - **Per-field tolerance.** A wrong-typed field now keeps its default and the
   rest of the component loads; before, a wrong-typed bool or enum threw and the
   whole component was skipped. Data that is not an object is still skipped.
@@ -125,7 +130,7 @@ prefabs.
   `Disk` (cross-session: AssetRef uuid+relative refs, semantic clipIndex —
   session handles NEVER hit disk) and `Memory` (same-session snapshot: live
   handle reuse). Add a component once here and every path picks it up.
-  `lodMesh` is hand-written for the same reason `meshRenderer` is — its levels are
+  `lodMesh` has a codec of its own for the same reason `meshRenderer` does — its levels are
   asset references — with one limitation stated in place: **levels resolve
   SYNCHRONOUSLY from cooked meshes only.** `loadMesh`'s last resort is an Assimp
   import on a worker that completes by setting a `MeshRenderer`, and no shape of that
@@ -138,8 +143,8 @@ prefabs.
   `LodMesh` from it. Both, deliberately: wiring only one produced the same asset
   rendering with LOD in the player and without it in the editor.
 - **`reflected_serde.h`** — the GENERIC half of serde, driven by flecs meta:
-  any component registered with `.member<>()` that isn't in the hand-written
-  table saves/loads automatically under the entity's `"reflected"` sub-object,
+  any component registered with `.member<>()` that the schema registry does
+  not name saves/loads automatically under the entity's `"reflected"` sub-object,
   keyed by component path (`"combat::Health"`). Types not registered at load
   time (kit components before their kit loads) stash in `ReflectedPending` and
   `applyPending()` applies them once the type appears (called after sim-start
@@ -151,7 +156,7 @@ prefabs.
   saving reach assets: load a cooked mesh (with its LOD levels), a material by
   name, a material's name back from its handle, and stream a source mesh on a
   worker. See "How a scene reaches assets" below.
-- **`scene_serializer.h`** — `.scene` JSON save/load on top of the table:
+- **`scene_serializer.h`** — `.scene` JSON save/load on top of the registry:
   - `loadAsync` — names/transforms synchronous, meshes stream via
     `SceneAssets::streamMesh`; the completion resolves skeleton/clip handles
     fresh (Animator::clipIndex selects the clip) and applies the authored

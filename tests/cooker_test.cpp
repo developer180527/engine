@@ -32,6 +32,7 @@
 #include <assimp/matrix4x4.inl>
 #include <assetlib/mesh_asset.h>
 #include <assetlib/scene_asset.h>
+#include "assets/cooked_scene.h"
 #include <assetlib/texture_asset.h>
 #include <assetlib/cook_pipeline.h>
 #include <vector>
@@ -175,37 +176,48 @@ int main() {
         CHECK(std::memcmp(nm, identity, sizeof nm) == 0, "flattened basis still falls back to identity");
     }
 
-    // ── 2. Scene string table dedup ───────────────────────────────────────
+    // ── 2. A cooked scene carries the whole scene (WO-091) ────────────────
+    // Before WO-091 the cook kept nine components in a fixed record and dropped
+    // the rest; colour grading, kits' components and unknown ones never reached
+    // a shipped game. Now the payload is the scene itself, and only mesh
+    // references change (healed from the asset DB, here absent).
     {
-        const std::string shared = "assets/props/very/long/shared/mesh_path.gltf";
-        std::string scene = R"({"entities":[)";
+        nlohmann::json scene = {{"version", 1}, {"entities", nlohmann::json::array()}};
         for (int i = 0; i < 100; ++i) {
-            if (i) scene += ",";
-            scene += R"({"id":)" + std::to_string(i + 1)
-                   + R"(,"name":"e)" + std::to_string(i)
-                   + R"(","meshRenderer":{"path":")" + shared + R"("}})";
+            nlohmann::json e = {{"id", i + 1}, {"name", "e" + std::to_string(i)},
+                {"meshRenderer", {{"path", "assets/props/shared.gltf"},
+                                  {"cookedPath", "meshs/shared.cooked"}}}};
+            if (i == 0) {
+                e["colourGrading"] = {{"exposureEV", -1.5}, {"toneMapper", 2},
+                                      {"lutPath", "luts/warm.cube"}};
+                e["reflected"] = {{"combat::Health", {{"current", 40}, {"max", 120}}}};
+                e["sprite"]    = {{"atlas", "ui.png"}, {"frame", 3}};   // nothing registered
+                e["camera"]    = {{"$rev", 9}, {"fov", 10.0}};          // a newer revision
+            }
+            scene["entities"].push_back(std::move(e));
         }
-        scene += "]}";
-        fs::path jsonPath = dir / "dedup.scene";
-        { std::ofstream f(jsonPath); f << scene; }
-        fs::path outPath = dir / "dedup.cooked";
-        CHECK(cookSceneFile(jsonPath, outPath), "scene with 100 shared refs cooks");
+        fs::path jsonPath = dir / "whole.scene";
+        { std::ofstream f(jsonPath); f << scene.dump(2); }
+        fs::path outPath = dir / "whole.cooked";
+        CHECK(cookSceneFile(jsonPath, outPath), "a scene with 100 entities cooks");
 
-        assetlib::SceneAsset cooked;
-        CHECK(assetlib::loadScene(cooked, outPath), "cooked scene loads");
-        CHECK(cooked.entities.size() == 100, "100 entities (%zu)", cooked.entities.size());
-        // Pre-fix: 100 copies of the path (~4.5 KB). Post-fix: one copy +
-        // 100 short names. Generous bound proves dedup without brittleness.
-        CHECK(cooked.stringTable.size() < shared.size() * 3 + 100 * 8,
-              "string table deduplicated (%zu B, was ~%zu pre-fix)",
-              cooked.stringTable.size(), shared.size() * 100);
-        // Offsets must still round-trip after interning.
-        bool allResolve = true;
-        for (const auto& e : cooked.entities)
-            if (assetlib::stringTableRead(cooked.stringTable,
-                    e.meshSourceOffset, e.meshSourceLength) != shared)
-                allResolve = false;
-        CHECK(allResolve, "every entity's interned path round-trips");
+        assetlib::SceneAsset cooked; nlohmann::json back; std::string why;
+        CHECK(assetlib::loadScene(cooked, outPath, &why) && cooked_scene::decode(cooked, back, why),
+              "the cooked scene loads and decodes (%s)", why.c_str());
+        CHECK(back == scene, "it is the source scene, every component of every entity kept");
+        CHECK(cooked_scene::meshPaths(back) == std::vector<std::string>{"meshs/shared.cooked"},
+              "its mesh paths are listed once each");
+
+        // A v3 file (the fixed record) is refused by version, with a reason.
+        {
+            std::ofstream f(dir / "v3.cooked", std::ios::binary);
+            assetlib::SceneHeader h; h.version = 3; h.payloadSize = 0;
+            f.write(reinterpret_cast<const char*>(&h), sizeof h);
+        }
+        assetlib::SceneAsset old; why.clear();
+        CHECK(!assetlib::loadScene(old, dir / "v3.cooked", &why)
+              && why.find("re-cook") != std::string::npos,
+              "a scene cooked in the old format is refused, and told to re-cook (%s)", why.c_str());
     }
 
     // ── 2c. A skinned glTF cooks WITH its skeleton (WO-014; was WO-002's refusal) ─

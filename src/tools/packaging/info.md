@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-30
+verified: 2026-11-26
 covers:
   - src/tools/packaging/
 tests:
@@ -16,7 +16,7 @@ without running a build:
 
 | Function | Question |
 |---|---|
-| `sceneMeshRefs` | Which objects ship at all? |
+| `sceneMeshRefs` | Which objects ship at all? (each entity's mesh and the LOD levels a scene names, read from the cooked scene through `assets/cooked_scene.h`, WO-091) |
 | `meshClosure` | What does each mesh need in order to look right? |
 | `shaderFiles` | Will the shading the project authored actually run? |
 | `materialFiles` | Will the looks the project authored be available? |

@@ -258,48 +258,32 @@ Alongside the asset system, four cross-platform quick wins were implemented:
 
 ## Phase 2: Binary Scene Format + SceneService
 
-### Binary Scene Format (magic: `0x53434E45` / "SCNE")
+### Cooked Scene Format (magic: `0x53434E45` / "SCNE")
 
-The editor saves scenes as JSON (human-readable, git-diff-friendly). The cook pipeline bakes
-JSON into a binary format for runtime use. The binary format is designed for zero parsing overhead.
+The editor saves scenes as JSON (human-readable, git-diff-friendly). The cook writes
+a `.cooked` scene for runtime use: since WO-091 (format 4), the scene itself, CBOR-encoded,
+with every mesh reference healed against the asset database.
 
 ```
-[SceneHeader]                32 bytes   magic, version, entityCount, stringTableSize
-[SceneEntity × N]           256 bytes each — ALL component data inlined, fixed-size
-[String table]              packed null-terminated strings
+[SceneHeader]   32 bytes   magic, version (4), payload encoding (1 = CBOR), payload size
+[payload]       the scene as EntitySerde saves it, CBOR
 ```
 
-**10K entities = 2.5 MB.** No parsing, no allocations, no key lookups — `memcpy` the entity
-block, read variable-length strings by offset.
+The runtime reads it through the same schema registry the editor uses
+(`src/scene/component_schema.h`, `entity_serializer.h`), so every component a scene can
+hold reaches the shipped game: colour grading, kits' components, and components this build
+does not know (kept and saved back, DR-0034).
 
-#### SceneHeader (32 bytes)
-| Field | Type | Description |
-|-------|------|-------------|
-| magic | uint32 | `0x53434E45` ("SCNE") |
-| version | uint32 | Currently `1` |
-| entityCount | uint32 | Number of entity records |
-| stringTableSize | uint32 | Byte size of the string table |
-| _pad | uint8[16] | Reserved |
+**Formats 1–3** were a fixed 256-byte record per entity with slots for nine components,
+read with a `memcpy`. They are refused at load ("re-cook the scene"). Measured on 50 000
+entities sharing one mesh (`tests/scene_load_bench.cpp`, Noop backend, M-series Mac,
+2026-11-26): format 3 loaded in 32 ms, format 4 loads in 131 ms (56 ms of it decoding the
+CBOR into JSON), and its file is 28% smaller. The difference is the price of one reader;
+a schema-driven binary encoding read without the JSON tree is the way back if a level's
+load time needs it.
 
-#### SceneEntity (256 bytes, fixed)
-Each entity record inlines ALL possible component data. A `componentMask` bitfield says which
-are meaningful; unused fields are zeroed.
-
-| Bit | Component | Data inlined |
-|-----|-----------|--------------|
-| 0 | Transform | position(float3), rotation(quat4), scale(float3) |
-| 1 | Name | offset + length into string table |
-| 2 | MeshRenderer | cookedPath, sourcePath, sourceType, matOverrideId |
-| 3 | Camera | fov, projection, near/far, orthoSize, clearColor |
-| 4 | RigidBody | bodyType, shape, mass, restitution, friction, halfExtent, radius, halfHeight |
-| 5 | Script | scriptPath offset + length into string table |
-| 6 | CharacterController | radius, height, maxSlope, stepHeight, mass, gravityScale |
-| 7 | Light | type, color, intensity, range, spotAngles, castShadows, temperature |
-
-Variable-length data (entity names, mesh paths, script paths) are stored as `(offset, length)`
-pairs pointing into the string table. Sentinel offset `0xFFFFFFFF` = not present.
-
-**File**: `modules/assetlib/include/assetlib/scene_asset.h`, `modules/assetlib/src/scene_asset.cpp`
+**Files**: `modules/assetlib/include/assetlib/scene_asset.h`, `modules/assetlib/src/formats/scene_asset.cpp`,
+`src/assets/cooked_scene.h`
 
 ### SceneService
 
@@ -308,11 +292,12 @@ transforms, parent links, meshes, cameras, lights, scripts, physics, everything.
 
 ```
 SceneService
-    ├── reads binary .scene file (memcpy entity block + string table)
-    ├── for each MeshRenderer entity: AssetService::loadMesh(cookedPath)
+    ├── reads the .cooked scene and decodes its payload (cooked_scene.h)
+    ├── creates each entity through EntitySerde::createEntity (the schema registry)
+    │   ├── meshes through AssetService::loadMesh(cookedPath), skin included
     │   └── fallback: PrimitiveLibrary::byName() for built-in shapes
-    ├── creates flecs entities, sets all components from binary data
-    ├── restores ChildOf parent links in a second pass
+    ├── restores ChildOf parent links in a second pass, by the ids as written
+    ├── resolves entity references once every entity exists
     └── tracks spawned entities + loaded assets for unloadScene()
 ```
 

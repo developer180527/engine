@@ -15,6 +15,9 @@
 # The second is worth stating precisely: the cycle is caught by flecs aborting
 # before the ancestor-walk assertion is ever reached. The walk still earns its
 # place — it covers a cycle that flecs tolerates — but it is not what fired.
+#
+# Seeds below were found under generator 1 (cooked scene format 3). Kept and
+# replayed under generator 2 (format 4, WO-091), as the corpus README requires.
 2277151743773813066
 16861278626067538202
 6965110661002779539

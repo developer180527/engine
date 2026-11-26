@@ -1,6 +1,11 @@
 # scene_loader — every bug this target has found, pinned forever.
 # One decimal master seed per line; `--seed <n>` reproduces one exactly.
 # See tests/fuzz/corpus/README.md for the lane contract.
+#
+# Every seed below was found under generator 1 (cooked scene format 3, the fixed
+# record). Format 4 (WO-091) has no record and no string table; the seeds are kept
+# and replayed under generator 2, where they exercise the same three questions of
+# the new format: truncation, allocation from the header, out-of-bounds reads.
 
 # ── Truncation accepted as success ───────────────────────────────────────────
 # loadScene ended in `return f.good() || f.eof()`, so a short read succeeded:

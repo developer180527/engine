@@ -3,6 +3,9 @@
 
 #include <assetlib/mesh_asset.h>
 #include <assetlib/scene_asset.h>
+#include <nlohmann/json.hpp>
+
+#include "assets/cooked_scene.h"
 #include <assetlib/material_asset.h>
 #include <assetlib/shader_asset.h>
 
@@ -63,18 +66,18 @@ SceneRefs sceneMeshRefs(const fs::path& scenesDir) {
 
     std::set<std::string> seen;
     for (const auto& path : scenes) {
-        assetlib::SceneAsset scene;
-        if (!assetlib::loadScene(scene, path)) {
+        assetlib::SceneAsset file;
+        nlohmann::json scene;
+        std::string why;
+        if (!assetlib::loadScene(file, path, &why) || !cooked_scene::decode(file, scene, why)) {
             out.unreadableScenes.push_back(path.filename().string());
             continue;
         }
         ++out.scenesRead;
-        for (const auto& ent : scene.entities) {
-            std::string p = assetlib::stringTableRead(
-                scene.stringTable, ent.meshCookedOffset, ent.meshCookedLength);
-            if (p.empty()) continue;                 // entity has no mesh
+        // Each entity's mesh and its LOD levels (WO-091: the levels a scene names
+        // are loaded by the player now, so they ship too).
+        for (std::string& p : cooked_scene::meshPaths(scene))
             if (seen.insert(p).second) out.meshes.push_back(std::move(p));
-        }
     }
     return out;
 }

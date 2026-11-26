@@ -1,9 +1,12 @@
 ---
 status: as-built
-verified: 2026-08-27
+verified: 2026-11-26
 covers:
   - src/assets/cookers/scene/scene_cooker.cpp
   - src/core/json_read.h
+  - src/scene/entity_serializer.h
+  - src/scene/component_schema.h
+  - src/assets/cooked_scene.h
   - modules/assetlib/include/assetlib/scene_asset.h
 ---
 # The `.scene` format
@@ -15,6 +18,12 @@ A `.scene` file is JSON. It is the *source* format; `engine_cook` turns it into 
 binary `.cooked` scene that the runtime loads. Both the editor and a person with a
 text editor write these files, and the cooker cannot tell which — that is the
 point.
+
+**One reader.** Since WO-091 the editor and the shipped player read a scene the
+same way: through the schema registry (`src/scene/entity_serializer.h`,
+`registerBuiltinSchemas`). The cooked file carries the scene itself, so every rule
+below holds in both. Before, the cooker had rules of its own, and two of them
+differed from the editor's (a non-object component value, and a missing `id`).
 
 This document exists because [`tool-ecosystem.md`](../architecture/tool-ecosystem.md)
 §4 claims a complete game can be built with the SDK, the CLI tools and a text
@@ -30,8 +39,8 @@ now it was undocumented — the only way to learn it was to read the cooker.
 >   true.
 > - **[`tests/sdk_only_game_test.cpp`](../../tests/sdk_only_game_test.cpp)** pins
 >   the surprising claims below — the ones about what a *wrong* value does — by
->   cooking a scene full of deliberately bad values and asserting the outcomes
->   this document promises.
+>   cooking a scene full of deliberately bad values, loading it through the
+>   player's own loader, and asserting the outcomes this document promises.
 >
 > The second exists because writing this file turned up a claim that was wrong
 > (see "the one that is not a silent default"). A schema reference nobody checks
@@ -78,8 +87,8 @@ walk is one level deep per directory.
 }
 ```
 
-`entities` is the only key read. Anything else in the object is ignored, so
-comments-by-convention (`"_note": "..."`) are harmless.
+`entities` is the only key read (`version` is written, and is 1). Anything else in
+the object is ignored, so comments-by-convention (`"_note": "..."`) are harmless.
 
 If `entities` is missing, or present but not an array, the file cooks to an
 **empty scene** rather than failing. That is deliberate: an empty, inspectable
@@ -117,7 +126,7 @@ has an honest empty answer and the first does not.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `id` | integer | `0` | This entity's identity *within this file*. Only needed for hierarchy. |
+| `id` | integer | a fresh one | This entity's stable identity. Needed for hierarchy and for references. |
 | `parentId` | integer | `0` | The `id` of this entity's parent. `0` means **no parent**. |
 
 Everything else is a **component**, keyed by name. Array elements that are not
@@ -129,46 +138,58 @@ Parent links are resolved by matching `parentId` against another entity's `id`
 **in the same file**. An unresolvable `parentId` is ignored — the entity simply
 has no parent, with no diagnostic.
 
-Because `id` defaults to `0`, **every entity you intend to parent or be a parent
-of needs an explicit, non-zero `id`.** Omit them and every entity shares id `0`,
-the parent lookup collapses to a single entry, and the hierarchy comes out wrong
-in a way nothing reports. If you are not using hierarchy at all, omit both keys.
+An entity that omits `id` (or gives one that is not a non-negative integer) is
+given a **fresh** id at load, distinct from every other. So it cannot be anyone's
+parent: a `parentId` can only name an id that was written. **Every entity you
+intend to be a parent needs an explicit, non-zero `id`.** Two entities writing the
+same `id` are both loaded; the second is given a fresh one, with a warning, and a
+`parentId` naming that id links to the first. If you are not using hierarchy at
+all, omit both keys.
 
 Cycles and excessive depth are guarded at load, so a self-parenting or looping
 file will not hang the runtime.
 
 ---
 
-## The rule that surprises everyone
+## What attaches a component
 
-> **A component is attached because its KEY IS PRESENT — not because its value
-> makes sense.**
+> **A component is attached when its key is present and its value is an object.**
 
 ```json
-{ "name": "Oops", "camera": 5 }
+{ "name": "Defaults", "camera": {} }
+{ "name": "Oops",     "camera": 5 }
 ```
 
-That entity **has a camera**, with every field at its default: fov 60, near 0.1,
-far 1000, primary. The cooker sets the component bit on
-`je.contains("camera")`, then reads fields out of the value; a non-object value
-yields no fields, so all of them keep their defaults.
+The first has a camera with every field at its default: fov 60, near 0.1, far
+1000, primary. The second has **no camera**: a value that is not an object is
+skipped, and the load logs `malformed "camera" — skipped (not an object)`. The rest
+of that entity still loads. The same applies to `"camera": null` and `"camera": []`.
 
-The same applies to `"camera": {}`, `"camera": null` and `"camera": []`. If you
-do not want a component, **remove the key** — do not set it to null.
+*(Changed in WO-091. The cooker used to attach a default component for any value,
+while the editor skipped it; the shipped game and the editor disagreed about the
+same file. Now both skip it. `name` is the one component whose value is not an
+object: it is the string.)*
 
-This cuts both ways and is occasionally what you want: `"transform": {}` is a
-valid way to say "identity transform, explicitly."
+`"transform": {}` is a valid way to say "identity transform, explicitly."
+
+**A key nothing registered is kept.** A component from a provider or a newer
+engine that this build does not know (`"sprite": {...}`) loads as opaque data and
+is saved back unchanged, with a warning naming it. So is a component saved at a
+newer revision than this engine reads (`"$rev"` in its object), rather than being
+read as if it were the old one (DR-0034).
 
 ---
 
 ## How wrong values behave
 
-The cooker reads every field through `src/core/json_read.h`, and its contract is
-uniform and worth internalising, because it means **a malformed scene degrades
-instead of exploding**:
+Every field is read through its schema's field type (`src/scene/component_schema.h`,
+built on `src/core/json_read.h`), and the contract is uniform and worth
+internalising, because it means **a malformed scene degrades instead of
+exploding**:
 
-> A missing, wrong-typed, short, or non-finite value **leaves the destination
-> alone**. You get the documented default, never a zero you did not ask for.
+> A missing, wrong-typed, out-of-range, short, or non-finite value **leaves the
+> destination alone**. You get the documented default, never a zero you did not
+> ask for, and the rest of the component still loads.
 
 Concretely:
 
@@ -180,7 +201,8 @@ Concretely:
 | `"position": 5` | `(0, 0, 0)` | not an array |
 | `"castShadows": "true"` | `false` | **booleans must be real booleans** |
 | `"castShadows": 1` | `false` | same — `1` is not `true` here |
-| `"id": "3"` | `0` | must be a JSON integer |
+| `"id": "3"` | a fresh id | must be a JSON integer |
+| `"exposureMode": 300` | the default | an integer field takes only values that fit its type |
 | `"fov": 1e999` | **the whole scene fails to cook** | see below — this one is not a default |
 
 ### The one that is not a silent default
@@ -239,8 +261,10 @@ expected to fall will sit still until you say `"bodyType": 2`.
 
 ## Components
 
-Defaults below are what you get when the key is absent, and are transcribed from
-`scene_cooker.cpp`.
+Defaults below are what you get when the key is absent. They are the schemas'
+(`registerBuiltinSchemas` in `src/scene/entity_serializer.h`); each schema also
+states them (`ComponentSchema::defaults`), for a tool that wants to read them
+rather than this table.
 
 ### `transform`
 
@@ -261,9 +285,6 @@ Not an object — the value *is* the string.
 ```json
 { "name": "Player" }
 ```
-
-Names are interned and deduplicated in the cooked string table, so repeating one
-across ten thousand entities costs one copy.
 
 ### `meshRenderer`
 
@@ -349,16 +370,54 @@ missing.
 | Field | Type | Default |
 |---|---|---|
 | `path` | string | `""` |
+| `asset` | string (UUID) | `""` |
 | `clipIndex` | integer | `0` |
 | `speed` | float | `1.0` |
 | `fade` | float, seconds | `0.2` |
+| `time` | float, seconds | `0.0` |
 | `playing` | bool | `false` |
 | `looping` | bool | `true` |
 
-Clips are resolved at runtime from `path`, or from `clipIndex` for a clip embedded
-in the mesh. Note `playing` defaults to **false** — a skinned mesh with an
-animator that nobody starts will T-pose, and that looks like a broken rig rather
-than a missing flag.
+Clips are resolved at load from `path` (a standalone clip asset, bound to the
+mesh's skeleton by bone name), or from `clipIndex` for a clip embedded in the
+mesh. Note `playing` defaults to **false** — a skinned mesh with an animator that
+nobody starts will T-pose, and that looks like a broken rig rather than a missing
+flag. A skinned mesh with **no** `animator` key plays its first embedded clip.
+
+### `skinnedMesh`
+
+`{}`: a marker. The skeleton always comes from the entity's mesh; nothing about it
+is saved.
+
+### `lodMesh`
+
+| Field | Type | Meaning |
+|---|---|---|
+| `levels` | array of mesh references (`cookedPath`, `asset`, `path`) | the coarser levels, finest first |
+| `coarsenBelow` | array of floats | the screen size below which each level is used |
+
+Written by the editor from a cooked LOD chain; rarely by hand.
+
+### `colourGrading`
+
+| Field | Type | Default |
+|---|---|---|
+| `exposureMode` | integer (0 manual, 1 physical) | `0` |
+| `toneMapper` | integer (0 none, 1 PBR Neutral) | `1` |
+| `exposureEV` | float, stops | `0.0` |
+| `aperture` | float, f-number | `16.0` |
+| `shutterSeconds` | float | `0.01` |
+| `iso` | float | `100.0` |
+| `lutPath` | string | `""` (none) |
+
+An unknown `toneMapper` or `exposureMode` value is kept as written and refused
+where it is used, so a scene from a newer engine round-trips.
+
+### `reflected`
+
+A kit's components, by the kit's own name: `{"combat::Health": {"current": 40}}`.
+Read once the kit has registered the component (kits load at Play); until then
+kept and saved back unchanged.
 
 ### `characterController`
 
@@ -455,26 +514,32 @@ nothing visible:
 | a `true` flag has no effect | it was quoted: `"true"` is not `true` |
 | an enum behaves as the first option | it was a string: `"point"` is not `1` |
 | a rigid body will not fall | `bodyType` defaults to kinematic; dynamic is `2` |
-| hierarchy is flat or wrong | `id` omitted, so every entity is id `0` |
+| hierarchy is flat or wrong | the parent's `id` omitted, so no `parentId` can name it |
+| a component is missing, with a warning | its value was not an object |
 | mesh missing, `Cannot stat` at runtime | a hand-written or stale `cookedPath` |
 | material silently wrong | `material` name does not match any authored `.cmat` |
 | skinned mesh T-poses | `animator.playing` defaults to `false` |
 | nothing in the scene at all | `entities` is present but not an array |
 
-The cook log is the first place to look — it reports the entity count and string
-table size per scene (`Cooked N entities → main.cooked`). An entity count lower
-than you wrote means array elements were skipped for not being objects.
+The cook log is the first place to look — it reports the entity count and size
+per scene (`Cooked N entities → main.cooked`); the load log names every component
+it skipped or kept unread. An entity count lower than you wrote means array
+elements were skipped for not being objects.
 
 ---
 
 ## The cooked side
 
 For completeness, since a tool may want to read the output rather than the input:
-`modules/assetlib/include/assetlib/scene_asset.h` defines the binary format —
-currently **version 3**, a 32-byte header, fixed 256-byte entity records, and a
-packed string table. `assetlib::loadScene` reads it; component presence lives in a
-`componentMask` bitfield rather than in the record's contents, which is why the
-"key present" rule above shows up on both sides of the cook.
+`modules/assetlib/include/assetlib/scene_asset.h` defines the container —
+currently **version 4**, a 32-byte header (magic, version, payload encoding,
+payload size) and a payload. The payload is the scene itself, as above, encoded as
+CBOR, with each mesh reference's `cookedPath` healed against the asset database.
+`assetlib::loadScene` reads the container; `src/assets/cooked_scene.h` decodes the
+payload (refusing CBOR nested deeper than 64 levels) and lists the meshes a scene
+names, which is what the packager ships.
 
-Both the entity record size and the header size are pinned by `static_assert`, so
-that format cannot change shape without a build failure.
+Version 3 and earlier were a fixed 256-byte record per entity with slots for nine
+components; colour grading, kits' components and unknown ones did not survive the
+cook. They are refused at load with "re-cook the scene": a cooked scene is derived
+data, and the `.scene` is the truth.

@@ -38,6 +38,17 @@
 #include "render/texture_registry.h"
 #include "render/vertex.h"
 #include "runtime/services/asset_service.h"
+#include "render/skinned_vertex.h"
+#include "animation/clip_registry.h"
+#include "animation/ozz_bridge.h"
+#include "animation/skeleton_registry.h"
+
+#include <ozz/animation/offline/animation_builder.h>
+#include <ozz/animation/offline/raw_animation.h>
+#include <ozz/animation/runtime/animation.h>
+#include <ozz/animation/runtime/skeleton.h>
+#include <ozz/base/io/archive.h>
+#include <ozz/base/io/stream.h>
 
 namespace fs = std::filesystem;
 
@@ -47,6 +58,63 @@ static int g_failures = 0;
                    std::printf("\n"); ++g_failures; }                  \
     else { std::printf("  ok    " __VA_ARGS__); std::printf("\n"); }   \
 } while (0)
+
+
+// A real SKINNED cooked mesh: two bones, an ozz skeleton archive and one
+// embedded clip, through the real writer. What a skinned character is on disk.
+static std::vector<uint8_t> drainStream(ozz::io::MemoryStream& ms) {
+    const int n = ms.Tell();
+    std::vector<uint8_t> out((size_t)n);
+    ms.Seek(0, ozz::io::Stream::kSet);
+    ms.Read(out.data(), (size_t)n);
+    return out;
+}
+static bool writeSkinnedMesh(const fs::path& out) {
+    Skeleton s;
+    s.bones.resize(2);
+    s.bones[0].name = "root"; s.bones[0].parentIndex = -1;
+    s.bones[1].name = "arm";  s.bones[1].parentIndex = 0;
+    s.buildBoneMap();
+    anim::buildOzzSkeleton(s);
+    if (!s.ozz) return false;
+    assetlib::MeshAsset m;
+    m.header.version      = 6;
+    m.header.vertexFlags  = assetlib::VF_POSITION | assetlib::VF_NORMAL | assetlib::VF_UV0
+                          | assetlib::VF_TANGENT | assetlib::VF_JOINTS | assetlib::VF_WEIGHTS;
+    m.header.vertexStride = sizeof(SkinnedVertex);
+    m.header.vertexCount  = 3;
+    m.header.indexStride  = 4;
+    m.header.indexCount   = 3;
+    m.header.boneCount    = 2;
+    m.vertexData.assign((size_t)m.header.vertexCount * m.header.vertexStride, 0);
+    const uint32_t idx[3] = { 0, 1, 2 };
+    m.indexData.assign((const uint8_t*)idx, (const uint8_t*)idx + sizeof(idx));
+    for (int i = 0; i < 3; ++i) { m.header.boundsMin[i] = -1.0f; m.header.boundsMax[i] = 1.0f; }
+    for (const Bone& b : s.bones) {
+        assetlib::CookedBone cb{};
+        std::snprintf(cb.name, sizeof(cb.name), "%s", b.name.c_str());
+        cb.parentIndex = b.parentIndex;
+        cb.bindRotation[3] = 1.0f;
+        cb.bindScale[0] = cb.bindScale[1] = cb.bindScale[2] = 1.0f;
+        for (int k = 0; k < 16; ++k)
+            cb.inverseBindMatrix[k] = cb.localBindMatrix[k] = (k % 5 == 0) ? 1.0f : 0.0f;
+        m.bones.push_back(cb);
+    }
+    { ozz::io::MemoryStream ms; { ozz::io::OArchive a(&ms); a << *s.ozz; } m.skeletonBlob = drainStream(ms); }
+    m.skeletonBlobDigest = assetlib::blobDigest(m.skeletonBlob);
+    ozz::animation::offline::RawAnimation raw;
+    raw.duration = 1.0f;
+    raw.tracks.resize((size_t)s.ozz->num_joints());
+    ozz::animation::offline::AnimationBuilder builder;
+    auto built = builder(raw);
+    if (!built) return false;
+    assetlib::CookedClipBlob clip;
+    clip.name = "idle"; clip.mappedTracks = clip.totalTracks = 2;
+    { ozz::io::MemoryStream ms; { ozz::io::OArchive a(&ms); a << *built; } clip.blob = drainStream(ms); }
+    clip.blobDigest = assetlib::blobDigest(clip.blob);
+    m.clips.push_back(std::move(clip));
+    return assetlib::saveMesh(m, out);
+}
 
 static bool writeCtex(const fs::path& out) {
     assetlib::TextureAsset t;
@@ -200,90 +268,83 @@ int main() {
               "and this handle has none left to give");
     }
 
-    // ── 6. The SKINNED path, where the fix above did not reach ─────────────
-    // `loadMesh` only returns a cached handle when the caller wants no skin. A
-    // caller passing `outSkin` falls through to a full load, because a cache
-    // entry cannot hand back the skeleton and clip handles — and that fall
-    // through is not rare, it is UNIVERSAL: `AssetService::m_skeletons` is
-    // declared in the header and assigned nowhere in the tree, so the
-    // `!m_skeletons` disjunct is always true.
+    // ── 6. A load that ASKS FOR THE SKIN, of a static mesh (WO-091) ────────
+    // `loadMesh` used to return a cached handle only when the caller wanted no
+    // skin; a caller passing `outSkin` fell through to a full load and
+    // superseded the entry, because the entry could not hand back a skin. A
+    // scene load always asks (it cannot know which meshes are skinned), so 50 000
+    // entities over one static mesh read its file 50 000 times. The entry now
+    // records whether the mesh is static, and a skin-asking hit on it is an
+    // ordinary shared hit with an empty skin: one mesh, one texture reference,
+    // released on the last unload.
     //
-    // The full load ended in `m_loadedMeshes[key] = {...}`, an OVERWRITE. The
-    // superseded entry was the only record of the texture references its own
-    // load had acquired, so they were never given back: the count below settled
-    // at 1 with no mesh left holding it, and the texture budget could never
-    // reclaim that texture again. Sections 1–4 could not see this — none of
-    // them pass `outSkin`.
-    //
-    // The fix re-keys the superseded entry instead of dropping it. Both meshes
-    // are then separately owned and separately released.
+    // The supersede path the old §6 and §7 covered (re-key the entry rather than
+    // overwrite it, BUG-0052) is unchanged code, now reached only by an entry
+    // whose skin is unknown: an async load, or a skinned mesh whose skeleton
+    // blob did not decode.
     {
-        std::printf("\n-- 6. a skinned load supersedes rather than abandons --\n");
+        std::printf("\n-- 6. a skin-asking load of a static mesh shares it --\n");
         AssetService::MeshSkin skinA{}, skinB{};
+        skinA.skeleton.id = 99;   // must come back emptied
         const MeshHandle sa = svc.loadMesh(kRel, &skinA);
         const MeshHandle sb = svc.loadMesh(kRel, &skinB);
-        CHECK(sa.valid() && sb.valid() && sa.id != sb.id,
-              "two skinned loads produce two meshes (%u, %u) — the fall-through "
-              "does not dedup, which is the behaviour that supersedes the entry",
+        CHECK(sa.valid() && sa.id == sb.id,
+              "two skin-asking loads share one mesh (%u, %u), as loads without do",
               sa.id, sb.id);
-        CHECK(svc.textureCache().refCount(texKey) == 2,
-              "each load acquired the material's texture (%u)",
-              svc.textureCache().refCount(texKey));
-
-        // NOT discriminating, and measured: with the re-key removed this still
-        // passes, because a handle with no entry falls to the unconditional
-        // removeMesh at the bottom of unloadMesh and reports true from there.
-        // The two assertions that move under the mutation are the refcounts.
-        CHECK(svc.unloadMesh(sa),
-              "the superseded mesh unloads — its entry is still findable by "
-              "handle under its re-keyed name");
+        CHECK(!skinA.skeleton.valid() && !skinB.skeleton.valid() && skinB.clips.empty(),
+              "and each is told it has no skin");
         CHECK(svc.textureCache().refCount(texKey) == 1,
-              "and it gave back ITS reference (%u). Before the fix the overwrite "
-              "took that record with it and this stayed at 2",
+              "its material's texture is acquired once (%u)",
               svc.textureCache().refCount(texKey));
-
-        CHECK(svc.unloadMesh(sb), "the live entry unloads too");
+        CHECK(svc.unloadMesh(sa) && meshes.getMesh(sb) != nullptr,
+              "the first unload leaves the mesh resident for the second holder");
+        CHECK(svc.unloadMesh(sb) && meshes.getMesh(sb) == nullptr,
+              "the second destroys it, once");
         CHECK(svc.textureCache().refCount(texKey) == 0,
-              "leaving nothing referenced (%u) — the texture is evictable again",
-              svc.textureCache().refCount(texKey));
-        CHECK(meshes.getMesh(sa) == nullptr && meshes.getMesh(sb) == nullptr,
-              "and both meshes are destroyed, neither leaked into the handle pool");
+              "leaving nothing referenced (%u)", svc.textureCache().refCount(texKey));
     }
 
-    // ── 7. Superseding an entry that MORE THAN ONE caller holds ────────────
-    // §6 covers the leak. This covers the destruction hazard, which needs a
-    // count above 1 on the entry being superseded — reachable by loading a mesh
-    // unskinned twice and then skinned once, in that order.
-    //
-    // Dropping the entry there loses the count, and both holders of the old
-    // handle then reach `removeMesh` through the no-entry path. The first
-    // destroys; `AssetRegistry::removeMesh` recycles the slot off a free list
-    // with no generation counter, so the second holder goes on drawing whatever
-    // the next addMesh puts there. That is BUG-0052 exactly, surviving inside
-    // the fix for BUG-0052.
+    // ── 7. Mixed holders: with and without the skin ────────────────────────
     {
-        std::printf("\n-- 7. superseding a SHARED entry --\n");
+        std::printf("\n-- 7. holders with and without the skin share one count --\n");
         const MeshHandle p = svc.loadMesh(kRel);
         const MeshHandle q = svc.loadMesh(kRel);
-        CHECK(p.valid() && p.id == q.id, "two unskinned holders, one handle (%u)", p.id);
-
         AssetService::MeshSkin skin{};
         const MeshHandle r = svc.loadMesh(kRel, &skin);
-        CHECK(r.valid() && r.id != p.id,
-              "a skinned load then supersedes their entry with a new mesh (%u)", r.id);
-
-        CHECK(svc.unloadMesh(p),
-              "the first of the two shared holders gives its reference back");
-        CHECK(meshes.getMesh(q) != nullptr,
-              "and the superseded mesh is STILL RESIDENT for the second (%u) — "
-              "the count travelled with the entry instead of being dropped", q.id);
-
-        CHECK(svc.unloadMesh(q), "the second holder leaves");
-        CHECK(meshes.getMesh(q) == nullptr, "and now it is destroyed, once");
-        CHECK(svc.unloadMesh(r), "the live entry unloads independently");
+        CHECK(p.valid() && p.id == q.id && q.id == r.id,
+              "three holders, one handle (%u)", p.id);
+        CHECK(svc.unloadMesh(p) && svc.unloadMesh(q) && meshes.getMesh(r) != nullptr,
+              "two leave, and it is still resident for the third");
+        CHECK(svc.unloadMesh(r) && meshes.getMesh(r) == nullptr, "the third destroys it, once");
         CHECK(svc.textureCache().refCount(texKey) == 0,
               "with every texture reference given back (%u)",
               svc.textureCache().refCount(texKey));
+    }
+
+    // ── 8. A SKINNED mesh shared by two entities (WO-091) ──────────────────
+    // With the skeleton and clip registries wired, as every runtime has them, a
+    // second skin-asking load of the same skinned mesh hits the cache. Every
+    // caller must get the skin: an entity whose load returns no skeleton is
+    // drawn in bind pose and never animates.
+    {
+        std::printf("\n-- 8. two loads of one skinned mesh, each with its skin --\n");
+        SkeletonRegistry skeletons;
+        AnimClipRegistry clips;
+        AssetService::Config scfg{ meshes, textures, materials, &assetLib, root };
+        scfg.skeletons = &skeletons; scfg.clips = &clips;
+        AssetService skinned(scfg);
+        CHECK(writeSkinnedMesh(root / ".cache" / "hero.cmesh"), "a skinned cooked mesh is written");
+        AssetService::MeshSkin first{}, second{};
+        const MeshHandle h1 = skinned.loadMesh("hero.cmesh", &first);
+        const MeshHandle h2 = skinned.loadMesh("hero.cmesh", &second);
+        CHECK(h1.valid() && first.skeleton.valid() && first.clips.size() == 1,
+              "the first load has its skeleton and clip (skeleton %u, %zu clip(s))",
+              first.skeleton.id, first.clips.size());
+        CHECK(h2.valid() && second.skeleton.valid() && second.clips.size() == 1,
+              "the second load has them too (skeleton %u, %zu clip(s))",
+              second.skeleton.id, second.clips.size());
+        if (h2.valid()) skinned.unloadMesh(h2);
+        if (h1.valid()) skinned.unloadMesh(h1);
     }
 
     fs::remove_all(root);

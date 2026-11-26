@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-30
+verified: 2026-11-26
 parses-external-input: true
 covers:
   - modules/assetlib/
@@ -43,6 +43,14 @@ both verbatim, which is the lesson worth keeping: a hardening that lands in one
 deserializer and not its sibling is a coincidence, not a policy. A third was
 unique to it — `stringTableRead` computed `offset + length` in 32-bit, so the
 bound wrapped and the read ran off the heap.
+
+Since WO-091 (2026-11-26) the scene container is format 4: a 32-byte header and a
+payload the header sizes exactly (shorter or longer is refused), which assetlib
+does not interpret. The engine encodes the scene there as CBOR
+(`src/assets/cooked_scene.h`), so the fixed record and its string table, and the
+offset arithmetic above, are gone. `loadScene` now reports why it refused
+(`why`), and refuses formats 1–3 by version, asking for a re-cook. The fuzzer
+still runs both halves (header and payload decode), under generator 2.
 
 `texture_asset` carries THREE block-compression families now — BC for desktop
 and Steam Deck, ASTC for iOS and modern Android, ETC2 for the GLES 3.0 floor —

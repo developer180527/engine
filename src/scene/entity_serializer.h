@@ -180,6 +180,48 @@ inline void loadName(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
     e.set<Name>({ j.is_string() ? j.get<std::string>() : std::string("Entity") });
 }
 
+// ── A skinned mesh's skeleton and clips, wired once the entity is loaded ─────
+// Handles are session-local: the scene stores identity only (Animator::clipPath,
+// or the mesh's embedded clipIndex), and the handles come from THIS load. The
+// mesh brings the skeleton, but the entity's SkinnedMesh and Animator are read
+// after it (registry order), so the wiring waits for the end of the entity
+// (finishSkin) and starts from the Animator as authored. The editor's import
+// callback (scene_serializer.h) wires the same way, through the same function.
+struct PendingSkin {
+    SkeletonHandle              skeleton;
+    std::vector<AnimClipHandle> clips;
+};
+
+// A skinned mesh without an authored Animator plays its clip, which is what the
+// editor has always shown; one with an Animator keeps its `playing`.
+inline void wireSkin(flecs::entity e, SkeletonHandle skeleton,
+                     const std::vector<AnimClipHandle>& clips,
+                     const std::function<AnimClipHandle(const std::string&, SkeletonHandle)>& bindClip) {
+    if (!skeleton.valid()) return;
+    SkinnedMesh sm;
+    sm.skeleton = skeleton;
+    e.set<SkinnedMesh>(sm);
+
+    Animator anim;
+    bool hadAnimator = false;
+    if (const Animator* a = e.try_get<Animator>()) { anim = *a; hadAnimator = true; }
+    if (!anim.clipPath.empty() && bindClip) {
+        // A standalone clip asset, bound by bone name to this skeleton.
+        const AnimClipHandle h = bindClip(anim.clipPath, skeleton);
+        if (h.valid()) {
+            anim.clip = h;
+            if (!hadAnimator) anim.playing = true;
+        }
+    } else if (!clips.empty()) {   // a clip inside the mesh file
+        int idx = anim.clipIndex;
+        if (idx < 0 || idx >= (int)clips.size()) idx = 0;
+        anim.clipIndex = idx;
+        anim.clip      = clips[idx];
+        if (!hadAnimator) anim.playing = true;
+    }
+    e.set<Animator>(anim);
+}
+
 // ── MeshRenderer (mode-aware: the one component that differs disk vs memory) ──
 // An entity whose authored mesh did not resolve still HAS a mesh as far as the
 // document is concerned — see scene/unresolved_mesh.h (WO-029).
@@ -303,10 +345,16 @@ inline void loadMeshRef(flecs::entity e, const nlohmann::json& j, SerdeContext& 
         // Request the cooked LOD chain too. Without this the editor's load path
         // silently produced no levels while scene_service's did — the same
         // asset rendering with LOD in the player and without it in the editor.
+        //
+        // And the skin: before this the editor's cooked path asked for none, so a
+        // skinned mesh loaded this way kept an invalid skeleton and never animated
+        // (WO-091); only the import path and the player's own loader wired one.
         std::vector<MeshHandle> lods;
-        MeshHandle h = sa->loadCookedMesh(cookedPath.c_str(), &lods);
+        StreamedMesh skin;
+        MeshHandle h = sa->loadCookedMesh(cookedPath.c_str(), &lods, &skin);
         if (h.valid()) {
             resolved({h, matOverride});
+            if (skin.skeleton.valid()) e.set<PendingSkin>({skin.skeleton, skin.clips});
             if (!lods.empty()) {
                 LodMesh lm;
                 lm.count = (uint8_t)std::min(lods.size(),
@@ -434,7 +482,7 @@ inline void loadLodMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& 
         } else {
             const std::string cooked = lj.value("cookedPath", std::string{});
             if (!cooked.empty() && ctx.sceneAssets && ctx.sceneAssets->loadCookedMesh)
-                h = ctx.sceneAssets->loadCookedMesh(cooked.c_str(), nullptr);   // relative — see above
+                h = ctx.sceneAssets->loadCookedMesh(cooked.c_str(), nullptr, nullptr);   // relative — see above
         }
         if (!h.valid()) {
             LOG_WARN("Scene", "LOD level %u unresolved, chain shortened",
@@ -507,9 +555,16 @@ inline void loadAnimator(flecs::entity e, const nlohmann::json& j, SerdeContext&
         // Disk: resolve the standalone-clip AssetRef to a loadable source
         // path; the import callback binds it to the skeleton once the skinned
         // mesh arrives. Clip handle stays invalid until then.
+        //
+        // A reference that does not resolve HERE keeps its authored path. The
+        // shipped player has no source assets (the clip library maps the path to
+        // the packaged cooked clip), and an editor missing the file must still
+        // save the reference back rather than erase it (DR-0034).
         AssetRef ref = assetref::fromJson(j);
-        if (!ref.empty())
+        if (!ref.empty()) {
             a.clipPath = assetref::resolve(ref, ctx.projectRoot, ctx.assetLib);
+            if (a.clipPath.empty()) a.clipPath = ref.path;
+        }
     }
     a.clipIndex = j.value("clipIndex", 0);
     a.fade    = readFloat(j, "fade", 0.2f);
@@ -578,7 +633,13 @@ inline void registerBuiltinSchemas(SchemaRegistry& r) {
         .f32("iso",                      &ColourGrading::iso)
         .string("lutPath",               &ColourGrading::lutPath, /*omitEmpty*/ true)
         .build());
+    // A body saved without "bodyType" is KINEMATIC, as every reader of the
+    // format has read it since the start (and docs/reference/scene-format.md
+    // says), though RigidBody's own default is dynamic.
+    RigidBody bodyDefaults;
+    bodyDefaults.bodyType = PhysicsBodyType::Kinematic;
     r.add(SchemaBuilder<RigidBody>("core.RigidBody", "rigidBody")
+        .defaults(bodyDefaults)
         .enumeration("bodyType",         &RigidBody::bodyType)
         .enumeration("shape",            &RigidBody::shape)
         .f32("mass",                     &RigidBody::mass)
@@ -733,6 +794,13 @@ inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
     for (const ComponentSchema& s : reg.all()) {
         auto it = je.find(s.key);
         if (it == je.end()) continue;
+        // Data at the current revision, which is nearly all of it, is read in
+        // place; only data that needs a migration (or refusing) is copied.
+        const bool marked = it->is_object() && it->contains(kRevisionKey);
+        if (!marked && s.revision == 0) {
+            tolerant(s.key.c_str(), [&] { s.load(e, *it, ctx); });
+            continue;
+        }
         nlohmann::json data = *it;
         std::string why;
         if (!migrateToCurrent(s, data, why)) {
@@ -749,6 +817,13 @@ inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
     // never seen their schema — so this one is not optional.
     if (je.contains("reflected"))
         tolerant("reflected", [&] { reflected::load(e, je["reflected"]); });
+    // The skin of a mesh loaded above, now that the authored Animator is read.
+    if (const PendingSkin* ps = e.try_get<PendingSkin>()) {
+        const PendingSkin skin = *ps;
+        e.remove<PendingSkin>();
+        wireSkin(e, skin.skeleton, skin.clips,
+                 ctx.sceneAssets ? ctx.sceneAssets->bindClip : nullptr);
+    }
     return e;
 }
 

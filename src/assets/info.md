@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-11
+verified: 2026-11-26
 parses-external-input: true
 covers:
   - src/assets/
@@ -345,6 +345,16 @@ divergence in the decimator, and equally invisible on the machine that made it. 
 not retried until source/cooker/settings change (`forceRecook` evicts the
 local blob and bypasses the fetch path — otherwise it would just re-download
 the bytes under suspicion).
+
+### The scene cooker and the cooked scene (`cookers/scene/`, `cooked_scene.h`, WO-091)
+`cookSceneFile` writes the scene itself: the `.scene` JSON, every component kept,
+with each mesh reference's `cookedPath` (the meshRenderer's and each LOD level's)
+healed against the asset database, which wins over a cached one. `cooked_scene.h`
+is its codec, shared by the cooker, the shipped player's `SceneService` and the
+packager: CBOR into assetlib's container, decoded with a depth cap (64 levels; the
+CBOR reader recurses per level), and `meshPaths()` for what a package ships. It is
+here, not in `src/scene`, because the cooker needs it and scene depends on assets.
+Until WO-091 the cook wrote a fixed record of nine components and dropped the rest.
 
 ## Loaders (`loaders/`)
 `mesh_loader` — reads a `.cooked` mesh and creates GPU buffers **through

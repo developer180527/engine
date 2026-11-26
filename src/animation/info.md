@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-09-30
+verified: 2026-11-26
 parses-external-input: true
 covers:
   - src/animation/
@@ -122,7 +122,10 @@ arrays (parent index always < child index) for cache-friendly evaluation.
   an error. Cache key is (path | skeleton handle); unmapped tracks warn (first
   few named); zero mapped tracks = wrong rig, refused.
   `Animator::clipPath` carries the reference (AssetRef uuid+relative on disk);
-  the scene-load import callback binds it once the skinned mesh arrives.
+  a scene load binds it once the skinned mesh arrives, through `clipBinder()`
+  (the same function for the editor's import callback, a cooked mesh and the
+  shipped player, WO-091). A reference that does not resolve on this machine
+  keeps its authored path, which is what the library maps to a packaged clip.
   Owned by EngineRuntime (`clipLibrary()`), reachable via RuntimeContext.
   Regression: `clip_binding_test <character.fbx> <clip.fbx>`.
 

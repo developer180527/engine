@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-11-11
+verified: 2026-11-26
 covers:
   - modules/assetlib/src/cook/*.cpp
   - modules/assetlib/src/ddc/*.cpp

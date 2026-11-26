@@ -12,10 +12,14 @@
 inline SceneAssets sceneAssetsFor(AssetService* service, AsyncLoader* loader) {
     SceneAssets a;
     if (service) {
-        a.loadCookedMesh = [service](const char* path, std::vector<MeshHandle>* lods) {
+        a.loadCookedMesh = [service](const char* path, std::vector<MeshHandle>* lods,
+                                     StreamedMesh* skin) {
             AssetService::MeshLods l;
-            const MeshHandle h = service->loadMesh(path, nullptr, lods ? &l : nullptr);
+            AssetService::MeshSkin s;
+            const MeshHandle h = service->loadMesh(path, skin ? &s : nullptr,
+                                                   lods ? &l : nullptr);
             if (lods) *lods = std::move(l.levels);
+            if (skin) { skin->mesh = h; skin->skeleton = s.skeleton; skin->clips = std::move(s.clips); }
             return h;
         };
         a.loadMaterial = [service](const char* name) { return service->loadMaterialAsset(name); };

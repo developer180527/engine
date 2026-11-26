@@ -32,9 +32,15 @@ struct StreamedMesh {
 };
 
 struct SceneAssets {
-    // A cooked mesh (path relative to the project's .cache), and its coarser
-    // LOD levels into `lods` when non-null. Invalid handle on failure.
-    std::function<MeshHandle(const char* cookedPath, std::vector<MeshHandle>* lods)> loadCookedMesh;
+    // A cooked mesh (path relative to the project's .cache), its coarser LOD
+    // levels into `lods` and, for a skinned mesh, its skeleton and embedded clips
+    // into `skin` (both optional). Invalid handle on failure.
+    std::function<MeshHandle(const char* cookedPath, std::vector<MeshHandle>* lods,
+                             StreamedMesh* skin)> loadCookedMesh;
+
+    // A standalone animation clip (an Animator's clipPath), bound by bone name to
+    // `skeleton`. Invalid if it does not load or does not fit.
+    std::function<AnimClipHandle(const std::string& clipPath, SkeletonHandle skeleton)> bindClip;
 
     // An authored material by NAME (what a scene file stores). Invalid if none.
     std::function<MaterialHandle(const char* name)> loadMaterial;

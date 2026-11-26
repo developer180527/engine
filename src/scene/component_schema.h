@@ -291,13 +291,18 @@ public:
     }
     // For a test's component, whose revision is the point of the test.
     SchemaBuilder& revision(uint32_t r) { m_s.revision = r; return *this; }
+    // What a field missing from saved data reads as, when that is not the
+    // struct's own default: the scene format's defaults are a promise to every
+    // file already written (a rigid body with no "bodyType" has always been
+    // kinematic, though a RigidBody constructed in code is dynamic).
+    SchemaBuilder& defaults(const T& d) { m_defaults = std::make_shared<const T>(d); return *this; }
 
     ComponentSchema build() {
         auto fields = std::make_shared<const std::vector<Field>>(std::move(m_fields));
-        {   // The defaults, as saved: a default-constructed component, written.
-            const T def{};
+        std::shared_ptr<const T> base = m_defaults ? m_defaults : std::make_shared<const T>();
+        {   // The defaults, as saved: what a component with no saved fields reads as.
             nlohmann::json d = nlohmann::json::object();
-            for (const Field& f : *fields) f.save(def, d, flecs::entity());
+            for (const Field& f : *fields) f.save(*base, d, flecs::entity());
             m_s.defaults = std::move(d);
         }
         m_s.save = [fields](flecs::entity e, nlohmann::json& j, const SerdeContext&) {
@@ -305,9 +310,9 @@ public:
             j = nlohmann::json::object();
             for (const Field& f : *fields) f.save(*t, j, e);
         };
-        m_s.load = [fields](flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
+        m_s.load = [fields, base](flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
             if (!j.is_object()) throw std::runtime_error("not an object");
-            T t{};
+            T t = *base;
             const bool ownRefs = beginEntityRefs(ctx);   // see entity()
             try {
                 for (const Field& f : *fields) f.load(t, j, e, ctx);
@@ -380,8 +385,9 @@ private:
         else return 0;
     }
 
-    ComponentSchema    m_s;
-    std::vector<Field> m_fields;
+    ComponentSchema          m_s;
+    std::vector<Field>       m_fields;
+    std::shared_ptr<const T> m_defaults;
 };
 
 }  // namespace EntitySerde

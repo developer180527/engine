@@ -24,6 +24,8 @@
 
 #include <assetlib/mesh_asset.h>
 #include <assetlib/scene_asset.h>
+#include <nlohmann/json.hpp>
+#include "assets/cooked_scene.h"
 #include <assetlib/material_asset.h>
 #include <assetlib/shader_asset.h>
 
@@ -75,16 +77,12 @@ static void touch(const fs::path& p) {
 // through assetlib::saveScene so the same reader the packager uses is exercised.
 static bool writeScene(const fs::path& p,
                        const std::vector<std::string>& meshRefs) {
+    nlohmann::json scene = {{"version", 1}, {"entities", nlohmann::json::array()}};
+    uint64_t id = 1;
+    for (const auto& ref : meshRefs)
+        scene["entities"].push_back({{"id", id++}, {"meshRenderer", {{"cookedPath", ref}}}});
     assetlib::SceneAsset sc;
-    for (const auto& ref : meshRefs) {
-        assetlib::SceneEntity e;
-        const auto [off, len] = assetlib::stringTableAppend(sc.stringTable, ref);
-        e.meshCookedOffset = off;
-        e.meshCookedLength = len;
-        sc.entities.push_back(e);
-    }
-    sc.header.entityCount     = (uint32_t)sc.entities.size();
-    sc.header.stringTableSize = (uint32_t)sc.stringTable.size();
+    cooked_scene::encode(scene, sc);
     return assetlib::saveScene(sc, p);
 }
 

@@ -29,6 +29,7 @@
 #include "animation/cooked_clip.h"
 #include "animation/ozz_bridge.h"
 #include "animation/skeleton.h"
+#include "animation/skeleton_registry.h"
 #include "core/handle.h"
 #include "core/logger.h"
 
@@ -142,3 +143,15 @@ private:
     std::filesystem::path m_cacheRoot;   // <project>/.cache/anim
     std::unordered_map<std::string, AnimClipHandle> m_cache; // "path|skelId"
 };
+// What a scene load binds a standalone clip with (SceneAssets::bindClip): the
+// library, the skeleton the clip is bound to by bone name, and the registry the
+// bound clip is stored in. Empty when any is missing, which a load treats as "this
+// host binds no standalone clips".
+inline std::function<AnimClipHandle(const std::string&, SkeletonHandle)>
+clipBinder(ClipLibrary* lib, SkeletonRegistry* skeletons, AnimClipRegistry* clips) {
+    if (!lib || !skeletons || !clips) return {};
+    return [lib, skeletons, clips](const std::string& path, SkeletonHandle sk) {
+        const Skeleton* s = skeletons->get(sk);
+        return s ? lib->load(path, sk, *s, *clips) : AnimClipHandle{};
+    };
+}

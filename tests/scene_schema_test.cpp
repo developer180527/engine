@@ -511,6 +511,82 @@ int main(int argc, char** argv) {
               "rest of the component loads");
     }
 
+
+    std::printf("\n-- what a component with nothing saved reads as --\n");
+    {
+        // The format's defaults are a promise to every file already written. A
+        // rigid body with no "bodyType" has always been KINEMATIC (the old table
+        // read 1, the cooker wrote 1, scene-format.md says so); RigidBody's own
+        // default is dynamic, and the first registry took that. Pinned here.
+        flecs::world w = makeWorld();
+        SerdeContext ctx; ctx.mode = SerdeMode::Disk;
+        const json je = json::parse(R"({"id": 5001, "name": "Body", "rigidBody": {},
+                                        "camera": {}, "light": {}, "characterController": {}})");
+        flecs::entity e = createEntity(w, je, ctx, IdPolicy::Preserve);
+        const RigidBody* rb = e.try_get<RigidBody>();
+        CHECK(rb && rb->bodyType == PhysicsBodyType::Kinematic,
+              "\"rigidBody\": {} is kinematic, as it has always been");
+        CHECK(schemas().byKey("rigidBody")->defaults.value("bodyType", -1) == 1,
+              "and the schema's stated default says so (bodyType 1)");
+        const Camera* c = e.try_get<Camera>(); const Light* l = e.try_get<Light>();
+        const CharacterController* cc = e.try_get<CharacterController>();
+        CHECK(c && c->fov == 60.0f && c->isPrimary && c->farPlane == 1000.0f
+              && l && l->intensity == 3.0f && l->range == 15.0f && !l->castShadows
+              && cc && cc->height == 1.8f && cc->mass == 70.0f,
+              "camera, light and character controller read their documented defaults");
+    }
+
+
+    std::printf("\n-- a cooked skinned mesh gets its skeleton and its clip (WO-091) --\n");
+    {
+        // Before WO-091 the cooked path asked for no skin, so a skinned mesh
+        // loaded from a cooked file kept an invalid skeleton and never animated
+        // in the editor. A fake host: mesh 3, skeleton 5, embedded clips 7 and 8,
+        // and a standalone clip that binds as 42.
+        SceneAssets fake;
+        fake.loadCookedMesh = [](const char*, std::vector<MeshHandle>*, StreamedMesh* skin) {
+            MeshHandle m; m.id = 3;
+            if (skin) {
+                skin->skeleton.id = 5;
+                AnimClipHandle c7, c8; c7.id = 7; c8.id = 8;
+                skin->clips = {c7, c8};
+            }
+            return m;
+        };
+        fake.bindClip = [](const std::string& path, SkeletonHandle sk) {
+            AnimClipHandle h; h.id = (path == "clips/walk.anim" && sk.id == 5) ? 42 : 0;
+            return h;
+        };
+        flecs::world w = makeWorld();
+        SerdeContext ctx; ctx.mode = SerdeMode::Disk; ctx.sceneAssets = &fake;
+        const json authored = json::parse(R"({"id": 6001, "name": "Authored",
+            "meshRenderer": {"cookedPath": "meshs/hero.cooked"}, "skinnedMesh": {},
+            "animator": {"clipIndex": 1, "playing": false, "speed": 0.5}})");
+        const json bare = json::parse(R"({"id": 6002, "name": "Bare",
+            "meshRenderer": {"cookedPath": "meshs/hero.cooked"}})");
+        const json standalone = json::parse(R"({"id": 6003, "name": "Standalone",
+            "meshRenderer": {"cookedPath": "meshs/hero.cooked"},
+            "animator": {"path": "clips/walk.anim", "playing": true}})");
+        flecs::entity e1 = createEntity(w, authored, ctx, IdPolicy::Preserve);
+        flecs::entity e2 = createEntity(w, bare, ctx, IdPolicy::Preserve);
+        flecs::entity e3 = createEntity(w, standalone, ctx, IdPolicy::Preserve);
+        const SkinnedMesh* sm = e1.try_get<SkinnedMesh>();
+        const Animator* a1 = e1.try_get<Animator>();
+        CHECK(sm && sm->skeleton.id == 5, "the skeleton is wired, after the saved "
+              "\"skinnedMesh\" marker that would otherwise leave it invalid");
+        CHECK(a1 && a1->clip.id == 8 && !a1->playing && a1->speed == 0.5f,
+              "the authored Animator keeps its fields and gets embedded clip 1 (id %u)",
+              a1 ? a1->clip.id : 0);
+        const Animator* a2 = e2.try_get<Animator>();
+        CHECK(a2 && a2->clip.id == 7 && a2->playing,
+              "a skinned mesh with no Animator plays its first clip, as the editor shows");
+        const Animator* a3 = e3.try_get<Animator>();
+        CHECK(a3 && a3->clip.id == 42 && a3->clipPath == "clips/walk.anim",
+              "a standalone clip binds by its path, kept as authored though it does not "
+              "resolve here");
+        CHECK(!e1.has<PendingSkin>() && !e2.has<PendingSkin>(), "nothing is left pending");
+    }
+
     std::printf("\n-- extensions: the namespaces a world has --\n");
     {
         flecs::world w = makeWorld();

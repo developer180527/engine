@@ -38,6 +38,8 @@
 #include "components/entity_id.h"
 
 #include <assetlib/scene_asset.h>
+#include <nlohmann/json.hpp>
+#include "assets/cooked_scene.h"
 #include <assetlib/mesh_asset.h>
 
 #include "gpu_test_device.h"
@@ -49,7 +51,8 @@
 
 namespace fs = std::filesystem;
 
-static constexpr uint32_t kGeneratorVersion = 1;
+// 2: cooked scene format 4 (WO-091); the corpus's seeds were found under 1.
+static constexpr uint32_t kGeneratorVersion = 2;
 
 namespace {
 
@@ -79,111 +82,105 @@ bool writeRealMesh(const fs::path& out) {
 
 // A scene of the shape SceneService actually consumes, with the identity and
 // parent fields deliberately hostile — those are the parts the parse fuzzer
-// hands over untouched and only the consumer interprets.
-assetlib::SceneAsset buildScene(fuzz::Rng& rng) {
-    using namespace assetlib;
-    SceneAsset s;
+// hands over untouched and only the consumer interprets. Since WO-091 (format 4)
+// the payload is the scene's own form, so the components are the registry's
+// keys, with values both well-formed and not.
+nlohmann::json junk(fuzz::Rng& rng, int depth = 0) {
+    switch (depth > 2 ? rng.below(4) : rng.below(6)) {
+        case 0:  return nullptr;
+        case 1:  return rng.chance(50);
+        case 2:  return (int64_t)rng.interestingU32();
+        case 3: {
+            std::string v;
+            for (uint32_t k = rng.range(0, 40); k > 0; --k) v.push_back((char)rng.range(32, 126));
+            return v;
+        }
+        case 4: {
+            nlohmann::json a = nlohmann::json::array();
+            for (uint32_t k = rng.range(0, 4); k > 0; --k) a.push_back(junk(rng, depth + 1));
+            return a;
+        }
+        default: {
+            nlohmann::json o = nlohmann::json::object();
+            for (uint32_t k = rng.range(0, 4); k > 0; --k) o["k" + std::to_string(k)] = junk(rng, depth + 1);
+            return o;
+        }
+    }
+}
 
+nlohmann::json buildScene(fuzz::Rng& rng) {
+    nlohmann::json scene = { {"version", 1}, {"entities", nlohmann::json::array()} };
     const uint32_t n = rng.range(0, 40);
     std::vector<uint64_t> issuedIds;
 
     for (uint32_t i = 0; i < n; ++i) {
-        SceneEntity e{};
-
+        nlohmann::json e = nlohmann::json::object();
         // Identity: duplicates and zero are the interesting cases. A cooked
         // scene with two entities claiming one id must resolve, not alias.
+        uint64_t id;
         switch (rng.below(5)) {
-            case 0:  e.entityId = 0; break;                       // "no id"
-            case 1:  e.entityId = issuedIds.empty() ? rng.next()  // duplicate
-                                : issuedIds[rng.below((uint32_t)issuedIds.size())]; break;
-            case 2:  e.entityId = 1; break;                       // collides with anything
-            default: e.entityId = rng.next(); break;
+            case 0:  id = 0; break;                                    // "no id"
+            case 1:  id = issuedIds.empty() ? rng.next()               // duplicate
+                        : issuedIds[rng.below((uint32_t)issuedIds.size())]; break;
+            case 2:  id = 1; break;                                    // collides with anything
+            default: id = rng.next(); break;
         }
-        issuedIds.push_back(e.entityId);
+        issuedIds.push_back(id);
+        if (id || rng.chance(50)) e["id"] = id;
 
         // Parenting: this is the adversarial part. safeReparent is the only
         // thing standing between these and an infinite ancestor walk.
+        uint64_t parent = 0;
         switch (rng.below(6)) {
-            case 0:  e.parentId = 0; break;                       // root
-            case 1:  e.parentId = e.entityId; break;              // SELF-parent
-            case 2:  e.parentId = issuedIds.empty() ? 0           // a real ancestor
-                                : issuedIds[rng.below((uint32_t)issuedIds.size())]; break;
-            case 3:  e.parentId = rng.next(); break;              // dangling
+            case 0:  parent = 0; break;                                // root
+            case 1:  parent = id; break;                               // SELF-parent
+            case 2:  parent = issuedIds.empty() ? 0                    // a real ancestor
+                            : issuedIds[rng.below((uint32_t)issuedIds.size())]; break;
+            case 3:  parent = rng.next(); break;                       // dangling
             // A deliberate chain: each entity parented to the PREVIOUS one, so
             // a 40-entity scene builds a 40-deep hierarchy. Combined with the
             // self-parent and duplicate-id cases above, this is how a cycle
             // gets built out of individually reasonable records.
-            default: e.parentId = i ? issuedIds[i - 1] : 0; break;
+            default: parent = i ? issuedIds[i - 1] : 0; break;
         }
+        if (parent) e["parentId"] = rng.chance(10) ? junk(rng) : nlohmann::json(parent);
 
-        uint32_t mask = kComp_Transform;
-        if (rng.chance(70)) mask |= kComp_Name;
-        if (rng.chance(65)) mask |= kComp_MeshRenderer;
-        if (rng.chance(15)) mask |= kComp_Camera;
-        if (rng.chance(25)) mask |= kComp_RigidBody;
-        if (rng.chance(20)) mask |= kComp_Script;
-        if (rng.chance(10)) mask |= kComp_CharacterController;
-        if (rng.chance(20)) mask |= kComp_Light;
-        if (rng.chance(15)) mask |= kComp_Animator;
-        if (rng.chance(8))  mask |= (1u << rng.range(9, 31));   // a bit from a later version
-        e.componentMask = mask;
-
-        auto put = [&](const std::string& v, uint32_t& off, uint32_t& len) {
-            const auto [o, l] = stringTableAppend(s.stringTable, v);
-            off = o; len = l;
-        };
-        auto junk = [&](uint32_t maxLen) {
-            std::string v;
-            const uint32_t k = rng.range(0, maxLen);
-            for (uint32_t c = 0; c < k; ++c) v.push_back((char)rng.range(32, 126));
-            return v;
-        };
-
-        if (mask & kComp_Name) put(junk(40), e.nameOffset, e.nameLength);
-        if (mask & kComp_MeshRenderer) {
+        e["transform"] = { {"position", {(double)((int32_t)rng.next() % 1000), 0.0, 0.0}},
+                           {"scale", {rng.chance(10) ? 0.0 : 1.0, 1.0, 1.0}} };
+        if (rng.chance(70)) e["name"] = rng.chance(10) ? junk(rng) : nlohmann::json("e" + std::to_string(i));
+        if (rng.chance(65)) {
             // Half the time a mesh that really loads — otherwise the GPU and
             // residency paths would never run and this would be a parse test
             // with extra steps.
+            nlohmann::json mr = nlohmann::json::object();
             if (rng.chance(50) && !g_realMeshes.empty())
-                put(g_realMeshes[rng.below((uint32_t)g_realMeshes.size())],
-                    e.meshCookedOffset, e.meshCookedLength);
+                mr["cookedPath"] = g_realMeshes[rng.below((uint32_t)g_realMeshes.size())];
             else
-                put(junk(60), e.meshCookedOffset, e.meshCookedLength);
-
-            if (rng.chance(40)) put(junk(40), e.meshSourceOffset, e.meshSourceLength);
-            e.meshSourceType = (uint8_t)rng.below(2);
-            if (rng.chance(40)) {
-                const auto [o, l] = stringTableAppend(s.stringTable, junk(32));
-                (void)l;
-                e.materialNameOffset = o;       // z-terminated, no length field
-            }
-            // Sentinel and out-of-range offsets: the consumer dereferences
-            // these, so it is the consumer that has to survive them.
-            if (rng.chance(12)) e.meshCookedOffset  = rng.interestingU32();
-            if (rng.chance(10)) e.materialNameOffset = rng.interestingU32();
-            if (rng.chance(10)) e.meshCookedLength  = rng.interestingU32();
+                mr["cookedPath"] = junk(rng);
+            if (rng.chance(40)) mr["path"] = junk(rng);
+            if (rng.chance(40)) mr["material"] = junk(rng);
+            if (rng.chance(20)) mr["sourceType"] = "primitive";
+            e["meshRenderer"] = rng.chance(10) ? junk(rng) : mr;
         }
-        if (mask & kComp_Script)   put(junk(50), e.scriptPathOffset, e.scriptPathLength);
-        if (mask & kComp_Animator) {
-            if (rng.chance(50)) put(junk(40), e.animClipPathOffset, e.animClipPathLength);
-            e.animClipIndex = (int16_t)rng.next();
-            e.animPlaying   = (uint8_t)rng.below(2);
-        }
+        // The engine's components, each as junk or with junk inside, and the
+        // shapes only the registry reads: a kit's block, an unknown key, a
+        // revision from the future, an LOD chain naming meshes.
+        static const char* kKeys[] = { "camera", "rigidBody", "script", "characterController",
+                                       "light", "animator", "skinnedMesh", "colourGrading",
+                                       "lodMesh", "reflected", "sprite" };
+        for (const char* k : kKeys)
+            if (rng.chance(15)) e[k] = junk(rng);
+        if (rng.chance(10)) e["camera"] = { {"$rev", rng.interestingU32()}, {"fov", 10} };
+        if (rng.chance(10))
+            e["animator"] = { {"clipIndex", (int64_t)(int32_t)rng.next()}, {"path", junk(rng)},
+                              {"playing", rng.chance(50)} };
+        if (rng.chance(8) && !g_realMeshes.empty())
+            e["lodMesh"] = { {"levels", { { {"cookedPath", g_realMeshes[0]} }, junk(rng) }},
+                             {"coarsenBelow", junk(rng)} };
 
-        // Enum-ish bytes well outside their declared ranges.
-        e.lightType        = (uint8_t)rng.below(255);
-        e.rbBodyType       = (uint8_t)rng.below(255);
-        e.rbShape          = (uint8_t)rng.below(255);
-        e.cameraProjection = (uint8_t)rng.below(255);
-
-        for (int k = 0; k < 3; ++k) e.position[k] = (float)((int32_t)rng.next() % 1000);
-        for (int k = 0; k < 3; ++k) e.scale[k]    = rng.chance(10) ? 0.0f : 1.0f;
-
-        s.entities.push_back(e);
+        scene["entities"].push_back(rng.chance(3) ? junk(rng) : e);   // sometimes not an entity
     }
-    s.header.entityCount     = (uint32_t)s.entities.size();
-    s.header.stringTableSize = (uint32_t)s.stringTable.size();
-    return s;
+    return scene;
 }
 
 // Walk to the root. Returns false if the chain does not terminate within a
@@ -230,7 +227,8 @@ void oneCase(uint64_t masterSeed, fuzz::Report& rep) {
     const fs::path file = g_root / ".cache" / "scenes"
                         / ("fuzz-" + std::to_string(fuzz::currentPid()) + ".scene");
     {
-        const auto scene = buildScene(rng);
+        assetlib::SceneAsset scene;
+        cooked_scene::encode(buildScene(rng), scene);
         if (!assetlib::saveScene(scene, file)) return;
         // Truncate sometimes: the consumer must handle a rejection from the
         // parse layer as cleanly as it handles a success.

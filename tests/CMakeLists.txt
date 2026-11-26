@@ -163,6 +163,12 @@ target_compile_definitions(scene_schema_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_
 # A project's required extensions refuse Play by name, its used ones warn (WO-071,
 # DR-0035): a headless engine booted on throwaway projects.
 engine_test(scene_extensions_test)
+# The shipped player gets every component (WO-091): the real cooker, SceneService
+# on the Noop backend, and the world saved back compared with the source.
+if(TARGET engine_cooking)
+    engine_test(cooked_scene_test LIB engine_runtime engine_cooking)
+    target_compile_definitions(cooked_scene_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+endif()
 # WO-029: loading never deletes an authored mesh. A reference the loader cannot
 # resolve (missing file, failed or unfinished import, no importer in this build)
 # is kept in UnresolvedMesh and written back unchanged by the next save — disk
@@ -586,7 +592,7 @@ if(ENGINE_WITH_SOURCE_IMPORTERS)
     # The other half — that all of this still works with no editor binary in the
     # tree at all — is the `sdk-only-game` CI job, which configures
     # ENGINE_BUILD_EDITOR=OFF and asserts the editor is absent.
-    engine_test(sdk_only_game_test LIB engine_core TIMEOUT 300)
+    engine_test(sdk_only_game_test TIMEOUT 300)
     if(TARGET engine_project AND TARGET engine_cook)
         set_tests_properties(sdk_only_game_test PROPERTIES ENVIRONMENT
             "ENGINE_PROJECT_TOOL=$<TARGET_FILE:engine_project>;ENGINE_COOK_TOOL=$<TARGET_FILE:engine_cook>;ENGINE_REQUIRE_SDK_ONLY_TEST=1")
@@ -1276,3 +1282,10 @@ endif()
 add_executable(render_submit_bench render_submit_bench.cpp)
 target_link_libraries(render_submit_bench PRIVATE engine_runtime)
 set_target_properties(render_submit_bench PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+# What loading a cooked scene costs (WO-091): 50 000 entities through the real
+# cooker and SceneService, Noop backend. Not a test: before/after numbers.
+if(TARGET engine_cooking)
+add_executable(scene_load_bench scene_load_bench.cpp)
+target_link_libraries(scene_load_bench PRIVATE engine_runtime engine_cooking)
+set_target_properties(scene_load_bench PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
