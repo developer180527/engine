@@ -24,7 +24,11 @@ static constexpr uint32_t kSceneMagic   = 0x53434E45;  // "SCNE"
 static constexpr uint32_t kSceneVersion = 4;           // v4: the registry's form, CBOR
 
 enum class ScenePayload : uint32_t {
-    Cbor = 1,   // RFC 8949, as nlohmann::json::to_cbor writes it
+    Cbor   = 1,   // RFC 8949, as nlohmann::json::to_cbor writes it
+    // WO-092: registered components packed by their schemas (a schema table,
+    // then each entity's packed records and, as CBOR, whatever was not packed).
+    // The engine's src/assets/cooked_scene.h describes it.
+    Packed = 2,
 };
 
 struct SceneHeader {

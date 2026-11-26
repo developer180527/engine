@@ -6,11 +6,16 @@
 
 namespace assetlib { class AssetRegistry; }
 
-// Standalone scene cooker — converts a JSON .scene file into a binary .cooked
-// file with zero-parse-overhead entity records + string table.
+#include "assets/cooked_scene.h"   // cooked_scene::Packer
+
+// Standalone scene cooker — converts a JSON .scene file into a cooked scene: the
+// scene itself, mesh references healed against the asset database, written
+// packed (src/assets/packed_scene.h) when a packer is given and as CBOR when not
+// (src/assets/cooked_scene.h). Both load; packed loads fastest.
 //
 // Minimal dependency surface: only needs JSON, assetlib types, and filesystem.
-// CookService and EditorApp both call through here.
+// CookService and EditorApp both call through here. The packer is the scene
+// layer's (EntitySerde::scenePacker()): this module cannot include it.
 //
 // Returns true on success. The assetLib pointer is used to resolve source paths
 // to cooked paths (optional; pass nullptr if unavailable — entities will lack
@@ -18,7 +23,8 @@ namespace assetlib { class AssetRegistry; }
 bool cookSceneFile(const std::filesystem::path& jsonPath,
                    const std::filesystem::path& outPath,
                    assetlib::AssetRegistry* assetLib = nullptr,
-                   const std::filesystem::path& projectRoot = {});
+                   const std::filesystem::path& projectRoot = {},
+                   const cooked_scene::Packer* packer = nullptr);
 
 // True if any asset THIS scene references has a cooked output newer than
 // `cookedTime` (the scene binary's mtime). The per-scene dependency check

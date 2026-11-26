@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-26
+verified: 2026-11-27
 parses-external-input: true
 covers:
   - src/assets/
@@ -359,6 +359,10 @@ head at a time, a value skipped without being decoded, a sticky failure flag, an
 the subset nlohmann writes (anything else is refused, so the caller falls back to
 the tree). It also gives the answers nlohmann's tree gives for a number, a boolean
 or a string, conversion casts included, which is what keeps the two readers equal.
+`packed_scene.h` is the packed payload's layout (WO-092): a schema table, then per
+entity its packed records and a CBOR rest. This module reads the layout only; the
+scene layer packs (the cooker takes its `cooked_scene::Packer`, and with none
+writes CBOR). `meshPathsOf` lists meshes from either encoding.
 Until WO-091 the cook wrote a fixed record of nine components and dropped the rest.
 
 ## Loaders (`loaders/`)

@@ -7,6 +7,7 @@
 #include "editor/imgui/imgui_bgfx.h"
 #include "project/project_context.h"
 #include "assets/cookers/cook_service.h"
+#include "scene/entity_serializer.h"   // EntitySerde::scenePacker
 #include "core/logger.h"
 #include <assetlib/asset_registry.h>
 
@@ -82,6 +83,7 @@ int main(int argc, char** argv) {
     auto cacheRoot = project.projectRoot / ".cache";
     CookService cookService(cacheRoot / "registry.db", project.projectRoot,
                             project.assetsRoot, cacheRoot);
+    cookService.setScenePacker(EntitySerde::scenePacker());   // WO-092
 
     EditorApp editor(runtime, plat->backendWindowHandle());
     editor.init();

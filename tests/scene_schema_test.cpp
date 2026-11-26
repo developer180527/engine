@@ -587,6 +587,69 @@ int main(int argc, char** argv) {
         CHECK(!e1.has<PendingSkin>() && !e2.has<PendingSkin>(), "nothing is left pending");
     }
 
+
+    std::printf("\n-- a packed scene under a schema that has changed since its cook (WO-092) --\n");
+    {
+        const std::string rev0 = readFile(kFixtures + "thruster_rev0.json");
+        const SchemaRegistry r0 = registryWithThruster(0);
+        assetlib::SceneAsset file;
+        std::string why;
+        packScene(json::parse(rev0), file, why, r0);
+        auto loadWith = [&](const SchemaRegistry& reg, flecs::world& w) {
+            SerdeContext ctx; ctx.mode = SerdeMode::Disk; ctx.schemas = &reg;
+            packed::View view;
+            packed::Entity pe;
+            flecs::entity e;
+            if (!view.open(file.payload.data(), file.payload.size(), why) || !view.next(pe)) return e;
+            const PackedSchemas match = matchPackedSchemas(view, reg);
+            createEntityPacked(w, view, pe, match, ctx, IdPolicy::Preserve, e);
+            return e;
+        };
+        {
+            flecs::world w = makeWorld();
+            const flecs::entity e = loadWith(r0, w);
+            const ThrusterV0* t = e.is_valid() ? e.try_get<ThrusterV0>() : nullptr;
+            CHECK(t && t->thrust == 2500.0f, "packed and loaded under the same schema: 2500 N");
+        }
+        {
+            const SchemaRegistry r1 = registryWithThruster(1);
+            flecs::world w = makeWorld();
+            const flecs::entity e = loadWith(r1, w);
+            const ThrusterV1* t = e.is_valid() ? e.try_get<ThrusterV1>() : nullptr;
+            CHECK(t && t->thrustKN == 2.5f, "under revision 1 the record is rebuilt from the file's "
+                  "own field table and migrated: 2.5 kN (%g)", t ? (double)t->thrustKN : -1.0);
+            CHECK(e.is_valid() && e.try_get<Name>() && e.try_get<Name>()->value == "Engine bell",
+                  "and the entity's other components unpack as usual");
+        }
+        {
+            SchemaRegistry none;
+            registerBuiltinSchemas(none);
+            flecs::world w = makeWorld();
+            const flecs::entity e = loadWith(none, w);
+            const UnknownComponents* u = e.is_valid() ? e.try_get<UnknownComponents>() : nullptr;
+            CHECK(u && u->blobs.count("thruster") && json::parse(u->blobs.at("thruster"))["thrust"] == 2500.0,
+                  "an engine without the component keeps it, by its key, as unknown");
+        }
+        // A corrupt record is refused, not misread.
+        {
+            packed::View view; packed::Entity pe;
+            view.open(file.payload.data(), file.payload.size(), why);
+            view.next(pe);
+            bool truncated = false;
+            for (const packed::Record& rec : pe.records) {
+                if (view.schemas()[rec.schema].name != "test.Thruster") continue;
+                packed::Record shorter = rec; shorter.size = rec.size - 1;
+                packed::Entity bad = pe; bad.records = { shorter };
+                const PackedSchemas match = matchPackedSchemas(view, r0);
+                flecs::world w = makeWorld();
+                SerdeContext ctx; ctx.mode = SerdeMode::Disk; ctx.schemas = &r0;
+                flecs::entity e;
+                truncated = !createEntityPacked(w, view, bad, match, ctx, IdPolicy::Preserve, e);
+            }
+            CHECK(truncated, "a record a byte short is refused");
+        }
+    }
+
     std::printf("\n-- extensions: the namespaces a world has --\n");
     {
         flecs::world w = makeWorld();

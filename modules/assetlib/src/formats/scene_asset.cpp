@@ -48,7 +48,8 @@ bool loadScene(SceneAsset& out, const std::filesystem::path& inPath, std::string
         return refuse("cooked scene format " + std::to_string(out.header.version)
                       + ", this engine reads " + std::to_string(kSceneVersion)
                       + " (re-cook the scene)");
-    if (out.header.encoding != (uint32_t)ScenePayload::Cbor)
+    if (out.header.encoding != (uint32_t)ScenePayload::Cbor
+        && out.header.encoding != (uint32_t)ScenePayload::Packed)
         return refuse("unknown payload encoding " + std::to_string(out.header.encoding));
 
     // The header must account for every byte, no more and no fewer: a payload

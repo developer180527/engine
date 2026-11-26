@@ -135,6 +135,39 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
     // nlohmann's rules. A valid cook never takes that path.
     const uint8_t* data = file.payload.data();
     const std::size_t size = file.payload.size();
+
+    // ── Packed (WO-092): the cook's fastest form ────────────────────────────
+    // Registered components copied straight into place by their schemas; the
+    // rest read in place as CBOR. A packed file has no tree to fall back to, so
+    // one that does not read is refused, with everything it made undone.
+    if (file.header.encoding == (uint32_t)assetlib::ScenePayload::Packed) {
+        auto undo = [&] {
+            for (const Created& c : created) if (c.entity.is_alive()) c.entity.destruct();
+            for (MeshHandle h : loaded.meshHandles) m_assets.unloadMesh(h);
+        };
+        packed::View view;
+        if (!view.open(data, size, why)) {
+            LOG_ERROR("SceneService", "Failed to load scene %s: %s", cookedPath, why.c_str());
+            return 0;
+        }
+        const EntitySerde::PackedSchemas match =
+            EntitySerde::matchPackedSchemas(view, EntitySerde::schemasOf(ctx));
+        created.reserve(view.entityCount());
+        packed::Entity pe;
+        bool bad = false;
+        while (!bad && view.next(pe)) {
+            flecs::entity e;
+            bad = !EntitySerde::createEntityPacked(m_world, view, pe, match, ctx,
+                                                   EntitySerde::IdPolicy::Preserve, e);
+            created.push_back({e, pe.fileId, pe.parentId});
+        }
+        if (bad || !view.complete()) {
+            undo();
+            LOG_ERROR("SceneService", "Failed to load scene %s: the packed scene is truncated "
+                      "or corrupt (re-cook it)", cookedPath);
+            return 0;
+        }
+    }
     auto inPlace = [&]() -> bool {
         cbor::Reader r(data, size);
         cbor::Item top;
@@ -169,7 +202,8 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
         }
         return sawEntities && !r.failed() && r.pos() == size;
     };
-    if (!inPlace()) {
+    const bool packedScene = file.header.encoding == (uint32_t)assetlib::ScenePayload::Packed;
+    if (!packedScene && !inPlace()) {
         // Undo the attempt: its entities, its mesh references, its pending links.
         for (const Created& c : created) if (c.entity.is_alive()) c.entity.destruct();
         for (MeshHandle h : loaded.meshHandles) m_assets.unloadMesh(h);
@@ -254,14 +288,14 @@ void SceneService::preloadScene(const char* cookedPath) {
 
     assetlib::SceneAsset file;
     std::string why;
-    nlohmann::json scene;
-    if (!assetlib::loadScene(file, absPath, &why) || !cooked_scene::decode(file, scene, why)) {
+    std::vector<std::string> meshes;
+    if (!assetlib::loadScene(file, absPath, &why) || !cooked_scene::meshPathsOf(file, meshes, why)) {
         LOG_ERROR("SceneService", "preloadScene: %s: %s", cookedPath, why.c_str());
         return;
     }
 
     PreloadEntry entry;
-    for (std::string& mesh : cooked_scene::meshPaths(scene)) {
+    for (std::string& mesh : meshes) {
         m_assets.loadMeshAsync(mesh.c_str());
         entry.meshPaths.push_back(std::move(mesh));
     }

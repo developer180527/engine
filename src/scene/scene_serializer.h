@@ -307,7 +307,9 @@ inline bool cookScene(const std::filesystem::path& jsonPath,
                       const std::filesystem::path& outPath,
                       assetlib::AssetRegistry* assetLib = nullptr,
                       const std::filesystem::path& projectRoot = {}) {
-    return cookSceneFile(jsonPath, outPath, assetLib, projectRoot);
+    // Packed, by this layer's schemas (WO-092): the fastest form to load.
+    static const cooked_scene::Packer packer = EntitySerde::scenePacker();
+    return cookSceneFile(jsonPath, outPath, assetLib, projectRoot, &packer);
 }
 
 } // namespace SceneSerializer

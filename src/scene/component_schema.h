@@ -37,6 +37,7 @@
 
 #include "assets/asset_ref.h"
 #include "assets/cbor_reader.h"
+#include "assets/packed_scene.h"
 #include "core/json_read.h"
 #include "core/logger.h"
 
@@ -52,6 +53,8 @@ void deferEntityRef(SerdeContext& ctx, flecs::entity owner, uint64_t stableId,
                     std::function<void(flecs::entity owner, flecs::entity target)> apply);
 bool beginEntityRefs(SerdeContext& ctx);
 void endEntityRefs(SerdeContext& ctx, flecs::world w, bool owned);
+// The context a cook packs with: disk mode, and a reference list nothing reads.
+SerdeContext& packContext();
 
 // What a field holds, as the engine API's draft names its field types
 // (docs/plans/engine-api-draft/eng/eng_world.h, EngFieldType). An enum is saved as
@@ -66,6 +69,22 @@ inline const char* fieldTypeName(FieldType t) {
         "entity", "asset" };
     return k[(int)t];
 }
+// The bytes a field of this type takes in a packed record (0: variable or a
+// composite, written by its own rule: string, entity, asset).
+inline constexpr std::size_t packedSize(FieldType t) {
+    switch (t) {
+        case FieldType::Bool: case FieldType::I8: case FieldType::U8: return 1;
+        case FieldType::I16: case FieldType::U16: return 2;
+        case FieldType::I32: case FieldType::U32: case FieldType::F32: return 4;
+        case FieldType::I64: case FieldType::U64: case FieldType::F64: return 8;
+        case FieldType::Vec2: return 8;
+        case FieldType::Vec3: return 12;
+        case FieldType::Vec4: case FieldType::Quat: return 16;
+        case FieldType::Mat4: return 64;
+        default: return 0;
+    }
+}
+
 struct FieldInfo {
     std::string name;    // the key inside the component's object
     FieldType   type;
@@ -99,6 +118,18 @@ struct ComponentSchema {
     // again.
     std::function<bool(flecs::entity, const uint8_t* data, std::size_t size, std::size_t pos,
                        SerdeContext&, std::size_t* end)> loadCbor;
+    // ── Packed (WO-092, assets/packed_scene.h) ─────────────────────────────
+    // `pack` writes a value (already at this revision) as `packedFields`, by
+    // reading it into the component with the same field readers `load` uses and
+    // writing the component's fields; false when the value cannot be packed (not
+    // an object, for most). `unpack` reads them back and sets the component;
+    // false on bytes that do not fit. Field-by-field schemas and Name have them.
+    // `packedFields` is what the cooked file's schema table records: a field
+    // named "" is the value itself (Name's string), not a key of an object.
+    std::function<bool(const nlohmann::json& value, packed::Writer&)> pack;
+    std::function<bool(flecs::entity, packed::Reader&, SerdeContext&)> unpack;
+    std::vector<FieldInfo> packedFields;
+
     // Reads nothing but its own value, so it may load in whatever order the
     // keys come (the CBOR reader does it as it meets them). False for a codec
     // that depends on another component being loaded first (the LOD chain on
@@ -324,7 +355,9 @@ public:
     SchemaBuilder& boolean(const char* key, bool T::*m) {
         return add(key, FieldType::Bool, 1,
             [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = t.*m; },
-            ENGINE_FIELD_READ { (void)owner; (void)ctx; if (v.isBool()) t.*m = v.asBool(); });
+            ENGINE_FIELD_READ { (void)owner; (void)ctx; if (v.isBool()) t.*m = v.asBool(); },
+            [m](const T& t, const nlohmann::json*, packed::Writer& w) { w.u8(t.*m ? 1 : 0); },
+            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) { t.*m = r.u8() != 0; });
     }
     // Any integer type, read only when the saved value is an integer that fits.
     // nlohmann keeps a non-negative integer as unsigned and a negative one as
@@ -332,6 +365,8 @@ public:
     template <class I>
     SchemaBuilder& integer(const char* key, I T::*m) {
         static_assert(std::is_integral_v<I> && !std::is_same_v<I, bool>);
+        static_assert(sizeof(I) == packedSize(integerType<I>()),
+                      "an integer field's type must be a fixed-width integer");
         return add(key, integerType<I>(), 1,
             [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = t.*m; },
             ENGINE_FIELD_READ {
@@ -347,7 +382,9 @@ public:
                     } else {
                         if (s >= 0 && (uint64_t)s <= (uint64_t)std::numeric_limits<I>::max()) t.*m = (I)s;
                     }
-                } });
+                } },
+            [m](const T& t, const nlohmann::json*, packed::Writer& w) { const I v = t.*m; w.raw(&v, sizeof(I)); },
+            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) { r.raw(&(t.*m), sizeof(I)); });
     }
     SchemaBuilder& u8(const char* key, uint8_t T::*m) { return integer(key, m); }
     // An enum saved as its integer value. A value outside the enum is kept as
@@ -357,7 +394,12 @@ public:
         static_assert(std::is_enum_v<E>);
         return add(key, FieldType::I32, 1,
             [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = (int)(t.*m); },
-            ENGINE_FIELD_READ { (void)owner; (void)ctx; if (v.isNumber()) t.*m = (E)v.template number<int>(); });
+            ENGINE_FIELD_READ { (void)owner; (void)ctx; if (v.isNumber()) t.*m = (E)v.template number<int>(); },
+            // As an int32, the integer JSON saves: (int)(E), and back as (E)(int).
+            [m](const T& t, const nlohmann::json*, packed::Writer& w) {
+                const int32_t v = (int32_t)(int)(t.*m); w.raw(&v, 4); },
+            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) {
+                int32_t v = 0; r.raw(&v, 4); t.*m = (E)(int)v; });
     }
     SchemaBuilder& f32(const char* key, float T::*m) {
         return add(key, FieldType::F32, 1,
@@ -366,7 +408,9 @@ public:
                 (void)owner; (void)ctx;
                 if (!v.isNumber()) return;
                 const float f = v.template number<float>();
-                if (std::isfinite(f)) t.*m = f; });
+                if (std::isfinite(f)) t.*m = f; },
+            [m](const T& t, const nlohmann::json*, packed::Writer& w) { w.raw(&(t.*m), 4); },
+            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) { r.raw(&(t.*m), 4); });
     }
     SchemaBuilder& f64(const char* key, double T::*m) {
         return add(key, FieldType::F64, 1,
@@ -375,7 +419,9 @@ public:
                 (void)owner; (void)ctx;
                 if (!v.isNumber()) return;
                 const double d = v.template number<double>();
-                if (std::isfinite(d)) t.*m = d; });
+                if (std::isfinite(d)) t.*m = d; },
+            [m](const T& t, const nlohmann::json*, packed::Writer& w) { w.raw(&(t.*m), 8); },
+            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) { r.raw(&(t.*m), 8); });
     }
     // Vectors, a quaternion and a matrix: N floats saved as an array, from a
     // float[N] or a type that is exactly N floats (bx::Vec3, bx::Quaternion).
@@ -394,7 +440,9 @@ public:
         return add(key, FieldType::String, 1,
             [key, m, omitEmpty](const T& t, nlohmann::json& j, flecs::entity) {
                 if (!omitEmpty || !(t.*m).empty()) j[key] = t.*m; },
-            ENGINE_FIELD_READ { (void)owner; (void)ctx; if (v.isString()) t.*m = v.asString(); });
+            ENGINE_FIELD_READ { (void)owner; (void)ctx; if (v.isString()) t.*m = v.asString(); },
+            [m](const T& t, const nlohmann::json*, packed::Writer& w) { w.str(t.*m); },
+            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) { t.*m = std::string(r.str()); });
     }
     // Another entity. In memory a flecs id; saved as that entity's stable id (0:
     // none), and set on load once the entity it names exists. A reference to an
@@ -407,6 +455,20 @@ public:
             ENGINE_FIELD_READ {
                 t.*m = 0;   // never a flecs id from another world or session
                 const uint64_t id = u64From(v);
+                if (!id) return;
+                deferEntityRef(ctx, owner, id, [m](flecs::entity o, flecs::entity target) {
+                    if (T* c = o.try_get_mut<T>()) { c->*m = target.id(); o.modified<T>(); }
+                }); },
+            // Whether the key was saved, then the stable id it names: absent keeps
+            // the default, present clears it and links once the entity exists.
+            [](const T&, const nlohmann::json* v, packed::Writer& w) {
+                w.u8(v ? 1 : 0);
+                w.u64(v ? u64From(JsonValue{v}) : 0); },
+            [m](T& t, packed::Reader& r, flecs::entity owner, SerdeContext& ctx) {
+                const bool present = r.u8() != 0;
+                const uint64_t id = r.u64();
+                if (!present) return;
+                t.*m = 0;
                 if (!id) return;
                 deferEntityRef(ctx, owner, id, [m](flecs::entity o, flecs::entity target) {
                     if (T* c = o.try_get_mut<T>()) { c->*m = target.id(); o.modified<T>(); }
@@ -426,7 +488,10 @@ public:
                 if (!v.isObject()) return;
                 std::decay_t<decltype(v)> s;
                 (t.*m).uuid = v.find("asset", s) && s.isString() ? s.asString() : std::string{};
-                (t.*m).path = v.find("path", s)  && s.isString() ? s.asString() : std::string{}; });
+                (t.*m).path = v.find("path", s)  && s.isString() ? s.asString() : std::string{}; },
+            [m](const T& t, const nlohmann::json*, packed::Writer& w) { w.str((t.*m).uuid); w.str((t.*m).path); },
+            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) {
+                (t.*m).uuid = std::string(r.str()); (t.*m).path = std::string(r.str()); });
     }
 
     // Saved only while `pred` holds (a script with no path is not saved).
@@ -513,6 +578,32 @@ public:
             if (end) *end = r.pos();
             return true;
         };
+        m_s.pack = [fields, base](const nlohmann::json& j, packed::Writer& w) {
+            if (!j.is_object()) return false;
+            // Read as the JSON reader reads it, into a component of its own;
+            // entity fields defer into a list nothing applies.
+            SerdeContext& ctx = packContext();
+            T t = *base;
+            for (const Field& f : *fields)
+                if (auto it = j.find(f.key); it != j.end())
+                    f.loadJson(t, JsonValue{&*it}, flecs::entity(), ctx);
+            for (const Field& f : *fields) {
+                auto it = j.find(f.key);
+                f.pack(t, it != j.end() ? &*it : nullptr, w);
+            }
+            return true;
+        };
+        m_s.unpack = [fields, base](flecs::entity e, packed::Reader& r, SerdeContext& ctx) {
+            T t = *base;
+            const bool ownRefs = beginEntityRefs(ctx);
+            struct EndRefs { SerdeContext& c; flecs::world w; bool own;
+                             ~EndRefs() { endEntityRefs(c, w, own); } } endRefs{ctx, e.world(), ownRefs};
+            for (const Field& f : *fields) f.unpack(t, r, e, ctx);
+            if (!r.ok() || !r.atEnd()) return false;
+            e.set<T>(std::move(t));
+            return true;
+        };
+        m_s.packedFields = m_s.fields;
         m_s.orderFree = true;
         return std::move(m_s);
     }
@@ -521,14 +612,21 @@ private:
     using SaveFn = std::function<void(const T&, nlohmann::json&, flecs::entity owner)>;
     using JsonFn = std::function<void(T&, const JsonValue&, flecs::entity owner, SerdeContext&)>;
     using CborFn = std::function<void(T&, const CborValue&, flecs::entity owner, SerdeContext&)>;
-    struct Field { std::string key; SaveFn save; JsonFn loadJson; CborFn loadCbor; };
+    // Packed: write the field from the component as loaded (the JSON value, for
+    // an entity field, whose packed form is the id it names); read it back.
+    using PackFn   = std::function<void(const T&, const nlohmann::json* value, packed::Writer&)>;
+    using UnpackFn = std::function<void(T&, packed::Reader&, flecs::entity owner, SerdeContext&)>;
+    struct Field { std::string key; SaveFn save; JsonFn loadJson; CborFn loadCbor;
+                   PackFn pack; UnpackFn unpack; };
 
     template <class Read>
-    SchemaBuilder& add(const char* key, FieldType type, uint32_t count, SaveFn save, Read read) {
+    SchemaBuilder& add(const char* key, FieldType type, uint32_t count, SaveFn save, Read read,
+                       PackFn pack, UnpackFn unpack) {
         m_s.fields.push_back({key, type, count});
         m_fields.push_back({key, std::move(save),
             [read](T& t, const JsonValue& v, flecs::entity o, SerdeContext& c) { read(t, v, o, c); },
-            [read](T& t, const CborValue& v, flecs::entity o, SerdeContext& c) { read(t, v, o, c); }});
+            [read](T& t, const CborValue& v, flecs::entity o, SerdeContext& c) { read(t, v, o, c); },
+            std::move(pack), std::move(unpack)});
         return *this;
     }
 
@@ -553,7 +651,9 @@ private:
                     if (!e.isNumber()) return;
                     const float f = e.template number<float>();
                     if (std::isfinite(f)) out[i] = f;
-                }); });
+                }); },
+            [m](const T& t, const nlohmann::json*, packed::Writer& w) { w.raw(&(t.*m), N * 4); },
+            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) { r.raw(&(t.*m), N * 4); });
     }
 #undef ENGINE_FIELD_READ
 

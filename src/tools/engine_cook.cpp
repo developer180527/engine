@@ -14,6 +14,7 @@
 //   1  one or more assets failed to cook
 //   2  no project found
 #include "assets/cookers/cook_service.h"
+#include "scene/entity_serializer.h"   // EntitySerde::scenePacker
 #include "project/project_context.h"
 #include "core/logger.h"
 #include "stdout_live.h"
@@ -62,6 +63,8 @@ int main(int argc, char** argv) {
                      cacheRoot);
     cook.setScope(cookAll ? CookService::Scope::WholeProject
                           : CookService::Scope::SceneClosure);
+    // Scenes packed by the engine's component schemas (WO-092).
+    cook.setScenePacker(EntitySerde::scenePacker());
 
     // GC is its own mode: collecting garbage and cooking in one invocation
     // would report against a cache the same run just changed.

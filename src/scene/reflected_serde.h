@@ -23,6 +23,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "core/json_read.h"
 #include "core/logger.h"
 #include "components/serde_transient.h"
 
@@ -115,7 +116,7 @@ inline void load(flecs::entity e, const nlohmann::json& in) {
     flecs::world w = e.world();
     for (auto it = in.begin(); it != in.end(); ++it) {
         const std::string& path = it.key();
-        const std::string  blob = it.value().dump();
+        const std::string  blob = jsonread::dumpLoaded(it.value());
         flecs::entity comp = lookupPath(w, path);
         if (comp.is_valid() && comp.has<flecs::Struct>()) {
             applyBlob(w, e, comp, blob);

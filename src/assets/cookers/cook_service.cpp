@@ -654,11 +654,11 @@ std::vector<assetlib::CookPipeline::ExtraTask> CookService::buildSceneTasks(
         // (WAL: one writer + N readers). Everything captured by value; the
         // caller-thread registry is never touched from here.
         t.run = [jsonPath = entry.path(), outPath, dbPath = m_dbPath,
-                 projectRoot = m_projectRoot]() -> bool {
+                 projectRoot = m_projectRoot, packer = m_scenePacker]() -> bool {
             assetlib::AssetRegistry reg;
             if (!reg.open(dbPath))
-                return cookSceneFile(jsonPath, outPath, nullptr, projectRoot);
-            return cookSceneFile(jsonPath, outPath, &reg, projectRoot);
+                return cookSceneFile(jsonPath, outPath, nullptr, projectRoot, &packer);
+            return cookSceneFile(jsonPath, outPath, &reg, projectRoot, &packer);
         };
         t.onDone = [name = t.name, scenesCooked, scenesFailed](bool ok) {
             if (ok) { ++*scenesCooked; }

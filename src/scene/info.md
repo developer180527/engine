@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-26
+verified: 2026-11-27
 parses-external-input: true
 covers:
   - src/scene/
@@ -110,6 +110,12 @@ way. Scene save, the Play snapshot and the undo stack all walk the registry.
   does not write (a repeated key, anything outside the subset nlohmann writes)
   make the load roll back and read the scene through the tree.
   `fuzz_scene_reader_parity_test` holds the two readers to the same result.
+- **Packed** (WO-092). The tools cook packed (`assets/packed_scene.h`): each
+  component with `pack`/`unpack` (field-by-field schemas and Name) is written by
+  its fields and copied back at load (`createEntityPacked`); the rest is CBOR, read
+  as above. `scenePacker()` is what a cook installs. A record cooked under another
+  schema is rebuilt as JSON from the file's field table (`packedToJson`) and
+  migrated. The parity fuzzer checks all three readers.
 - **Per-field tolerance.** A wrong-typed field now keeps its default and the
   rest of the component loads; before, a wrong-typed bool or enum threw and the
   whole component was skipped. Data that is not an object is still skipped.

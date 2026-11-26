@@ -29,6 +29,7 @@
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
 #include "scene/entity_serializer.h"
+#include <assetlib/scene_asset.h>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -68,49 +69,66 @@ int main() {
     }
     const fs::path src = root / "main.scene";
     { std::ofstream f(src); f << source.dump(2); }
-    const fs::path cooked = root / ".cache" / "scenes" / "main.cooked";
-    CHECK(cookSceneFile(src, cooked, nullptr, root), "the scene cooks");
+    const cooked_scene::Packer packScenes = EntitySerde::scenePacker();
+    for (const cooked_scene::Packer* packer : {(const cooked_scene::Packer*)nullptr, &packScenes}) {
+    std::printf("\n== cooked %s ==\n", packer ? "packed (the tools' cook)" : "as CBOR (no packer)");
+        const fs::path cooked = root / ".cache" / "scenes" / "main.cooked";
+        CHECK(cookSceneFile(src, cooked, nullptr, root, packer), "the scene cooks");
+        {
+            assetlib::SceneAsset file; std::string why;
+            CHECK(assetlib::loadScene(file, cooked, &why)
+                  && file.header.encoding == (uint32_t)(packer ? assetlib::ScenePayload::Packed
+                                                               : assetlib::ScenePayload::Cbor),
+                  "written %s", packer ? "packed" : "as CBOR");
+            std::vector<std::string> meshes;
+            CHECK(cooked_scene::meshPathsOf(file, meshes, why)
+                  && meshes == std::vector<std::string>{"meshs/6f1c2a8e-0b44-4c55-9d3e-2a1b7c9d0e11.cooked"},
+                  "and the meshes it names are listed, for the packager and a preload (%zu)",
+                  meshes.size());
+        }
 
-    flecs::world world;
-    MetaRegistry::registerAll(world);
-    world.component<Health>("combat::Health")
-        .member("current", &Health::current).member("max", &Health::max);
-    AssetRegistry meshes; TextureRegistry textures; MaterialRegistry materials;
-    AssetService assets({meshes, textures, materials});
-    assets.setProjectRoot(root);
-    {
-        SceneService svc({assets, meshes, textures, materials, world});
-        svc.setCacheRoot(root / ".cache");
-        const uint32_t h = svc.loadScene("scenes/main.cooked");
-        CHECK(h != 0 && svc.sceneEntityCount(h) == 3,
-              "SceneService loads it: 3 entities (%u)", h ? svc.sceneEntityCount(h) : 0);
-    }
+        flecs::world world;
+        MetaRegistry::registerAll(world);
+        world.component<Health>("combat::Health")
+            .member("current", &Health::current).member("max", &Health::max);
+        AssetRegistry meshes; TextureRegistry textures; MaterialRegistry materials;
+        AssetService assets({meshes, textures, materials});
+        assets.setProjectRoot(root);
+        {
+            SceneService svc({assets, meshes, textures, materials, world});
+            svc.setCacheRoot(root / ".cache");
+            const uint32_t h = svc.loadScene("scenes/main.cooked");
+            CHECK(h != 0 && svc.sceneEntityCount(h) == 3,
+                  "SceneService loads it: 3 entities (%u)", h ? svc.sceneEntityCount(h) : 0);
+        }
 
-    std::printf("\n-- each component on its entity --\n");
-    const flecs::entity a = findById(world, 1001), b = findById(world, 1002),
-                        f = findById(world, 1003);
-    const ColourGrading* g = a.try_get<ColourGrading>();
-    CHECK(g && g->exposureEV == -1.5f && g->toneMapper == 2 && g->lutPath == "assets/luts/warm.cube",
-          "colour grading reaches the game (exposure, tone mapper, LUT)");
-    const Health* hp = a.try_get<Health>();
-    CHECK(hp && hp->current == 40.0f && hp->max == 120.0f, "a kit's component reaches the game");
-    CHECK(a.try_get<Light>() && a.try_get<Light>()->type == LightType::Spot
-          && a.try_get<RigidBody>() && a.try_get<CharacterController>()
-          && a.try_get<ScriptComponent>() && a.try_get<Camera>(),
-          "and the nine components the old record held still do");
-    CHECK(b.try_get<Animator>() && b.try_get<Animator>()->clipIndex == 3
-          && b.target(flecs::ChildOf) == a, "the child keeps its animator and its parent");
-    CHECK(!f.has<Camera>(), "a camera from a newer revision is not loaded as a default one");
+        std::printf("\n-- each component on its entity --\n");
+        const flecs::entity a = findById(world, 1001), b = findById(world, 1002),
+                            f = findById(world, 1003);
+        const ColourGrading* g = a.try_get<ColourGrading>();
+        CHECK(g && g->exposureEV == -1.5f && g->toneMapper == 2 && g->lutPath == "assets/luts/warm.cube",
+              "colour grading reaches the game (exposure, tone mapper, LUT)");
+        const Health* hp = a.try_get<Health>();
+        CHECK(hp && hp->current == 40.0f && hp->max == 120.0f, "a kit's component reaches the game");
+        CHECK(a.try_get<Light>() && a.try_get<Light>()->type == LightType::Spot
+              && a.try_get<RigidBody>() && a.try_get<CharacterController>()
+              && a.try_get<ScriptComponent>() && a.try_get<Camera>(),
+              "and the nine components the old record held still do");
+        CHECK(b.try_get<Animator>() && b.try_get<Animator>()->clipIndex == 3
+              && b.target(flecs::ChildOf) == a, "the child keeps its animator and its parent");
+        CHECK(!f.has<Camera>(), "a camera from a newer revision is not loaded as a default one");
 
-    std::printf("\n-- saved back, it is the source --\n");
-    EntitySerde::SerdeContext ctx; ctx.mode = EntitySerde::SerdeMode::Disk;
-    for (std::size_t i = 0; i < source["entities"].size(); ++i) {
-        const json& want = source["entities"][i];
-        const flecs::entity e = findById(world, want["id"].get<uint64_t>());
-        const json got = EntitySerde::saveEntity(e, ctx);
-        CHECK(got == want, "entity %llu saves back exactly as authored%s",
-              (unsigned long long)want["id"].get<uint64_t>(),
-              got == want ? "" : (" — got " + got.dump()).c_str());
+        std::printf("\n-- saved back, it is the source --\n");
+        EntitySerde::SerdeContext ctx; ctx.mode = EntitySerde::SerdeMode::Disk;
+        for (std::size_t i = 0; i < source["entities"].size(); ++i) {
+            const json& want = source["entities"][i];
+            const flecs::entity e = findById(world, want["id"].get<uint64_t>());
+            const json got = EntitySerde::saveEntity(e, ctx);
+            CHECK(got == want, "entity %llu saves back exactly as authored%s",
+                  (unsigned long long)want["id"].get<uint64_t>(),
+                  got == want ? "" : (" — got " + got.dump()).c_str());
+        }
+
     }
 
     shutdownTestDevice();

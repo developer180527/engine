@@ -42,6 +42,7 @@
 #include "render/primitive_library.h"
 #include "scene/scene_assets.h"
 #include "core/lod_limit.h"
+#include "assets/cooked_scene.h"
 #include "scene/component_schema.h"
 #include "scene/reflected_serde.h"
 #include "scene/unknown_components.h"
@@ -288,7 +289,7 @@ inline void saveMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx
 inline void loadMeshMemory(flecs::entity e, const nlohmann::json& j) {
     {
         if (auto it = j.find("unresolved"); it != j.end() && it->is_object()) {
-            e.set<UnresolvedMesh>({it->dump(), j.value("unresolvedReason", std::string{}), false});
+            e.set<UnresolvedMesh>({jsonread::dumpLoaded(*it), j.value("unresolvedReason", std::string{}), false});
             if (const uint32_t pid = j.value("placeholderId", 0u)) {
                 MeshHandle mh; mh.id = pid;
                 e.set<MeshRenderer>({mh});
@@ -479,7 +480,7 @@ inline void loadMeshFrom(flecs::entity e, const V& j, const Dump& authored, Serd
 
 inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
     if (ctx.mode == SerdeMode::Memory) { loadMeshMemory(e, j); return; }
-    loadMeshFrom(e, JsonValue{&j}, [&j] { return j.dump(); }, ctx);
+    loadMeshFrom(e, JsonValue{&j}, [&j] { return jsonread::dumpLoaded(j); }, ctx);
 }
 
 // ── LodMesh (the coarser levels; level 0 is MeshRenderer's own mesh) ──────────
@@ -683,6 +684,19 @@ inline void registerBuiltinSchemas(SchemaRegistry& r) {
             return true;
         };
         name.orderFree = true;
+        // Packed: the string itself, as one field named "" (packed_scene.h).
+        name.pack = [](const nlohmann::json& v, packed::Writer& w) {
+            if (!v.is_string()) return false;   // "Entity", through loadName
+            w.str(v.get_ref<const std::string&>());
+            return true;
+        };
+        name.unpack = [](flecs::entity e, packed::Reader& r, SerdeContext&) {
+            std::string value(r.str());
+            if (!r.ok() || !r.atEnd()) return false;
+            e.set<Name>({std::move(value)});
+            return true;
+        };
+        name.packedFields = { {"", FieldType::String, 1} };
         r.add(std::move(name));
     }
     {
@@ -695,7 +709,7 @@ inline void registerBuiltinSchemas(SchemaRegistry& r) {
         mesh.loadCbor = [](flecs::entity e, const uint8_t* d, std::size_t n, std::size_t pos,
                            SerdeContext& ctx, std::size_t*) {
             if (ctx.mode == SerdeMode::Memory) return false;
-            loadMeshFrom(e, CborValue(d, n, pos), [d, n, pos] { return jsonAt(d, n, pos).dump(); }, ctx);
+            loadMeshFrom(e, CborValue(d, n, pos), [d, n, pos] { return jsonread::dumpLoaded(jsonAt(d, n, pos)); }, ctx);
             return true;
         };
         r.add(std::move(mesh));
@@ -867,7 +881,7 @@ inline flecs::entity beginEntity(flecs::world& w, uint64_t wanted, SerdeContext&
 // A component this engine cannot read, kept as loaded (DR-0034).
 inline void keepUnknown(flecs::entity e, const std::string& key, const nlohmann::json& data) {
     if (!e.has<UnknownComponents>()) e.set<UnknownComponents>({});
-    e.get_mut<UnknownComponents>().blobs[key] = data.dump();
+    e.get_mut<UnknownComponents>().blobs[key] = jsonread::dumpLoaded(data);
 }
 
 // One registered component from its JSON value: migrated if it carries an older
@@ -955,15 +969,15 @@ inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
 
 struct CookedIds { uint64_t fileId = 0, parentId = 0; };
 
-// One walk over the entity's map. Components that read nothing but their own
-// value (`orderFree`) are loaded as their keys come; the rest wait and load in
-// registry order, as the JSON reader loads everything. Returns false, having
-// created what it created, if the bytes are not what the cook writes (a failed
-// read, or a key that repeats): the caller then rolls the load back and reads
-// the scene through the tree, which keeps nlohmann's rules exactly.
-inline bool createEntityCbor(flecs::world& w, const uint8_t* data, std::size_t size,
-                             std::size_t pos, SerdeContext& ctx, IdPolicy policy,
-                             flecs::entity& out, CookedIds* ids = nullptr) {
+// One walk over an entity's map, loading it into `e`. Components that read
+// nothing but their own value (`orderFree`) are loaded as their keys come; the
+// rest wait and load in registry order, as the JSON reader loads everything.
+// The id and parent keys are not loaded: their positions are handed back.
+// Returns false, having loaded what it loaded, if the bytes are not what the
+// cook writes (a failed read, or a key that repeats): the caller rolls back.
+inline bool loadEntityCborMap(flecs::entity e, const uint8_t* data, std::size_t size,
+                              std::size_t pos, SerdeContext& ctx,
+                              std::size_t* idAtOut = nullptr, std::size_t* parentAtOut = nullptr) {
     const SchemaRegistry& reg = schemasOf(ctx);
     const auto& schemas = reg.all();
     static thread_local std::vector<std::size_t> later;
@@ -972,12 +986,6 @@ inline bool createEntityCbor(flecs::world& w, const uint8_t* data, std::size_t s
     seen.assign(schemas.size(), 0);
     std::size_t idAt = SIZE_MAX, parentAt = SIZE_MAX, reflectedAt = SIZE_MAX;
     std::vector<std::pair<std::string_view, std::size_t>> unknown;
-
-    flecs::entity e = w.entity();   // its id is resolved after the walk
-    out = e;
-    const bool ownRefs = beginEntityRefs(ctx);
-    struct EndRefs { SerdeContext& c; flecs::world w; bool own;
-                     ~EndRefs() { endEntityRefs(c, w, own); } } endRefs{ctx, w, ownRefs};
 
     cbor::Reader r(data, size);
     r.seek(pos);
@@ -1019,12 +1027,9 @@ inline bool createEntityCbor(flecs::world& w, const uint8_t* data, std::size_t s
         if (!r.skip()) return false;
     }
     if (r.failed()) return false;
+    if (idAtOut) *idAtOut = idAt;
+    if (parentAtOut) *parentAtOut = parentAt;
 
-    if (ids) {
-        ids->fileId   = idAt == SIZE_MAX ? 0 : u64From(CborValue(data, size, idAt));
-        ids->parentId = parentAt == SIZE_MAX ? 0 : u64From(CborValue(data, size, parentAt));
-    }
-    beginEntity(w, idAt == SIZE_MAX ? 0 : idFrom(CborValue(data, size, idAt)), ctx, policy, e);
     // In the tree's order (sorted by key), as the JSON reader keeps them.
     std::sort(unknown.begin(), unknown.end());
     for (const auto& u : unknown)
@@ -1038,6 +1043,251 @@ inline bool createEntityCbor(flecs::world& w, const uint8_t* data, std::size_t s
         if (!done) loadComponentJson(e, s, jsonAt(data, size, later[k]), ctx);
     }
     if (reflectedAt != SIZE_MAX) loadReflectedJson(e, jsonAt(data, size, reflectedAt));
+    return true;
+}
+
+// An entity from the cooked scene's CBOR. False if the bytes are not what the
+// cook writes, having created what it created: the caller rolls the load back
+// and reads the scene through the tree, which keeps nlohmann's rules exactly.
+inline bool createEntityCbor(flecs::world& w, const uint8_t* data, std::size_t size,
+                             std::size_t pos, SerdeContext& ctx, IdPolicy policy,
+                             flecs::entity& out, CookedIds* ids = nullptr) {
+    flecs::entity e = w.entity();   // its id is resolved after the walk
+    out = e;
+    const bool ownRefs = beginEntityRefs(ctx);
+    struct EndRefs { SerdeContext& c; flecs::world w; bool own;
+                     ~EndRefs() { endEntityRefs(c, w, own); } } endRefs{ctx, w, ownRefs};
+    std::size_t idAt = SIZE_MAX, parentAt = SIZE_MAX;
+    if (!loadEntityCborMap(e, data, size, pos, ctx, &idAt, &parentAt)) return false;
+    if (ids) {
+        ids->fileId   = idAt == SIZE_MAX ? 0 : u64From(CborValue(data, size, idAt));
+        ids->parentId = parentAt == SIZE_MAX ? 0 : u64From(CborValue(data, size, parentAt));
+    }
+    beginEntity(w, idAt == SIZE_MAX ? 0 : idFrom(CborValue(data, size, idAt)), ctx, policy, e);
+    finishEntity(e, ctx);
+    return true;
+}
+
+// ── The packed scene (WO-092, assets/packed_scene.h) ────────────────────────
+inline SerdeContext& packContext() {
+    static thread_local SerdeContext ctx;
+    static thread_local std::vector<SerdeContext::EntityRef> sink;
+    ctx.mode = SerdeMode::Disk;
+    sink.clear();
+    ctx.entityRefs = &sink;
+    return ctx;
+}
+
+// A packed record rebuilt as the JSON value it was packed from, by the cooked
+// file's own field table: for a component whose schema here is not the one it
+// was cooked with (another revision, other fields) or is not registered at all.
+// With its cooked revision marked, so the JSON reader migrates it.
+inline bool packedToJson(const packed::Schema& cooked, const uint8_t* data, uint32_t size,
+                         nlohmann::json& out) {
+    packed::Reader r(data, size);
+    auto value = [&](const packed::Field& f) -> nlohmann::json {
+        const FieldType t = (FieldType)f.type;
+        auto floats = [&](std::size_t n) {
+            nlohmann::json a = nlohmann::json::array();
+            for (std::size_t k = 0; k < n; ++k) { float v = 0; r.raw(&v, 4); a.push_back(v); }
+            return a;
+        };
+        switch (t) {
+            case FieldType::Bool: return r.u8() != 0;
+            case FieldType::I8:  { int8_t v = 0;   r.raw(&v, 1); return v; }
+            case FieldType::U8:  { uint8_t v = 0;  r.raw(&v, 1); return v; }
+            case FieldType::I16: { int16_t v = 0;  r.raw(&v, 2); return v; }
+            case FieldType::U16: { uint16_t v = 0; r.raw(&v, 2); return v; }
+            case FieldType::I32: { int32_t v = 0;  r.raw(&v, 4); return v; }
+            case FieldType::U32: { uint32_t v = 0; r.raw(&v, 4); return v; }
+            case FieldType::I64: { int64_t v = 0;  r.raw(&v, 8); return v; }
+            case FieldType::U64: { uint64_t v = 0; r.raw(&v, 8); return v; }
+            case FieldType::F32:
+                if (f.count > 1) return floats(f.count);
+                { float v = 0; r.raw(&v, 4); return v; }
+            case FieldType::F64: { double v = 0; r.raw(&v, 8); return v; }
+            case FieldType::Vec2: return floats(2);
+            case FieldType::Vec3: return floats(3);
+            case FieldType::Vec4: case FieldType::Quat: return floats(4);
+            case FieldType::Mat4: return floats(16);
+            case FieldType::String: return std::string(r.str());
+            case FieldType::Entity: {
+                const bool present = r.u8() != 0;
+                const uint64_t id = r.u64();
+                return present ? nlohmann::json(id) : nlohmann::json();   // null: absent
+            }
+            case FieldType::Asset: {
+                AssetRef a; a.uuid = std::string(r.str()); a.path = std::string(r.str());
+                nlohmann::json o = nlohmann::json::object();
+                assetref::toJson(a, o);
+                return o;
+            }
+        }
+        r.fail();
+        return nullptr;
+    };
+    if (cooked.fields.size() == 1 && cooked.fields[0].name.empty()) {
+        out = value(cooked.fields[0]);          // the value itself (Name's string)
+    } else {
+        out = nlohmann::json::object();
+        for (const packed::Field& f : cooked.fields) {
+            nlohmann::json v = value(f);
+            if (f.type == (uint8_t)FieldType::Entity && v.is_null()) continue;
+            out[f.name] = std::move(v);
+        }
+        if (cooked.revision > 0) out[kRevisionKey] = cooked.revision;
+    }
+    return r.ok() && r.atEnd();
+}
+
+// Writes `scene` (the .scene's JSON, mesh references already healed by the
+// cooker) as a packed payload. Each registered component with a packed form,
+// and data that reads at this engine's revision, is packed; everything else
+// (codecs of their own, unknown keys, a kit's block, data no migration reaches)
+// goes in the entity's rest, as CBOR, unchanged. Deterministic: the schema table
+// in registry order, keys in the tree's sorted order.
+inline bool packScene(const nlohmann::json& scene, assetlib::SceneAsset& out, std::string& why,
+                      const SchemaRegistry& reg = schemas()) {
+    out.header = assetlib::SceneHeader{};
+    out.header.encoding = (uint32_t)assetlib::ScenePayload::Packed;
+    out.payload.clear();
+    packed::Writer w(out.payload);
+    w.u32(packed::kMagic);
+    w.u32(packed::kLayout);
+
+    std::vector<const ComponentSchema*> table;
+    for (const ComponentSchema& s : reg.all())
+        if (s.pack && s.unpack && !s.packedFields.empty()) table.push_back(&s);
+    w.u32((uint32_t)table.size());
+    for (const ComponentSchema* s : table) {
+        w.str(s->name); w.str(s->key); w.u32(s->revision);
+        w.u32((uint32_t)s->packedFields.size());
+        for (const FieldInfo& f : s->packedFields) { w.str(f.name); w.u8((uint8_t)f.type); w.u32(f.count); }
+    }
+    auto indexOf = [&](const ComponentSchema* s) -> int {
+        for (std::size_t k = 0; k < table.size(); ++k) if (table[k] == s) return (int)k;
+        return -1;
+    };
+
+    const std::size_t countAt = w.reserve32();
+    uint32_t count = 0;
+    if (scene.is_object() && scene.contains("entities") && scene["entities"].is_array()) {
+        for (const nlohmann::json& je : scene["entities"]) {
+            if (!je.is_object()) continue;   // the readers skip it; so does the pack
+            ++count;
+            uint64_t wanted = 0, fileId = 0, parentId = 0;
+            if (auto it = je.find("id"); it != je.end()) {
+                wanted = idFrom(JsonValue{&*it});
+                fileId = u64From(JsonValue{&*it});
+            }
+            if (auto it = je.find("parentId"); it != je.end()) parentId = u64From(JsonValue{&*it});
+            w.u64(wanted); w.u64(fileId); w.u64(parentId);
+
+            nlohmann::json rest = nlohmann::json::object();
+            const std::size_t recordsAt = w.reserve32();
+            uint32_t records = 0;
+            for (auto it = je.begin(); it != je.end(); ++it) {
+                if (it.key() == "id" || it.key() == "parentId") continue;
+                const ComponentSchema* s = reg.byKey(it.key());
+                const int idx = s ? indexOf(s) : -1;
+                bool packedIt = false;
+                if (idx >= 0) {
+                    // At this revision, as the JSON reader would load it.
+                    const nlohmann::json* value = &*it;
+                    nlohmann::json migrated;
+                    const bool marked = it->is_object() && it->contains(kRevisionKey);
+                    bool readable = true;
+                    if (marked || s->revision > 0) {
+                        migrated = *it;
+                        std::string ignore;
+                        readable = it->is_object() && migrateToCurrent(*s, migrated, ignore);
+                        value = &migrated;
+                    }
+                    if (readable) {
+                        std::vector<uint8_t> bytes;
+                        packed::Writer rw(bytes);
+                        if (s->pack(*value, rw)) {
+                            w.u32((uint32_t)idx);
+                            w.u32((uint32_t)bytes.size());
+                            w.raw(bytes.data(), bytes.size());
+                            ++records;
+                            packedIt = true;
+                        }
+                    }
+                }
+                if (!packedIt) rest[it.key()] = *it;
+            }
+            w.patch32(recordsAt, records);
+            if (rest.empty()) {
+                w.u32(0);
+            } else {
+                const std::vector<uint8_t> cbor = nlohmann::json::to_cbor(rest);
+                w.u32((uint32_t)cbor.size());
+                w.raw(cbor.data(), cbor.size());
+            }
+        }
+    }
+    w.patch32(countAt, count);
+    (void)why;
+    return true;
+}
+
+// The packer a cook installs (cooked_scene::Packer), over the engine's schemas.
+inline cooked_scene::Packer scenePacker() {
+    return [](const nlohmann::json& scene, assetlib::SceneAsset& out, std::string& why) {
+        return packScene(scene, out, why);
+    };
+}
+
+// The cooked file's schemas, matched to this engine's: a record whose schema
+// here is the one it was cooked with (name, key, revision, packed fields) is
+// unpacked; any other is rebuilt as JSON (packedToJson) and read through the
+// JSON stage, or kept as unknown when nothing here has its name.
+struct PackedSchemas {
+    std::vector<const ComponentSchema*> same;    // by cooked index; null: not the same
+    std::vector<const ComponentSchema*> byName;  // by cooked index; null: not registered
+};
+inline PackedSchemas matchPackedSchemas(const packed::View& view, const SchemaRegistry& reg) {
+    PackedSchemas m;
+    for (const packed::Schema& c : view.schemas()) {
+        const ComponentSchema* s = reg.byName(c.name);
+        bool same = s && s->unpack && s->key == c.key && s->revision == c.revision
+                 && s->packedFields.size() == c.fields.size();
+        for (std::size_t k = 0; same && k < c.fields.size(); ++k) {
+            const FieldInfo& f = s->packedFields[k];
+            same = f.name == c.fields[k].name && (uint8_t)f.type == c.fields[k].type
+                && f.count == c.fields[k].count;
+        }
+        m.same.push_back(same ? s : nullptr);
+        m.byName.push_back(s);
+    }
+    return m;
+}
+
+// An entity from a packed scene. False, having created what it created, on
+// bytes that do not fit: the caller rolls the load back and refuses the file.
+inline bool createEntityPacked(flecs::world& w, const packed::View& view, const packed::Entity& pe,
+                               const PackedSchemas& match, SerdeContext& ctx, IdPolicy policy,
+                               flecs::entity& out) {
+    flecs::entity e = w.entity();
+    out = e;
+    const bool ownRefs = beginEntityRefs(ctx);
+    struct EndRefs { SerdeContext& c; flecs::world w; bool own;
+                     ~EndRefs() { endEntityRefs(c, w, own); } } endRefs{ctx, w, ownRefs};
+    for (const packed::Record& rec : pe.records) {
+        if (const ComponentSchema* s = match.same[rec.schema]) {
+            packed::Reader r(rec.data, rec.size);
+            if (!s->unpack(e, r, ctx)) return false;
+            continue;
+        }
+        const packed::Schema& cooked = view.schemas()[rec.schema];
+        nlohmann::json value;
+        if (!packedToJson(cooked, rec.data, rec.size, value)) return false;
+        if (const ComponentSchema* s = match.byName[rec.schema]) loadComponentJson(e, *s, value, ctx);
+        else loadUnknownJson(e, cooked.key, value);
+    }
+    if (pe.rest && !loadEntityCborMap(e, pe.rest, pe.restSize, 0, ctx)) return false;
+    beginEntity(w, pe.wantedId, ctx, policy, e);
     finishEntity(e, ctx);
     return true;
 }

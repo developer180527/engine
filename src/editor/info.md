@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: prototype
-verified: 2026-11-26
+verified: 2026-11-27
 covers:
   - src/editor/
 tests:

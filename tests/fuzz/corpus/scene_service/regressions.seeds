@@ -24,3 +24,15 @@
 12348081055662259564
 5813135465557942230
 1363229889033388563
+
+# ── Invalid UTF-8 in a corrupt cooked scene threw out of loadScene ───────────
+# Found under generator 3 (2026-11-27), the first to corrupt the PAYLOAD with the
+# header kept consistent (earlier ones only truncated, which the container's size
+# check refuses first). CBOR text strings are not checked for UTF-8 as they are
+# read, and the load dumped such values (an unknown component, an unresolved
+# mesh's reference, a kit's block): nlohmann's dump() throws type_error 316.
+# BUG-0081; jsonread::dumpLoaded replaces the bytes instead.
+13862028724916822874
+2819004114142605382
+10013283808138211631
+12618073385084366116

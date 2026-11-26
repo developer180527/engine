@@ -760,7 +760,9 @@ if(ENGINE_BUILD_TOOLS)
 # Game build scripts call this as a pre-build step. Links the cook stack only —
 # no bgfx, no GLFW, no Jolt/Lua in the binary.
 add_executable(engine_cook tools/engine_cook.cpp)
-target_link_libraries(engine_cook PRIVATE engine_cooking)
+# flecs for the scene layer's schemas, which pack scenes (WO-092): header-only
+# code over flecs and the core, so still no bgfx, GLFW, Jolt or Lua.
+target_link_libraries(engine_cook PRIVATE engine_cooking flecs_static)
 set_target_properties(engine_cook PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )

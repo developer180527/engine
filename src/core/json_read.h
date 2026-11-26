@@ -39,6 +39,16 @@
 
 namespace jsonread {
 
+// JSON text for data that was LOADED, never throwing. A cooked scene is binary
+// (CBOR), and CBOR text strings are not checked for UTF-8 as they are read, so a
+// corrupt file can hand back a string that `dump()` refuses with an exception
+// (type_error 316): out of a scene load, on the player's thread. Invalid bytes
+// become U+FFFD instead; the file is already corrupt, and the rest of it still
+// loads. Found by fuzz_scene_service_test (WO-092).
+inline std::string dumpLoaded(const nlohmann::json& j) {
+    return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
 // True (and writes `out`) only for a real, finite number.
 inline bool finiteNumber(const nlohmann::json& v, float& out) {
     if (!v.is_number()) return false;

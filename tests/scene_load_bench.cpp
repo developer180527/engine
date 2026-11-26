@@ -11,7 +11,8 @@
 // The scene: every entity a name and transform, one in four parented to an
 // earlier one, one in two a mesh (one shared cooked mesh, so it is the scene's
 // cost and not the mesh's), one in ten a light, one in five a rigid body.
-// Each line is the median of 5 loads into a fresh world.
+// Each line is the median of 5 loads into a fresh world, for the scene cooked as
+// CBOR (a cook with no packer) and packed (the tools' cook, WO-092).
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -34,6 +35,7 @@
 #include "runtime/services/asset_service.h"
 #include "runtime/services/scene_service.h"
 #include "assets/cooked_scene.h"
+#include "scene/entity_serializer.h"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -100,12 +102,16 @@ int main(int argc, char** argv) {
     if (!writeMesh(root / ".cache" / "meshs" / "prop.cooked")) return 1;
     if (!initTestDevice()) return 1;
 
-    for (uint32_t n : profile ? std::vector<uint32_t>{50000u} : std::vector<uint32_t>{5000u, 50000u}) {
+    const cooked_scene::Packer packScenes = EntitySerde::scenePacker();
+    for (uint32_t n : profile ? std::vector<uint32_t>{50000u} : std::vector<uint32_t>{5000u, 50000u})
+    for (const cooked_scene::Packer* packer : profile
+             ? std::vector<const cooked_scene::Packer*>{&packScenes}
+             : std::vector<const cooked_scene::Packer*>{nullptr, &packScenes}) {
         const fs::path src = root / ("bench" + std::to_string(n) + ".scene");
         { std::ofstream f(src); f << makeScene(n).dump(2); }
         const fs::path cooked = root / ".cache" / "scenes" / ("bench" + std::to_string(n) + ".cooked");
         const auto c0 = std::chrono::steady_clock::now();
-        if (!cookSceneFile(src, cooked, nullptr, root)) return 1;
+        if (!cookSceneFile(src, cooked, nullptr, root, packer)) return 1;
         const double cookMs = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - c0).count();
 
@@ -127,23 +133,10 @@ int main(int argc, char** argv) {
             if (h) svc.unloadScene(h);
             bgfx::frame();
         }
-        // What decoding the payload into a JSON tree alone costs: the tree path a
-        // load falls back to for bytes the cook does not write, and what every
-        // load paid before WO-092 read the CBOR in place.
-        std::vector<double> dec;
-        for (int run = 0; run < (profile ? 1 : 5); ++run) {
-            assetlib::SceneAsset file; json scene; std::string why;
-            const auto t0 = std::chrono::steady_clock::now();
-            if (assetlib::loadScene(file, cooked, &why)) cooked_scene::decode(file, scene, why);
-            dec.push_back(std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - t0).count());
-        }
-        std::sort(dec.begin(), dec.end());
         std::sort(ms.begin(), ms.end());
-        std::printf("entities %6u  loaded %6u  cooked %8.1f KB  cook %8.1f ms  load %8.1f ms"
-                    "  (a JSON tree alone: %6.1f ms)\n",
-                    n, entities, fs::file_size(cooked) / 1024.0, cookMs, ms[ms.size() / 2],
-                    dec[dec.size() / 2]);
+        std::printf("entities %6u  %-6s  loaded %6u  cooked %8.1f KB  cook %8.1f ms  load %8.1f ms\n",
+                    n, packer ? "packed" : "CBOR", entities, fs::file_size(cooked) / 1024.0, cookMs,
+                    ms[ms.size() / 2]);
     }
     shutdownTestDevice();
     fs::remove_all(root);

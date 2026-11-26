@@ -177,18 +177,48 @@ void oneCase(uint64_t masterSeed, fuzz::Report& rep) {
         rep.fail(key, "the CBOR reader refused what to_cbor wrote: " + je.dump());
         return;
     }
-    json sa = saved(a), sb = saved(b);
+    // The third reader: the entity packed by the cook's packer, unpacked.
+    flecs::world wc = makeWorld();
+    SerdeContext cc; cc.mode = SerdeMode::Disk; cc.sceneAssets = &host;
+    std::vector<SerdeContext::EntityRef> rc; cc.entityRefs = &rc;
+    flecs::entity c;
+    {
+        assetlib::SceneAsset file;
+        std::string why;
+        packScene(json{{"entities", json::array({je})}}, file, why);
+        packed::View view;
+        packed::Entity pe;
+        if (!view.open(file.payload.data(), file.payload.size(), why) || !view.next(pe)) {
+            rep.fail(key, "the packed reader refused what the packer wrote (" + why + "): " + je.dump());
+            return;
+        }
+        const PackedSchemas match = matchPackedSchemas(view, schemas());
+        const bool loadedIt = createEntityPacked(wc, view, pe, match, cc, IdPolicy::Preserve, c);
+        const bool more = view.next(pe);
+        if (!loadedIt || more || !view.complete()) {
+            rep.fail(key, "the packed reader could not load what the packer wrote: " + je.dump());
+            return;
+        }
+    }
+    json sa = saved(a), sb = saved(b), sc = saved(c);
     // An entity with no usable id is given a fresh, random one by each reader:
     // that is the same behaviour, not a disagreement.
     uint64_t want = 0;
     if (auto it = je.find("id"); it != je.end()) want = idFrom(JsonValue{&*it});
-    if (want == 0) { sa.erase("id"); sb.erase("id"); }
+    if (want == 0) { sa.erase("id"); sb.erase("id"); sc.erase("id"); }
+    if (sa != sc) {
+        rep.fail(key, "the JSON and packed readers disagree.\n  entity: " + je.dump() + "\n  json:   "
+                 + sa.dump() + "\n  packed: " + sc.dump());
+        return;
+    }
     if (sa != sb) {
         rep.fail(key, "the readers disagree.\n  entity: " + je.dump() + "\n  json:   " + sa.dump()
                  + "\n  cbor:   " + sb.dump());
         return;
     }
     const auto ka = componentsOf(a), kb = componentsOf(b);
+    if (ka != componentsOf(c))
+        rep.fail(key, "the packed reader left different components on the entity: " + je.dump());
     if (ka != kb) {
         std::string da, db;
         for (const auto& c : ka) da += c + " ";

@@ -40,6 +40,7 @@
 #include <assetlib/scene_asset.h>
 #include <nlohmann/json.hpp>
 #include "assets/cooked_scene.h"
+#include "scene/entity_serializer.h"
 #include <assetlib/mesh_asset.h>
 
 #include "gpu_test_device.h"
@@ -51,8 +52,9 @@
 
 namespace fs = std::filesystem;
 
-// 2: cooked scene format 4 (WO-091); the corpus's seeds were found under 1.
-static constexpr uint32_t kGeneratorVersion = 2;
+// 2: cooked scene format 4 (WO-091); 3: half packed, payload corrupted (WO-092).
+// The corpus's seeds were found under 1.
+static constexpr uint32_t kGeneratorVersion = 3;
 
 namespace {
 
@@ -228,7 +230,19 @@ void oneCase(uint64_t masterSeed, fuzz::Report& rep) {
                         / ("fuzz-" + std::to_string(fuzz::currentPid()) + ".scene");
     {
         assetlib::SceneAsset scene;
-        cooked_scene::encode(buildScene(rng), scene);
+        // Half the cases packed, as the tools cook (WO-092), half as CBOR.
+        const nlohmann::json js = buildScene(rng);
+        std::string why;
+        if (!rng.chance(50) || !EntitySerde::packScene(js, scene, why))
+            cooked_scene::encode(js, scene);
+        // Corrupt the PAYLOAD with the header kept consistent, so the damage
+        // reaches the payload readers rather than the container's size check:
+        // flipped bits, or a payload cut short with its size rewritten.
+        if (!scene.payload.empty() && rng.chance(20))
+            for (uint32_t k = rng.range(1, 8); k > 0; --k)
+                scene.payload[rng.below((uint32_t)scene.payload.size())] ^= (uint8_t)(1u << rng.below(8));
+        if (!scene.payload.empty() && rng.chance(10))
+            scene.payload.resize(rng.below((uint32_t)scene.payload.size()));
         if (!assetlib::saveScene(scene, file)) return;
         // Truncate sometimes: the consumer must handle a rejection from the
         // parse layer as cleanly as it handles a success.

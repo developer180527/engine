@@ -144,7 +144,8 @@ std::unordered_set<std::string> collectSceneAssetClosure(
 bool cookSceneFile(const std::filesystem::path& jsonPath,
                    const std::filesystem::path& outPath,
                    assetlib::AssetRegistry* assetLib,
-                   const std::filesystem::path& projectRoot) {
+                   const std::filesystem::path& projectRoot,
+                   const cooked_scene::Packer* packer) {
     if (!std::filesystem::exists(jsonPath)) {
         LOG_ERROR("SceneCook", "JSON scene not found: %s", jsonPath.string().c_str());
         return false;
@@ -202,14 +203,23 @@ bool cookSceneFile(const std::filesystem::path& jsonPath,
     }
 
     assetlib::SceneAsset cooked;
-    cooked_scene::encode(scene, cooked);
+    const char* encoding = "CBOR";
+    std::string packWhy;
+    if (packer && *packer && (*packer)(scene, cooked, packWhy)) {
+        encoding = "packed";
+    } else {
+        if (packer && *packer)
+            LOG_WARN("SceneCook", "%s: not packed (%s) — written as CBOR, which loads slower",
+                     jsonPath.filename().string().c_str(), packWhy.c_str());
+        cooked_scene::encode(scene, cooked);
+    }
     std::filesystem::create_directories(outPath.parent_path());
     if (!assetlib::saveScene(cooked, outPath)) {
         LOG_ERROR("SceneCook", "Failed to write binary: %s", outPath.string().c_str());
         return false;
     }
-    LOG_SUCCESS("SceneCook", "Cooked %zu entities → %s (%zu B)", count,
-                outPath.filename().string().c_str(), cooked.payload.size());
+    LOG_SUCCESS("SceneCook", "Cooked %zu entities → %s (%zu B, %s)", count,
+                outPath.filename().string().c_str(), cooked.payload.size(), encoding);
     return true;
 }
 

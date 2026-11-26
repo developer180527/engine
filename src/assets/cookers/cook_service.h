@@ -2,6 +2,7 @@
 #include <assetlib/asset_registry.h>
 #include <assetlib/cook_pipeline.h>
 #include "assets/cook_requests.h"
+#include "assets/cooked_scene.h"   // cooked_scene::Packer
 #include <filesystem>
 #include <thread>
 #include <atomic>
@@ -123,6 +124,13 @@ public:
     enum class Scope { WholeProject, SceneClosure };
     void setScope(Scope s) { m_scope = s; }
 
+    // How scenes are written: packed, by the scene layer's schemas, when the
+    // owner of the cook installs a packer (EntitySerde::scenePacker(); this
+    // module cannot include the scene layer), and as CBOR when not (WO-092). Set
+    // before start() or cookOnce(); the packer must be safe to call from the
+    // cook's worker threads (the scene layer's is: it reads only the schemas).
+    void setScenePacker(cooked_scene::Packer p) { m_scenePacker = std::move(p); }
+
     // ── Engine-owned default assets ─────────────────────────────────────────
     // A SECOND asset root, outside the project: the engine's own shaders (and
     // eventually its default materials). They cook into the project's .cache
@@ -177,6 +185,7 @@ private:
     std::filesystem::path m_assetsRoot;
     std::filesystem::path m_engineAssetsRoot = defaultEngineAssetsRoot();
     std::filesystem::path m_cacheRoot;
+    cooked_scene::Packer  m_scenePacker;   // empty: scenes are written as CBOR
 
     std::thread             m_thread;
     std::atomic<bool>       m_running{true};

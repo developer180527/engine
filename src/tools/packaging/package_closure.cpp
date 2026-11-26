@@ -67,16 +67,16 @@ SceneRefs sceneMeshRefs(const fs::path& scenesDir) {
     std::set<std::string> seen;
     for (const auto& path : scenes) {
         assetlib::SceneAsset file;
-        nlohmann::json scene;
+        std::vector<std::string> meshes;
         std::string why;
-        if (!assetlib::loadScene(file, path, &why) || !cooked_scene::decode(file, scene, why)) {
+        if (!assetlib::loadScene(file, path, &why) || !cooked_scene::meshPathsOf(file, meshes, why)) {
             out.unreadableScenes.push_back(path.filename().string());
             continue;
         }
         ++out.scenesRead;
         // Each entity's mesh and its LOD levels (WO-091: the levels a scene names
-        // are loaded by the player now, so they ship too).
-        for (std::string& p : cooked_scene::meshPaths(scene))
+        // are loaded by the player now, so they ship too), from either encoding.
+        for (std::string& p : meshes)
             if (seen.insert(p).second) out.meshes.push_back(std::move(p));
     }
     return out;

@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-11-26
+verified: 2026-11-27
 covers:
   - src/assets/cookers/scene/scene_cooker.cpp
   - src/core/json_read.h
@@ -539,6 +539,9 @@ CBOR, with each mesh reference's `cookedPath` healed against the asset database.
 (`src/assets/cbor_reader.h`), and `src/assets/cooked_scene.h` decodes it into JSON
 (refusing CBOR nested deeper than 64 levels) for the packager, which ships the meshes
 a scene names, and for a payload the in-place reader does not take.
+The tools write the payload **packed** (encoding 2, `src/assets/packed_scene.h`):
+registered components as their schemas' fields, everything else as CBOR. A cook
+with no packer writes CBOR (encoding 1). Both load.
 
 Version 3 and earlier were a fixed 256-byte record per entity with slots for nine
 components; colour grading, kits' components and unknown ones did not survive the
