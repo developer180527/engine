@@ -345,6 +345,12 @@ set(CPP_RTTI_ENABLED         ON  CACHE BOOL "" FORCE)
 # One runtime for the whole program is not negotiable — objects built against
 # different CRTs cannot share allocations, iostreams or a heap.
 set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+# Jolt's own LTO off (BUG-0085). Jolt turns it on for Release by default, so
+# with Clang libJolt.a holds LLVM bitcode, which Ubuntu's default linker
+# (ld.bfd, no LLVMgold plugin) cannot read: the shipping player failed with
+# "libJolt.a: error adding symbols: file format not recognized". Nothing else
+# in the engine is LTO'd; whole-program LTO is one decision for all of it.
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/JoltPhysics/Build)
 
 # ── recastnavigation — navmesh (Recast build + Detour runtime query) ──────
