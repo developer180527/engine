@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-11-14
+verified: 2026-11-26
 covers:
   - src/plugins/
 tests:
@@ -17,7 +17,11 @@ tests:
 ## Purpose
 Engine subsystem implementations behind the `IEnginePlugin` interface
 (`src/runtime/plugin.h`): physics, scripting, audio. Registered with the
-runtime's `PluginRegistry`; the host (editor or game) chooses which to add.
+runtime's `PluginRegistry`. Which ones is project data: `stock_providers.cpp` is
+the build's one list (kind, name, factory, registered by explicit calls), and
+`addProviders()` (`stock_plugins.h`) adds the chosen ones or refuses an unknown
+name by name (WO-076). Every kind has a `none` provider, audio included
+(`null_audio_plugin.h`).
 
 ## Plugin vs Kit (same interface, different deployment)
 `IEnginePlugin` is just the lifecycle hook — both built-in subsystems and

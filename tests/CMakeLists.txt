@@ -903,6 +903,12 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:asset_cook_request_test>)
     set_tests_properties(player_has_no_cook_stack PROPERTIES LABELS unit TIMEOUT 120)
 
+    # The shipped player lists the providers this build has, by kind (WO-076).
+    add_test(NAME player_lists_providers
+             COMMAND engine_player --list-providers --json)
+    set_tests_properties(player_lists_providers PROPERTIES LABELS unit TIMEOUT 30
+        PASS_REGULAR_EXPRESSION "\"renderer\"[^]]*\"forward-bgfx\"")
+
     # A kit-ABI component header cannot change without being recorded as
     # comment-only or with its kAbiRevision raised, so a change of MEANING
     # cannot pass as an ordinary edit (WO-051).

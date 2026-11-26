@@ -20,9 +20,9 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## Next up
 
-1. [WO-076](WO-076-provider-registry.md) **A provider registry — providers chosen by name from one list, an unknown name refused** · P1 · size M — Providers are chosen by an if-chain in `stock_plugins.h`, and the same names are written a second time in `eng_capi.cpp`. A misspelled name in `project.json` silently runs Jolt or Lua instead (DR-0035 says refuse). The renderer is not chosen by name at all (`runtime_boot.cpp`). A new provider means editing engine code in two places. One registry fixes all four, and it needs nothing from the world API, so it does not have to wait for WO-073 as WO-074 does.
-2. [WO-071](WO-071-schema-registry-and-generic-serializer.md) **A component schema registry and one generic scene serializer, with unknown components kept** · P1 · size L — Every later step names components by registered schema: the change stream, the C world API, provider-namespaced components, migrations. Today the scene serializer is a hand-written list (`entity_serializer.h`, 11 schemas hard-coded in `meta_registry.h`) that drops any component it does not know, and `MeshRenderer` saves the bgfx renderer's registry ids.
-3. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
+1. [WO-071](WO-071-schema-registry-and-generic-serializer.md) **A component schema registry and one generic scene serializer, with unknown components kept** · P1 · size L — Every later step names components by registered schema: the change stream, the C world API, provider-namespaced components, migrations. Today the scene serializer is a hand-written list (`entity_serializer.h`, 11 schemas hard-coded in `meta_registry.h`) that drops any component it does not know, and `MeshRenderer` saves the bgfx renderer's registry ids.
+2. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
+3. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -35,11 +35,10 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
 | [WO-070](WO-070-engstep-and-main-window.md) | `engStep` and main-window control on today's internals — the C API's first, usable step | Providers & modules | M | **active** 6/7 | — |
-| [WO-076](WO-076-provider-registry.md) | A provider registry — providers chosen by name from one list, an unknown name refused | Providers & modules | M | **ready** | engine-plugin |
 | [WO-071](WO-071-schema-registry-and-generic-serializer.md) | A component schema registry and one generic scene serializer, with unknown components kept | Asset import & cooking | L | **ready** | scene-service |
 | [WO-072](WO-072-change-stream.md) | One change stream per registered component — free without subscribers, merged per read | Renderer & RHI | M | blocked by WO-071 | render-scene |
 | [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | blocked by WO-071, WO-072 | kit-abi |
-| [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API | Providers & modules | M | blocked by WO-073, WO-076 | engine-plugin |
+| [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API | Providers & modules | M | blocked by WO-073 | engine-plugin |
 | [WO-075](WO-075-renderer-contract-headers.md) | The renderer contract as headers, with a conformance suite the null renderer passes first | Renderer & RHI | M | blocked by WO-073 | renderer |
 | [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | **ready** | kit-abi, engine-plugin, script-services |
 | [WO-053](WO-053-bone-maps-per-section.md) | Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128 | Asset import & cooking | L | **ready** | cooker, kit-abi |
@@ -49,7 +48,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-062](WO-062-bgfx-sized-for-what-the-host-draws.md) | bgfx is sized for what the host draws, not for its defaults (about 49 MB down to about 21 MB) | Renderer & RHI | S | **ready** | — |
 | [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
 | [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
-| [WO-085](WO-085-provider-manifests.md) | Provider manifests and platform tables — each provider declared once, built only where it can run | Providers & modules | M | blocked by WO-076 | — |
+| [WO-085](WO-085-provider-manifests.md) | Provider manifests and platform tables — each provider declared once, built only where it can run | Providers & modules | M | **ready** | — |
 | [WO-086](WO-086-provider-resolver-and-build-time-refusal.md) | The provider resolver — per-target choice in project.json, refused by name at engine_build | Providers & modules | M | blocked by WO-085 | — |
 
 ## P2 — the planned programmes, in dependency order.
@@ -66,7 +65,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-066](WO-066-shipping-build-absent-not-disabled.md) | Shipping build — development machinery absent from the binary, not switched off | Process & context | L | **ready** | — |
 | [WO-068](WO-068-nothing-cooked-at-runtime.md) | Nothing is cooked or compiled at runtime — shaders' final driver step is the only exception | Asset import & cooking | L | blocked by WO-069 | — |
 | [WO-069](WO-069-engine-owned-animation-and-audio-formats.md) | Cooked animation and audio in the engine's own formats, so changing a provider never changes them | Asset import & cooking | L | **ready** | audio-provider |
-| [WO-077](WO-077-swap-providers-at-dev-time.md) | Swap a provider at development time — loaded by name, changed when the simulation stops | Providers & modules | L | blocked by WO-076, WO-085 | engine-plugin, audio-provider |
+| [WO-077](WO-077-swap-providers-at-dev-time.md) | Swap a provider at development time — loaded by name, changed when the simulation stops | Providers & modules | L | blocked by WO-085 | engine-plugin, audio-provider |
 | [WO-079](WO-079-job-system-follow-ups.md) | Job system follow-ups — the last private threads, a frame-start wake, other platforms, retiring enkiTS | Process & context | M | **ready** | — |
 | [WO-081](WO-081-farm-phase-0.md) | The home server, phase 0 — pulls main, builds four trees, quiet enough to measure, noise floor known | Process & context | M | blocked by WO-080 | — |
 | [WO-082](WO-082-farm-results-db.md) | The farm's results database, A/B statistics and nightly report | Process & context | M | blocked by WO-081 | — |
@@ -101,6 +100,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-076](WO-076-provider-registry.md) | A provider registry — providers chosen by name from one list, an unknown name refused | 2026-11-26 | tests/providers_test.cpp (every kind refused by name, none per kind, overrides, injection), eng_step_test (EngEngineDesc.providers refused from the registry), ctest player_lists_providers |
 | [WO-078](WO-078-the-engines-own-job-scheduler.md) | The engine's own job scheduler — work stealing, priorities, an I/O lane, scratch memory; measured and fuzzed | 2026-11-14 | tests/jobs_fuzz_test.cpp (60 seeds in the unit lane, 1 500 passed; both backends; ThreadSanitizer clean on 190 seeds; two planted bugs caught); tests/jobs_bench.cpp (a paced frame 0.54 ms against enkiTS's 2.03 ms at half the CPU, numbers in src/core/jobs/info.md); unit, audit and docs lanes on the native backend |
 | [WO-056](WO-056-rhi-g2-prerequisites.md) | RHI G2 prerequisites — the reading and decisions the first triangle needs | 2026-10-12 | studies 001, 002, 007, 008 concluded (008 by docs/rhi/studies/008-spike/spike.sh, Metal runs mutation-checked); design-api.md §4.5-4.7; DR-0013 |
 | [WO-051](WO-051-kit-abi-meaning-revisions.md) | A kit-ABI component that changes meaning refuses old kits, instead of loading them | 2026-10-06 | tests/module_abi/tests/gate.rs (old_revision fixture refused, named); ctest kit_abi_headers; mutations in the log |

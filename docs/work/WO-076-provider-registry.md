@@ -6,7 +6,9 @@ program: providers
 priority: P1
 rank: 2
 size: M
-state: todo
+state: done
+done: 2026-11-26
+evidence: tests/providers_test.cpp (every kind refused by name, none per kind, overrides, injection), eng_step_test (EngEngineDesc.providers refused from the registry), ctest player_lists_providers
 depends: []
 contracts: [engine-plugin]
 touches:
@@ -21,13 +23,13 @@ source: review 2026-11-11 (swappable providers at development time); split out o
 Providers are chosen by an if-chain in `stock_plugins.h`, and the same names are written a second time in `eng_capi.cpp`. A misspelled name in `project.json` silently runs Jolt or Lua instead (DR-0035 says refuse). The renderer is not chosen by name at all (`runtime_boot.cpp`). A new provider means editing engine code in two places. One registry fixes all four, and it needs nothing from the world API, so it does not have to wait for WO-073 as WO-074 does.
 
 ## Done when
-- [ ] a registry in the runtime: a provider registers a kind (`physics`, `audio`, `scripting`, `renderer`), a name and a factory. Registration is an explicit call from one list per build, not a static initialiser (a static library drops objects nobody references, so self-registration silently loses providers)
-- [ ] `stock_plugins.h`'s if-chain and `eng_capi.cpp`'s name lists are gone: both ask the registry, and the refusal message's list of known names comes from it
-- [ ] an unknown provider name is refused at startup, by name, with the names this build has, for `project.json` and for `EngEngineDesc.providers`; tested for each kind
-- [ ] direct injection: a host may hand the engine a provider object without a name (`engine-architecture.md` §2b), tested with a fake physics provider
-- [ ] the renderer is in the registry as `forward-bgfx` and `none`, chosen by `project.json` (`"renderer"`). Today's rule is kept until per-target choice exists (WO-086): with no display, or in a server build, the renderer is `none`, and the log says why
-- [ ] every kind has a `none` provider that is a real registered provider, audio included (today `"audio": "none"` registers nothing). `none` is chosen by name and is never used as a fallback
-- [ ] `engine_player --list-providers` prints kinds and names, with `--json`
+- [x] a registry in the runtime: a provider registers a kind (`physics`, `audio`, `scripting`, `renderer`), a name and a factory. Registration is an explicit call from one list per build, not a static initialiser (a static library drops objects nobody references, so self-registration silently loses providers)
+- [x] `stock_plugins.h`'s if-chain and `eng_capi.cpp`'s name lists are gone: both ask the registry, and the refusal message's list of known names comes from it
+- [x] an unknown provider name is refused at startup, by name, with the names this build has, for `project.json` and for `EngEngineDesc.providers`; tested for each kind
+- [x] direct injection: a host may hand the engine a provider object without a name (`engine-architecture.md` §2b), tested with a fake physics provider
+- [x] the renderer is in the registry as `forward-bgfx` and `none`, chosen by `project.json` (`"renderer"`). Today's rule is kept until per-target choice exists (WO-086): with no display, or in a server build, the renderer is `none`, and the log says why
+- [x] every kind has a `none` provider that is a real registered provider, audio included (today `"audio": "none"` registers nothing). `none` is chosen by name and is never used as a fallback
+- [x] `engine_player --list-providers` prints kinds and names, with `--json`
 
 ## Contract
 Nothing: a project that names `jolt`, `lua`, `miniaudio` or `none` behaves as today. Only a misspelled name changes, from a silent fallback to a refusal that names it. Existing `project.json` files with no `"renderer"` get the default.
@@ -37,3 +39,9 @@ Nothing: a project that names `jolt`, `lua`, `miniaudio` or `none` behaves as to
 - Manifests, platforms and build-time resolution: WO-085 and WO-086. The registry's interface is written so they can feed it: a provider registers kind, name and factory, and nothing else is assumed.
 - Moving physics off flecs (WO-074) and the renderer contract (WO-075). The registry holds today's provider classes as they are.
 - Services of new kinds (`engFindService`, `engine-api.md`): the registry's kinds stay a fixed list until the C API's module part lands.
+
+## Notes (done 2026-11-26)
+- **Where each choice is checked.** The renderer is checked in `EngineRuntime::init()`, before the profiler channels or the job pool exist. A shutdown after a failed init is a no-op, and the first version, which checked later, crashed the next boot. Physics, scripting and audio are checked in `addProviders()`. The build's list lives in `src/plugins/`, above the runtime, and the runtime registering it itself made a module cycle (audit LAYER-06). So the runtime registers only its own renderers.
+- **Overrides survive a project reload.** `EngineConfig::providerOverrides` is applied again after every `openProject()`. Applied only once, init's own `openProject` reloaded the project and silently dropped the C API's override.
+- **The editor** logs a refusal and opens with no providers, never with different ones.
+- **The C API** checks `EngEngineDesc.providers` at `engCreateEngine` against the same list, and now accepts `renderer`.

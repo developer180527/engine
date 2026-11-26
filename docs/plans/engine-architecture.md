@@ -223,14 +223,14 @@ A provider developer is not limited to the kinds above.
 | Physics | yes (`jolt`, `none`) | `engine-plugin.md` | takes `flecs::world` directly |
 | Scripting | yes (`lua`, `none`) | `script-services.md` | |
 | Audio | yes (`miniaudio`, `none`) | `audio-provider.md` | |
-| Rendering | no (`runtime_boot.cpp` picks in code) | `renderer.md` (bgfx-shaped) | `renderer-contract.md` |
+| Rendering | yes (`forward-bgfx`, `none`) | `renderer.md` (bgfx-shaped) | `renderer-contract.md` |
 | Networking | no (`modules/net`, Rust) | none | a contract, when a second implementation is wanted |
 
-**One gap shared by every kind:** an unknown provider name logs an error and
-falls back to the default provider (`plugins/stock_plugins.h`), so a typo in
-`project.json` runs a different provider than the one asked for. Under §6 it is
-refused at startup, by name, with the list of providers this build has (WO-076).
-After that it is refused even earlier, at `engine_build` (WO-086).
+**Closed by WO-076:** an unknown provider name used to log an error and fall
+back to the default provider, so a typo in `project.json` ran a different
+provider than the one asked for. It is now refused at startup, by name, with
+the list of providers this build has. Next it is refused even earlier, at
+`engine_build` (WO-086).
 
 ## 7a. Every tool is a CLI over the library
 

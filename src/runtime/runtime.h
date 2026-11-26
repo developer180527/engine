@@ -23,6 +23,7 @@
 #include "runtime/input/input_latency_channel.h"
 #include "render/renderer_interface.h"   // IRenderer — NOT the concrete Renderer
 #include "runtime/plugin_registry.h"
+#include "runtime/provider_registry.h"
 #include "runtime/kit_host.h"
 #include "runtime/event_sweeper.h"
 #include "runtime/sim_command.h"
@@ -90,6 +91,11 @@ struct EngineConfig {
     // Enable the frame/boot profiler. Defaults on when ENGINE_PROFILE is
     // compiled in (debug); shipping release builds compile it out entirely.
     bool enableProfiler = (ENGINE_PROFILE != 0);
+
+    // Provider choices that override project.json for this engine, as
+    // (kind, name) pairs: the C API's EngEngineDesc.providers. Checked with the
+    // project's own choices at init, and refused by name (WO-076).
+    std::vector<std::pair<std::string, std::string>> providerOverrides;
 
     // Residency budget for async-loaded cooked meshes, in MB. 0 = unbounded
     // (editor default — keep everything). With a budget set, the runtime
@@ -262,6 +268,25 @@ public:
     // Plugins — register via plugins().add(...) after init(), then call
     // attachPlugins() once. detachAll happens automatically in shutdown().
     PluginRegistry&  plugins()      { return m_plugins; }
+    // Providers — which ones this build has, by kind and name (WO-076).
+    // init() registers the runtime's renderers and checks the renderer choice;
+    // addProviders() (plugins/stock_plugins.h) registers the build's list and
+    // adds the chosen ones. A host may add its own, or inject() one, before.
+    providers::Registry&       providerRegistry()       { return m_providers; }
+    const providers::Registry& providerRegistry() const { return m_providers; }
+    // Why init() or addProviders() refused, by name; empty when nothing was.
+    const std::string& bootError() const { return m_bootError; }
+    void setBootError(std::string why) { m_bootError = std::move(why); }
+    // Checks every provider choice in the project (and the overrides) against
+    // the registry: an unknown kind, an unknown name, a value that is not a
+    // name. Fills `why` with the first refusal. init() checks kinds and the
+    // renderer only (renderersOnly); addProviders() checks all of them.
+    bool checkProviderChoices(std::string& why, bool renderersOnly = false) const;
+    // The renderers this build has: `forward-bgfx` (not in a server build) and
+    // `none`. Called from the build's provider list.
+    static void registerRenderers(providers::Registry& r);
+    // The chosen renderer's name, after init().
+    const std::string& rendererName() const { return m_rendererName; }
     // The tick's command buffer. Gameplay submits here instead of mutating
     // simulation state directly; see runtime/sim_command.h.
     simcmd::Buffer&  commands()     { return m_commands; }
@@ -482,6 +507,11 @@ private:
     WorldQueryCache<const Transform>                m_prevSnapAddQuery; // first step
     AnimatorSystem m_animatorSystem;
     PluginRegistry m_plugins;
+    providers::Registry m_providers;
+    std::string m_bootError;
+    std::string m_rendererName;
+    std::vector<std::pair<std::string, std::string>> m_providerOverrides;   // EngineConfig's
+    void applyProviderOverrides();   // onto m_project; again after every project load
     KitHost        m_kits;              // project kits — dlopened lazily at Play
     PrimaryCameraFinder m_cameraFinder; // cached camera query (game tick)
     LutLibrary          m_luts;         // grading LUTs by path (colour stage B)

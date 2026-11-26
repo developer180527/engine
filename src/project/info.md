@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-09-30
+verified: 2026-11-26
 parses-external-input: true
 covers:
   - src/project/
@@ -31,6 +31,10 @@ itself) keep working — loaders fall back, nothing migrates in place.
 - **`project_context.h`** — loads/saves `project.json`; `autoDetect()`
   prefers the last-opened project; `load(root)` is the explicit form. Opened
   at `EngineRuntime::init` or later via `openProject` (editor hub flow).
+  Its `"providers"` block names one provider per kind (`physics`, `scripting`,
+  `audio`, `renderer`). Keys that are not a kind, and values that are not a
+  name, are kept in `Providers::unrecognised` so startup refuses them by name
+  instead of ignoring them (WO-076). `renderer` is written only when set.
 - **`project_scaffold.h/.cpp`** — `project::create(dir, name, template)`
   generates the structure. Templates: "basic3d" (camera + sun + cube scene),
   "empty".

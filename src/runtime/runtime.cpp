@@ -123,6 +123,7 @@ bool EngineRuntime::openProject(const std::filesystem::path& root) {
         return false;
     }
     m_project = ProjectContext::load(root);
+    applyProviderOverrides();   // the host's choices outlive a reload (WO-076)
     LOG_INFO("Project", "Opened: %s", m_project.projectRoot.string().c_str());
     // The editor boots projectless — input bindings arrive WITH the project.
     m_input.loadProjectBindings(m_project.projectRoot);

@@ -51,16 +51,23 @@ struct ProjectContext {
     // Engine service providers — WHICH implementation fills each engine
     // service slot, as project data ("providers" in project.json). Swapping
     // physics/audio/scripting is a project setting, not a host-code edit:
-    // hosts construct plugins by name via plugins/stock_plugins.h.
+    // hosts add the chosen ones from the provider registry (WO-076,
+    // runtime/provider_registry.h; the build's list is plugins/stock_providers.cpp).
     //   physics:   "jolt" (default) | "none"
     //   scripting: "lua"  (default) | "none"
     //   audio:     "miniaudio" (default) | "none"
-    // A custom engine-side provider = add its case to stock_plugins.h; a
-    // gameplay-level system = a kit, no engine change at all.
+    //   renderer:  "forward-bgfx" | "none"; empty means the engine's default
+    //              (forward-bgfx, or none with no display or in a server build)
+    // A name this build does not have is refused at startup, by name
+    // (DR-0035). So is a kind the engine does not know (`unrecognised`).
     struct Providers {
         std::string physics   = "jolt";
         std::string scripting = "lua";
         std::string audio     = "miniaudio";
+        std::string renderer;                  // empty: the engine's default
+        // Keys in the "providers" block that are not a kind, or whose value is
+        // not a name, as written. Kept so startup can refuse them by name.
+        std::vector<std::string> unrecognised;
     };
 
     // Graphics quality — project data, because the right answer depends on the
@@ -131,6 +138,7 @@ struct ProjectContext {
         j["providers"] = {{"physics",   providers.physics},
                           {"scripting", providers.scripting},
                           {"audio",     providers.audio}};
+        if (!providers.renderer.empty()) j["providers"]["renderer"] = providers.renderer;
         j["graphics"]  = {{"shadowResolution", graphics.shadowResolution}};
 
         std::ofstream f(projectRoot / "project.json");
@@ -154,9 +162,16 @@ struct ProjectContext {
                 std::string ar = j.value("assetRoot", "assets");
                 ctx.assetsRoot = std::filesystem::weakly_canonical(ctx.projectRoot / ar);
                 if (auto p = j.find("providers"); p != j.end() && p->is_object()) {
-                    ctx.providers.physics   = p->value("physics",   ctx.providers.physics);
-                    ctx.providers.scripting = p->value("scripting", ctx.providers.scripting);
-                    ctx.providers.audio     = p->value("audio",     ctx.providers.audio);
+                    for (auto it = p->begin(); it != p->end(); ++it) {
+                        std::string* slot =
+                            it.key() == "physics"   ? &ctx.providers.physics   :
+                            it.key() == "scripting" ? &ctx.providers.scripting :
+                            it.key() == "audio"     ? &ctx.providers.audio     :
+                            it.key() == "renderer"  ? &ctx.providers.renderer  : nullptr;
+                        if (slot && it.value().is_string()) *slot = it.value().get<std::string>();
+                        else ctx.providers.unrecognised.push_back(
+                            slot ? it.key() + " (its value is not a provider name)" : it.key());
+                    }
                 }
                 if (auto g = j.find("graphics"); g != j.end() && g->is_object()) {
                     // VALIDATED, because the cost is quadratic and the failure

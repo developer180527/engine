@@ -46,7 +46,7 @@ int main() {
     std::filesystem::create_directories(cfg.projectRoot);
     EngineRuntime engine;
     CHECK(engine.init(cfg, std::make_unique<HeadlessPlatform>()), "a headless runtime");
-    addStockPlugins(engine);
+    CHECK(addProviders(engine), "the stock providers are added");
     engine.attachPlugins();
     engine.startSimulation(EngineRuntime::SimMode::InPlace);
     for (int t = 0; t < 60; ++t) engine.tick(1.0f / 60.0f);   // warm up

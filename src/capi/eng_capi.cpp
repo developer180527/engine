@@ -100,7 +100,7 @@ constexpr size_t kEventQueueLimit = 256;
 struct EngEngine {
     std::string appName = "engine";
     std::string projectPath;
-    std::string physics, scripting, audio;   // overrides of project.json; empty: keep
+    std::vector<std::pair<std::string, std::string>> providerChoices;   // overrides of project.json
     EngPacing   pacing = ENG_PACING_ENGINE;
 
     std::unique_ptr<IPlatform>     platform;  // created at once: monitors are listable before a window
@@ -166,21 +166,26 @@ EngResult start(EngEngine* e, const EngWindowDesc* wd) {
         if (wd) { e->platform = makeDefaultPlatform(); e->plat = e->platform.get(); }
         return fail(code, std::move(why));
     };
-    if (!rt->init(cfg, std::move(platform)))
+    cfg.providerOverrides = e->providerChoices;
+    if (!rt->init(cfg, std::move(platform))) {
+        if (!rt->bootError().empty()) {
+            std::string why = rt->bootError();
+            return abandon(ENG_ERROR_NOT_FOUND, std::move(why));
+        }
         return abandon(ENG_ERROR_UNSUPPORTED, wd ? "the window could not be created on this platform"
                                                  : "the engine could not start headless");
+    }
     if (!e->projectPath.empty() && !rt->hasProject())
         return abandon(ENG_ERROR_NOT_FOUND, "no project.json at " + e->projectPath);
 
-    auto& prov = rt->project().providers;
-    if (!e->physics.empty())   prov.physics = e->physics;
-    if (!e->scripting.empty()) prov.scripting = e->scripting;
-    if (!e->audio.empty())     prov.audio = e->audio;
 
 #if !defined(ENGINE_WINDOW_BACKEND_SDL3)
     if (wd) InputSystem::get().init(plat->backendWindowHandle());
 #endif
-    addStockPlugins(*rt);
+    if (!addProviders(*rt)) {
+        std::string why = rt->bootError();
+        return abandon(ENG_ERROR_NOT_FOUND, std::move(why));
+    }
     rt->attachPlugins();
     rt->kits().setReloadPolicy(modload::ModuleLibrary::Reload::Never);
 
@@ -326,22 +331,22 @@ EngResult engCreateEngine(const EngEngineDesc* in, EngEngine** out) {
         e->pacing = d.pacing;
         if (d.provider_count && !d.providers)
             return fail(ENG_ERROR_INVALID_ARGUMENT, "provider_count is not zero but providers is NULL");
+        // Checked against the build's provider list here, so a wrong choice is
+        // refused at create rather than at the first step (WO-076).
+        providers::Registry known;
+        registerStockProviders(known);
         for (uint32_t i = 0; i < d.provider_count; ++i) {
             const EngProviderChoice& c = d.providers[i];
             const std::string kind = c.kind ? c.kind : "", name = c.name ? c.name : "";
-            auto known = [&](std::initializer_list<const char*> names) {
-                for (const char* n : names) if (name == n) return true;
-                return false;
-            };
-            if (kind == "physics" && known({"jolt", "none"})) e->physics = name;
-            else if (kind == "scripting" && known({"lua", "none"})) e->scripting = name;
-            else if (kind == "audio" && known({"miniaudio", "none"})) e->audio = name;
-            else if (kind == "physics" || kind == "scripting" || kind == "audio")
-                return fail(ENG_ERROR_NOT_FOUND, "no " + kind + " provider named '" + name + "' in this build (" +
-                    (kind == "physics" ? "jolt, none" : kind == "scripting" ? "lua, none" : "miniaudio, none") + ")");
-            else
-                return fail(ENG_ERROR_NOT_FOUND, "no provider kind '" + kind +
-                                                 "' can be chosen in this build (physics, scripting, audio)");
+            if (c.reserved[0] || c.reserved[1])
+                return fail(ENG_ERROR_INVALID_ARGUMENT, "EngProviderChoice.reserved must be zero");
+            providers::Kind k;
+            if (!providers::kindFromName(kind, k))
+                return fail(ENG_ERROR_NOT_FOUND, "no provider kind '" + kind + "' (kinds: " +
+                                                 providers::allKindNames() + ")");
+            std::string why;
+            if (!known.resolve(k, name, why)) return fail(ENG_ERROR_NOT_FOUND, why);
+            e->providerChoices.emplace_back(kind, name);
         }
         if (d.project_path) {
             e->projectPath = d.project_path;

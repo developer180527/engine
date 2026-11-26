@@ -73,7 +73,7 @@ int main() {
         cfg.openAssetDatabase = false; cfg.enableProfiler = false;
         EngineRuntime rt;
         CHECK(rt.init(cfg, std::make_unique<HeadlessPlatform>()), "EngineRuntime starts headless");
-        addStockPlugins(rt);
+        CHECK(addProviders(rt), "the stock providers are added");
         rt.attachPlugins();
         rt.startSimulation();
         buildScene(rt.simWorld());
@@ -166,7 +166,9 @@ int main() {
         EngEngineDesc d = desc(); d.providers = c; d.provider_count = 1;
         refused(engCreateEngine(&d, &e), ENG_ERROR_NOT_FOUND, "havok", "an unknown physics provider");
         c[0].kind = "renderer"; c[0].name = "aaa";
-        refused(engCreateEngine(&d, &e), ENG_ERROR_NOT_FOUND, "renderer", "a provider kind this build cannot choose");
+        refused(engCreateEngine(&d, &e), ENG_ERROR_NOT_FOUND, "forward-bgfx", "a renderer this build does not have, with the ones it has");
+        c[0].kind = "pathfinding"; c[0].name = "recast";
+        refused(engCreateEngine(&d, &e), ENG_ERROR_NOT_FOUND, "pathfinding", "a provider kind the engine does not know");
         c[0].kind = "physics"; c[0].name = "none";
         CHECK(engCreateEngine(&d, &e) == ENG_OK, "a known provider choice is accepted");
         engDestroyEngine(e); e = nullptr;

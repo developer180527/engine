@@ -43,6 +43,11 @@
 #include "core/transform.h"
 
 namespace {
+#if ENGINE_SERVER_BUILD
+constexpr bool kServerBuild = true;
+#else
+constexpr bool kServerBuild = false;
+#endif
 // ozz allocations route to the Animation tag; installed in init() (ozz only
 // allocates at import time). The instance deliberately outlives main —
 // statics may free through it.
@@ -66,6 +71,35 @@ bool EngineRuntime::init(const EngineConfig& cfg,
         LOG_ERROR("Runtime", "init() called twice — ignoring");
         return false;
     }
+    // Project loads first so the window title can default to its name.
+    // Resolve the project up front so the window title can use its name.
+    // With autoDetectProject=false and no explicit root, the engine boots
+    // projectless — the app opens one later via openProject() (editor hub).
+    if (!cfg.projectRoot.empty())
+        m_project = ProjectContext::load(cfg.projectRoot);
+    else if (cfg.autoDetectProject)
+        m_project = ProjectContext::autoDetect();
+    // (openProject below does the logging + asset DB once systems exist)
+
+    // Providers (WO-076): the runtime's own renderers, then the overrides, then
+    // the choices the runtime can judge (every kind, and the renderer) checked
+    // before anything is created, so a refusal leaves nothing to undo
+    // (registered channels, the job pool). Physics, scripting and audio come
+    // from the build's list, which lives above the runtime
+    // (plugins/stock_providers.cpp): addProviders() registers and checks them.
+    // A name the build does not have is refused, by name (DR-0035).
+    {
+        std::string why;
+        registerRenderers(m_providers);
+        m_providerOverrides = cfg.providerOverrides;
+        applyProviderOverrides();
+        if (!checkProviderChoices(why, /*renderersOnly=*/true)) {
+            m_bootError = why;
+            LOG_ERROR("Providers", "%s", why.c_str());
+            return false;
+        }
+    }
+
     // Profiler comes up first so it can time the boot sequence itself.
     // The memory channel registers before the boot frame so boot allocations
     // are measured too (the framework's first extra channel).
@@ -92,15 +126,6 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     mem::init();
     m_width = cfg.width; m_height = cfg.height; m_fov = cfg.fov;
 
-    // Project loads first so the window title can default to its name.
-    // Resolve the project up front so the window title can use its name.
-    // With autoDetectProject=false and no explicit root, the engine boots
-    // projectless — the app opens one later via openProject() (editor hub).
-    if (!cfg.projectRoot.empty())
-        m_project = ProjectContext::load(cfg.projectRoot);
-    else if (cfg.autoDetectProject)
-        m_project = ProjectContext::autoDetect();
-    // (openProject below does the logging + asset DB once systems exist)
 
     const std::string title = !cfg.title.empty() ? cfg.title
         : (hasProject() ? m_project.name : std::string("Engine"));
@@ -128,31 +153,86 @@ bool EngineRuntime::init(const EngineConfig& cfg,
     return true;
 }
 
+void EngineRuntime::registerRenderers(providers::Registry& r) {
+    if (!r.claimList("renderers")) return;   // once per registry
+#if !ENGINE_SERVER_BUILD
+    r.addRenderer("forward-bgfx", "the bgfx forward renderer",
+                  [] { return std::unique_ptr<IRenderer>(std::make_unique<Renderer>()); });
+#endif
+    r.addRenderer("none", "no renderer: nothing is drawn",
+                  [] { return std::unique_ptr<IRenderer>(std::make_unique<NullRenderer>()); });
+}
+
+void EngineRuntime::applyProviderOverrides() {
+    auto& prov = m_project.providers;
+    for (const auto& [kind, name] : m_providerOverrides) {
+        providers::Kind k;
+        if (!providers::kindFromName(kind, k)) { prov.unrecognised.push_back(kind); continue; }
+        (k == providers::Kind::Physics   ? prov.physics   :
+         k == providers::Kind::Scripting ? prov.scripting :
+         k == providers::Kind::Audio     ? prov.audio     : prov.renderer) = name;
+    }
+}
+
+bool EngineRuntime::checkProviderChoices(std::string& why, bool renderersOnly) const {
+    const auto& p = m_project.providers;
+    if (!p.unrecognised.empty()) {
+        why = "project.json \"providers\": '" + p.unrecognised.front() +
+              "' is not a provider kind with a name (kinds: " + providers::allKindNames() + ")";
+        return false;
+    }
+    const std::pair<providers::Kind, const std::string*> chosen[] = {
+        {providers::Kind::Physics, &p.physics}, {providers::Kind::Scripting, &p.scripting},
+        {providers::Kind::Audio, &p.audio}, {providers::Kind::Renderer, &p.renderer}};
+    for (const auto& [kind, name] : chosen) {
+        if (renderersOnly && kind != providers::Kind::Renderer) continue;
+        if (kind == providers::Kind::Renderer && name->empty()) continue;   // the default
+        if (m_providers.injected(kind)) continue;                          // the host's own
+        if (!m_providers.resolve(kind, *name, why)) return false;
+    }
+    return true;
+}
+
 bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
     // THE ONE PLACE that decides which renderer exists. Everything downstream
     // calls through IRenderer and never asks again — which is what removed the
     // scattered `if (!m_headless)` guards around render calls, and with them the
     // class of bug where one guard is present and an adjacent one is not
     // (docs/rhi/headless.md §4).
-    if (!m_platform->supportsRendering()) {
-        // Headless platform — no GPU. ECS, assets, animation, physics and
-        // scripting still run; render entry points do nothing, correctly.
+    //
+    // By name from the registry (WO-076). The project may name one; empty is
+    // the engine's default. Until a project can choose per target (WO-086),
+    // today's rule stays: with no display, or in a server build, the renderer
+    // is `none`, and the log says why when a project asked for another.
+    const std::string asked = m_project.providers.renderer;
+    std::string name = asked.empty() ? std::string("forward-bgfx") : asked;
+    const char* noDisplay = !m_platform->supportsRendering() ? "this platform has no display"
+                          : kServerBuild                  ? "this is a server build"
+                          : nullptr;
+    if (noDisplay && name != "none") {
+        if (!asked.empty())
+            LOG_INFO("Renderer", "renderer '%s' asked for, but %s: using 'none'",
+                     asked.c_str(), noDisplay);
+        name = "none";
+    }
+    std::string why;
+    const providers::Entry* entry = m_providers.resolve(providers::Kind::Renderer, name, why);
+    if (!entry) {
+        m_bootError = why;
+        LOG_ERROR("Renderer", "%s", why.c_str());
+        return false;
+    }
+    m_rendererName = name;
+    m_renderer = entry->makeRenderer();
+    if (name == "none") {
+        // No GPU work. ECS, assets, animation, physics and scripting still
+        // run; render entry points do nothing, correctly.
         m_headless = true;
-        m_renderer = std::make_unique<NullRenderer>();
         return true;
     }
 #if ENGINE_SERVER_BUILD
-    // A server build has no Renderer to construct. Reaching here means the
-    // platform claimed it can render, which for a server is a configuration
-    // error rather than a state to recover from — say so and stay headless
-    // instead of pretending a device exists.
-    LOG_WARN("Renderer", "server build: platform reports rendering support, but "
-                         "this binary contains no renderer — staying headless");
-    m_headless = true;
-    m_renderer = std::make_unique<NullRenderer>();
-    return true;
+    return false;   // unreachable: a server build registers only `none`
 #else
-    m_renderer = std::make_unique<Renderer>();
 
     void* nwh = m_platform->nativeWindowHandle();
 

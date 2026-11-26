@@ -15,7 +15,7 @@ typedef struct EngModuleDesc EngModuleDesc; /* eng_module.h */
  * Nested in EngEngineDesc as an array, so it can never grow. */
 typedef struct EngProviderChoice {
     const char* kind;  /* "renderer", "physics", "audio", ... */
-    const char* name;  /* "aaa", "jolt", "null", ... Unknown: refused by name. */
+    const char* name;  /* "forward-bgfx", "jolt", "none", ... Unknown: refused by name. */
     uint64_t reserved[2]; /* must be zero */
 } EngProviderChoice;
 

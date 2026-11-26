@@ -109,15 +109,18 @@ including kinds the engine has never heard of.
 
 | Kind | Built | Contract | Planned |
 |---|---|---|---|
-| Rendering | bgfx forward renderer, picked in code | `renderer.md` (bgfx-shaped) | the renderer contract; librhi AAA renderer; WebGPU renderer for the web ([renderer-contract.md](docs/plans/renderer-contract.md)) |
+| Rendering | bgfx forward renderer (`forward-bgfx`), or none, by name | `renderer.md` (bgfx-shaped) | the renderer contract; librhi AAA renderer; WebGPU renderer for the web ([renderer-contract.md](docs/plans/renderer-contract.md)) |
 | Physics | Jolt, or none, by name in `project.json` | `engine-plugin.md` | the world API instead of `flecs::world` |
 | Audio | miniaudio, or none | `audio-provider.md` (C ABI) | takes the engine audio format (WO-069) |
 | Scripting | Lua, or none | `script-services.md` | precompiled Lua in shipped games (WO-068) |
 | Networking | `modules/net` (Rust), no contract | | a contract when a second implementation is wanted |
 | Game UI | | | libgui, as `engine.ui.v1` (WO-067) |
 
-**Built:** providers are chosen from a hard-coded switch
-(`src/plugins/stock_plugins.h`), and an unknown name falls back to the default.
+**Built:** a provider registry (`src/runtime/provider_registry.h`). The build's
+one list is `src/plugins/stock_providers.cpp`. `project.json` chooses physics,
+scripting, audio and the renderer by name, and every kind has a `none` provider.
+An unknown name or kind is refused at startup, by name. A host may inject its
+own provider object. `engine_player --list-providers` prints the list (WO-076).
 
 **Planned** ([provider-selection.md](docs/plans/provider-selection.md), DR-0037):
 - **Declared once.** Each provider has a manifest beside its source: kind, name,

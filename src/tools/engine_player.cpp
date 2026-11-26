@@ -1,6 +1,7 @@
 // ── engine_player — the shipped-game runtime ─────────────────────────────────
 //
 //   engine_player [project-dir]        (default: auto-detect from cwd)
+//   engine_player --list-providers [--json]   the providers this build has
 //
 // What a PLAYER ships and engine_host doesn't: nothing. What engine_host
 // carries and this deliberately does not: dev-module hot-reload + watching,
@@ -29,6 +30,7 @@
 #include "core/logger.h"                    // quietForShipping
 #include "project/project_context.h"       // finding the project from the cwd
 #include "render/render_stats_channel.h"   // --gpu-stats (measure on target)
+#include "plugins/stock_plugins.h"          // --list-providers
 
 namespace fs = std::filesystem;
 
@@ -44,6 +46,17 @@ int main(int argc, char** argv) {
     bool gpuStats   = false;  // --gpu-stats: VRAM / draws / handle churn
     const char* budgetTier = nullptr;   // --budget low|mid|high: PASS/OVER
     std::string projectArg;
+    // --list-providers [--json]: the providers this build has, by kind, and
+    // nothing else (WO-076). No project, no window.
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) != "--list-providers") continue;
+        bool json = false;
+        for (int k = 1; k < argc; ++k) json |= std::string(argv[k]) == "--json";
+        providers::Registry r;
+        registerStockProviders(r);
+        std::fputs((json ? r.describeJson() + "\n" : r.describe()).c_str(), stdout);
+        return 0;
+    }
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--frames" && i + 1 < argc)  frameLimit = std::strtol(argv[++i], nullptr, 10);

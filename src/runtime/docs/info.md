@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-14
+verified: 2026-11-26
 parses-external-input: true
 covers:
   - src/runtime/
@@ -924,6 +924,20 @@ with `cfg.autoDetectProject = false` and opens the picked project afterward.
 `openProject` loads project.json, opens + scans the asset database, points
 AssetService/SceneService at the project, and retitles the window
 (`IPlatform::setTitle`). `hasProject()` reports the current state.
+
+## Providers (`provider_registry.h`, WO-076)
+The runtime holds the provider registry (`providerRegistry()`): kind, name,
+factory. `init()` registers the runtime's own renderers (`forward-bgfx`, and
+`none`; a server build has only `none`), applies `EngineConfig::providerOverrides`
+(re-applied after every project load), and refuses an unknown kind or renderer
+name **before anything is created**, so a refusal leaves no channels or job pool
+to undo. A shut-down that follows a failed `init()` is a no-op, so that ordering
+matters. With no display, or in a server build, the renderer is `none`, and the
+log says so when a project asked for another; this rule stays until a project
+can choose per target (WO-086). Physics, scripting and audio come from the
+build's list in `src/plugins/`, which sits above the runtime: `addProviders()`
+there registers and checks them. The runtime never includes `src/plugins/`
+(audit LAYER-06). Why a choice was refused is `bootError()`.
 
 ## Simulation Lifecycle
 `startSimulation(InPlace|Snapshot)` / `stopSimulation()` / `tickSimulation(dt)`.

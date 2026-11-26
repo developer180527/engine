@@ -371,6 +371,7 @@ add_library(engine_runtime STATIC
     # Runtime core — platform, frame loop, renderer, services
     runtime/runtime.cpp
     runtime/runtime_boot.cpp
+    runtime/provider_registry.cpp
     runtime/runtime_frame.cpp
     runtime/runtime_sim.cpp
     # The determinism gate's mechanism: a canonical digest of ECS-observable
@@ -425,8 +426,9 @@ add_library(engine_runtime STATIC
     # Cooked-binary loaders
     assets/loaders/mesh_loader.cpp
 
-    # Plugin backends
+    # Plugin backends, and the build's one list of providers (WO-076)
     plugins/audio_impl.cpp
+    plugins/stock_providers.cpp
 
     # miniaudio behind EngineAudioProviderV1. Compiled INTO the engine (no
     # dlopen in a shipping game) while the identical source also builds as a

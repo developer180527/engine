@@ -145,8 +145,10 @@ public:
         // Component meta schemas are registered by the RUNTIME (initSystems +
         // each fresh game world) — the reflection backbone is engine-owned now.
         // Providers by NAME from the project's "providers" block (see
-        // stock_plugins.h) — the editor runs whatever the game ships with.
-        addStockPlugins(m_rt);
+        // stock_plugins.h); the editor runs whatever the game ships with. A
+        // name this build does not have is refused and logged by name, and the
+        // editor opens without providers rather than with different ones.
+        addProviders(m_rt);
         m_rt.attachPlugins();
 
         // ── Engine detail becomes demand-driven from here on ─────────────────

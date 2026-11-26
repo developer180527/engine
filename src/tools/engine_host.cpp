@@ -139,7 +139,11 @@ int main(int argc, char** argv) {
     auto  platform = makeDefaultPlatform();
     auto* plat     = platform.get();
     EngineRuntime engine;
-    if (!engine.init(cfg, std::move(platform))) return 1;
+    if (!engine.init(cfg, std::move(platform))) {
+        if (!engine.bootError().empty())
+            std::fprintf(stderr, "engine_host: %s\n", engine.bootError().c_str());
+        return 1;
+    }
     if (!engine.hasProject()) {
         std::fprintf(stderr, "engine_host: no project at %s\n",
                      projectDir.string().c_str());
@@ -158,9 +162,13 @@ int main(int argc, char** argv) {
     // the project's input.json — see docs/guides/engine-api.md. InputSystem remains
     // for editor/meta polling only.)
 
-    // Stock providers first (by NAME from project.json's "providers" block —
-    // see stock_plugins.h) — broadcast order puts game logic after scripts.
-    addStockPlugins(engine);
+    // Providers first (by NAME from project.json's "providers" block, refused
+    // by name if unknown — see stock_plugins.h); broadcast order puts game
+    // logic after scripts.
+    if (!addProviders(engine)) {
+        std::fprintf(stderr, "engine_host: %s\n", engine.bootError().c_str());
+        return 2;
+    }
 
     // Optional dev module joins the registry before attach so it shares the
     // lifecycle with stock plugins. The watcher baseline is captured HERE — at
