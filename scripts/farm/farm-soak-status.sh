@@ -17,8 +17,11 @@ if [ -d "$L" ]; then
 fi
 echo "past runs:"
 for d in $(ls -1dt "$RESULTS"/soak/2*/ 2>/dev/null | head -n "$n"); do
-  v=$(grep -m1 '^verdict=' "$d/verdict.txt" 2>/dev/null | cut -d= -f2); r=$(grep -m1 '^reason=' "$d/verdict.txt" 2>/dev/null | cut -d= -f2-)
-  [ -z "$v" ] && r="$(( $(wc -l <"$d/metrics.csv" 2>/dev/null || echo 1) - 1 )) minutes so far"
+  # `|| true`: farm-lib.sh sets -e and pipefail, and a run in progress has no
+  # verdict.txt, so a bare grep here ended the script at the first (newest) run.
+  v=$(grep -m1 '^verdict=' "$d/verdict.txt" 2>/dev/null | cut -d= -f2 || true)
+  r=$(grep -m1 '^reason=' "$d/verdict.txt" 2>/dev/null | cut -d= -f2- || true)
+  if [ -z "$v" ]; then r="$(( $(wc -l <"$d/metrics.csv" 2>/dev/null || echo 1) - 1 )) minutes so far"; fi
   printf '  %-40s %-10s %s\n' "$(basename "$d")" "${v:-running}" "$r"
 done
 echo "after a 'fail': read soak.log in the run folder, 'coredumpctl list soak_engine' for a core,"
