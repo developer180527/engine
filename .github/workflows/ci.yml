@@ -95,8 +95,10 @@ jobs:
   # slow frame: BUG-0082 (a check MSVC could not compile) sat on main with only
   # the macOS leg green. scene_portability_test then holds the cooked scene to
   # committed golden bytes on every leg. The list is PORTABILITY_PATHS below; the
-  # files a push changed come from the compare API, and anything that cannot be
-  # determined (a new branch, a forced push, a very large push) runs everything.
+  # files changed since the last commit that passed every leg come from the
+  # compare API (so a commit whose waiting run was replaced still counts), and
+  # anything that cannot be determined (a new branch, a forced push, a very
+  # large change) runs everything.
   plan:
     name: Plan
     runs-on: ubuntu-latest
@@ -127,6 +129,21 @@ jobs:
           full=1
           if [ "${{ github.event_name }}" = "push" ]; then
             full=0
+            # Compare from the last commit whose run passed on EVERY leg, not
+            # only from this push's parent: GitHub keeps one waiting run per
+            # branch, so a pushed commit's run can be replaced before it starts,
+            # and its changes must still count. A run passed every leg when its
+            # Windows x64 job succeeded (that leg runs only in a full matrix).
+            for id in $(gh run list -R "${{ github.repository }}" --workflow ci.yml --branch main \
+                          --status success -L 30 --json databaseId --jq '.[].databaseId' 2>/dev/null); do
+              if gh run view "$id" -R "${{ github.repository }}" --json jobs \
+                   --jq '.jobs[] | select(.name == "Windows (x64, MSVC)" and .conclusion == "success") | .name' \
+                   2>/dev/null | grep -q .; then
+                BEFORE=$(gh run view "$id" -R "${{ github.repository }}" --json headSha --jq .headSha)
+                echo "comparing with $BEFORE, the last commit that passed every leg"
+                break
+              fi
+            done
             if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
               full=1; echo "a new branch: every leg"
             elif ! files=$(gh api "repos/${{ github.repository }}/compare/$BEFORE...$AFTER" \
