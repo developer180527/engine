@@ -89,6 +89,16 @@ struct ProjectContext {
         uint32_t shadowResolution = 2048;
     };
 
+    // Component namespaces the project's scenes use beyond the engine core
+    // ("extensions" in project.json; scene/extensions.h). `required` ones missing
+    // at simulation start refuse it by name; `used` ones missing are warned
+    // about once. `raw` is the block as written, saved back as it was.
+    struct Extensions {
+        nlohmann::json           raw;        // null: no block
+        std::vector<std::string> required;
+        std::vector<std::string> used;
+    };
+
     std::filesystem::path projectRoot;   // folder containing project.json
     std::filesystem::path assetsRoot;    // projectRoot/assets by default
     std::string           name          = "Untitled Project";
@@ -97,6 +107,7 @@ struct ProjectContext {
     std::vector<Kit>      kits;          // plugged-in gameplay kits (see Kit)
     Providers             providers;     // engine service selection (see above)
     Graphics              graphics;      // quality knobs (see above)
+    Extensions            extensions;    // required and used (see above)
 
     bool valid() const {
         return !assetsRoot.empty()
@@ -139,6 +150,7 @@ struct ProjectContext {
         j["kits"] = std::move(jk);
         // The block as written, so per-target choices survive a save; a project
         // that never had one gets today's names.
+        if (!extensions.raw.is_null()) j["extensions"] = extensions.raw;
         if (!providers.raw.is_null()) j["providers"] = providers.raw;
         else j["providers"] = {{"physics",   providers.physics},
                                {"scripting", providers.scripting},
@@ -167,6 +179,21 @@ struct ProjectContext {
                 ctx.assetsRoot = std::filesystem::weakly_canonical(ctx.projectRoot / ar);
                 if (auto p = j.find("providers"); p != j.end())
                     ctx.providers.raw = *p;    // resolved, and checked, at startup
+                if (auto x = j.find("extensions"); x != j.end()) {
+                    ctx.extensions.raw = *x;
+                    // Names only; anything else in a list is skipped, and an
+                    // unknown name is what the check at simulation start reports.
+                    auto names = [&](const char* key, std::vector<std::string>& out) {
+                        if (!x->is_object()) return;
+                        auto it = x->find(key);
+                        if (it == x->end() || !it->is_array()) return;
+                        for (const auto& n : *it)
+                            if (n.is_string() && !n.get<std::string>().empty())
+                                out.push_back(n.get<std::string>());
+                    };
+                    names("required", ctx.extensions.required);
+                    names("used",     ctx.extensions.used);
+                }
                 if (auto g = j.find("graphics"); g != j.end() && g->is_object()) {
                     // VALIDATED, because the cost is quadratic and the failure
                     // is not a crash but a machine that quietly runs out of

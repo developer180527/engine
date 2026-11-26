@@ -11,7 +11,8 @@ tests:
   - tests/scene_parents_test.cpp      # the hierarchy post-pass, hostile input
   - tests/scene_mesh_reference_test.cpp  # a mesh that fails to load is never saved away
   - tests/scene_material_roundtrip_test.cpp  # a material override survives save + load (BUG-0072)
-  - tests/scene_schema_test.cpp       # the format byte for byte; unknown kept; migrations (WO-071)
+  - tests/scene_schema_test.cpp       # the format byte for byte; unknown kept; migrations; field types (WO-071)
+  - tests/scene_extensions_test.cpp   # a project's required extensions refuse Play by name (WO-071)
 ---
 # Scene
 
@@ -81,6 +82,18 @@ way. Scene save, the Play snapshot and the undo stack all walk the registry.
 - **Revisions.** Revision 0 writes no marker, which is every scene saved before
   this; a later revision writes `"$rev"` in the component's object, and loading
   older data runs the schema's migrations one revision at a time.
+- **Field types.** The engine API draft's (`eng_world.h`) but BLOB: bool, the
+  eight integers (range-checked), f32, f64, vec2/3/4, quat, mat4, string, entity
+  and asset. Each schema states its fields with their types, and its defaults as
+  saved. An entity field saves the stable id of the entity it names and is set
+  once every entity of the scene exists: a loader passes `SerdeContext::entityRefs`
+  and calls `resolveEntityRefs` after the last one; a lone entity resolves its own.
+- **Extensions** (`extensions.h`). A namespace of components (`apollo.Thruster`,
+  `combat::Health`) that the project lists in project.json as `required` or
+  `used`. Checked at simulation start, after kits attach: a missing required one
+  refuses Play and the player, naming it and what is available.
+- **Not yet in the shipped player.** It reads cooked scenes, a fixed record of
+  nine components (`assetlib::SceneEntity`): WO-091.
 - **Per-field tolerance.** A wrong-typed field now keeps its default and the
   rest of the component loads; before, a wrong-typed bool or enum threw and the
   whole component was skipped. Data that is not an object is still skipped.

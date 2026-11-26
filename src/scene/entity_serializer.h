@@ -97,7 +97,72 @@ struct SerdeContext {
     // The schemas to read and write with. Null: the engine's own (schemas()). A
     // test passes its own registry to load data under a revision it chose.
     const SchemaRegistry*     schemas      = nullptr;
+
+    // Load: entity-reference fields waiting for the entity they name. A loader
+    // creating many entities sets this and calls resolveEntityRefs once they all
+    // exist; without it (undo restoring one entity) a reference resolves at once,
+    // against the entities already in the world.
+    struct EntityRef {
+        flecs::entity owner;
+        uint64_t      stableId;
+        std::function<void(flecs::entity owner, flecs::entity target)> apply;
+    };
+    std::vector<EntityRef>*   entityRefs   = nullptr;
 };
+
+inline uint64_t stableIdOf(flecs::entity target) {
+    if (!target.is_valid() || !target.is_alive()) return 0;
+    const EntityId* id = target.try_get<EntityId>();
+    return id ? id->value : 0;
+}
+
+// Resolves one reference: through the id index when the loader has one (O(1)),
+// else by a scan, which only the one-entity paths (undo) take.
+inline void applyEntityRef(flecs::world& w, const SerdeContext::EntityRef& r,
+                           const EntityIdIndex* index) {
+    flecs::entity target;
+    if (index) {
+        if (auto it = index->map.find(r.stableId); it != index->map.end()) target = it->second;
+    } else {
+        target = findById(w, r.stableId);
+    }
+    if (!target.is_alive()) {
+        LOG_WARN("Scene", "entity reference to %llu: no such entity here — loaded as none",
+                 (unsigned long long)r.stableId);
+        return;
+    }
+    if (r.owner.is_alive()) r.apply(r.owner, target);
+}
+
+inline void deferEntityRef(SerdeContext& ctx, flecs::entity owner, uint64_t stableId,
+                           std::function<void(flecs::entity, flecs::entity)> apply) {
+    if (ctx.entityRefs) ctx.entityRefs->push_back({owner, stableId, std::move(apply)});
+}
+
+// The references of a load that did not bring its own list: a single component
+// (undo restoring one) or a single entity. The outermost load to start owns the
+// list and resolves it when it is done, after its components are set.
+inline bool beginEntityRefs(SerdeContext& ctx) {
+    if (ctx.entityRefs) return false;
+    static thread_local std::vector<SerdeContext::EntityRef> local;
+    local.clear();
+    ctx.entityRefs = &local;
+    return true;
+}
+inline void endEntityRefs(SerdeContext& ctx, flecs::world w, bool owned) {
+    if (!owned) return;
+    std::vector<SerdeContext::EntityRef>* refs = ctx.entityRefs;
+    ctx.entityRefs = nullptr;
+    for (const SerdeContext::EntityRef& r : *refs) applyEntityRef(w, r, ctx.idIndex);
+    refs->clear();
+}
+
+// Every deferred reference, once the scene's entities all exist.
+inline void resolveEntityRefs(flecs::world& w, SerdeContext& ctx) {
+    if (!ctx.entityRefs) return;
+    for (const SerdeContext::EntityRef& r : *ctx.entityRefs) applyEntityRef(w, r, ctx.idIndex);
+    ctx.entityRefs->clear();
+}
 
 // Bounds- and type-safe JSON reads live in core/json_read.h — the same defect
 // was found in four files, so the helper is shared rather than copied a fifth
@@ -477,9 +542,9 @@ inline ComponentSchema customSchema(const char* name, const char* key, uint32_t 
 
 inline void registerBuiltinSchemas(SchemaRegistry& r) {
     r.add(SchemaBuilder<Transform>("core.Transform", "transform")
-        .floats<3>("position", &Transform::position)
-        .floats<4>("rotation", &Transform::rotation)
-        .floats<3>("scale",    &Transform::scale)
+        .vec3("position", &Transform::position)
+        .quat("rotation", &Transform::rotation)
+        .vec3("scale",    &Transform::scale)
         .build());
     // Name's saved form is a bare string, not an object: the one legacy shape kept.
     r.add(customSchema("core.Name", "name", Name::kAbiRevision, hasName, saveName, loadName,
@@ -499,7 +564,7 @@ inline void registerBuiltinSchemas(SchemaRegistry& r) {
         .f32("orthoSize",                &Camera::orthoSize)
         .f32("nearPlane",                &Camera::nearPlane)
         .f32("farPlane",                 &Camera::farPlane)
-        .floats<4>("clearColor",         &Camera::clearColor)
+        .vec4("clearColor",         &Camera::clearColor)
         .build());
     // An unknown enum byte is kept AS READ: resolvedToneMapper() and
     // resolvedExposure() refuse it at use, so a scene saved by a newer engine
@@ -520,7 +585,7 @@ inline void registerBuiltinSchemas(SchemaRegistry& r) {
         .f32("restitution",              &RigidBody::restitution)
         .f32("friction",                 &RigidBody::friction)
         .boolean("useGravity",           &RigidBody::useGravity)
-        .floats<3>("halfExtent",         &RigidBody::halfExtent)
+        .vec3("halfExtent",         &RigidBody::halfExtent)
         .f32("radius",                   &RigidBody::radius)
         .f32("halfHeight",               &RigidBody::halfHeight)
         .build());
@@ -542,7 +607,7 @@ inline void registerBuiltinSchemas(SchemaRegistry& r) {
     // Transform at extraction.
     r.add(SchemaBuilder<Light>("core.Light", "light")
         .enumeration("type",             &Light::type)
-        .floats<3>("color",              &Light::color)
+        .vec3("color",              &Light::color)
         .f32("intensity",                &Light::intensity)
         .f32("range",                    &Light::range)
         .f32("spotInner",                &Light::spotInner)
@@ -648,6 +713,11 @@ inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
     }
     e.set<EntityId>({id});
     if (!je.is_object()) return e;
+    // A scene loader passes its own list and resolves it after the last entity;
+    // a lone entity (undo) resolves its references when its components are set.
+    const bool ownRefs = beginEntityRefs(ctx);
+    struct EndRefs { SerdeContext& c; flecs::world w; bool own;
+                     ~EndRefs() { endEntityRefs(c, w, own); } } endRefs{ctx, w, ownRefs};
     const SchemaRegistry& reg = schemasOf(ctx);
     // Unknown first, so a component kept here is never also loaded below.
     auto keep = [&e](const std::string& key, const nlohmann::json& data) {

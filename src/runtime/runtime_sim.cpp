@@ -26,13 +26,17 @@
 #include "components/prev_transform.h"
 #include "components/camera.h"
 #include "core/transform.h"
+#include "scene/entity_serializer.h"
+#include "scene/extensions.h"
 
 bool EngineRuntime::startSimulation(SimMode mode) {
     if (!m_initialized) {
-        LOG_ERROR("Sim", "startSimulation() before init()");
+        m_simError = "startSimulation() before init()";
+        LOG_ERROR("Sim", "%s", m_simError.c_str());
         return false;
     }
     if (m_simulating) return true;
+    m_simError.clear();
     // Lifecycle order is onAttach -> onSimulationStart; broadcasting sim
     // start to plugins whose onAttach never ran silently violates it. The
     // class enforces every other lifecycle rule loudly — this one too
@@ -112,6 +116,30 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     // the editor can author/inspect kit components directly.
     reflected::applyPending(simWorld());
     if (m_gameWorld) reflected::applyPending(m_ecs);
+    // The project's extensions, now that its kits have registered their
+    // components (scene/extensions.h). A required one missing refuses the run by
+    // name; the scene's data for it is kept either way.
+    {
+        const auto& x = m_project.extensions;
+        if (!x.required.empty() || !x.used.empty()) {
+            const extensions::Missing miss = extensions::check(
+                simWorld(), EntitySerde::schemas(), x.required, x.used);
+            for (const std::string& u : miss.used)
+                LOG_WARN("Sim", "extension \"%s\" (used by this project) is not in this "
+                         "build or its kits — its components are kept, and do nothing; "
+                         "available: %s", u.c_str(), miss.have.c_str());
+            if (!miss.required.empty()) {
+                std::string names;
+                for (const std::string& r : miss.required) names += (names.empty() ? "" : ", ") + r;
+                m_simError = "the project requires extension(s) " + names
+                           + ", which neither this build nor its kits provide; available: "
+                           + miss.have;
+                LOG_ERROR("Sim", "simulation refused: %s", m_simError.c_str());
+                stopSimulation();
+                return false;
+            }
+        }
+    }
     LOG_SUCCESS("Sim", "Simulation started (%s)",
                 mode == SimMode::Snapshot ? "snapshot" : "in-place");
     return true;

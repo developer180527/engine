@@ -160,6 +160,9 @@ engine_test(reflected_pending_test)
 # serializer before the schema registry replaced it, loaded and saved back.
 engine_test(scene_schema_test)
 target_compile_definitions(scene_schema_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# A project's required extensions refuse Play by name, its used ones warn (WO-071,
+# DR-0035): a headless engine booted on throwaway projects.
+engine_test(scene_extensions_test)
 # WO-029: loading never deletes an authored mesh. A reference the loader cannot
 # resolve (missing file, failed or unfinished import, no importer in this build)
 # is kept in UnresolvedMesh and written back unchanged by the next save — disk

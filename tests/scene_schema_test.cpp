@@ -28,6 +28,12 @@
 
 #include "components/meta_registry.h"
 #include "scene/entity_serializer.h"
+#include "scene/extensions.h"
+
+#include <climits>
+#include <cstdint>
+#include <set>
+#include <vector>
 
 namespace { int g_failures = 0; }
 #define CHECK(cond, ...) do {                                       \
@@ -155,8 +161,11 @@ std::string roundTrip(const std::string& text, SerdeMode mode,
     out["version"]  = scene["version"];
     out["entities"] = json::array();
     std::vector<flecs::entity> made;
+    std::vector<SerdeContext::EntityRef> refs;   // as the scene loader does
+    ctx.entityRefs = &refs;
     for (const auto& je : scene["entities"])
         made.push_back(createEntity(w, je, ctx, IdPolicy::Preserve));
+    resolveEntityRefs(w, ctx);
     // Parents after every entity exists, as the scene loader does.
     for (std::size_t i = 0; i < made.size(); ++i) {
         const auto& je = scene["entities"][i];
@@ -281,6 +290,48 @@ const char* kUnknownScene = R"({
 }
 )";
 
+// ── Every field type (the engine API draft's EngFieldType) ──────────────────
+struct Probe {
+    bool          on    = true;
+    int8_t        i8    = -3;
+    uint8_t       u8    = 200;
+    int16_t       i16   = -30000;
+    uint16_t      u16   = 60000;
+    int32_t       i32   = -7;
+    uint32_t      u32   = 4000000000u;
+    int64_t       i64   = -9000000000ll;
+    uint64_t      u64   = 18000000000000000000ull;
+    float         f     = 0.5f;
+    double        d     = 0.1;
+    float         v2[2] = {1, 2};
+    float         v3[3] = {1, 2, 3};
+    float         v4[4] = {1, 2, 3, 4};
+    float         q[4]  = {0, 0, 0, 1};
+    float         m[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    std::string   s     = "hello";
+    flecs::entity_t target = 0;
+    AssetRef      a;
+};
+
+SchemaRegistry registryWithProbe() {
+    SchemaRegistry r;
+    registerBuiltinSchemas(r);
+    r.add(SchemaBuilder<Probe>("test.Probe", "probe")
+        .boolean("on", &Probe::on)
+        .integer("i8", &Probe::i8).integer("u8", &Probe::u8)
+        .integer("i16", &Probe::i16).integer("u16", &Probe::u16)
+        .integer("i32", &Probe::i32).integer("u32", &Probe::u32)
+        .integer("i64", &Probe::i64).integer("u64", &Probe::u64)
+        .f32("f", &Probe::f).f64("d", &Probe::d)
+        .vec2("v2", &Probe::v2).vec3("v3", &Probe::v3).vec4("v4", &Probe::v4)
+        .quat("q", &Probe::q).mat4("m", &Probe::m)
+        .string("s", &Probe::s)
+        .entity("target", &Probe::target)
+        .asset("a", &Probe::a)
+        .build());
+    return r;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -384,6 +435,100 @@ int main(int argc, char** argv) {
         CHECK(r.all().size() == n, "and nothing was added (%zu)", r.all().size());
         CHECK(r.byName("core.Transform") && r.byKey("transform") == r.byName("core.Transform"),
               "components are found by namespaced name and by key");
+    }
+
+
+    std::printf("\n-- every field type, with defaults and types stated by the schema --\n");
+    {
+        const SchemaRegistry r = registryWithProbe();
+        const ComponentSchema* ps = r.byName("test.Probe");
+        CHECK(ps && ps->fields.size() == 19, "the schema lists its 19 fields (%zu)",
+              ps ? ps->fields.size() : 0);
+        std::string types;
+        if (ps) for (const FieldInfo& f : ps->fields) types += std::string(fieldTypeName(f.type)) + " ";
+        CHECK(types == "bool i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 vec2 vec3 vec4 quat mat4 "
+                       "string entity asset ", "each with its type: %s", types.c_str());
+        CHECK(ps && ps->defaults.value("u64", 0ull) == 18000000000000000000ull
+              && ps->defaults.value("s", std::string{}) == "hello"
+              && ps->defaults["m"].size() == 16 && ps->defaults.value("target", 1ull) == 0ull,
+              "and its defaults are the saved form of a default component");
+        const ComponentSchema* cam = schemas().byName("core.Camera");
+        CHECK(cam && cam->defaults.value("fov", 0.0) == 60.0 && cam->fields.size() == 7,
+              "the engine's own schemas state theirs too (camera: fov 60, 7 fields)");
+
+        // Two entities, the reference pointing FORWARD in file order, values not
+        // the defaults, through disk and memory.
+        flecs::world w = makeWorld();
+        SerdeContext ctx; ctx.mode = SerdeMode::Disk; ctx.schemas = &r;
+        flecs::entity a = w.entity(), b = w.entity();
+        a.set<EntityId>({4001}); a.set<Name>({"A"}); a.set<Transform>(Transform{});
+        b.set<EntityId>({4002}); b.set<Name>({"B"}); b.set<Transform>(Transform{});
+        Probe p;
+        p.on = false; p.i8 = -128; p.u8 = 255; p.i16 = 32767; p.u16 = 1; p.i32 = INT32_MIN;
+        p.u32 = 7; p.i64 = INT64_MIN; p.u64 = UINT64_MAX; p.f = -2.5f; p.d = 1e300;
+        p.v2[1] = 9; p.v3[2] = 9; p.v4[3] = 9; p.q[0] = 1; p.m[15] = 2;
+        p.s = "world"; p.target = b.id(); p.a = {"0b6f-uuid", "assets/sfx/door.wav"};
+        a.set<Probe>(p);
+        json scene;
+        scene["version"]  = 1;
+        scene["entities"] = json::array({ saveEntity(a, ctx), saveEntity(b, ctx) });
+        const std::string text = scene.dump(2) + "\n";
+        CHECK(scene["entities"][0]["probe"].value("target", 0ull) == 4002ull,
+              "an entity field is saved as the stable id of the entity it names");
+        for (SerdeMode mode : {SerdeMode::Disk, SerdeMode::Memory}) {
+            CHECK(roundTrip(text, mode, &r) == text, "%s: every field type round-trips "
+                  "byte-identically", mode == SerdeMode::Disk ? "disk" : "memory");
+        }
+        // Loaded through the scene loader's own path: a list resolved at the end.
+        flecs::world w2 = makeWorld();
+        SerdeContext c2; c2.mode = SerdeMode::Disk; c2.schemas = &r;
+        std::vector<SerdeContext::EntityRef> refs; c2.entityRefs = &refs;
+        flecs::entity la = createEntity(w2, scene["entities"][0], c2, IdPolicy::Preserve);
+        flecs::entity lb = createEntity(w2, scene["entities"][1], c2, IdPolicy::Preserve);
+        resolveEntityRefs(w2, c2);
+        const Probe* lp = la.try_get<Probe>();
+        CHECK(lp && lp->target == lb.id(), "a reference to an entity later in the file "
+              "resolves to that entity in the new world");
+        CHECK(lp && lp->i8 == -128 && lp->u8 == 255 && lp->i16 == 32767 && lp->i32 == INT32_MIN
+              && lp->i64 == INT64_MIN && lp->u64 == UINT64_MAX && lp->d == 1e300
+              && lp->m[15] == 2 && lp->s == "world" && lp->a.path == "assets/sfx/door.wav"
+              && lp->a.uuid == "0b6f-uuid" && !lp->on,
+              "and every value, at each type's limits, reads back exactly");
+
+        // Out of range or the wrong type keeps the default; nothing throws.
+        json bad = scene["entities"][0];
+        bad["probe"]["i8"] = 300; bad["probe"]["u16"] = -1; bad["probe"]["u64"] = -5;
+        bad["probe"]["d"] = "x"; bad["probe"]["a"] = 7; bad["probe"]["target"] = 999999;
+        bad["id"] = 4009;
+        flecs::world w3 = makeWorld();
+        SerdeContext c3; c3.mode = SerdeMode::Disk; c3.schemas = &r;
+        flecs::entity e3 = createEntity(w3, bad, c3, IdPolicy::Preserve);
+        const Probe* bp = e3.try_get<Probe>();
+        const Probe def;
+        CHECK(bp && bp->i8 == def.i8 && bp->u16 == def.u16 && bp->u64 == def.u64
+              && bp->d == def.d && bp->a.empty() && bp->target == 0 && bp->u8 == 255,
+              "an out-of-range, wrong-typed or dangling field keeps its default, and the "
+              "rest of the component loads");
+    }
+
+    std::printf("\n-- extensions: the namespaces a world has --\n");
+    {
+        flecs::world w = makeWorld();
+        const std::set<std::string> have = extensions::available(w, schemas());
+        CHECK(have.count("core") && have.count("combat") && !have.count("flecs")
+              && !have.count("bx"),
+              "core (the registry) and combat (a kit's flecs component), not the engine's "
+              "own bookkeeping (flecs, bx)");
+        const extensions::Missing m = extensions::check(w, schemas(), {"combat", "apollo"},
+                                                        {"voxel", "apollo"});
+        CHECK(m.required.size() == 1 && m.required[0] == "apollo",
+              "a required namespace nothing provides is missing (apollo)");
+        CHECK(m.used.size() == 1 && m.used[0] == "voxel",
+              "a used one is reported apart, and one also required is not reported twice");
+        CHECK(extensions::namespaceOf("apollo.Thruster") == "apollo"
+              && extensions::namespaceOf("combat::Health") == "combat"
+              && extensions::namespaceOf("Transform").empty(),
+              "both spellings of a namespace are read, and none is none");
     }
 
     if (g_failures) {

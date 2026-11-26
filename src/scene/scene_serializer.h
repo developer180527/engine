@@ -186,9 +186,13 @@ inline bool loadAsync(const std::filesystem::path& scenePath,
     EntityIdIndex ids;
     ids.build(ecs);
     ctx.idIndex = &ids;
+    // Entity-reference fields name entities that may come later in the file.
+    std::vector<SerdeContext::EntityRef> refs;
+    ctx.entityRefs = &refs;
 
     for (const auto& je : scene.value("entities", nlohmann::json::array()))
         EntitySerde::createEntity(ecs, je, ctx, IdPolicy::Preserve);
+    EntitySerde::resolveEntityRefs(ecs, ctx);
 
     // Stream deferred (Assimp) meshes on worker threads; wire the handle in
     // on completion. Immediate cases (primitive, glTF, cooked) were resolved
@@ -307,12 +311,15 @@ inline void loadIntoWorld(const std::string& snapshot, flecs::world& world,
     EntityIdIndex ids;                                  // see the disk path
     ids.build(world);
     ctx.idIndex = &ids;
+    std::vector<SerdeContext::EntityRef> refs;          // see the disk path
+    ctx.entityRefs = &refs;
 
     int count = 0;
     for (const auto& je : scene.value("entities", nlohmann::json::array())) {
         EntitySerde::createEntity(world, je, ctx, IdPolicy::Preserve);
         ++count;
     }
+    EntitySerde::resolveEntityRefs(world, ctx);
     restoreParents(world, scene);
     LOG_INFO("Scene", "Game world populated: %d entities (instant, shared handles)", count);
 }

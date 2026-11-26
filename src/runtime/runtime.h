@@ -276,6 +276,8 @@ public:
     const providers::Registry& providerRegistry() const { return m_providers; }
     // Why init() or addProviders() refused, by name; empty when nothing was.
     const std::string& bootError() const { return m_bootError; }
+    // Why the last startSimulation() returned false (empty: it did not).
+    const std::string& simulationError() const { return m_simError; }
     void setBootError(std::string why) { m_bootError = std::move(why); }
     // Checks every provider choice in the project (and the overrides) against
     // the registry: an unknown kind, an unknown name, a value that is not a
@@ -512,6 +514,7 @@ private:
     PluginRegistry m_plugins;
     providers::Registry m_providers;
     std::string m_bootError;
+    std::string m_simError;
     std::string m_rendererName;
     std::vector<std::pair<std::string, std::string>> m_providerOverrides;   // EngineConfig's
     std::string m_providerChoiceError;   // the last resolution's refusal, if any

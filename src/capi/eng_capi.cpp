@@ -195,7 +195,11 @@ EngResult start(EngEngine* e, const EngWindowDesc* wd) {
         if (rt->sceneService().loadScene(cookedRel.c_str()) == 0)
             return abandon(ENG_ERROR_NOT_FOUND, "the cooked scene " + cookedRel + " failed to load");
     }
-    rt->startSimulation();
+    // Refused (a required extension missing, DR-0035): the game does not run
+    // without what it needs, and the reason reaches the caller.
+    if (!rt->startSimulation())
+        return abandon(ENG_ERROR_REFUSED, rt->simulationError().empty()
+                       ? std::string("the simulation did not start") : rt->simulationError());
 
     e->plat = plat;
     e->rt = std::move(rt);

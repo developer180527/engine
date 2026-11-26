@@ -6,7 +6,9 @@ program: assets
 priority: P1
 rank: 3
 size: L
-state: active
+state: done
+done: 2026-11-26
+evidence: tests/scene_schema_test.cpp (40 checks) and tests/scene_extensions_test.cpp (9 checks), both mutation-checked; fixtures written by the hand-written table at 7807d9d; unit and fuzz-regress lanes 139/139; the fps_shooter and libgui demo scenes round-trip byte for byte
 depends: []
 contracts: [scene-service]
 touches:
@@ -20,13 +22,13 @@ source: docs/plans/engine-architecture.md §4 and §8 step 2; roadmap §2.8; DR-
 Every later step names components by registered schema: the change stream, the C world API, provider-namespaced components, migrations. Today the scene serializer is a hand-written list (`entity_serializer.h`, 11 schemas hard-coded in `meta_registry.h`) that drops any component it does not know. (`MeshRenderer` saving registry ids was true only of the in-memory snapshot; on disk it already wrote asset references, checked 2026-11-26.)
 
 ## Done when
-- [ ] a schema registry: name (namespaced, `core.Transform`), revision (`kAbiRevision`), fields with the draft's field types (`eng_world.h`, including the proposed ones), defaults, and an optional migration per revision
+- [x] a schema registry: name (namespaced, `core.Transform`), revision (`kAbiRevision`), fields with the draft's field types (`eng_world.h`, including the proposed ones), defaults, and an optional migration per revision (2026-11-26: `scene/component_schema.h`; every draft type but BLOB, which is WO-073's: bool, the eight integers, f32, f64, vec2/3/4, quat, mat4, string, entity, asset; each schema lists its fields with their types and its defaults as saved; `scene_schema_test` covers every type at its limits, an entity reference resolved forward in file order, and out-of-range values kept at default)
 - [x] every existing component registered through it; one generic serializer replaces the hand-written list (2026-11-26: 12 schemas in `registerBuiltinSchemas`; 8 field-by-field, 4 with codecs of their own: mesh, LOD chain, skinned mesh, animator)
 - [x] **every existing scene and project round-trips byte-identically** through the new serializer (2026-11-26: `tests/fixtures/scenes/every_component.{disk,memory}.json`, written by the hand-written table at 7807d9d, byte-identical from the registry and through load then save; the two scenes on disk, `fps_shooter`'s and `experiments/libgui_sandbox`'s, produce the same bytes from both serializers and equal their files. No sample or tracked project has a scene; the WO-033 check project is not on this machine)
 - [x] unknown components load as opaque data and save back unchanged; a test loads a scene with a component no one registered, saves it, and compares (2026-11-26: `scene_schema_test`, disk and memory, plus data from a newer revision; mutation-checked: dropping the re-emit fails 3 checks)
 - [x] a migration: one component's revision bumped in a test, an old scene loads through its migration, and a scene saved before the bump is kept as a fixture (DR-0034) (2026-11-26: `test.Thruster` 0 to 1, `tests/fixtures/scenes/thruster_rev0.json` written by the revision-0 schema; a missing migration keeps the data unchanged)
 - [x] no GPU handle in any saved component: `MeshRenderer`'s registry ids are replaced by asset UUIDs on disk (2026-11-26: already so on disk, `saveMesh` writes an AssetRef and a material name; the ids are only in the in-memory snapshot, which never leaves the process. Now asserted: the disk fixture has none of the five id keys, and the memory one has them, so the check can see them)
-- [ ] the project file declares extensions as required or used; a missing required one fails at load by name (DR-0035)
+- [x] the project file declares extensions as required or used; a missing required one fails at load by name (DR-0035) (2026-11-26: `"extensions": {"required": [...], "used": [...]}` in project.json; checked at simulation start, after kits attach, the first point at which missing is known; a required one refuses Play and the player (`engStart` returns ENG_ERROR_REFUSED with the reason), naming it and what is available; a used one warns. `scene_extensions_test` boots a headless engine on six projects; mutation-checked)
 
 ## Contract
 Nothing: scenes on disk keep their current shape (byte-identical round-trip); the in-memory components do not change.
@@ -41,3 +43,8 @@ The variable-length `EngBlob` storage (WO-073 builds it with the world API); ren
   - Fixtures first, from the old code, then the swap; `scene_schema_test` (26 checks). Unit lane 128/128.
   - Behaviour change, for malformed input only: a wrong-typed bool or enum keeps its default and the rest of the component loads, where before the whole component was skipped.
   - Left: the field types beyond those six (the draft's integers, f64, entity, asset, mat4) and per-field defaults stated in the schema rather than taken from the struct; the project's required and used extensions (DR-0035).
+- 2026-11-26, finished.
+  - Field types: the draft's set but BLOB. Entity fields save the stable id of the entity they name and are set once the scene's entities all exist (`SerdeContext::entityRefs`, `resolveEntityRefs`, called by both scene loaders); a lone entity (undo) resolves its own.
+  - Each schema states its fields with their types, and its defaults as saved, for the editor and the world API to read.
+  - Extensions: `scene/extensions.h`; `ProjectContext::Extensions`, saved back as written; `EngineRuntime::simulationError()`. Engine bookkeeping namespaces (flecs, bx, reflected, simhash) are not extensions.
+  - Found: the shipped player reads cooked scenes, a fixed 256-byte record with nine components, so colour grading, kits' components and unknown ones never reach a shipped game. WO-091.

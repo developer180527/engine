@@ -21,8 +21,10 @@
 // (newer than this engine, or a revision with no migration) is NOT dropped: it is
 // kept as an unknown component and saved back unchanged, with one warning that
 // names it (DR-0035).
+#include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -33,12 +35,41 @@
 #include <flecs.h>
 #include <nlohmann/json.hpp>
 
+#include "assets/asset_ref.h"
 #include "core/json_read.h"
 #include "core/logger.h"
 
 namespace EntitySerde {
 
 struct SerdeContext;   // entity_serializer.h: mode, asset hooks, id index
+
+// Entity references, defined in entity_serializer.h where the context is whole.
+// A field naming another entity saves that entity's stable id (EntityId), and on
+// load is set once every entity of the scene exists (resolveEntityRefs).
+uint64_t stableIdOf(flecs::entity target);
+void deferEntityRef(SerdeContext& ctx, flecs::entity owner, uint64_t stableId,
+                    std::function<void(flecs::entity owner, flecs::entity target)> apply);
+bool beginEntityRefs(SerdeContext& ctx);
+void endEntityRefs(SerdeContext& ctx, flecs::world w, bool owned);
+
+// What a field holds, as the engine API's draft names its field types
+// (docs/plans/engine-api-draft/eng/eng_world.h, EngFieldType). An enum is saved as
+// its integer value and described as I32. Variable-length blobs are WO-073's.
+enum class FieldType : uint8_t {
+    Bool, I8, U8, I16, U16, I32, U32, I64, U64, F32, F64,
+    Vec2, Vec3, Vec4, Quat, Mat4, String, Entity, Asset,
+};
+inline const char* fieldTypeName(FieldType t) {
+    static const char* k[] = { "bool", "i8", "u8", "i16", "u16", "i32", "u32", "i64",
+        "u64", "f32", "f64", "vec2", "vec3", "vec4", "quat", "mat4", "string",
+        "entity", "asset" };
+    return k[(int)t];
+}
+struct FieldInfo {
+    std::string name;    // the key inside the component's object
+    FieldType   type;
+    uint32_t    count;   // 1, or N for an array of N f32 (floats<N>)
+};
 
 // The key a revision is saved under, inside the component's object. `$` keeps it
 // apart from any field name a component could have.
@@ -57,6 +88,12 @@ struct ComponentSchema {
     // on data it cannot read at all; the caller skips the component and says so.
     std::function<void(flecs::entity, const nlohmann::json& in, SerdeContext&)> load;
     std::function<void(flecs::entity)> remove;
+
+    // Field-by-field schemas only (empty for a codec of its own): every field
+    // with its type, and the saved form of a default-constructed component,
+    // which is what a field missing from saved data reads as.
+    std::vector<FieldInfo> fields;
+    nlohmann::json         defaults;
 
     // migrations[r] upgrades data saved under revision r to revision r + 1, in
     // place. There must be one for every revision below `revision` that saved
@@ -136,9 +173,9 @@ inline bool migrateToCurrent(const ComponentSchema& schema, nlohmann::json& data
 
 // ── Field-by-field schemas ──────────────────────────────────────────────────
 // Reads are tolerant per field, the rule every scene reader here follows: a
-// field that is missing, of the wrong type or not finite keeps the component's
-// default, and the rest of the component still loads. Data that is not an
-// object at all is refused, so the component is skipped as before.
+// field that is missing, of the wrong type, out of range or not finite keeps the
+// component's default, and the rest of the component still loads. Data that is
+// not an object at all is refused, so the component is skipped as before.
 template <class T>
 class SchemaBuilder {
 public:
@@ -150,68 +187,98 @@ public:
         m_s.remove = [](flecs::entity e) { e.remove<T>(); };
     }
 
-    SchemaBuilder& f32(const char* key, float T::*m) {
-        m_fields.push_back({
-            [key, m](const T& t, nlohmann::json& j) { j[key] = t.*m; },
-            [key, m](T& t, const nlohmann::json& j) { t.*m = jsonread::readFloat(j, key, t.*m); }});
-        return *this;
-    }
-    // N floats saved as an array: a float[N], or a vector or quaternion type that
-    // is exactly N floats.
-    template <std::size_t N, class M>
-    SchemaBuilder& floats(const char* key, M T::*m) {
-        static_assert(sizeof(M) == N * sizeof(float) && std::is_standard_layout_v<M>,
-                      "floats<N> needs a member of exactly N floats");
-        m_fields.push_back({
-            [key, m](const T& t, nlohmann::json& j) {
-                const float* f = reinterpret_cast<const float*>(&(t.*m));
-                nlohmann::json a = nlohmann::json::array();
-                for (std::size_t i = 0; i < N; ++i) a.push_back(f[i]);
-                j[key] = std::move(a);
-            },
-            [key, m](T& t, const nlohmann::json& j) {
-                jsonread::readFloats(j, key, reinterpret_cast<float*>(&(t.*m)), (int)N);
-            }});
-        return *this;
-    }
     SchemaBuilder& boolean(const char* key, bool T::*m) {
-        m_fields.push_back({
-            [key, m](const T& t, nlohmann::json& j) { j[key] = t.*m; },
-            [key, m](T& t, const nlohmann::json& j) { t.*m = jsonread::readBool(j, key, t.*m); }});
-        return *this;
+        return add(key, FieldType::Bool, 1,
+            [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = t.*m; },
+            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
+                t.*m = jsonread::readBool(j, key, t.*m); });
     }
+    // Any integer type, read only when the saved value is an integer that fits.
+    template <class I>
+    SchemaBuilder& integer(const char* key, I T::*m) {
+        static_assert(std::is_integral_v<I> && !std::is_same_v<I, bool>);
+        return add(key, integerType<I>(), 1,
+            [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = t.*m; },
+            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
+                readInteger(j, key, t.*m); });
+    }
+    SchemaBuilder& u8(const char* key, uint8_t T::*m) { return integer(key, m); }
     // An enum saved as its integer value. A value outside the enum is kept as
     // read: whoever uses it refuses it, so a scene from a newer engine round-trips.
     template <class E>
     SchemaBuilder& enumeration(const char* key, E T::*m) {
         static_assert(std::is_enum_v<E>);
-        m_fields.push_back({
-            [key, m](const T& t, nlohmann::json& j) { j[key] = (int)(t.*m); },
-            [key, m](T& t, const nlohmann::json& j) {
-                if (j.contains(key) && j[key].is_number()) t.*m = (E)j[key].template get<int>();
-            }});
-        return *this;
+        return add(key, FieldType::I32, 1,
+            [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = (int)(t.*m); },
+            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
+                if (j.contains(key) && j[key].is_number()) t.*m = (E)j[key].template get<int>(); });
     }
-    // A byte: read only when it is an unsigned value that fits.
-    SchemaBuilder& u8(const char* key, uint8_t T::*m) {
-        m_fields.push_back({
-            [key, m](const T& t, nlohmann::json& j) { j[key] = t.*m; },
-            [key, m](T& t, const nlohmann::json& j) {
-                if (!j.contains(key) || !j[key].is_number_unsigned()) return;
-                const uint64_t v = j[key].template get<uint64_t>();
-                if (v <= 255) t.*m = (uint8_t)v;
-            }});
-        return *this;
+    SchemaBuilder& f32(const char* key, float T::*m) {
+        return add(key, FieldType::F32, 1,
+            [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = t.*m; },
+            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
+                t.*m = jsonread::readFloat(j, key, t.*m); });
     }
+    SchemaBuilder& f64(const char* key, double T::*m) {
+        return add(key, FieldType::F64, 1,
+            [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = t.*m; },
+            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
+                if (!j.contains(key) || !j[key].is_number()) return;
+                const double d = j[key].template get<double>();
+                if (std::isfinite(d)) t.*m = d; });
+    }
+    // Vectors, a quaternion and a matrix: N floats saved as an array, from a
+    // float[N] or a type that is exactly N floats (bx::Vec3, bx::Quaternion).
+    template <class M> SchemaBuilder& vec2(const char* k, M T::*m) { return floatArray<2>(k, m, FieldType::Vec2); }
+    template <class M> SchemaBuilder& vec3(const char* k, M T::*m) { return floatArray<3>(k, m, FieldType::Vec3); }
+    template <class M> SchemaBuilder& vec4(const char* k, M T::*m) { return floatArray<4>(k, m, FieldType::Vec4); }
+    template <class M> SchemaBuilder& quat(const char* k, M T::*m) { return floatArray<4>(k, m, FieldType::Quat); }
+    // 16 floats, column-major, as the engine API's draft states its MAT4.
+    template <class M> SchemaBuilder& mat4(const char* k, M T::*m) { return floatArray<16>(k, m, FieldType::Mat4); }
+    // Any other fixed count of floats.
+    template <std::size_t N, class M>
+    SchemaBuilder& floats(const char* k, M T::*m) { return floatArray<N>(k, m, FieldType::F32); }
+
     // A string; `omitEmpty` leaves an empty one out of the saved object.
     SchemaBuilder& string(const char* key, std::string T::*m, bool omitEmpty = false) {
-        m_fields.push_back({
-            [key, m, omitEmpty](const T& t, nlohmann::json& j) {
-                if (!omitEmpty || !(t.*m).empty()) j[key] = t.*m;
-            },
-            [key, m](T& t, const nlohmann::json& j) { t.*m = jsonread::readString(j, key, t.*m); }});
-        return *this;
+        return add(key, FieldType::String, 1,
+            [key, m, omitEmpty](const T& t, nlohmann::json& j, flecs::entity) {
+                if (!omitEmpty || !(t.*m).empty()) j[key] = t.*m; },
+            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
+                t.*m = jsonread::readString(j, key, t.*m); });
     }
+    // Another entity. In memory a flecs id; saved as that entity's stable id (0:
+    // none), and set on load once the entity it names exists. A reference to an
+    // entity that is not in the scene loads as none, with a warning.
+    SchemaBuilder& entity(const char* key, flecs::entity_t T::*m) {
+        return add(key, FieldType::Entity, 1,
+            [key, m](const T& t, nlohmann::json& j, flecs::entity owner) {
+                j[key] = t.*m && owner.is_valid()
+                       ? stableIdOf(flecs::entity(owner.world(), t.*m)) : (uint64_t)0; },
+            [key, m](T& t, const nlohmann::json& j, flecs::entity owner, SerdeContext& ctx) {
+                t.*m = 0;   // never a flecs id from another world or session
+                const uint64_t id = jsonread::readU64(j, key, 0);
+                if (!id) return;
+                deferEntityRef(ctx, owner, id, [m](flecs::entity o, flecs::entity target) {
+                    if (T* c = o.try_get_mut<T>()) { c->*m = target.id(); o.modified<T>(); }
+                }); });
+    }
+    // An asset, by identity: its UUID and project-relative path (AssetRef), what
+    // the component means rather than whatever loaded it. Saved as
+    // {"asset": uuid, "path": path}, the shape every asset reference here has.
+    SchemaBuilder& asset(const char* key, AssetRef T::*m) {
+        return add(key, FieldType::Asset, 1,
+            [key, m](const T& t, nlohmann::json& j, flecs::entity) {
+                nlohmann::json a = nlohmann::json::object();
+                assetref::toJson(t.*m, a);
+                j[key] = std::move(a); },
+            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
+                if (!j.contains(key) || !j[key].is_object()) return;
+                const nlohmann::json& a = j[key];
+                (t.*m).uuid = jsonread::readString(a, "asset");
+                (t.*m).path = jsonread::readString(a, "path"); });
+    }
+
     // Saved only while `pred` holds (a script with no path is not saved).
     SchemaBuilder& savedWhen(bool (*pred)(const T&)) {
         m_s.has = [pred](flecs::entity e) { const T* t = e.try_get<T>(); return t && pred(*t); };
@@ -227,25 +294,86 @@ public:
 
     ComponentSchema build() {
         auto fields = std::make_shared<const std::vector<Field>>(std::move(m_fields));
+        {   // The defaults, as saved: a default-constructed component, written.
+            const T def{};
+            nlohmann::json d = nlohmann::json::object();
+            for (const Field& f : *fields) f.save(def, d, flecs::entity());
+            m_s.defaults = std::move(d);
+        }
         m_s.save = [fields](flecs::entity e, nlohmann::json& j, const SerdeContext&) {
             const T* t = e.try_get<T>(); if (!t) return;
             j = nlohmann::json::object();
-            for (const Field& f : *fields) f.save(*t, j);
+            for (const Field& f : *fields) f.save(*t, j, e);
         };
-        m_s.load = [fields](flecs::entity e, const nlohmann::json& j, SerdeContext&) {
+        m_s.load = [fields](flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
             if (!j.is_object()) throw std::runtime_error("not an object");
             T t{};
-            for (const Field& f : *fields) f.load(t, j);
-            e.set<T>(std::move(t));
+            const bool ownRefs = beginEntityRefs(ctx);   // see entity()
+            try {
+                for (const Field& f : *fields) f.load(t, j, e, ctx);
+                e.set<T>(std::move(t));
+            } catch (...) { endEntityRefs(ctx, e.world(), ownRefs); throw; }
+            endEntityRefs(ctx, e.world(), ownRefs);
         };
         return std::move(m_s);
     }
 
 private:
-    struct Field {
-        std::function<void(const T&, nlohmann::json&)> save;
-        std::function<void(T&, const nlohmann::json&)>  load;
-    };
+    using SaveFn = std::function<void(const T&, nlohmann::json&, flecs::entity owner)>;
+    using LoadFn = std::function<void(T&, const nlohmann::json&, flecs::entity owner, SerdeContext&)>;
+    struct Field { SaveFn save; LoadFn load; };
+
+    SchemaBuilder& add(const char* key, FieldType type, uint32_t count, SaveFn save, LoadFn load) {
+        m_s.fields.push_back({key, type, count});
+        m_fields.push_back({std::move(save), std::move(load)});
+        return *this;
+    }
+
+    template <std::size_t N, class M>
+    SchemaBuilder& floatArray(const char* key, M T::*m, FieldType type) {
+        static_assert(sizeof(M) == N * sizeof(float) && std::is_standard_layout_v<M>,
+                      "this field needs a member of exactly N floats");
+        return add(key, type, type == FieldType::F32 ? (uint32_t)N : 1,
+            [key, m](const T& t, nlohmann::json& j, flecs::entity) {
+                const float* f = reinterpret_cast<const float*>(&(t.*m));
+                nlohmann::json a = nlohmann::json::array();
+                for (std::size_t i = 0; i < N; ++i) a.push_back(f[i]);
+                j[key] = std::move(a); },
+            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
+                jsonread::readFloats(j, key, reinterpret_cast<float*>(&(t.*m)), (int)N); });
+    }
+
+    template <class I>
+    static constexpr FieldType integerType() {
+        if constexpr (std::is_same_v<I, int8_t>)   return FieldType::I8;
+        else if constexpr (std::is_same_v<I, uint8_t>)  return FieldType::U8;
+        else if constexpr (std::is_same_v<I, int16_t>)  return FieldType::I16;
+        else if constexpr (std::is_same_v<I, uint16_t>) return FieldType::U16;
+        else if constexpr (std::is_same_v<I, int32_t>)  return FieldType::I32;
+        else if constexpr (std::is_same_v<I, uint32_t>) return FieldType::U32;
+        else if constexpr (std::is_signed_v<I>)         return FieldType::I64;
+        else                                            return FieldType::U64;
+    }
+
+    // nlohmann keeps a parsed non-negative integer as unsigned and a negative one
+    // as signed, so both are read, and the value is range-checked against I.
+    template <class I>
+    static void readInteger(const nlohmann::json& j, const char* key, I& out) {
+        if (!j.is_object() || !j.contains(key)) return;
+        const nlohmann::json& v = j[key];
+        if (v.is_number_unsigned()) {
+            const uint64_t u = v.template get<uint64_t>();
+            if (u <= (uint64_t)std::numeric_limits<I>::max()) out = (I)u;
+        } else if (v.is_number_integer()) {
+            const int64_t s = v.template get<int64_t>();
+            if constexpr (std::is_signed_v<I>) {
+                if (s >= (int64_t)std::numeric_limits<I>::min()
+                    && s <= (int64_t)std::numeric_limits<I>::max()) out = (I)s;
+            } else {
+                if (s >= 0 && (uint64_t)s <= (uint64_t)std::numeric_limits<I>::max()) out = (I)s;
+            }
+        }
+    }
 
     static constexpr uint32_t revisionOf() {
         if constexpr (requires { T::kAbiRevision; }) return T::kAbiRevision;
