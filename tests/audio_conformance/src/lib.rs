@@ -1148,16 +1148,40 @@ pub unsafe fn run(p: &ProviderV1) -> Report {
                 d_host_ns / 1e6,
                 if d_host_ns > 0.0 { implied_ns / d_host_ns } else { 0.0 }
             ));
-            r.check(
-                ok,
-                format!(
-                    "the sample clock and the host clock agree on elapsed time \
-                     ({:.1} ms of samples vs {:.1} ms of host) — sampled together, \
-                     so startSampleTime can be computed",
-                    implied_ns / 1e6,
-                    d_host_ns / 1e6
-                ),
-            );
+            // ENGINE_AUDIO_NO_HARDWARE means "there is no dependable audio
+            // device here", and the provider stops asserting hardware timing
+            // under it (miniaudio_provider.cpp). This is a hardware-timing
+            // property, so the suite stops too: on GitHub's macOS runners the
+            // real CoreAudio device intermittently ran at half speed or worse
+            // (4 of 9 runs, 2026-11-26; 114.7 vs 263.6 ms, 29.3 vs 5003 ms) with
+            // the code under test unchanged. Same rule as the provider: set and
+            // not "0". The measurement is still recorded (the note above).
+            let no_hardware = std::env::var("ENGINE_AUDIO_NO_HARDWARE")
+                .map(|v| !v.is_empty() && !v.starts_with('0'))
+                .unwrap_or(false);
+            if no_hardware {
+                r.check(
+                    true,
+                    format!(
+                        "the sample clock vs host clock agreement is NOT checked: \
+                         ENGINE_AUDIO_NO_HARDWARE is set, so device timing is not \
+                         dependable here ({:.1} ms of samples vs {:.1} ms of host)",
+                        implied_ns / 1e6,
+                        d_host_ns / 1e6
+                    ),
+                );
+            } else {
+                r.check(
+                    ok,
+                    format!(
+                        "the sample clock and the host clock agree on elapsed time \
+                         ({:.1} ms of samples vs {:.1} ms of host) — sampled together, \
+                         so startSampleTime can be computed",
+                        implied_ns / 1e6,
+                        d_host_ns / 1e6
+                    ),
+                );
+            }
             r.check(
                 counters.now_ns_calls.load(std::sync::atomic::Ordering::Relaxed) > 0,
                 "hostTimeNs comes from services->nowNs, not a private clock — \

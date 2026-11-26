@@ -390,7 +390,11 @@ once:
   provider that ignores them and calls `malloc` fails here rather than silently
   escaping the memory budget
 - **the sample clock and the host clock agree on elapsed time**, which is what
-  proves the `samplesPlayed`/`hostTimeNs` pair was sampled together
+  proves the `samplesPlayed`/`hostTimeNs` pair was sampled together. Not
+  checked when `ENGINE_AUDIO_NO_HARDWARE` is set (every CI runner sets it): that
+  flag means no dependable device timing, so the suite records the numbers and
+  skips the assertion, as the provider skips its own timing checks. GitHub's
+  macOS runners failed it in 4 of 9 runs on 2026-11-26 with nothing changed
 - `findSound` refusing an unknown name and the reserved hash `0`
 - `createStream` refusing a null reader, and not minting a live id from a reader
   that fails immediately

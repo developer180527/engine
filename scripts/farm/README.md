@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-11-14
+verified: 2026-11-26
 covers:
   - scripts/farm/
 ---
