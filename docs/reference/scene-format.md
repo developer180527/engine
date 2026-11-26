@@ -541,7 +541,8 @@ CBOR, with each mesh reference's `cookedPath` healed against the asset database.
 a scene names, and for a payload the in-place reader does not take.
 The tools write the payload **packed** (encoding 2, `src/assets/packed_scene.h`):
 registered components as their schemas' fields, everything else as CBOR. A cook
-with no packer writes CBOR (encoding 1). Both load.
+with no packer writes CBOR (encoding 1). Both load, by the same per-field rules:
+a packed float that is not finite keeps its default, as a JSON one does.
 
 Version 3 and earlier were a fixed 256-byte record per entity with slots for nine
 components; colour grading, kits' components and unknown ones did not survive the

@@ -17,6 +17,7 @@
 //
 // Entities are saved one by one in file order, not through a world query, so
 // the comparison is of the serializer and not of flecs' table order.
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -668,6 +669,47 @@ int main(int argc, char** argv) {
               && extensions::namespaceOf("combat::Health") == "combat"
               && extensions::namespaceOf("Transform").empty(),
               "both spellings of a namespace are read, and none is none");
+    }
+
+    // ── A packed float that is not finite keeps the default (review 2026-11-27)
+    // The JSON and CBOR readers have always kept a field's default for NaN or
+    // infinity; the packed reader copied the bytes. The cook never writes one, so
+    // the reader-parity fuzz could not see it: these corrupt the record by hand.
+    std::printf("\n-- packed floats that are not finite --\n");
+    {
+        const json scene = {{"entities", json::array({json{
+            {"id", 7001}, {"name", "T"},
+            {"transform", {{"position", {1.0, 2.0, 3.0}}, {"rotation", {0.0, 0.0, 0.0, 1.0}},
+                           {"scale", {4.0, 5.0, 6.0}}}}}})}};
+        auto loadPatched = [&](auto patch) {
+            assetlib::SceneAsset file;
+            std::string why;
+            packScene(scene, file, why);
+            packed::View view;
+            packed::Entity pe;
+            if (!view.open(file.payload.data(), file.payload.size(), why) || !view.next(pe)) return Transform{};
+            for (const packed::Record& rec : pe.records)
+                if (view.schemas()[rec.schema].name == "core.Transform")
+                    patch(file.payload.data() + (rec.data - file.payload.data()), rec.size);
+            view.open(file.payload.data(), file.payload.size(), why);
+            view.next(pe);
+            flecs::world w = makeWorld();
+            SerdeContext ctx; ctx.mode = SerdeMode::Disk;
+            std::vector<SerdeContext::EntityRef> refs; ctx.entityRefs = &refs;
+            flecs::entity e;
+            createEntityPacked(w, view, pe, matchPackedSchemas(view, schemas()), ctx, IdPolicy::Preserve, e);
+            const Transform* t = e.try_get<Transform>();
+            return t ? *t : Transform{};
+        };
+        const Transform all = loadPatched([](uint8_t* p, uint32_t n) { std::memset(p, 0xFF, n); });
+        const Transform d{};
+        CHECK(all.position.x == d.position.x && all.position.y == d.position.y && all.position.z == d.position.z
+              && all.rotation.w == d.rotation.w && all.scale.x == d.scale.x && all.scale.z == d.scale.z,
+              "every float NaN: every field keeps its default, as the JSON reader does");
+        const Transform one = loadPatched([](uint8_t* p, uint32_t) {
+            const float inf = INFINITY; std::memcpy(p, &inf, 4); });
+        CHECK(one.position.x == 0.0f && one.position.y == 2.0f && one.position.z == 3.0f
+              && one.scale.y == 5.0f, "one element infinite: that element keeps its default, the rest load");
     }
 
     if (g_failures) {

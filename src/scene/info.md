@@ -93,7 +93,10 @@ way. Scene save, the Play snapshot and the undo stack all walk the registry.
 - **Extensions** (`extensions.h`). A namespace of components (`apollo.Thruster`,
   `combat::Health`) that the project lists in project.json as `required` or
   `used`. Checked at simulation start, after kits attach: a missing required one
-  refuses Play and the player, naming it and what is available.
+  refuses Play and the player, naming it and what is available. A block written
+  wrongly (not an object, an unknown key such as `requried`, a list that is not
+  a list of names) refuses Play the same way, naming what is wrong: read as
+  "declares nothing", a misspelled `required` would never be checked (BUG-0084).
 - **The shipped player too** (WO-091). A cooked scene is the scene itself
   (`cooked_scene.h`: assetlib's header, a CBOR payload); `SceneService::loadScene`
   creates its entities through `createEntity`, so the editor and the game read one
@@ -115,7 +118,10 @@ way. Scene save, the Play snapshot and the undo stack all walk the registry.
   its fields and copied back at load (`createEntityPacked`); the rest is CBOR, read
   as above. `scenePacker()` is what a cook installs. A record cooked under another
   schema is rebuilt as JSON from the file's field table (`packedToJson`) and
-  migrated. The parity fuzzer checks all three readers.
+  migrated. The parity fuzzer checks all three readers. The packed readers keep
+  the per-field rule too: a float that is not finite keeps its default, element
+  by element (BUG-0083). The parity fuzzer cannot see that rule, because the
+  packer never writes such a value, so `scene_schema_test` corrupts records by hand.
 - **Per-field tolerance.** A wrong-typed field now keeps its default and the
   rest of the component loads; before, a wrong-typed bool or enum threw and the
   whole component was skipped. Data that is not an object is still skipped.

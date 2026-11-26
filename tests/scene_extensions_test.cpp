@@ -86,8 +86,22 @@ int main() {
         CHECK(used.started, "a used one that is missing is a warning, not a refusal");
         const Play none = play(makeProject("none", nullptr));
         CHECK(none.started, "a project that declares none starts as before");
+    }
+
+    // A block written wrongly is refused at Play, by name, rather than read as
+    // declaring nothing: a required extension in a misspelled key would
+    // otherwise never be checked (DR-0035). The project still opens.
+    std::printf("\n-- a malformed block is refused by name --\n");
+    {
         const Play odd = play(makeProject("odd", R"({"required": "apollo", "used": [3, ""]})"));
-        CHECK(odd.booted && odd.started, "a malformed block declares nothing (and opens)");
+        CHECK(odd.booted && !odd.started && has(odd.error, "\"required\" is not a list of names")
+              && has(odd.error, "holds 3"), "a list that is not a list of names (%s)", odd.error.c_str());
+        const Play typo = play(makeProject("typo", R"({"requried": ["apollo"]})"));
+        CHECK(typo.booted && !typo.started && has(typo.error, "\"requried\" is not a key it has"),
+              "a misspelled key (%s)", typo.error.c_str());
+        const Play notObject = play(makeProject("not-object", R"(["apollo"])"));
+        CHECK(notObject.booted && !notObject.started && has(notObject.error, "not an object"),
+              "a block that is not an object (%s)", notObject.error.c_str());
     }
 
     std::printf("\n-- the block survives the editor saving the project --\n");

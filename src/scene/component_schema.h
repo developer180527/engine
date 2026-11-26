@@ -410,7 +410,10 @@ public:
                 const float f = v.template number<float>();
                 if (std::isfinite(f)) t.*m = f; },
             [m](const T& t, const nlohmann::json*, packed::Writer& w) { w.raw(&(t.*m), 4); },
-            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) { r.raw(&(t.*m), 4); });
+            // As the JSON and CBOR readers: a value that is not finite keeps the
+            // default. The cook never writes one, but a cooked file is untrusted.
+            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) {
+                float f = 0; r.raw(&f, 4); if (std::isfinite(f)) t.*m = f; });
     }
     SchemaBuilder& f64(const char* key, double T::*m) {
         return add(key, FieldType::F64, 1,
@@ -421,7 +424,8 @@ public:
                 const double d = v.template number<double>();
                 if (std::isfinite(d)) t.*m = d; },
             [m](const T& t, const nlohmann::json*, packed::Writer& w) { w.raw(&(t.*m), 8); },
-            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) { r.raw(&(t.*m), 8); });
+            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) {
+                double d = 0; r.raw(&d, 8); if (std::isfinite(d)) t.*m = d; });
     }
     // Vectors, a quaternion and a matrix: N floats saved as an array, from a
     // float[N] or a type that is exactly N floats (bx::Vec3, bx::Quaternion).
@@ -653,7 +657,13 @@ private:
                     if (std::isfinite(f)) out[i] = f;
                 }); },
             [m](const T& t, const nlohmann::json*, packed::Writer& w) { w.raw(&(t.*m), N * 4); },
-            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) { r.raw(&(t.*m), N * 4); });
+            // Element by element, as the JSON reader: one that is not finite
+            // keeps its default, the rest still load.
+            [m](T& t, packed::Reader& r, flecs::entity, SerdeContext&) {
+                float in[N] = {};
+                if (!r.raw(in, N * 4)) return;
+                float* out = reinterpret_cast<float*>(&(t.*m));
+                for (std::size_t i = 0; i < N; ++i) if (std::isfinite(in[i])) out[i] = in[i]; });
     }
 #undef ENGINE_FIELD_READ
 

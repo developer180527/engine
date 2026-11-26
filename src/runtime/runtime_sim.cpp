@@ -121,6 +121,13 @@ bool EngineRuntime::startSimulation(SimMode mode) {
     // name; the scene's data for it is kept either way.
     {
         const auto& x = m_project.extensions;
+        if (!x.malformed.empty()) {
+            m_simError = "project.json \"extensions\": " + x.malformed.front();
+            for (std::size_t i = 1; i < x.malformed.size(); ++i) m_simError += "; " + x.malformed[i];
+            LOG_ERROR("Sim", "simulation refused: %s", m_simError.c_str());
+            stopSimulation();
+            return false;
+        }
         if (!x.required.empty() || !x.used.empty()) {
             const extensions::Missing miss = extensions::check(
                 simWorld(), EntitySerde::schemas(), x.required, x.used);

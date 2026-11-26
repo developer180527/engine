@@ -97,6 +97,11 @@ struct ProjectContext {
         nlohmann::json           raw;        // null: no block
         std::vector<std::string> required;
         std::vector<std::string> used;
+        // What in the block is not what it should be, as written: a block that
+        // is not an object, an unknown key, a list that is not a list of names.
+        // A required extension written wrongly would otherwise never be checked,
+        // so the simulation refuses to start, by name (DR-0035).
+        std::vector<std::string> malformed;
     };
 
     std::filesystem::path projectRoot;   // folder containing project.json
@@ -148,9 +153,9 @@ struct ProjectContext {
             jk.push_back(std::move(e));
         }
         j["kits"] = std::move(jk);
+        if (!extensions.raw.is_null()) j["extensions"] = extensions.raw;
         // The block as written, so per-target choices survive a save; a project
         // that never had one gets today's names.
-        if (!extensions.raw.is_null()) j["extensions"] = extensions.raw;
         if (!providers.raw.is_null()) j["providers"] = providers.raw;
         else j["providers"] = {{"physics",   providers.physics},
                                {"scripting", providers.scripting},
@@ -181,18 +186,35 @@ struct ProjectContext {
                     ctx.providers.raw = *p;    // resolved, and checked, at startup
                 if (auto x = j.find("extensions"); x != j.end()) {
                     ctx.extensions.raw = *x;
-                    // Names only; anything else in a list is skipped, and an
+                    // Names only. Anything else is recorded in `malformed`, and
+                    // the simulation refuses to start with it, by name; an
                     // unknown name is what the check at simulation start reports.
+                    auto& bad = ctx.extensions.malformed;
                     auto names = [&](const char* key, std::vector<std::string>& out) {
-                        if (!x->is_object()) return;
                         auto it = x->find(key);
-                        if (it == x->end() || !it->is_array()) return;
-                        for (const auto& n : *it)
+                        if (it == x->end()) return;
+                        if (!it->is_array()) {
+                            bad.push_back(std::string("\"") + key + "\" is not a list of names");
+                            return;
+                        }
+                        for (const auto& n : *it) {
                             if (n.is_string() && !n.get<std::string>().empty())
                                 out.push_back(n.get<std::string>());
+                            else
+                                bad.push_back(std::string("\"") + key + "\" holds " + n.dump() +
+                                              ", which is not an extension name");
+                        }
                     };
-                    names("required", ctx.extensions.required);
-                    names("used",     ctx.extensions.used);
+                    if (!x->is_object()) {
+                        bad.push_back("the block is not an object of \"required\" and \"used\"");
+                    } else {
+                        for (auto it = x->begin(); it != x->end(); ++it)
+                            if (it.key() != "required" && it.key() != "used")
+                                bad.push_back("\"" + it.key() + "\" is not a key it has "
+                                              "(\"required\", \"used\")");
+                        names("required", ctx.extensions.required);
+                        names("used",     ctx.extensions.used);
+                    }
                 }
                 if (auto g = j.find("graphics"); g != j.end() && g->is_object()) {
                     // VALIDATED, because the cost is quadratic and the failure

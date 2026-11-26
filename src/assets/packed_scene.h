@@ -32,6 +32,7 @@
 // UNTRUSTED. Every count and size is checked against the bytes that remain
 // before it is used, and a read past the end fails the reader (sticky), so a
 // corrupt file is refused, never over-read.
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -40,7 +41,9 @@
 
 namespace packed {
 
-static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+// std::endian, not __BYTE_ORDER__: MSVC defines neither of the GCC/Clang macros,
+// so that form did not compile on Windows.
+static_assert(std::endian::native == std::endian::little,
               "the packed scene layout is little-endian and written as memory");
 
 inline constexpr uint32_t kMagic  = 0x444B5053;   // "SPKD"
