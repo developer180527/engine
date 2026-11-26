@@ -1264,3 +1264,8 @@ if(ENGINE_WITH_RUST AND NOT ENGINE_SANITIZE AND TARGET engine_module_probe)
 endif()
 
 
+# What recording the colour pass costs on the CPU, headless (Noop backend). Not a
+# test: numbers to compare one change to the renderer's submission against the last.
+add_executable(render_submit_bench render_submit_bench.cpp)
+target_link_libraries(render_submit_bench PRIVATE engine_runtime)
+set_target_properties(render_submit_bench PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
