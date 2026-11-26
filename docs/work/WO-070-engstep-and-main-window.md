@@ -6,7 +6,8 @@ program: providers
 priority: P1
 rank: 1
 size: M
-state: active
+state: parked
+parked-until: the owner checks the window by eye (build/eng_window_manual), the one open item; everything else is done
 depends: []
 touches:
   - src/runtime/runtime_frame.cpp
