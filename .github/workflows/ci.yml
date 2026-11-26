@@ -87,6 +87,16 @@ jobs:
   # The matrix lives here as JSON because GitHub does not expose `matrix` to a
   # job-level `if`, so per-leg selection has to happen before the matrix exists.
   # It is defined ONCE and filtered, rather than duplicated per event.
+  #
+  # EXCEPT where portability is the point. A push that touches the cooked
+  # formats, the scene and asset readers, the provider machinery, the public
+  # headers or the build system runs ALL six legs, because those are where a
+  # platform difference becomes a wrong file or a failed build rather than a
+  # slow frame: BUG-0082 (a check MSVC could not compile) sat on main with only
+  # the macOS leg green. scene_portability_test then holds the cooked scene to
+  # committed golden bytes on every leg. The list is PORTABILITY_PATHS below; the
+  # files a push changed come from the compare API, and anything that cannot be
+  # determined (a new branch, a forced push, a very large push) runs everything.
   plan:
     name: Plan
     runs-on: ubuntu-latest
@@ -95,6 +105,13 @@ jobs:
     steps:
       - id: pick
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          # ERE over repository paths. Keep it to what decides bytes on disk,
+          # what MSVC/libstdc++ see differently, and the build itself.
+          PORTABILITY_PATHS: '^(src/(assets|scene|project|plugins|capi)/|src/runtime/(provider_registry|runtime_boot)|modules/assetlib/|cmake/|include/|tests/fixtures/|tests/(scene_|provider|cooked_scene|fuzz_scene)|third_party/patches/|\.github/workflows/ci\.yml$|CMakeLists\.txt$|src/CMakeLists\.txt$)'
         run: |
           # on_push marks the gating leg. Everything else waits for the nightly.
           cat > all.json <<'JSON'
@@ -107,10 +124,28 @@ jobs:
             {"name":"Windows (arm64, MSVC)","slug":"windows-arm64-msvc","os":"windows-11-arm","msvc_arch":"arm64","rust_target":"aarch64-pc-windows-msvc","experimental":false}
           ]
           JSON
+          full=1
           if [ "${{ github.event_name }}" = "push" ]; then
-            sel=$(jq -c '[.[] | select(.on_push == true)]' all.json)
-          else
+            full=0
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              full=1; echo "a new branch: every leg"
+            elif ! files=$(gh api "repos/${{ github.repository }}/compare/$BEFORE...$AFTER" \
+                             --jq '.files[].filename' 2>/dev/null); then
+              full=1; echo "the changed files could not be listed (a forced push?): every leg"
+            elif [ "$(printf '%s\n' "$files" | wc -l)" -ge 300 ]; then
+              full=1; echo "300 or more files changed (the compare API's limit): every leg"
+            elif hits=$(printf '%s\n' "$files" | grep -E "$PORTABILITY_PATHS"); then
+              full=1
+              echo "portability-sensitive files changed, so every leg runs:"
+              printf '%s\n' "$hits" | head -20 | sed 's/^/  /'
+            else
+              echo "no portability-sensitive file changed: the gating leg only"
+            fi
+          fi
+          if [ "$full" = 1 ]; then
             sel=$(jq -c '.' all.json)
+          else
+            sel=$(jq -c '[.[] | select(.on_push == true)]' all.json)
           fi
           # Fail loudly rather than silently running nothing — an empty matrix
           # is a job that reports success having built no platform at all.

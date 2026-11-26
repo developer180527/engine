@@ -163,6 +163,11 @@ target_compile_definitions(scene_schema_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_
 # A project's required extensions refuse Play by name, its used ones warn (WO-071,
 # DR-0035): a headless engine booted on throwaway projects.
 engine_test(scene_extensions_test)
+# A cooked scene is the same file on every platform: cooked here it is the
+# committed golden bytes, and the golden files load here through every reader.
+# ci.yml runs every leg when a change touches the scene format.
+engine_test(scene_portability_test)
+target_compile_definitions(scene_portability_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # The shipped player gets every component (WO-091): the real cooker, SceneService
 # on the Noop backend, and the world saved back compared with the source.
 if(TARGET engine_cooking)

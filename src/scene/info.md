@@ -13,6 +13,7 @@ tests:
   - tests/scene_material_roundtrip_test.cpp  # a material override survives save + load (BUG-0072)
   - tests/scene_schema_test.cpp       # the format byte for byte; unknown kept; migrations; field types (WO-071)
   - tests/scene_extensions_test.cpp   # a project's required extensions refuse Play by name (WO-071)
+  - tests/scene_portability_test.cpp  # one cooked scene, byte for byte, on every platform
   - tests/cooked_scene_test.cpp       # the shipped player gets every component (WO-091)
   - tests/fuzz_scene_reader_parity_test.cpp  # the JSON and CBOR readers agree (WO-092)
 ---
@@ -122,6 +123,13 @@ way. Scene save, the Play snapshot and the undo stack all walk the registry.
   the per-field rule too: a float that is not finite keeps its default, element
   by element (BUG-0083). The parity fuzzer cannot see that rule, because the
   packer never writes such a value, so `scene_schema_test` corrupts records by hand.
+- **The same file on every platform.** `scene_portability_test` holds the cooked
+  scene to two committed golden files (`tests/fixtures/scenes/every_component.{packed,cbor}.cooked`).
+  Cooked here, the bytes must equal them, and on a difference the test names the
+  entity and record. The golden files must load here through every reader and
+  save back as authored. CI runs every platform when a push touches the scene
+  format (`ci.yml`, `PORTABILITY_PATHS`), so a platform difference shows on that
+  commit, not in the nightly.
 - **Per-field tolerance.** A wrong-typed field now keeps its default and the
   rest of the component loads; before, a wrong-typed bool or enum threw and the
   whole component was skipped. Data that is not an object is still skipped.

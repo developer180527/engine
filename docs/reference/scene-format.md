@@ -544,6 +544,12 @@ registered components as their schemas' fields, everything else as CBOR. A cook
 with no packer writes CBOR (encoding 1). Both load, by the same per-field rules:
 a packed float that is not finite keeps its default, as a JSON one does.
 
+**The cooked bytes are the same on every platform.** `scene_portability_test`
+compares a cook of `every_component.disk.json` with two committed golden files,
+byte for byte, on every CI leg, and loads them through every reader. A change
+that needs the golden files regenerated is a change to the format: bump the
+packed layout or the scene version, and re-cook.
+
 Version 3 and earlier were a fixed 256-byte record per entity with slots for nine
 components; colour grading, kits' components and unknown ones did not survive the
 cook. They are refused at load with "re-cook the scene": a cooked scene is derived
