@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <vector>
 
 #include <assetlib/mesh_asset.h>
@@ -88,8 +89,10 @@ json makeScene(uint32_t n) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
+    // --profile: the 50 000-entity load only, 40 times, for a sampling profiler.
+    const bool profile = argc > 1 && std::string(argv[1]) == "--profile";
     const fs::path root = fs::temp_directory_path() / "engine_scene_load_bench";
     fs::remove_all(root);
     fs::create_directories(root / ".cache" / "meshs");
@@ -97,7 +100,7 @@ int main() {
     if (!writeMesh(root / ".cache" / "meshs" / "prop.cooked")) return 1;
     if (!initTestDevice()) return 1;
 
-    for (uint32_t n : {5000u, 50000u}) {
+    for (uint32_t n : profile ? std::vector<uint32_t>{50000u} : std::vector<uint32_t>{5000u, 50000u}) {
         const fs::path src = root / ("bench" + std::to_string(n) + ".scene");
         { std::ofstream f(src); f << makeScene(n).dump(2); }
         const fs::path cooked = root / ".cache" / "scenes" / ("bench" + std::to_string(n) + ".cooked");
@@ -108,7 +111,7 @@ int main() {
 
         std::vector<double> ms;
         uint32_t entities = 0;
-        for (int run = 0; run < 5; ++run) {
+        for (int run = 0; run < (profile ? 40 : 5); ++run) {
             flecs::world world;
             AssetRegistry meshes; TextureRegistry textures; MaterialRegistry materials;
             AssetService assets({meshes, textures, materials});
@@ -124,10 +127,11 @@ int main() {
             if (h) svc.unloadScene(h);
             bgfx::frame();
         }
-        // The payload's decode alone, which the load includes: how much of the
-        // load is the format and how much is creating entities.
+        // What decoding the payload into a JSON tree alone costs: the tree path a
+        // load falls back to for bytes the cook does not write, and what every
+        // load paid before WO-092 read the CBOR in place.
         std::vector<double> dec;
-        for (int run = 0; run < 5; ++run) {
+        for (int run = 0; run < (profile ? 1 : 5); ++run) {
             assetlib::SceneAsset file; json scene; std::string why;
             const auto t0 = std::chrono::steady_clock::now();
             if (assetlib::loadScene(file, cooked, &why)) cooked_scene::decode(file, scene, why);
@@ -137,7 +141,7 @@ int main() {
         std::sort(dec.begin(), dec.end());
         std::sort(ms.begin(), ms.end());
         std::printf("entities %6u  loaded %6u  cooked %8.1f KB  cook %8.1f ms  load %8.1f ms"
-                    "  (of which read+decode %6.1f ms)\n",
+                    "  (a JSON tree alone: %6.1f ms)\n",
                     n, entities, fs::file_size(cooked) / 1024.0, cookMs, ms[ms.size() / 2],
                     dec[dec.size() / 2]);
     }

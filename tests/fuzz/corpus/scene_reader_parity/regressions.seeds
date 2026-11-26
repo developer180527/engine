@@ -1,0 +1,13 @@
+# scene_reader_parity — every disagreement this target has found, pinned forever.
+# One decimal master seed per line; `--seed <n>` reproduces one exactly.
+# See tests/fuzz/corpus/README.md for the lane contract.
+
+# ── A revision marker of 0, which only an in-memory tree can hold as signed ──
+# Found on the first run (2026-11-26). The generator built entities in memory,
+# where `"$rev": 0` can be a SIGNED integer; the JSON reader refuses a signed
+# revision, while the CBOR reader sees the unsigned 0 to_cbor writes. No parsed
+# file holds a signed non-negative integer, so the generator now reads its entity
+# back through text, as a .scene is read. Kept: both seeds put a revision marker
+# on a component and exercise the migrate path in both readers.
+7329083535023708056
+425137423495724621

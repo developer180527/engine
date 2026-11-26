@@ -15,6 +15,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 - [WO-038](WO-038-ci-green-on-every-leg.md) **CI green on every leg, and red is noticed** — 5/7 done. Still open:
   - a `workflow_dispatch` run of the full matrix is green on all six legs plus the sanitizer, SDK-only and shipping jobs (Windows may show more once it links)
   - a failed nightly notifies instead of sitting red for weeks
+- [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) **The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components** — 4/5 done. Still open:
+  - `tests/scene_load_bench.cpp` at 50 000 entities within the measurement's noise of format 3's 32 ms on the same machine (format 3's loader rebuilt for the comparison, as WO-091 did), and the numbers recorded here
 
 ## Next up
 
@@ -45,7 +47,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
 | [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
 | [WO-090](WO-090-first-librhi-renderer.md) | The first librhi renderer — a provider beside bgfx, the forward pipeline ported pass by pass, each bgfx assumption removed where the port meets it | Renderer & RHI | L | blocked by WO-075 | renderer, gpu-seam |
-| [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) | The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components | Asset import & cooking | M | **ready** | scene-service |
+| [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) | The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components | Asset import & cooking | M | **active** 4/5 | scene-service |
 
 ## P2 — the planned programmes, in dependency order.
 

@@ -30,6 +30,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/json_read.h"
+#include "assets/cbor_reader.h"
 #include "assets/cooked_scene.h"
 #include "scene/entity_serializer.h"
 #include "scene/scene_assets.h"
@@ -84,12 +85,10 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
     // This replaced a fixed 256-byte record with slots for nine components.
     assetlib::SceneAsset file;
     std::string why;
-    nlohmann::json scene;
-    if (!assetlib::loadScene(file, absPath, &why) || !cooked_scene::decode(file, scene, why)) {
+    if (!assetlib::loadScene(file, absPath, &why)) {
         LOG_ERROR("SceneService", "Failed to load scene %s: %s", cookedPath, why.c_str());
         return 0;
     }
-
     LoadedScene loaded;
     loaded.path = absPath;
 
@@ -125,15 +124,74 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
     // id is reassigned on load, so the file's ids are what links refer to).
     struct Created { flecs::entity entity; uint64_t fileId, parentId; };
     std::vector<Created> created;
-    const nlohmann::json& entities = scene["entities"];
-    created.reserve(entities.size());
-    for (const nlohmann::json& je : entities) {
-        if (!je.is_object()) continue;   // not an entity: skipped, as the editor does
-        flecs::entity e = EntitySerde::createEntity(m_world, je, ctx,
-                                                    EntitySerde::IdPolicy::Preserve);
-        loaded.entityIds.push_back(e.id());
-        created.push_back({e, jsonread::readU64(je, "id", 0), jsonread::readU64(je, "parentId", 0)});
+
+    // ── Read in place, in one pass (WO-092) ─────────────────────────────────
+    // The payload is the CBOR the cook writes, read without building a JSON tree
+    // (which was most of a load's time). Nothing is validated first: anything
+    // that is not what the cook writes (a failed read, a byte outside the subset
+    // nlohmann writes, a repeated key, trailing bytes) ends the attempt, and
+    // everything it made is undone. The scene is then read through the tree,
+    // exactly as before: it refuses what nlohmann refuses and reads the rest by
+    // nlohmann's rules. A valid cook never takes that path.
+    const uint8_t* data = file.payload.data();
+    const std::size_t size = file.payload.size();
+    auto inPlace = [&]() -> bool {
+        cbor::Reader r(data, size);
+        cbor::Item top;
+        if (!r.head(top) || top.kind != cbor::Kind::Map) return false;
+        bool sawEntities = false;
+        for (uint64_t n = 0; n < top.count; ++n) {
+            cbor::Item key;
+            if (!r.head(key) || key.kind != cbor::Kind::Text) return false;
+            if (key.text != "entities") { if (!r.skip()) return false; continue; }
+            if (sawEntities) return false;   // repeated: the tree keeps the last
+            sawEntities = true;
+            cbor::Item arr;
+            if (!r.head(arr)) return false;
+            if (arr.kind != cbor::Kind::Array) return false;   // the tree refuses it, by name
+            created.reserve((std::size_t)arr.count);
+            for (uint64_t k = 0; k < arr.count; ++k) {
+                const std::size_t at = r.pos();
+                cbor::Item head;
+                if (!r.head(head)) return false;
+                r.seek(at);
+                if (head.kind == cbor::Kind::Map) {
+                    EntitySerde::CookedIds cid;
+                    flecs::entity e;
+                    const bool ok = EntitySerde::createEntityCbor(
+                        m_world, data, size, at, ctx, EntitySerde::IdPolicy::Preserve, e, &cid);
+                    created.push_back({e, cid.fileId, cid.parentId});
+                    if (!ok) return false;
+                }
+                // Not an entity: skipped, as the editor does.
+                if (!r.skip()) return false;
+            }
+        }
+        return sawEntities && !r.failed() && r.pos() == size;
+    };
+    if (!inPlace()) {
+        // Undo the attempt: its entities, its mesh references, its pending links.
+        for (const Created& c : created) if (c.entity.is_alive()) c.entity.destruct();
+        for (MeshHandle h : loaded.meshHandles) m_assets.unloadMesh(h);
+        created.clear();
+        loaded.meshHandles.clear();
+        refs.clear();
+        ids.build(m_world);
+        nlohmann::json scene;
+        if (!cooked_scene::decode(file, scene, why)) {
+            LOG_ERROR("SceneService", "Failed to load scene %s: %s", cookedPath, why.c_str());
+            return 0;
+        }
+        const nlohmann::json& entities = scene["entities"];
+        created.reserve(entities.size());
+        for (const nlohmann::json& je : entities) {
+            if (!je.is_object()) continue;   // not an entity: skipped, as the editor does
+            flecs::entity e = EntitySerde::createEntity(m_world, je, ctx,
+                                                        EntitySerde::IdPolicy::Preserve);
+            created.push_back({e, jsonread::readU64(je, "id", 0), jsonread::readU64(je, "parentId", 0)});
+        }
     }
+    for (const Created& c : created) loaded.entityIds.push_back(c.entity.id());
     std::unordered_map<uint64_t, flecs::entity> byFileId;
     byFileId.reserve(created.size());
     for (const Created& c : created)

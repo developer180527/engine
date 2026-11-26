@@ -354,6 +354,11 @@ is its codec, shared by the cooker, the shipped player's `SceneService` and the
 packager: CBOR into assetlib's container, decoded with a depth cap (64 levels; the
 CBOR reader recurses per level), and `meshPaths()` for what a package ships. It is
 here, not in `src/scene`, because the cooker needs it and scene depends on assets.
+`cbor_reader.h` reads that CBOR in place, without a tree (WO-092): a cursor, one
+head at a time, a value skipped without being decoded, a sticky failure flag, and
+the subset nlohmann writes (anything else is refused, so the caller falls back to
+the tree). It also gives the answers nlohmann's tree gives for a number, a boolean
+or a string, conversion casts included, which is what keeps the two readers equal.
 Until WO-091 the cook wrote a fixed record of nine components and dropped the rest.
 
 ## Loaders (`loaders/`)

@@ -17,6 +17,7 @@
 #include <functional>
 #include <filesystem>
 #include <cctype>
+#include <algorithm>
 #include <cmath>
 
 #include "core/transform.h"
@@ -108,6 +109,11 @@ struct SerdeContext {
         std::function<void(flecs::entity owner, flecs::entity target)> apply;
     };
     std::vector<EntityRef>*   entityRefs   = nullptr;
+
+    // Load: set when a mesh this entity loaded brought a skin, so finishing the
+    // entity looks for one only then (a component lookup per entity, at scene
+    // scale, was measurable: WO-092).
+    bool                      skinPending  = false;
 };
 
 inline uint64_t stableIdOf(flecs::entity target) {
@@ -279,8 +285,8 @@ inline void saveMesh(flecs::entity e, nlohmann::json& j, const SerdeContext& ctx
         }
     }
 }
-inline void loadMeshRef(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
-    if (ctx.mode == SerdeMode::Memory) {
+inline void loadMeshMemory(flecs::entity e, const nlohmann::json& j) {
+    {
         if (auto it = j.find("unresolved"); it != j.end() && it->is_object()) {
             e.set<UnresolvedMesh>({it->dump(), j.value("unresolvedReason", std::string{}), false});
             if (const uint32_t pid = j.value("placeholderId", 0u)) {
@@ -299,6 +305,26 @@ inline void loadMeshRef(flecs::entity e, const nlohmann::json& j, SerdeContext& 
         return;
     }
 
+}
+
+// A string field of a mesh reference as nlohmann's `value(key, "")` reads it:
+// absent is empty, a string is its value, anything else (or a reference that is
+// not an object) THROWS, which skips the component and keeps the reference.
+// Written over the value interface, so the cooked scene's CBOR is read the same.
+template <class V>
+inline std::string stringField(const V& j, const char* key) {
+    if (!j.isObject()) throw std::runtime_error("a mesh reference is not an object");
+    V v;
+    if (!j.find(key, v)) return {};
+    if (!v.isString()) throw std::runtime_error(std::string("\"") + key + "\" is not a string");
+    return v.asString();
+}
+
+// Disk: a mesh by its cooked path, else its source reference. `authored()` is
+// the reference as JSON text, asked for only when the mesh does not resolve.
+template <class V, class Dump>
+inline void loadMeshDisk(flecs::entity e, const V& j, const Dump& authored, SerdeContext& ctx,
+                         bool& didResolve) {
     // ── Fast path: cooked binary via the host (SceneAssets) ────────────
     // If cookedPath is present and the host can load cooked meshes, load directly
     // from the cooked binary — no Assimp, no glTF import, no worker queue.
@@ -312,18 +338,23 @@ inline void loadMeshRef(flecs::entity e, const nlohmann::json& j, SerdeContext& 
     // looked broken: scenes still rendered, just via the slow path, and a shipped
     // dist with no source assets would have failed outright.
     // Keep the authored reference until something resolves it (WO-029). Every
-    // path below that sets a MeshRenderer removes this; every path that does not
-    // leaves it, with the reason, so the next save cannot drop the mesh.
-    e.set<UnresolvedMesh>({j.dump(), "not resolved", false});
-    auto unresolved = [&e](std::string why, bool pending = false) {
-        if (UnresolvedMesh* u = e.try_get_mut<UnresolvedMesh>()) {
-            u->reason = std::move(why); u->pending = pending;
-        }
+    // path below that does not set a MeshRenderer calls unresolved(), which
+    // keeps it with the reason, so the next save cannot drop the mesh; loadMesh
+    // keeps it too if a read throws partway. Kept lazily: most meshes resolve on
+    // the cooked path, and writing the reference only to remove it again was a
+    // string dump and two archetype moves per mesh (WO-092).
+    auto unresolved = [&e, &authored](std::string why, bool pending = false) {
+        if (!e.has<UnresolvedMesh>()) e.set<UnresolvedMesh>({authored(), "", false});
+        UnresolvedMesh& u = e.get_mut<UnresolvedMesh>();
+        u.reason = std::move(why); u.pending = pending;
     };
-    auto resolved = [&e](MeshRenderer mr) {
+    auto resolved = [&e, &didResolve](MeshRenderer mr) {
+        didResolve = true;
         e.set<MeshRenderer>(mr);
-        e.remove<UnresolvedMesh>();
-        e.remove<MeshPlaceholder>();
+        // Checked first: removing a component the entity never had still costs
+        // flecs a lookup, and at scene scale it showed (WO-092).
+        if (e.has<UnresolvedMesh>())  e.remove<UnresolvedMesh>();
+        if (e.has<MeshPlaceholder>()) e.remove<MeshPlaceholder>();
     };
 
     // The authored material name, resolved to a handle. Empty is normal — most
@@ -331,7 +362,7 @@ inline void loadMeshRef(flecs::entity e, const nlohmann::json& j, SerdeContext& 
     MaterialHandle matOverride;
     const SceneAssets* sa = ctx.sceneAssets;
     if (sa && sa->loadMaterial) {
-        const std::string matName = j.value("material", std::string{});
+        const std::string matName = stringField(j, "material");
         if (!matName.empty()) {
             matOverride = sa->loadMaterial(matName.c_str());
             if (!matOverride.valid())
@@ -340,7 +371,7 @@ inline void loadMeshRef(flecs::entity e, const nlohmann::json& j, SerdeContext& 
         }
     }
 
-    const std::string cookedPath = j.value("cookedPath", std::string{});
+    const std::string cookedPath = stringField(j, "cookedPath");
     if (!cookedPath.empty() && sa && sa->loadCookedMesh) {
         // Request the cooked LOD chain too. Without this the editor's load path
         // silently produced no levels while scene_service's did — the same
@@ -354,7 +385,10 @@ inline void loadMeshRef(flecs::entity e, const nlohmann::json& j, SerdeContext& 
         MeshHandle h = sa->loadCookedMesh(cookedPath.c_str(), &lods, &skin);
         if (h.valid()) {
             resolved({h, matOverride});
-            if (skin.skeleton.valid()) e.set<PendingSkin>({skin.skeleton, skin.clips});
+            if (skin.skeleton.valid()) {
+                e.set<PendingSkin>({skin.skeleton, skin.clips});
+                ctx.skinPending = true;
+            }
             if (!lods.empty()) {
                 LodMesh lm;
                 lm.count = (uint8_t)std::min(lods.size(),
@@ -372,9 +406,12 @@ inline void loadMeshRef(flecs::entity e, const nlohmann::json& j, SerdeContext& 
     // UUID resolves through the registry (survives renames/moves); relative
     // path resolves against the project root; legacy absolute paths are
     // accepted as-is and re-rooted by assets/ suffix when stale.
-    AssetRef    ref     = assetref::fromJson(j);
+    AssetRef ref;   // as assetref::fromJson reads it
+    ref.uuid = stringField(j, "asset");
+    ref.path = stringField(j, "path");
+    if (ref.path.empty()) ref.path = stringField(j, "sourcePath");   // legacy (absolute)
     std::string srcPath = assetref::resolve(ref, ctx.projectRoot, ctx.assetLib);
-    std::string srcType = j.value("sourceType", std::string{});
+    std::string srcType = stringField(j, "sourceType");
     if (srcPath.empty()) {
         if (!ref.empty()) {
             LOG_WARN("Scene", "Mesh reference unresolved (uuid=%s path=%s) — kept, "
@@ -415,13 +452,34 @@ inline void loadMeshRef(flecs::entity e, const nlohmann::json& j, SerdeContext& 
 // primitive cube instead of nothing. MeshPlaceholder records that the
 // MeshRenderer is the stand-in, so saveMesh still writes the authored
 // reference. Needs the primitive library (absent headless: no placeholder).
-inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
-    loadMeshRef(e, j, ctx);
-    if (ctx.mode != SerdeMode::Disk || !e.has<UnresolvedMesh>() || e.has<MeshRenderer>()) return;
+// Disk load, then the placeholder (WO-018): an entity whose mesh did not
+// resolve here (Pending: a cook is coming; Failed: none will) SHOWS the
+// primitive cube instead of nothing. MeshPlaceholder records that the
+// MeshRenderer is the stand-in, so saveMesh still writes the authored
+// reference. Needs the primitive library (absent headless: no placeholder).
+template <class V, class Dump>
+inline void loadMeshFrom(flecs::entity e, const V& j, const Dump& authored, SerdeContext& ctx) {
+    bool didResolve = false;
+    try {
+        loadMeshDisk(e, j, authored, ctx, didResolve);
+    } catch (...) {
+        // A malformed reference that threw partway is still the author's: keep
+        // it, so a save writes it back (scene_mesh_reference_test, case 6).
+        if (!e.has<MeshRenderer>() && !e.has<UnresolvedMesh>())
+            e.set<UnresolvedMesh>({authored(), "malformed", false});
+        throw;
+    }
+    if (didResolve) return;
     if (!ctx.primitives || !ctx.primitives->ready()) return;
+    if (!e.has<UnresolvedMesh>() || e.has<MeshRenderer>()) return;
     const MeshHandle cube = ctx.primitives->cube();
     e.set<MeshRenderer>({cube});
     e.set<MeshPlaceholder>({cube});
+}
+
+inline void loadMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& ctx) {
+    if (ctx.mode == SerdeMode::Memory) { loadMeshMemory(e, j); return; }
+    loadMeshFrom(e, JsonValue{&j}, [&j] { return j.dump(); }, ctx);
 }
 
 // ── LodMesh (the coarser levels; level 0 is MeshRenderer's own mesh) ──────────
@@ -575,6 +633,15 @@ inline void loadAnimator(flecs::entity e, const nlohmann::json& j, SerdeContext&
     e.set<Animator>(a);
 }
 
+// A value of the cooked scene's CBOR as JSON: for what has no in-place reader.
+inline nlohmann::json jsonAt(const uint8_t* data, std::size_t size, std::size_t pos) {
+    cbor::Reader r(data, size);
+    r.seek(pos);
+    r.skip();
+    return nlohmann::json::from_cbor(data + pos, data + r.pos(), /*strict*/ true,
+                                     /*allow_exceptions*/ false);
+}
+
 // ── The registry ──────────────────────────────────────────────────────────────
 // The engine's components, in load order. Field-by-field where the saved form is
 // the component's own data; a codec of its own where it is not (a mesh is saved
@@ -602,12 +669,37 @@ inline void registerBuiltinSchemas(SchemaRegistry& r) {
         .vec3("scale",    &Transform::scale)
         .build());
     // Name's saved form is a bare string, not an object: the one legacy shape kept.
-    r.add(customSchema("core.Name", "name", Name::kAbiRevision, hasName, saveName, loadName,
-                       [](flecs::entity e) { e.remove<Name>(); }));
-    r.add(customSchema("core.MeshRenderer", "meshRenderer", MeshRenderer::kAbiRevision,
-                       hasMesh, saveMesh, loadMesh,
-                       [](flecs::entity e) { e.remove<MeshRenderer>(); e.remove<UnresolvedMesh>();
-                                             e.remove<MeshPlaceholder>(); }));
+    {
+        ComponentSchema name = customSchema("core.Name", "name", Name::kAbiRevision, hasName,
+                                            saveName, loadName,
+                                            [](flecs::entity e) { e.remove<Name>(); });
+        // A string read in place; anything else ("Entity") through loadName.
+        name.loadCbor = [](flecs::entity e, const uint8_t* d, std::size_t n, std::size_t pos,
+                           SerdeContext&, std::size_t* end) {
+            const CborValue v(d, n, pos);
+            if (!v.isString()) return false;
+            e.set<Name>({v.asString()});
+            if (end) *end = v.body;
+            return true;
+        };
+        name.orderFree = true;
+        r.add(std::move(name));
+    }
+    {
+        ComponentSchema mesh = customSchema("core.MeshRenderer", "meshRenderer",
+            MeshRenderer::kAbiRevision, hasMesh, saveMesh, loadMesh,
+            [](flecs::entity e) { e.remove<MeshRenderer>(); e.remove<UnresolvedMesh>();
+                                  e.remove<MeshPlaceholder>(); });
+        // The cooked scene's reference read in place; its JSON text is built only
+        // when the mesh does not resolve (to keep it, WO-029).
+        mesh.loadCbor = [](flecs::entity e, const uint8_t* d, std::size_t n, std::size_t pos,
+                           SerdeContext& ctx, std::size_t*) {
+            if (ctx.mode == SerdeMode::Memory) return false;
+            loadMeshFrom(e, CborValue(d, n, pos), [d, n, pos] { return jsonAt(d, n, pos).dump(); }, ctx);
+            return true;
+        };
+        r.add(std::move(mesh));
+    }
     // After meshRenderer, and it has to stay there: a chain describes the
     // coarser levels of THAT mesh, and load order is the registry's order.
     r.add(customSchema("core.LodMesh", "lodMesh", 0, hasLodMesh, saveLodMesh, loadLodMesh,
@@ -726,37 +818,33 @@ inline nlohmann::json saveEntity(flecs::entity e, const SerdeContext& ctx) {
     return je;
 }
 
-// Creates an anonymous entity (no flecs name path -> no duplicate-name
-// aliasing), resolves identity per policy, then drives every table load.
-// Parent links are NOT restored here. Must be called outside query iteration.
-inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
-                                  SerdeContext& ctx, IdPolicy policy) {
-    flecs::entity e = w.entity();                       // anonymous
-    // ── Every read below is TYPE-TOLERANT, and it has to be ─────────────────
-    // nlohmann's `value()` does NOT fall back to the default when the key
-    // exists with the wrong type — it THROWS `type_error`. A `.scene` is a text
-    // file that gets hand-edited, merged, and conflict-resolved, so wrong types
-    // are the normal failure, not the adversarial one. `scene_serializer.h`
-    // wraps only `json::parse` in try/catch, which means one `"fov": "60"`
-    // propagated an exception out of scene load and took the editor or the
-    // player down with it. Found by tests/fuzz_entity_serde_test.cpp, which
-    // reported it on roughly one case in twenty.
-    //
-    // The granularity is the point: a malformed COMPONENT is skipped and
-    // reported, and the rest of the entity still loads. Wrapping the whole
-    // function would turn one bad field into a missing entity; wrapping the
-    // whole load — the obvious fix — would turn it into a missing scene.
-    auto tolerant = [&](const char* what, auto&& fn) {
-        try { fn(); }
-        catch (const std::exception& ex) {
-            LOG_WARN("Scene", "entity %s: malformed \"%s\" — skipped (%s)",
-                     "load", what, ex.what());
-        }
-    };
+// ── Loading an entity, in stages both readers share ──────────────────────────
+// ── Every read below is TYPE-TOLERANT, and it has to be ─────────────────────
+// nlohmann's `value()` does NOT fall back to the default when the key exists
+// with the wrong type — it THROWS `type_error`. A `.scene` is a text file that
+// gets hand-edited, merged, and conflict-resolved, so wrong types are the normal
+// failure, not the adversarial one. One `"fov": "60"` used to propagate out of
+// scene load and take the editor or the player down with it (found by
+// tests/fuzz_entity_serde_test.cpp, on roughly one case in twenty).
+//
+// The granularity is the point: a malformed COMPONENT is skipped and reported,
+// and the rest of the entity still loads. Wrapping the whole function would turn
+// one bad field into a missing entity; wrapping the whole load would turn it into
+// a missing scene.
+template <class Fn>
+inline void tolerantLoad(const char* what, Fn&& fn) {
+    try { fn(); }
+    catch (const std::exception& ex) {
+        LOG_WARN("Scene", "entity %s: malformed \"%s\" — skipped (%s)", "load", what, ex.what());
+    }
+}
 
-    uint64_t id = 0;
-    if (policy == IdPolicy::Preserve)
-        tolerant("id", [&] { id = je.value("id", (uint64_t)0); });
+// An anonymous entity (no flecs name path, so no duplicate-name aliasing) with
+// its stable id: `wanted` when Preserve and free, else a fresh one.
+inline flecs::entity beginEntity(flecs::world& w, uint64_t wanted, SerdeContext& ctx,
+                                 IdPolicy policy, flecs::entity existing = flecs::entity()) {
+    flecs::entity e = existing ? existing : w.entity();
+    uint64_t id = policy == IdPolicy::Preserve ? wanted : 0;
     // Dedupe: never silently alias an id that is already live. Through the index
     // when the caller supplied one (O(1)); otherwise the O(n) scan, which is only
     // acceptable for one-off callers — see EntityIdIndex.
@@ -773,6 +861,72 @@ inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
         do { id = generateEntityId(); } while (findById(w, id).is_alive());
     }
     e.set<EntityId>({id});
+    return e;
+}
+
+// A component this engine cannot read, kept as loaded (DR-0034).
+inline void keepUnknown(flecs::entity e, const std::string& key, const nlohmann::json& data) {
+    if (!e.has<UnknownComponents>()) e.set<UnknownComponents>({});
+    e.get_mut<UnknownComponents>().blobs[key] = data.dump();
+}
+
+// One registered component from its JSON value: migrated if it carries an older
+// revision, kept if it cannot be read here, else loaded.
+inline void loadComponentJson(flecs::entity e, const ComponentSchema& s,
+                              const nlohmann::json& value, SerdeContext& ctx) {
+    // Data at the current revision, which is nearly all of it, is read in
+    // place; only data that needs a migration (or refusing) is copied.
+    const bool marked = value.is_object() && value.contains(kRevisionKey);
+    if (!marked && s.revision == 0) {
+        tolerantLoad(s.key.c_str(), [&] { s.load(e, value, ctx); });
+        return;
+    }
+    nlohmann::json data = value;
+    std::string why;
+    if (!migrateToCurrent(s, data, why)) {
+        LOG_WARN("Scene", "%s (\"%s\") cannot be read here: %s — kept, and saved "
+                 "back unchanged", s.name.c_str(), s.key.c_str(), why.c_str());
+        keepUnknown(e, s.key, value);
+        return;
+    }
+    tolerantLoad(s.key.c_str(), [&] { s.load(e, data, ctx); });
+}
+
+inline void loadUnknownJson(flecs::entity e, const std::string& key, const nlohmann::json& value) {
+    LOG_WARN("Scene", "component \"%s\" is not registered here — kept, and saved back "
+             "unchanged", key.c_str());
+    keepUnknown(e, key, value);
+}
+
+// Generic path: apply reflected components that resolve now; stash the rest in
+// ReflectedPending until their kit registers the type. Kit-authored components
+// are the LEAST trustworthy shape in the file — the engine has never seen their
+// schema — so this one is not optional.
+inline void loadReflectedJson(flecs::entity e, const nlohmann::json& value) {
+    tolerantLoad("reflected", [&] { reflected::load(e, value); });
+}
+
+// The skin of a mesh loaded above, now that the authored Animator is read.
+inline void finishEntity(flecs::entity e, SerdeContext& ctx) {
+    if (!ctx.skinPending) return;
+    ctx.skinPending = false;
+    if (const PendingSkin* ps = e.try_get<PendingSkin>()) {
+        const PendingSkin skin = *ps;
+        e.remove<PendingSkin>();
+        wireSkin(e, skin.skeleton, skin.clips,
+                 ctx.sceneAssets ? ctx.sceneAssets->bindClip : nullptr);
+    }
+}
+
+// Creates an anonymous entity, resolves identity per policy, then loads every
+// component: unknown keys kept, registered ones in registry order, a kit's last.
+// Parent links are NOT restored here. Must be called outside query iteration.
+inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
+                                  SerdeContext& ctx, IdPolicy policy) {
+    uint64_t wanted = 0;
+    if (je.is_object())
+        if (auto it = je.find("id"); it != je.end()) wanted = idFrom(JsonValue{&*it});
+    flecs::entity e = beginEntity(w, wanted, ctx, policy);
     if (!je.is_object()) return e;
     // A scene loader passes its own list and resolves it after the last entity;
     // a lone entity (undo) resolves its references when its components are set.
@@ -781,50 +935,111 @@ inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
                      ~EndRefs() { endEntityRefs(c, w, own); } } endRefs{ctx, w, ownRefs};
     const SchemaRegistry& reg = schemasOf(ctx);
     // Unknown first, so a component kept here is never also loaded below.
-    auto keep = [&e](const std::string& key, const nlohmann::json& data) {
-        if (!e.has<UnknownComponents>()) e.set<UnknownComponents>({});
-        e.get_mut<UnknownComponents>().blobs[key] = data.dump();
-    };
     for (auto it = je.begin(); it != je.end(); ++it)
-        if (!isEntityField(it.key()) && !reg.byKey(it.key())) {
-            LOG_WARN("Scene", "component \"%s\" is not registered here — kept, and "
-                     "saved back unchanged", it.key().c_str());
-            keep(it.key(), it.value());
-        }
-    for (const ComponentSchema& s : reg.all()) {
-        auto it = je.find(s.key);
-        if (it == je.end()) continue;
-        // Data at the current revision, which is nearly all of it, is read in
-        // place; only data that needs a migration (or refusing) is copied.
-        const bool marked = it->is_object() && it->contains(kRevisionKey);
-        if (!marked && s.revision == 0) {
-            tolerant(s.key.c_str(), [&] { s.load(e, *it, ctx); });
-            continue;
-        }
-        nlohmann::json data = *it;
-        std::string why;
-        if (!migrateToCurrent(s, data, why)) {
-            LOG_WARN("Scene", "%s (\"%s\") cannot be read here: %s — kept, and saved "
-                     "back unchanged", s.name.c_str(), s.key.c_str(), why.c_str());
-            keep(s.key, *it);
-            continue;
-        }
-        tolerant(s.key.c_str(), [&] { s.load(e, data, ctx); });
-    }
-    // Generic path: apply reflected components that resolve now; stash the
-    // rest in ReflectedPending until their kit registers the type. Kit-authored
-    // components are the LEAST trustworthy shape in the file — the engine has
-    // never seen their schema — so this one is not optional.
-    if (je.contains("reflected"))
-        tolerant("reflected", [&] { reflected::load(e, je["reflected"]); });
-    // The skin of a mesh loaded above, now that the authored Animator is read.
-    if (const PendingSkin* ps = e.try_get<PendingSkin>()) {
-        const PendingSkin skin = *ps;
-        e.remove<PendingSkin>();
-        wireSkin(e, skin.skeleton, skin.clips,
-                 ctx.sceneAssets ? ctx.sceneAssets->bindClip : nullptr);
-    }
+        if (!isEntityField(it.key()) && !reg.byKey(it.key()))
+            loadUnknownJson(e, it.key(), it.value());
+    for (const ComponentSchema& s : reg.all())
+        if (auto it = je.find(s.key); it != je.end()) loadComponentJson(e, s, *it, ctx);
+    if (auto it = je.find("reflected"); it != je.end()) loadReflectedJson(e, *it);
+    finishEntity(e, ctx);
     return e;
+}
+
+// ── The same, from the cooked scene's CBOR, with no JSON tree (WO-092) ───────
+// `pos` is the entity's map in `data`, which cbor::validate has accepted. Each
+// registered component with a CBOR reader is read in place; anything else (a
+// codec of its own, an unknown key, a kit's block, a revision marker) is built
+// as a small JSON value and goes through the same stage the JSON reader uses,
+// so the two readers cannot disagree about it. Keys are taken as the tree takes
+// them: the last of a repeated key wins.
+
+struct CookedIds { uint64_t fileId = 0, parentId = 0; };
+
+// One walk over the entity's map. Components that read nothing but their own
+// value (`orderFree`) are loaded as their keys come; the rest wait and load in
+// registry order, as the JSON reader loads everything. Returns false, having
+// created what it created, if the bytes are not what the cook writes (a failed
+// read, or a key that repeats): the caller then rolls the load back and reads
+// the scene through the tree, which keeps nlohmann's rules exactly.
+inline bool createEntityCbor(flecs::world& w, const uint8_t* data, std::size_t size,
+                             std::size_t pos, SerdeContext& ctx, IdPolicy policy,
+                             flecs::entity& out, CookedIds* ids = nullptr) {
+    const SchemaRegistry& reg = schemasOf(ctx);
+    const auto& schemas = reg.all();
+    static thread_local std::vector<std::size_t> later;
+    static thread_local std::vector<uint8_t> seen;
+    later.assign(schemas.size(), SIZE_MAX);
+    seen.assign(schemas.size(), 0);
+    std::size_t idAt = SIZE_MAX, parentAt = SIZE_MAX, reflectedAt = SIZE_MAX;
+    std::vector<std::pair<std::string_view, std::size_t>> unknown;
+
+    flecs::entity e = w.entity();   // its id is resolved after the walk
+    out = e;
+    const bool ownRefs = beginEntityRefs(ctx);
+    struct EndRefs { SerdeContext& c; flecs::world w; bool own;
+                     ~EndRefs() { endEntityRefs(c, w, own); } } endRefs{ctx, w, ownRefs};
+
+    cbor::Reader r(data, size);
+    r.seek(pos);
+    cbor::Item obj;
+    if (!r.head(obj) || obj.kind != cbor::Kind::Map) return false;
+    for (uint64_t n = 0; n < obj.count; ++n) {
+        cbor::Item key;
+        if (!r.head(key) || key.kind != cbor::Kind::Text) return false;
+        const std::size_t vpos = r.pos();
+        auto once = [](std::size_t& slot, std::size_t v) {
+            if (slot != SIZE_MAX) return false;
+            slot = v;
+            return true;
+        };
+        if (key.text == "id")             { if (!once(idAt, vpos)) return false; }
+        else if (key.text == "parentId")  { if (!once(parentAt, vpos)) return false; }
+        else if (key.text == "reflected") { if (!once(reflectedAt, vpos)) return false; }
+        else {
+            std::size_t k = 0;
+            while (k < schemas.size() && key.text != schemas[k].key) ++k;
+            if (k == schemas.size()) {
+                for (const auto& u : unknown) if (u.first == key.text) return false;
+                unknown.push_back({key.text, vpos});
+            } else {
+                if (seen[k]++) return false;
+                const ComponentSchema& s = schemas[k];
+                bool done = false;
+                std::size_t end = SIZE_MAX;
+                if (s.orderFree && s.loadCbor && s.revision == 0)
+                    tolerantLoad(s.key.c_str(), [&] {
+                        done = true;   // a throw is a load that reported and skipped
+                        done = s.loadCbor(e, data, size, vpos, ctx, &end);
+                    });
+                if (!done) later[k] = vpos;
+                else if (end != SIZE_MAX) { r.seek(end); continue; }
+            }
+        }
+        r.seek(vpos);
+        if (!r.skip()) return false;
+    }
+    if (r.failed()) return false;
+
+    if (ids) {
+        ids->fileId   = idAt == SIZE_MAX ? 0 : u64From(CborValue(data, size, idAt));
+        ids->parentId = parentAt == SIZE_MAX ? 0 : u64From(CborValue(data, size, parentAt));
+    }
+    beginEntity(w, idAt == SIZE_MAX ? 0 : idFrom(CborValue(data, size, idAt)), ctx, policy, e);
+    // In the tree's order (sorted by key), as the JSON reader keeps them.
+    std::sort(unknown.begin(), unknown.end());
+    for (const auto& u : unknown)
+        loadUnknownJson(e, std::string(u.first), jsonAt(data, size, u.second));
+    for (std::size_t k = 0; k < schemas.size(); ++k) {
+        if (later[k] == SIZE_MAX) continue;
+        const ComponentSchema& s = schemas[k];
+        bool done = false;
+        if (s.loadCbor && s.revision == 0)
+            tolerantLoad(s.key.c_str(), [&] { done = true; done = s.loadCbor(e, data, size, later[k], ctx, nullptr); });
+        if (!done) loadComponentJson(e, s, jsonAt(data, size, later[k]), ctx);
+    }
+    if (reflectedAt != SIZE_MAX) loadReflectedJson(e, jsonAt(data, size, reflectedAt));
+    finishEntity(e, ctx);
+    return true;
 }
 
 } // namespace EntitySerde

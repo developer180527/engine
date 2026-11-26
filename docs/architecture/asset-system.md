@@ -277,10 +277,9 @@ does not know (kept and saved back, DR-0034).
 **Formats 1–3** were a fixed 256-byte record per entity with slots for nine components,
 read with a `memcpy`. They are refused at load ("re-cook the scene"). Measured on 50 000
 entities sharing one mesh (`tests/scene_load_bench.cpp`, Noop backend, M-series Mac,
-2026-11-26): format 3 loaded in 32 ms, format 4 loads in 131 ms (56 ms of it decoding the
-CBOR into JSON), and its file is 28% smaller. The difference is the price of one reader;
-a schema-driven binary encoding read without the JSON tree is the way back if a level's
-load time needs it.
+2026-11-26): format 3 loaded in 32 ms; format 4 through a JSON tree in 131 ms; read in
+place, with no tree (WO-092), in 50 ms. Its file is 28% smaller. What remains of the gap
+is walking a self-describing format where format 3 copied fixed records.
 
 **Files**: `modules/assetlib/include/assetlib/scene_asset.h`, `modules/assetlib/src/formats/scene_asset.cpp`,
 `src/assets/cooked_scene.h`

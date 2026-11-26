@@ -36,6 +36,7 @@
 #include <nlohmann/json.hpp>
 
 #include "assets/asset_ref.h"
+#include "assets/cbor_reader.h"
 #include "core/json_read.h"
 #include "core/logger.h"
 
@@ -88,6 +89,21 @@ struct ComponentSchema {
     // on data it cannot read at all; the caller skips the component and says so.
     std::function<void(flecs::entity, const nlohmann::json& in, SerdeContext&)> load;
     std::function<void(flecs::entity)> remove;
+
+    // The same read, straight from the cooked scene's CBOR at `pos` (a map),
+    // with no JSON tree built (WO-092). Set for field-by-field schemas and for
+    // the few codecs that have one. Returns false, having done nothing, when the
+    // data needs the JSON path: not a map, or carrying a revision marker. The
+    // caller then builds the value as JSON and calls `load`.
+    // On success `*end` is where the value ended, so the caller need not walk it
+    // again.
+    std::function<bool(flecs::entity, const uint8_t* data, std::size_t size, std::size_t pos,
+                       SerdeContext&, std::size_t* end)> loadCbor;
+    // Reads nothing but its own value, so it may load in whatever order the
+    // keys come (the CBOR reader does it as it meets them). False for a codec
+    // that depends on another component being loaded first (the LOD chain on
+    // its mesh) or on the entity's later ones (a mesh's skin on its Animator).
+    bool orderFree = false;
 
     // Field-by-field schemas only (empty for a codec of its own): every field
     // with its type, and the saved form of a default-constructed component,
@@ -171,6 +187,121 @@ inline bool migrateToCurrent(const ComponentSchema& schema, nlohmann::json& data
     return true;
 }
 
+// ── One value, read the same from JSON or from CBOR ─────────────────────────
+// Every field reader below is written ONCE, against this small interface, and
+// instantiated for both: the editor reads a .scene as JSON, the shipped player
+// reads the cooked scene's CBOR in place (WO-092). Two readers written apart
+// would drift; one reader over two adapters cannot. The CBOR adapter gives the
+// answers nlohmann's tree gives for the same bytes (cbor_reader.h), and
+// fuzz_scene_reader_parity_test checks the two against each other.
+struct JsonValue {
+    const nlohmann::json* j;
+    bool isNumber()   const { return j->is_number(); }
+    bool isUnsigned() const { return j->is_number_unsigned(); }
+    bool isInteger()  const { return j->is_number_integer(); }
+    template <class N> N number() const { return j->template get<N>(); }
+    bool isBool()     const { return j->is_boolean(); }
+    bool asBool()     const { return j->template get<bool>(); }
+    bool isString()   const { return j->is_string(); }
+    std::string asString() const { return j->template get<std::string>(); }
+    bool isArray()    const { return j->is_array(); }
+    bool isObject()   const { return j->is_object(); }
+    std::size_t size() const { return j->size(); }
+    JsonValue at(std::size_t k) const { return { &(*j)[k] }; }
+    // The first n elements, in order.
+    template <class F> void elements(std::size_t n, F&& fn) const {
+        for (std::size_t k = 0; k < n; ++k) fn(k, JsonValue{&(*j)[k]});
+    }
+    bool find(const char* key, JsonValue& out) const {
+        if (!j->is_object()) return false;
+        auto it = j->find(key);
+        if (it == j->end()) return false;
+        out = { &*it };
+        return true;
+    }
+};
+
+struct CborValue {
+    const uint8_t* data = nullptr;
+    std::size_t    len = 0;
+    std::size_t    body = 0;    // just past this item's head
+    cbor::Item     item;
+    bool           ok = false;
+    // Where the value ends, once known: at once for a scalar, and for a
+    // container after elements() has walked all of it.
+    mutable std::size_t endPos = SIZE_MAX;
+
+    CborValue() = default;
+    CborValue(const uint8_t* d, std::size_t n, std::size_t pos) : data(d), len(n) {
+        cbor::Reader r(d, n);
+        r.seek(pos);
+        ok = r.head(item);
+        body = r.pos();
+        if (ok && item.kind != cbor::Kind::Array && item.kind != cbor::Kind::Map) endPos = body;
+    }
+    bool isNumber()   const { return ok && cbor::isNumber(item); }
+    bool isUnsigned() const { return ok && item.kind == cbor::Kind::UInt; }
+    bool isInteger()  const { return ok && (item.kind == cbor::Kind::UInt || item.kind == cbor::Kind::NegInt); }
+    template <class N> N number() const { return cbor::numberAs<N>(item); }
+    bool isBool()     const { return ok && item.kind == cbor::Kind::Bool; }
+    bool asBool()     const { return item.b; }
+    bool isString()   const { return ok && item.kind == cbor::Kind::Text; }
+    std::string asString() const { return std::string(item.text); }
+    bool isArray()    const { return ok && item.kind == cbor::Kind::Array; }
+    bool isObject()   const { return ok && item.kind == cbor::Kind::Map; }
+    std::size_t size() const { return (std::size_t)item.count; }
+    CborValue at(std::size_t k) const {
+        cbor::Reader r(data, len);
+        r.seek(body);
+        for (std::size_t n = 0; n < k; ++n) r.skip();
+        return CborValue(data, len, r.pos());
+    }
+    // The first n elements, in order: one walk, not one per element.
+    template <class F> void elements(std::size_t n, F&& fn) const {
+        cbor::Reader r(data, len);
+        r.seek(body);
+        for (std::size_t k = 0; k < n; ++k) {
+            const std::size_t at = r.pos();
+            const CborValue e(data, len, at);
+            fn(k, e);
+            if (e.endPos != SIZE_MAX) r.seek(e.endPos);
+            else { r.seek(at); if (!r.skip()) return; }
+        }
+        if (n == item.count && item.kind == cbor::Kind::Array) endPos = r.pos();
+    }
+    // The LAST pair with this key, as nlohmann's tree keeps it.
+    bool find(const char* key, CborValue& out) const {
+        if (!isObject()) return false;
+        cbor::Reader r(data, len);
+        r.seek(body);
+        bool found = false;
+        const std::string_view want(key);
+        for (uint64_t n = 0; n < item.count; ++n) {
+            cbor::Item k;
+            if (!r.head(k)) return found;
+            const std::size_t at = r.pos();
+            if (k.text == want) { out = CborValue(data, len, at); found = true; }
+            r.seek(at);
+            if (!r.skip()) return found;
+        }
+        return found;
+    }
+};
+
+// The stable id an entity was saved with, as `je.value("id", 0)` reads it: a
+// number by nlohmann's cast, a boolean as 0 or 1, anything else none.
+template <class V>
+inline uint64_t idFrom(const V& v) {
+    if (v.isNumber()) return v.template number<uint64_t>();
+    if (v.isBool())   return v.asBool() ? 1 : 0;
+    return 0;
+}
+// An unsigned id field as jsonread::readU64 reads it (parentId, entity fields).
+template <class V>
+inline uint64_t u64From(const V& v, uint64_t dflt = 0) {
+    return v.isInteger() ? v.template number<uint64_t>() : dflt;
+}
+
 // ── Field-by-field schemas ──────────────────────────────────────────────────
 // Reads are tolerant per field, the rule every scene reader here follows: a
 // field that is missing, of the wrong type, out of range or not finite keeps the
@@ -178,6 +309,9 @@ inline bool migrateToCurrent(const ComponentSchema& schema, nlohmann::json& data
 // not an object at all is refused, so the component is skipped as before.
 template <class T>
 class SchemaBuilder {
+    // A field's reader: given the value saved under its key (present), update t.
+    // A generic lambda, instantiated for JsonValue and for CborValue.
+#define ENGINE_FIELD_READ [key, m](T& t, const auto& v, flecs::entity owner, SerdeContext& ctx)
 public:
     SchemaBuilder(std::string name, std::string key) {
         m_s.name = std::move(name);
@@ -190,17 +324,30 @@ public:
     SchemaBuilder& boolean(const char* key, bool T::*m) {
         return add(key, FieldType::Bool, 1,
             [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = t.*m; },
-            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
-                t.*m = jsonread::readBool(j, key, t.*m); });
+            ENGINE_FIELD_READ { (void)owner; (void)ctx; if (v.isBool()) t.*m = v.asBool(); });
     }
     // Any integer type, read only when the saved value is an integer that fits.
+    // nlohmann keeps a non-negative integer as unsigned and a negative one as
+    // signed, so both are read, and the value is range-checked against I.
     template <class I>
     SchemaBuilder& integer(const char* key, I T::*m) {
         static_assert(std::is_integral_v<I> && !std::is_same_v<I, bool>);
         return add(key, integerType<I>(), 1,
             [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = t.*m; },
-            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
-                readInteger(j, key, t.*m); });
+            ENGINE_FIELD_READ {
+                (void)owner; (void)ctx;
+                if (v.isUnsigned()) {
+                    const uint64_t u = v.template number<uint64_t>();
+                    if (u <= (uint64_t)std::numeric_limits<I>::max()) t.*m = (I)u;
+                } else if (v.isInteger()) {
+                    const int64_t s = v.template number<int64_t>();
+                    if constexpr (std::is_signed_v<I>) {
+                        if (s >= (int64_t)std::numeric_limits<I>::min()
+                            && s <= (int64_t)std::numeric_limits<I>::max()) t.*m = (I)s;
+                    } else {
+                        if (s >= 0 && (uint64_t)s <= (uint64_t)std::numeric_limits<I>::max()) t.*m = (I)s;
+                    }
+                } });
     }
     SchemaBuilder& u8(const char* key, uint8_t T::*m) { return integer(key, m); }
     // An enum saved as its integer value. A value outside the enum is kept as
@@ -210,21 +357,24 @@ public:
         static_assert(std::is_enum_v<E>);
         return add(key, FieldType::I32, 1,
             [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = (int)(t.*m); },
-            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
-                if (j.contains(key) && j[key].is_number()) t.*m = (E)j[key].template get<int>(); });
+            ENGINE_FIELD_READ { (void)owner; (void)ctx; if (v.isNumber()) t.*m = (E)v.template number<int>(); });
     }
     SchemaBuilder& f32(const char* key, float T::*m) {
         return add(key, FieldType::F32, 1,
             [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = t.*m; },
-            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
-                t.*m = jsonread::readFloat(j, key, t.*m); });
+            ENGINE_FIELD_READ {
+                (void)owner; (void)ctx;
+                if (!v.isNumber()) return;
+                const float f = v.template number<float>();
+                if (std::isfinite(f)) t.*m = f; });
     }
     SchemaBuilder& f64(const char* key, double T::*m) {
         return add(key, FieldType::F64, 1,
             [key, m](const T& t, nlohmann::json& j, flecs::entity) { j[key] = t.*m; },
-            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
-                if (!j.contains(key) || !j[key].is_number()) return;
-                const double d = j[key].template get<double>();
+            ENGINE_FIELD_READ {
+                (void)owner; (void)ctx;
+                if (!v.isNumber()) return;
+                const double d = v.template number<double>();
                 if (std::isfinite(d)) t.*m = d; });
     }
     // Vectors, a quaternion and a matrix: N floats saved as an array, from a
@@ -244,8 +394,7 @@ public:
         return add(key, FieldType::String, 1,
             [key, m, omitEmpty](const T& t, nlohmann::json& j, flecs::entity) {
                 if (!omitEmpty || !(t.*m).empty()) j[key] = t.*m; },
-            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
-                t.*m = jsonread::readString(j, key, t.*m); });
+            ENGINE_FIELD_READ { (void)owner; (void)ctx; if (v.isString()) t.*m = v.asString(); });
     }
     // Another entity. In memory a flecs id; saved as that entity's stable id (0:
     // none), and set on load once the entity it names exists. A reference to an
@@ -255,9 +404,9 @@ public:
             [key, m](const T& t, nlohmann::json& j, flecs::entity owner) {
                 j[key] = t.*m && owner.is_valid()
                        ? stableIdOf(flecs::entity(owner.world(), t.*m)) : (uint64_t)0; },
-            [key, m](T& t, const nlohmann::json& j, flecs::entity owner, SerdeContext& ctx) {
+            ENGINE_FIELD_READ {
                 t.*m = 0;   // never a flecs id from another world or session
-                const uint64_t id = jsonread::readU64(j, key, 0);
+                const uint64_t id = u64From(v);
                 if (!id) return;
                 deferEntityRef(ctx, owner, id, [m](flecs::entity o, flecs::entity target) {
                     if (T* c = o.try_get_mut<T>()) { c->*m = target.id(); o.modified<T>(); }
@@ -272,11 +421,12 @@ public:
                 nlohmann::json a = nlohmann::json::object();
                 assetref::toJson(t.*m, a);
                 j[key] = std::move(a); },
-            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
-                if (!j.contains(key) || !j[key].is_object()) return;
-                const nlohmann::json& a = j[key];
-                (t.*m).uuid = jsonread::readString(a, "asset");
-                (t.*m).path = jsonread::readString(a, "path"); });
+            ENGINE_FIELD_READ {
+                (void)owner; (void)ctx;
+                if (!v.isObject()) return;
+                std::decay_t<decltype(v)> s;
+                (t.*m).uuid = v.find("asset", s) && s.isString() ? s.asString() : std::string{};
+                (t.*m).path = v.find("path", s)  && s.isString() ? s.asString() : std::string{}; });
     }
 
     // Saved only while `pred` holds (a script with no path is not saved).
@@ -315,22 +465,70 @@ public:
             T t = *base;
             const bool ownRefs = beginEntityRefs(ctx);   // see entity()
             try {
-                for (const Field& f : *fields) f.load(t, j, e, ctx);
+                for (const Field& f : *fields) {
+                    auto it = j.find(f.key);
+                    if (it != j.end()) f.loadJson(t, JsonValue{&*it}, e, ctx);
+                }
                 e.set<T>(std::move(t));
             } catch (...) { endEntityRefs(ctx, e.world(), ownRefs); throw; }
             endEntityRefs(ctx, e.world(), ownRefs);
         };
+        m_s.loadCbor = [fields, base](flecs::entity e, const uint8_t* data, std::size_t size,
+                                      std::size_t pos, SerdeContext& ctx, std::size_t* end) {
+            const CborValue obj(data, size, pos);
+            if (!obj.isObject()) return false;
+            // One walk: each field read as its key comes. A repeated key, or a
+            // revision marker, hands the whole component to the JSON path (the
+            // tree keeps a repeated key's last value; a marker means migrate),
+            // and nothing read here is kept: `t` is set only at the end.
+            const std::size_t nf = fields->size();
+            uint64_t seenBits = 0;
+            T t = *base;
+            const bool ownRefs = beginEntityRefs(ctx);
+            struct EndRefs { SerdeContext& c; flecs::world w; bool own;
+                             ~EndRefs() { endEntityRefs(c, w, own); } } endRefs{ctx, e.world(), ownRefs};
+            cbor::Reader r(data, size);
+            r.seek(obj.body);
+            for (uint64_t n = 0; n < obj.item.count; ++n) {
+                cbor::Item key;
+                if (!r.head(key) || key.kind != cbor::Kind::Text) return false;
+                const std::size_t vpos = r.pos();
+                if (key.text == kRevisionKey) return false;
+                std::size_t k = 0;
+                while (k < nf && key.text != (*fields)[k].key) ++k;
+                if (k < nf) {
+                    if (k < 64) {
+                        if (seenBits & (1ull << k)) return false;
+                        seenBits |= 1ull << k;
+                    }
+                    const CborValue v(data, size, vpos);
+                    (*fields)[k].loadCbor(t, v, e, ctx);
+                    if (v.endPos != SIZE_MAX) { r.seek(v.endPos); continue; }
+                }
+                r.seek(vpos);
+                if (!r.skip()) return false;
+            }
+            if (r.failed()) return false;
+            e.set<T>(std::move(t));
+            if (end) *end = r.pos();
+            return true;
+        };
+        m_s.orderFree = true;
         return std::move(m_s);
     }
 
 private:
     using SaveFn = std::function<void(const T&, nlohmann::json&, flecs::entity owner)>;
-    using LoadFn = std::function<void(T&, const nlohmann::json&, flecs::entity owner, SerdeContext&)>;
-    struct Field { SaveFn save; LoadFn load; };
+    using JsonFn = std::function<void(T&, const JsonValue&, flecs::entity owner, SerdeContext&)>;
+    using CborFn = std::function<void(T&, const CborValue&, flecs::entity owner, SerdeContext&)>;
+    struct Field { std::string key; SaveFn save; JsonFn loadJson; CborFn loadCbor; };
 
-    SchemaBuilder& add(const char* key, FieldType type, uint32_t count, SaveFn save, LoadFn load) {
+    template <class Read>
+    SchemaBuilder& add(const char* key, FieldType type, uint32_t count, SaveFn save, Read read) {
         m_s.fields.push_back({key, type, count});
-        m_fields.push_back({std::move(save), std::move(load)});
+        m_fields.push_back({key, std::move(save),
+            [read](T& t, const JsonValue& v, flecs::entity o, SerdeContext& c) { read(t, v, o, c); },
+            [read](T& t, const CborValue& v, flecs::entity o, SerdeContext& c) { read(t, v, o, c); }});
         return *this;
     }
 
@@ -344,9 +542,20 @@ private:
                 nlohmann::json a = nlohmann::json::array();
                 for (std::size_t i = 0; i < N; ++i) a.push_back(f[i]);
                 j[key] = std::move(a); },
-            [key, m](T& t, const nlohmann::json& j, flecs::entity, SerdeContext&) {
-                jsonread::readFloats(j, key, reinterpret_cast<float*>(&(t.*m)), (int)N); });
+            ENGINE_FIELD_READ {
+                // As jsonread::readFloats: an array; as many as it has, up to N;
+                // each a finite number, or that element keeps its default.
+                (void)owner; (void)ctx;
+                if (!v.isArray()) return;
+                float* out = reinterpret_cast<float*>(&(t.*m));
+                const std::size_t n = v.size() < N ? v.size() : N;
+                v.elements(n, [out](std::size_t i, const auto& e) {
+                    if (!e.isNumber()) return;
+                    const float f = e.template number<float>();
+                    if (std::isfinite(f)) out[i] = f;
+                }); });
     }
+#undef ENGINE_FIELD_READ
 
     template <class I>
     static constexpr FieldType integerType() {
@@ -358,26 +567,6 @@ private:
         else if constexpr (std::is_same_v<I, uint32_t>) return FieldType::U32;
         else if constexpr (std::is_signed_v<I>)         return FieldType::I64;
         else                                            return FieldType::U64;
-    }
-
-    // nlohmann keeps a parsed non-negative integer as unsigned and a negative one
-    // as signed, so both are read, and the value is range-checked against I.
-    template <class I>
-    static void readInteger(const nlohmann::json& j, const char* key, I& out) {
-        if (!j.is_object() || !j.contains(key)) return;
-        const nlohmann::json& v = j[key];
-        if (v.is_number_unsigned()) {
-            const uint64_t u = v.template get<uint64_t>();
-            if (u <= (uint64_t)std::numeric_limits<I>::max()) out = (I)u;
-        } else if (v.is_number_integer()) {
-            const int64_t s = v.template get<int64_t>();
-            if constexpr (std::is_signed_v<I>) {
-                if (s >= (int64_t)std::numeric_limits<I>::min()
-                    && s <= (int64_t)std::numeric_limits<I>::max()) out = (I)s;
-            } else {
-                if (s >= 0 && (uint64_t)s <= (uint64_t)std::numeric_limits<I>::max()) out = (I)s;
-            }
-        }
     }
 
     static constexpr uint32_t revisionOf() {

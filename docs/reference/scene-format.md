@@ -535,9 +535,10 @@ For completeness, since a tool may want to read the output rather than the input
 currently **version 4**, a 32-byte header (magic, version, payload encoding,
 payload size) and a payload. The payload is the scene itself, as above, encoded as
 CBOR, with each mesh reference's `cookedPath` healed against the asset database.
-`assetlib::loadScene` reads the container; `src/assets/cooked_scene.h` decodes the
-payload (refusing CBOR nested deeper than 64 levels) and lists the meshes a scene
-names, which is what the packager ships.
+`assetlib::loadScene` reads the container; the player reads the payload in place
+(`src/assets/cbor_reader.h`), and `src/assets/cooked_scene.h` decodes it into JSON
+(refusing CBOR nested deeper than 64 levels) for the packager, which ships the meshes
+a scene names, and for a payload the in-place reader does not take.
 
 Version 3 and earlier were a fixed 256-byte record per entity with slots for nine
 components; colour grading, kits' components and unknown ones did not survive the

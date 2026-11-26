@@ -14,6 +14,7 @@ tests:
   - tests/scene_schema_test.cpp       # the format byte for byte; unknown kept; migrations; field types (WO-071)
   - tests/scene_extensions_test.cpp   # a project's required extensions refuse Play by name (WO-071)
   - tests/cooked_scene_test.cpp       # the shipped player gets every component (WO-091)
+  - tests/fuzz_scene_reader_parity_test.cpp  # the JSON and CBOR readers agree (WO-092)
 ---
 # Scene
 
@@ -99,6 +100,16 @@ way. Scene save, the Play snapshot and the undo stack all walk the registry.
   format. A cooked mesh's skin is wired at the end of its entity (`PendingSkin`,
   `wireSkin`), after the authored Animator is read; the editor's import callback
   uses the same function.
+- **Read in place** (WO-092). The player does not build a JSON tree from the
+  cooked scene: `createEntityCbor` walks each entity's CBOR once, loading a
+  component that reads only its own value (`orderFree`) as its key comes and the
+  rest in registry order. Every field reader is written once over a value
+  interface (`JsonValue`, `CborValue` in `component_schema.h`), so the editor's
+  JSON reader and the player's CBOR reader share them; what has no in-place reader
+  is built as a small JSON value and goes through the JSON stage. Bytes the cook
+  does not write (a repeated key, anything outside the subset nlohmann writes)
+  make the load roll back and read the scene through the tree.
+  `fuzz_scene_reader_parity_test` holds the two readers to the same result.
 - **Per-field tolerance.** A wrong-typed field now keeps its default and the
   rest of the component loads; before, a wrong-typed bool or enum threw and the
   whole component was skipped. Data that is not an object is still skipped.
