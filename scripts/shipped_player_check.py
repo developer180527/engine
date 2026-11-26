@@ -119,8 +119,13 @@ def package(build: Path, work: Path, name: str, providers: dict | None) -> tuple
     r = run([build / f"engine_build{EXE}", proj, "--dist", dist, "--strict"])
     took = time.monotonic() - t0
     if r.returncode != 0:
-        tail = "\n".join((r.stdout + r.stderr).splitlines()[-25:])
-        return dist, took, [f"{name}: engine_build failed (exit {r.returncode}):\n{tail}"]
+        out = (r.stdout + r.stderr).splitlines()
+        # The compiler's own lines first: a build failure's cause is usually far
+        # above the last lines, which only say that the build failed.
+        errs = [l for l in out if re.search(r"(error|Error|FAILED:|undefined reference|fatal)", l)][:40]
+        tail = "\n".join(out[-25:])
+        detail = ("\n".join(errs) + "\n  ...\n" if errs else "") + tail
+        return dist, took, [f"{name}: engine_build failed (exit {r.returncode}):\n{detail}"]
     return dist, took, []
 
 
