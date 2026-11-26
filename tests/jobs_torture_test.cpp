@@ -36,6 +36,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <memory>
 #include <vector>
 
 using Clock = std::chrono::steady_clock;
@@ -214,21 +215,44 @@ static void caseChurn() {
 }
 
 // ── latency ─────────────────────────────────────────────────────────────────
+// What this guards is a LOST WAKE-UP: workers park with no timeout, so a job
+// whose submit failed to wake one would never start. Each wait is bounded, and
+// a job not started within kLost is reported by name instead of hanging the run.
+// The median is held too, which catches a wake rule that leaves jobs for a
+// spinning worker to find. The tail (p99, max) is printed, not judged: on a
+// shared CI machine it measures the OS scheduler (a bare condition variable
+// shows the same 20-100 ms spikes on a macOS runner), and the home server, a
+// quiet and fixed machine, is where a tail regression is measured.
 static void caseLatency() {
     jobs::init();
+    constexpr double kLost = 2000000.0;      // 2 s, in µs: not slow, lost
+    constexpr double kMedian = 5000.0;       // 5 ms: CI's median is ~70 µs
     const int N = g_quick ? 300 : 2000;
     std::vector<double> us;
+    int lost = 0;
     for (int i = 0; i < N; ++i) {
         std::this_thread::sleep_for(std::chrono::microseconds(500));   // the pool parks
-        std::atomic<int64_t> startedAt{0};
+        // Shared, so a job that starts after the test gave up on it writes to
+        // memory that is still there.
+        auto startedAt = std::make_shared<std::atomic<int64_t>>(0);
         const auto t0 = Clock::now();
-        jobs::run("l.run", [&startedAt] { startedAt.store(Clock::now().time_since_epoch().count()); });
-        while (startedAt.load() == 0) {}   // not wait(): that would run it here
-        us.push_back(std::chrono::duration<double, std::micro>(Clock::time_point(Clock::duration(startedAt.load())) - t0).count());
+        jobs::run("l.run", [startedAt] { startedAt->store(Clock::now().time_since_epoch().count()); });
+        // Not wait(): that would run it here. Bounded, so a lost wake-up is a
+        // named failure rather than a hang.
+        const auto deadline = t0 + std::chrono::microseconds((int64_t)kLost);
+        while (startedAt->load() == 0 && Clock::now() < deadline) {}
+        if (startedAt->load() == 0) {
+            us.push_back(kLost);
+            if (++lost == 3) break;   // the defect is shown; do not spend 2 s on each of the rest
+            continue;
+        }
+        us.push_back(std::chrono::duration<double, std::micro>(Clock::time_point(Clock::duration(startedAt->load())) - t0).count());
     }
     std::sort(us.begin(), us.end());
-    CHECK(us.back() < 50000.0, "latency: a job to a parked pool starts after p50 %.1f µs, p99 %.1f µs, max %.1f µs",
-          us[us.size() / 2], us[us.size() * 99 / 100], us.back());
+    const double p50 = us[us.size() / 2], p99 = us[us.size() * 99 / 100], mx = us.back();
+    CHECK(lost == 0, "latency: every job submitted to a parked pool started within 2 s (%d lost wake-ups in %zu)", lost, us.size());
+    CHECK(p50 < kMedian, "latency: median start %.1f µs, under 5 ms (p99 %.1f µs, max %.1f µs: the OS's, not judged)",
+          p50, p99, mx);
     jobs::shutdown();
 }
 

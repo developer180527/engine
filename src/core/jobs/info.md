@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-26
+verified: 2026-11-27
 covers:
   - src/core/jobs/
 tests:
@@ -144,6 +144,12 @@ bare `std::condition_variable` with no job system shows the same tail (p99 100 t
 230 µs, worst 1.5 to 5.9 ms). On Linux arm64: p50 24 µs, p99 57 µs, worst 0.8 ms.
 The defences are the idle spin and `frameBegin`, which keep workers awake across
 a frame instead of waking them on its critical path.
+So the torture test's `latency` case judges what is the scheduler's: no lost
+wake-up (every job starts within 2 s; a dropped notify fails it by name in
+about 6 s, mutation-checked) and a median under 5 ms. It prints the tail but does
+not judge it: on a GitHub macOS runner one run showed p99 23 ms and worst 97 ms
+(2026-11-27), which is the shared VM's scheduler. A tail regression is measured on
+the home server.
 
 **Known limits**
 - `findTask` checks every queue before every steal attempt (`anyQueued`): reads
