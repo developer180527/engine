@@ -171,7 +171,16 @@ def main() -> int:
         if not lock_ok:
             failures.append(f"{name}: providers.lock.json names {names}, expected {want}")
         player = dist / f"engine_player{EXE}"
+        # MSVC's symbols are in the link map beside the shipping tree's player,
+        # which a game's dist/ never carries. Put it beside the packaged player
+        # for the check only (this package's build is the tree's latest).
+        ship_map = Path(__file__).resolve().parent.parent / "build-ship" / "engine_player.map"
+        dist_map = player.with_suffix(".map")
+        if os.name == "nt" and ship_map.exists():
+            shutil.copyfile(ship_map, dist_map)
         sym = check_symbols(player, lock)
+        if os.name == "nt" and dist_map.exists():
+            dist_map.unlink()
         failures += [f"{name}: {p}" for p in sym]
 
         if name == "headless":

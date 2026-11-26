@@ -702,6 +702,12 @@ endif()
 # ENABLE_EXPORTS: project kits resolve engine symbols from this executable.
 add_executable(engine_player tools/engine_player.cpp)
 target_link_libraries(engine_player PRIVATE engine_capi)   # WO-070: runs on the C API
+# MSVC keeps symbols in the PDB, not the .exe, so the symbol checks
+# (player_has_no_cook_stack, shipped_player_check.py) read the link map. Asked for
+# here, not only in tests/, so a shipping tree's player has one too (WO-088).
+if(MSVC)
+    target_link_options(engine_player PRIVATE /MAP)
+endif()
 set_target_properties(engine_player PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
     ENABLE_EXPORTS ON
