@@ -121,6 +121,12 @@ one list is `src/plugins/stock_providers.cpp`. `project.json` chooses physics,
 scripting, audio and the renderer by name, and every kind has a `none` provider.
 An unknown name or kind is refused at startup, by name. A host may inject its
 own provider object. `engine_player --list-providers` prints the list (WO-076).
+Each provider has a manifest beside its source, and CMake builds it only where it
+can run (WO-085). `project.json` can choose per platform and flavour, and one
+resolver (`src/project/provider_resolve.h`) checks the choice in
+`engine_build --platform` before anything is cooked or compiled, and at
+development startup. A shipped player is built with exactly the chosen
+providers and resolves nothing (WO-086).
 
 **Planned** ([provider-selection.md](docs/plans/provider-selection.md), DR-0037):
 - **Declared once.** Each provider has a manifest beside its source: kind, name,

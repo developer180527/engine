@@ -48,7 +48,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-062](WO-062-bgfx-sized-for-what-the-host-draws.md) | bgfx is sized for what the host draws, not for its defaults (about 49 MB down to about 21 MB) | Renderer & RHI | S | **ready** | — |
 | [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
 | [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
-| [WO-086](WO-086-provider-resolver-and-build-time-refusal.md) | The provider resolver — per-target choice in project.json, refused by name at engine_build | Providers & modules | M | **ready** | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -71,8 +70,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-083](WO-083-farm-engine-benchmarks.md) | Engine benchmarks and profiling on the farm — headless workloads through the C API, instructions retired, flame graphs | Process & context | L | blocked by WO-082 | — |
 | [WO-084](WO-084-farm-soak-fuzz-determinism.md) | Days-long soak, fuzzing at scale and the determinism lane on the farm | Process & context | L | blocked by WO-082 | — |
 | [WO-087](WO-087-providers-kept-apart.md) | Providers kept apart — engine services between them, one create context, no globals | Providers & modules | S | **ready** | — |
-| [WO-088](WO-088-test-the-shipped-player.md) | Test what ships — the static shipped player built and run in CI, per platform and selection | Providers & modules | M | blocked by WO-086 | — |
-| [WO-089](WO-089-rhi-backend-order-and-capabilities.md) | librhi's backend order from project.json, and device capabilities refused by name | Renderer & RHI | M | blocked by WO-086 | — |
+| [WO-088](WO-088-test-the-shipped-player.md) | Test what ships — the static shipped player built and run in CI, per platform and selection | Providers & modules | M | **ready** | — |
+| [WO-089](WO-089-rhi-backend-order-and-capabilities.md) | librhi's backend order from project.json, and device capabilities refused by name | Renderer & RHI | M | **ready** | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 
@@ -99,6 +98,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-086](WO-086-provider-resolver-and-build-time-refusal.md) | The provider resolver — per-target choice in project.json, refused by name at engine_build | 2026-11-26 | tests/provider_resolve_test.cpp (one case per check, web and server targets), providers_test 3b, ctest engine_build_* (explain, refusal for web, a web project, an unknown platform), a shipping tree built with a fixed selection: --list-providers showed only the four chosen, nm found no provsel, Jolt or miniaudio symbols |
 | [WO-085](WO-085-provider-manifests.md) | Provider manifests and platform tables — each provider declared once, built only where it can run | 2026-11-26 | ctest provider_manifest_* (12 configure cases, each refusal by name), providers_test 1b (manifests and registry agree), configure prints built/not built per provider and target |
 | [WO-076](WO-076-provider-registry.md) | A provider registry — providers chosen by name from one list, an unknown name refused | 2026-11-26 | tests/providers_test.cpp (every kind refused by name, none per kind, overrides, injection), eng_step_test (EngEngineDesc.providers refused from the registry), ctest player_lists_providers |
 | [WO-078](WO-078-the-engines-own-job-scheduler.md) | The engine's own job scheduler — work stealing, priorities, an I/O lane, scratch memory; measured and fuzzed | 2026-11-14 | tests/jobs_fuzz_test.cpp (60 seeds in the unit lane, 1 500 passed; both backends; ThreadSanitizer clean on 190 seeds; two planted bugs caught); tests/jobs_bench.cpp (a paced frame 0.54 ms against enkiTS's 2.03 ms at half the CPU, numbers in src/core/jobs/info.md); unit, audit and docs lanes on the native backend |

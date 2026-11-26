@@ -357,6 +357,11 @@ it.
 `engine_build` — the editor's fifth job, **export** — is the second Add-on, and
 it is where the protocol stopped being a guess.
 
+(Since WO-086 it also resolves the project's provider choice for the target
+before cooking anything, `--platform` and `--flavour`, and refuses an impossible
+choice by name; `--explain-providers [--json]` prints the choice and why each
+other provider was not used. See `docs/plans/provider-selection.md` §5.)
+
 **It had a worse version of the probe's defect.** Twelve warning sites, each
 describing a defect in the *shipped game*: an unreadable cooked scene whose every
 object is missing, a scene referencing a mesh that is not there, a mesh

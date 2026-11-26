@@ -76,7 +76,22 @@ in `sdk` is found. Configure prints one line per provider and target:
 ```
 
 **Not built is normal. A project choosing one that is not built is the error.**
-Today that error comes at startup (WO-076). After WO-086 it comes from `engine_build`.
+`engine_build --platform` refuses it before anything is compiled, and a
+development runtime refuses it at startup (WO-086).
+
+## A game's fixed selection
+
+`engine_build` resolves the project's choice for the target, then configures the
+shipping tree with `-DENGINE_PROVIDERS_SELECTED="physics=jolt;scripting=lua;audio=miniaudio;renderer=forward-bgfx"`.
+Every kind must appear exactly once, each name must be declared, and everything
+else is "not built: this game did not choose it". The generated header then
+defines `ENGINE_PROVIDERS_FIXED 1` and `ENGINE_PROVIDERS_CHOSEN_<KIND>`, and the
+player's runtime takes that choice without resolving anything. Empty, which is
+the default in a development tree, means every provider that can be built is.
+
+The generated header also carries each manifest's lists (platforms, flavours,
+needs, requires, provides), this platform's facts and the known platform names,
+so a development runtime can resolve with the same function `engine_build` uses.
 
 ## The platform tables
 

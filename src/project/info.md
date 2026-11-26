@@ -7,6 +7,7 @@ covers:
   - src/project/
 tests:
   - tests/providers_test.cpp
+  - tests/provider_resolve_test.cpp
   - tests/stress_physics.cpp
 ---
 # Project
@@ -32,9 +33,14 @@ itself) keep working — loaders fall back, nothing migrates in place.
   prefers the last-opened project; `load(root)` is the explicit form. Opened
   at `EngineRuntime::init` or later via `openProject` (editor hub flow).
   Its `"providers"` block names one provider per kind (`physics`, `scripting`,
-  `audio`, `renderer`). Keys that are not a kind, and values that are not a
-  name, are kept in `Providers::unrecognised` so startup refuses them by name
-  instead of ignoring them (WO-076). `renderer` is written only when set.
+  `audio`, `renderer`), as a name or per target (WO-086). It is kept as written
+  (`Providers::raw`) and saved back unchanged; the runtime resolves it for the
+  machine it runs on.
+- **`provider_resolve.h/.cpp`**: `provsel::resolve`, the one function that
+  picks a provider per kind for a target (platform + flavour) or refuses by
+  name. `engine_build` runs it from the manifests in the source tree, a
+  development runtime from what CMake compiled in. Pure: no engine headers.
+  Tested by `tests/provider_resolve_test.cpp`, one case per check.
 - **`project_scaffold.h/.cpp`** — `project::create(dir, name, template)`
   generates the structure. Templates: "basic3d" (camera + sun + cube scene),
   "empty".

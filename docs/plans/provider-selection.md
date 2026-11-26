@@ -7,7 +7,9 @@ covers:
 ---
 # Provider selection — declared once, resolved before the game runs
 
-> **Status: plan, 2026-11-26.** Nothing here is built. It turns the research in
+> **Status: plan, 2026-11-26.** Built so far: the registry (WO-076), manifests and
+> platform tables (WO-085), and the resolver with `engine_build --platform` (WO-086).
+> It turns the research in
 > [`provider-selection-research.md`](provider-selection-research.md) (how Unreal,
 > Unity, Godot, O3DE, CryEngine, Bevy and the graphics libraries do it) into
 > rules and work orders. It does not change the shape of a provider's interface;

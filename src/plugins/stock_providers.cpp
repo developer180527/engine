@@ -38,11 +38,6 @@
 
 using providers::Kind;
 
-const std::vector<DeclaredProvider>& declaredProviders() {
-    static const std::vector<DeclaredProvider> list = { ENGINE_PROVIDERS_DECLARED };
-    return list;
-}
-
 bool registerStockProviders(providers::Registry& r, std::string* why) {
     EngineRuntime::registerRenderers(r);
     if (!r.claimList("stock")) return true;   // already registered into this one
@@ -71,7 +66,7 @@ bool registerStockProviders(providers::Registry& r, std::string* why) {
     ok &= r.addPlugin(Kind::Audio, "none", "no audio device",
                       [] { return std::make_shared<NullAudioPlugin>(); }, why);
 #endif
-    for (const DeclaredProvider& d : declaredProviders()) {
+    for (const providers::BuiltRow& d : providers::builtRows()) {
         Kind k;
         if (d.built || !providers::kindFromName(d.kind, k) || k == Kind::Renderer) continue;
         r.addUnavailable(k, d.name, d.whyNot);

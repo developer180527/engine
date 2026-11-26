@@ -123,7 +123,10 @@ bool EngineRuntime::openProject(const std::filesystem::path& root) {
         return false;
     }
     m_project = ProjectContext::load(root);
-    applyProviderOverrides();   // the host's choices outlive a reload (WO-076)
+    // The provider choice again, for this project; the host's overrides
+    // outlive a reload (WO-076). A refusal is kept for addProviders() to report.
+    { std::string why;
+      if (!resolveProviderChoices(why)) LOG_ERROR("Providers", "%s", why.c_str()); }
     LOG_INFO("Project", "Opened: %s", m_project.projectRoot.string().c_str());
     // The editor boots projectless — input bindings arrive WITH the project.
     m_input.loadProjectBindings(m_project.projectRoot);

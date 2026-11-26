@@ -925,19 +925,31 @@ with `cfg.autoDetectProject = false` and opens the picked project afterward.
 AssetService/SceneService at the project, and retitles the window
 (`IPlatform::setTitle`). `hasProject()` reports the current state.
 
-## Providers (`provider_registry.h`, WO-076)
+## Providers (`provider_registry.h`, WO-076, WO-086)
 The runtime holds the provider registry (`providerRegistry()`): kind, name,
-factory. `init()` registers the runtime's own renderers (`forward-bgfx`, and
-`none`; a server build has only `none`), applies `EngineConfig::providerOverrides`
-(re-applied after every project load), and refuses an unknown kind or renderer
-name **before anything is created**, so a refusal leaves no channels or job pool
-to undo. A shut-down that follows a failed `init()` is a no-op, so that ordering
-matters. With no display, or in a server build, the renderer is `none`, and the
-log says so when a project asked for another; this rule stays until a project
-can choose per target (WO-086). Physics, scripting and audio come from the
-build's list in `src/plugins/`, which sits above the runtime: `addProviders()`
-there registers and checks them. The runtime never includes `src/plugins/`
-(audit LAYER-06). Why a choice was refused is `bootError()`.
+factory. `init()` registers the runtime's own renderers (those its target built,
+`engine_providers_built.h`). Once the platform has started it **resolves the
+project's choice for this machine** (`resolveProviderChoices`, through
+`project/provider_resolve.h`, the same function `engine_build` runs). The
+target is this platform, as `client`, or as `server` when this is a server
+build or the platform cannot render, in which case the `display` fact is false
+too. The engine's default `"renderer": {"default": "forward-bgfx", "server":
+"none"}` gives a headless run no renderer; a project that insists on one is
+refused by name. `EngineConfig::providerOverrides` are part of the input, and
+the choice is resolved again after every project load. Why a choice was refused
+is `bootError()`; the last resolution, as a table, is `providerResolution()`.
+
+**A shipped player resolves nothing** (`ENGINE_PROVIDERS_FIXED`): `engine_build`
+chose for the target and built exactly those providers. The runtime takes that
+choice, then the overrides, and the registry checks them.
+
+**A failed `init()` undoes itself** (`abortInit()`, BUG-0076): `shutdown()` is a
+no-op for an engine that never finished init, so every failure after the first
+side effect removes the profiler channels, stops the job pool and shuts the
+platform down. Physics, scripting and audio come from the build's list in
+`src/plugins/`, which sits above the runtime: `addProviders()` there registers
+them and checks the resolved names. The runtime never includes `src/plugins/`
+(audit LAYER-06).
 
 ## Simulation Lifecycle
 `startSimulation(InPlace|Snapshot)` / `stopSimulation()` / `tickSimulation(dt)`.

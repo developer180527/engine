@@ -25,6 +25,17 @@ struct IRenderer;
 
 namespace providers {
 
+// One row of the generated engine_providers_built.h (WO-085, WO-086): every
+// declared provider, whether this target built it, and its manifest's lists
+// (comma-separated).
+struct BuiltRow {
+    const char* kind; const char* name; bool built; const char* whyNot;
+    const char* contract; const char* platforms; const char* flavours;
+    const char* needs; const char* requiresList; const char* provides;
+};
+// The rows for the target this runtime was built as (defined in runtime_boot.cpp).
+const std::vector<BuiltRow>& builtRows();
+
 enum class Kind { Physics, Scripting, Audio, Renderer };
 inline constexpr Kind kAllKinds[] = { Kind::Physics, Kind::Scripting, Kind::Audio, Kind::Renderer };
 

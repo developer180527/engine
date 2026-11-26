@@ -143,6 +143,9 @@ add_library(engine_core STATIC
 
     # Project management — scaffolding new projects (canonical v2 layout)
     project/project_scaffold.cpp
+    # Which provider fills each kind for a target (WO-086). Here, not in the
+    # runtime, because engine_build runs it too; a shipped player never calls it.
+    project/provider_resolve.cpp
 
     # The tick command record: what the simulation was TOLD to do, separate
     # from the state it produced. In engine_core, not engine_runtime, because

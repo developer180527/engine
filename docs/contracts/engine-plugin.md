@@ -51,11 +51,13 @@ The game world is only valid between `onSimulationStart` and
 work — gameplay state never changes there.
 
 ## Errors
-A provider name this build does not have, a kind the engine does not know, or a
-value that is not a name is refused at startup, by name, with the names this
-build has (DR-0035). The renderer is checked in `EngineRuntime::init()`, before
-anything is created. Physics, scripting and audio are checked in
-`addProviders()`, which adds nothing if any choice is refused. The reason is in
+A provider name this build does not have, a kind the engine does not know, a
+target key that is not one, or a value that is not a name is refused by name,
+with what was available (DR-0035): at `engine_build --platform` for the target
+being packaged, and at startup for the machine a development build runs on
+(`project/provider_resolve.h`, WO-086). Startup resolves in `EngineRuntime::init()`,
+once the platform says whether it can render. `addProviders()` adds nothing if
+any choice was refused. The reason is in
 `EngineRuntime::bootError()`, and the C API returns it as `ENG_ERROR_NOT_FOUND`.
 A host may `inject()` its own provider object for a kind; the project's name for
 that kind is then not looked up.

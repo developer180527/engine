@@ -1,6 +1,15 @@
 // ── engine_build — package a project into a shippable dist/ ─────────────────
 //
 //   engine_build <project-dir> [--dist <dir>]        (default <project>/dist)
+//                [--platform <p>] [--flavour client|server]
+//   engine_build <project-dir> --explain-providers [--platform <p>] [--flavour <f>] [--json]
+//
+// 0. PROVIDERS  resolve the project's provider choice for the target, from the
+//               manifests in the source tree (WO-086, DR-0037), BEFORE anything
+//               is cooked or compiled. An impossible choice is refused by name.
+//               The shipping tree is then configured with exactly that choice
+//               (ENGINE_PROVIDERS_SELECTED), and dist/providers.lock.json
+//               records it.
 //
 // The export pipeline (backlog Phase G #29), end to end:
 //   1. COOK       engine_cook — every asset + scene to cooked binaries
@@ -74,6 +83,8 @@
 
 #include <nlohmann/json.hpp>
 #include <assetlib/scene_asset.h>
+
+#include "project/provider_resolve.h"
 
 namespace fs = std::filesystem;
 
@@ -272,12 +283,102 @@ static void emitManifest() {
     addon::writeManifest(m);
 }
 
+// ── Providers (WO-086) ──────────────────────────────────────────────────────
+// The platform this tool runs on, by the names in cmake/platforms/.
+static const char* hostPlatform() {
+#if defined(__APPLE__)
+    return "macos";
+#elif defined(_WIN32)
+    return "windows";
+#elif defined(__ANDROID__)
+    return "android";
+#elif defined(__linux__)
+    return "linux";
+#else
+#error "engine_build: no platform name for this OS (cmake/platforms/)"
+#endif
+}
+
+// Every manifest under src/ and every platform table, read from the source
+// tree, so the choice can be judged for any platform, not only this one.
+static bool loadProviderInputs(const fs::path& engineRoot, provsel::Inputs& in, std::string& why) {
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(engineRoot / "src", ec), end; it != end; it.increment(ec)) {
+        if (ec) break;
+        const std::string n = it->path().filename().string();
+        if (n.size() < 14 || n.compare(n.size() - 14, 14, ".provider.json") != 0) continue;
+        try {
+            std::ifstream f(it->path());
+            provsel::Decl d;
+            if (!provsel::declFromManifest(nlohmann::json::parse(f), d, why)) {
+                why = it->path().string() + ": " + why;
+                return false;
+            }
+            in.decls.push_back(std::move(d));
+        } catch (const std::exception& e) {
+            why = it->path().string() + ": " + e.what();
+            return false;
+        }
+    }
+    for (const auto& e : fs::directory_iterator(engineRoot / "cmake" / "platforms", ec)) {
+        if (e.path().extension() != ".json") continue;
+        try {
+            std::ifstream f(e.path());
+            provsel::Platform p;
+            if (!provsel::platformFromTable(nlohmann::json::parse(f), p, why)) {
+                why = e.path().string() + ": " + why;
+                return false;
+            }
+            in.platforms[p.name] = std::move(p);
+        } catch (const std::exception& ex) {
+            why = e.path().string() + ": " + ex.what();
+            return false;
+        }
+    }
+    if (in.decls.empty() || in.platforms.empty()) {
+        why = "no provider manifests or platform tables under " + engineRoot.string();
+        return false;
+    }
+    return true;
+}
+
+static std::string engineRevision(const fs::path& engineRoot) {
+    const std::string cmd = "git -C " + q(engineRoot) + " rev-parse HEAD 2>" +
+#if defined(_WIN32)
+        "NUL";
+#else
+        "/dev/null";
+#endif
+    std::string out;
+#if defined(_WIN32)
+    FILE* p = _popen(cmd.c_str(), "r");
+#else
+    FILE* p = popen(cmd.c_str(), "r");
+#endif
+    if (!p) return "unknown";
+    char buf[128];
+    while (std::fgets(buf, sizeof buf, p)) out += buf;
+#if defined(_WIN32)
+    _pclose(p);
+#else
+    pclose(p);
+#endif
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    return out.empty() ? "unknown" : out;
+}
+
 static int usage() {
     std::fprintf(stderr,
         "usage: engine_build <project-dir> [--dist <dir>] [options]\n"
         "       engine_build --addon-manifest\n"
         "\n"
         "  --dist <dir>            where to assemble the package\n"
+        "  --platform <p>          the platform to package for (default: this one).\n"
+        "                          The provider choice is checked for it first\n"
+        "  --flavour client|server the flavour (default: client)\n"
+        "  --explain-providers     print the provider choice for the target and why\n"
+        "                          every other provider was not used, then exit\n"
+        "  --json                  with --explain-providers: as JSON\n"
         "  --addon-result=<path>   write the machine-readable result there\n"
         "  --strict                make warnings fatal. Every warning this tool\n"
         "                          emits is a defect in the shipped package, so CI\n"
@@ -291,10 +392,22 @@ int main(int argc, char** argv) {
     stdoutLive();
 
     std::string projectArg, distArg;
+    std::string platform = hostPlatform(), flavour = "client";
+    bool explain = false, explainJson = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--addon-manifest") { emitManifest(); return addon::exitCode(addon::Exit::Ran); }
         if (a == "--strict")         { g_strict = true; continue; }
+        if (a == "--explain-providers") { explain = true; continue; }
+        if (a == "--json")           { explainJson = true; continue; }
+        if (a == "--platform" || a == "--flavour") {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "engine_build: %s needs a value\n", a.c_str());
+                return usage();
+            }
+            (a == "--platform" ? platform : flavour) = argv[++i];
+            continue;
+        }
         if (a.rfind("--addon-result=", 0) == 0) {
             g_resultPath = a.substr(15);
             if (g_resultPath.empty()) {
@@ -347,6 +460,56 @@ int main(int argc, char** argv) {
         return addon::exitCode(addon::Exit::MissingInput);
     }
 
+    // ── 0. Providers: resolved for the target before anything else runs ───
+    provsel::Inputs pin;
+    {
+        std::string why;
+        if (!loadProviderInputs(engineRoot, pin, why))
+            return failed("reading the provider manifests failed: " + why);
+        if (!pin.platforms.count(platform)) {
+            std::string known;
+            for (const auto& [n, p] : pin.platforms) known += (known.empty() ? "" : ", ") + n;
+            std::fprintf(stderr, "engine_build: unknown platform '%s' (known: %s)\n", platform.c_str(), known.c_str());
+            return usage();
+        }
+        if (flavour != "client" && flavour != "server") {
+            std::fprintf(stderr, "engine_build: unknown flavour '%s' (client, server)\n", flavour.c_str());
+            return usage();
+        }
+        try {
+            std::ifstream f(project / "project.json");
+            const nlohmann::json pj = nlohmann::json::parse(f);
+            if (auto it = pj.find("providers"); it != pj.end()) pin.providers = *it;
+        } catch (const std::exception& e) {
+            return failed(std::string("bad project.json: ") + e.what());
+        }
+        pin.target = {platform, flavour};
+    }
+    const provsel::Result providers = provsel::resolve(pin);
+    if (explain) {
+        if (explainJson) std::printf("%s\n", provsel::explainJson(providers).dump(2).c_str());
+        else             std::printf("%s", provsel::explainText(providers).c_str());
+        return providers.ok() ? finish(addon::Verdict::Ok)
+                              : finish(addon::Verdict::Fail, providers.refusals.front());
+    }
+    if (!providers.ok()) {
+        std::fprintf(stderr, "%s", provsel::explainText(providers).c_str());
+        std::string why = providers.refusals.front();
+        for (size_t i = 1; i < providers.refusals.size(); ++i) why += "; " + providers.refusals[i];
+        return failed("the provider choice is refused for " + platform + " " + flavour + ": " + why);
+    }
+    std::printf("%s", provsel::explainText(providers).c_str());
+    if (platform != hostPlatform())
+        return failed("this machine (" + std::string(hostPlatform()) + ") cannot package for " + platform +
+                      ": there is no toolchain for it here. The choice above is valid; "
+                      "--explain-providers checks any platform");
+    if (flavour == "server")
+        return failed("packaging a server needs a server player, and none exists yet. The server "
+                      "choice above is valid; --explain-providers --flavour server checks it");
+    std::string selected;
+    for (const provsel::KindResult& k : providers.kinds)
+        selected += (selected.empty() ? "" : ";") + k.kind + "=" + k.chosen;
+
     std::printf("[engine_build] project: %s\n[engine_build] dist:    %s\n",
                 project.string().c_str(), dist.string().c_str());
 
@@ -357,8 +520,29 @@ int main(int argc, char** argv) {
 
     // ── 2. Shipping player (Assimp-free posture, Release) ────────────────
     if (run("cmake -S " + q(engineRoot) + " -B " + q(shipTree) +
-            " -DENGINE_WITH_SOURCE_IMPORTERS=OFF -DCMAKE_BUILD_TYPE=Release") != 0)
+            " -DENGINE_WITH_SOURCE_IMPORTERS=OFF -DCMAKE_BUILD_TYPE=Release" +
+            " \"-DENGINE_PROVIDERS_SELECTED=" + selected + "\"") != 0)
         return failed("configuring the shipping tree failed");
+    // What the shipping tree could build, now that CMake has looked (an SDK
+    // found or not): every chosen provider must be in it. Refused before the
+    // player compiles.
+    try {
+        std::ifstream f(shipTree / "providers.json");
+        const nlohmann::json built = nlohmann::json::parse(f);
+        for (const provsel::KindResult& k : providers.kinds) {
+            bool ok = false;
+            std::string whyNot = "it is not declared in the shipping tree";
+            for (const auto& p : built.at("providers"))
+                if (p.value("kind", "") == k.kind && p.value("name", "") == k.chosen) {
+                    ok = p.value("built", 0) == 1;
+                    whyNot = p.value("why_not", "");
+                }
+            if (!ok)
+                return failed("the " + k.kind + " provider '" + k.chosen + "' cannot be built for this game: " + whyNot);
+        }
+    } catch (const std::exception& e) {
+        return failed(std::string("reading the shipping tree's providers.json failed: ") + e.what());
+    }
     if (run("cmake --build " + q(shipTree) + " --target engine_player" + jobFlag()) != 0)
         return failed("building engine_player failed");
     g_report.record("STEP", "player ok");
@@ -564,6 +748,22 @@ int main(int argc, char** argv) {
                       fs::copy_options::overwrite_existing, ec);
 
     { std::ofstream f(dist / "project.json"); f << proj.dump(2) << "\n"; }
+    // What this game was built with, for the crash reporter and the dist check
+    // (WO-066): one entry per kind.
+    {
+        nlohmann::json lock = {{"platform", platform}, {"flavour", flavour},
+                               {"engine_revision", engineRevision(engineRoot)}};
+        nlohmann::json list = nlohmann::json::array();
+        for (const provsel::KindResult& k : providers.kinds) {
+            std::string contract;
+            for (const provsel::Decl& d : pin.decls)
+                if (d.kind == k.kind && d.name == k.chosen) contract = d.contract;
+            list.push_back({{"kind", k.kind}, {"name", k.chosen}, {"contract", contract}, {"chosen_by", k.key}});
+        }
+        lock["providers"] = list;
+        std::ofstream f(dist / "providers.lock.json");
+        f << lock.dump(2) << "\n";
+    }
     {
         std::ofstream f(dist / "run.sh");
         f << "#!/bin/sh\ncd \"$(dirname \"$0\")\"\nexec ./engine_player .\n";

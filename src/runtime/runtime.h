@@ -287,6 +287,9 @@ public:
     static void registerRenderers(providers::Registry& r);
     // The chosen renderer's name, after init().
     const std::string& rendererName() const { return m_rendererName; }
+    // The last provider resolution as a table: what was chosen for this
+    // machine, by which key, and why every other provider was not.
+    const std::string& providerResolution() const { return m_providerResolution; }
     // The tick's command buffer. Gameplay submits here instead of mutating
     // simulation state directly; see runtime/sim_command.h.
     simcmd::Buffer&  commands()     { return m_commands; }
@@ -511,7 +514,15 @@ private:
     std::string m_bootError;
     std::string m_rendererName;
     std::vector<std::pair<std::string, std::string>> m_providerOverrides;   // EngineConfig's
-    void applyProviderOverrides();   // onto m_project; again after every project load
+    std::string m_providerChoiceError;   // the last resolution's refusal, if any
+    std::string m_providerResolution;    // the last resolution, as a table (for the log)
+    bool        m_canRender = false;     // the platform has a window to draw to
+    // The project's provider choice for this machine (WO-086), into
+    // m_project.providers. Called at init (after the platform) and after every
+    // project load. In a shipped game (ENGINE_PROVIDERS_FIXED) it only takes
+    // engine_build's choice and the overrides.
+    bool resolveProviderChoices(std::string& why);
+    void abortInit();                    // undo a failed init (BUG-0076)
     KitHost        m_kits;              // project kits — dlopened lazily at Play
     PrimaryCameraFinder m_cameraFinder; // cached camera query (game tick)
     LutLibrary          m_luts;         // grading LUTs by path (colour stage B)

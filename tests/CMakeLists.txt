@@ -497,6 +497,7 @@ engine_test(api_primitives_test)
 # registering a second backend rather than by reading the header.
 engine_test(ui_backend_test)
 engine_test(providers_test)
+engine_test(provider_resolve_test LIB engine_core)
 # Importer-dependent tests — dev posture only (the shipping build compiles
 # the source-import stack out; these have nothing to exercise there).
 if(ENGINE_WITH_SOURCE_IMPORTERS)
@@ -928,6 +929,35 @@ if(Python3_Interpreter_FOUND)
         set_tests_properties(provider_manifest_${_name} PROPERTIES LABELS unit TIMEOUT 120
             PASS_REGULAR_EXPRESSION "${_expect}")
     endforeach()
+
+    # engine_build resolves the provider choice for the target before anything
+    # is cooked or compiled, and refuses an impossible one by name (WO-086).
+    if(TARGET engine_build)
+        set(_pj ${CMAKE_BINARY_DIR}/provider_projects)
+        file(MAKE_DIRECTORY ${_pj}/plain/assets ${_pj}/web/assets)
+        file(WRITE ${_pj}/plain/project.json "{\"name\":\"plain\",\"assetRoot\":\"assets\"}")
+        file(WRITE ${_pj}/web/project.json "{\"name\":\"web\",\"assetRoot\":\"assets\",\"providers\":{
+            \"renderer\": {\"default\": \"forward-bgfx\", \"web\": \"none\", \"server\": \"none\"},
+            \"physics\": {\"default\": \"jolt\", \"web\": \"none\"},
+            \"scripting\": {\"default\": \"lua\", \"web\": \"none\"},
+            \"audio\": {\"default\": \"miniaudio\", \"web\": \"none\"}}}")
+        add_test(NAME engine_build_explains_providers
+                 COMMAND engine_build ${_pj}/plain --explain-providers)
+        set_tests_properties(engine_build_explains_providers PROPERTIES LABELS unit TIMEOUT 60
+            PASS_REGULAR_EXPRESSION "renderer +forward-bgfx +\\(engine default\\)")
+        add_test(NAME engine_build_refuses_web_by_name
+                 COMMAND engine_build ${_pj}/plain --platform web)
+        set_tests_properties(engine_build_refuses_web_by_name PROPERTIES LABELS unit TIMEOUT 60
+            PASS_REGULAR_EXPRESSION "refused for web client: the physics provider 'jolt'[^\n]*not web")
+        add_test(NAME engine_build_explains_a_web_project
+                 COMMAND engine_build ${_pj}/web --explain-providers --platform web --json)
+        set_tests_properties(engine_build_explains_a_web_project PROPERTIES LABELS unit TIMEOUT 60
+            PASS_REGULAR_EXPRESSION "\"ok\": true" FAIL_REGULAR_EXPRESSION "REFUSED")
+        add_test(NAME engine_build_refuses_a_bad_target_key
+                 COMMAND engine_build ${_pj}/plain --platform playstation)
+        set_tests_properties(engine_build_refuses_a_bad_target_key PROPERTIES LABELS unit TIMEOUT 60
+            PASS_REGULAR_EXPRESSION "unknown platform 'playstation'")
+    endif()
 
     # The shipped player lists the providers this build has, by kind (WO-076).
     add_test(NAME player_lists_providers

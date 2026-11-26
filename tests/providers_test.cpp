@@ -122,7 +122,7 @@ int main() {
         providers::Registry r;
         registerStockProviders(r);
         size_t declaredBuilt = 0;
-        for (const DeclaredProvider& d : declaredProviders()) {
+        for (const providers::BuiltRow& d : providers::builtRows()) {
             providers::Kind k;
             CHECK(providers::kindFromName(d.kind, k), "manifest kind '%s' is a kind", d.kind);
             if (d.built) {
@@ -135,7 +135,7 @@ int main() {
         }
         for (const providers::Entry& e : r.entries()) {
             bool declared = false;
-            for (const DeclaredProvider& d : declaredProviders())
+            for (const providers::BuiltRow& d : providers::builtRows())
                 declared |= d.built && e.name == d.name && std::string(providers::kindName(e.kind)) == d.kind;
             CHECK(declared, "registered %s '%s' has a manifest", providers::kindName(e.kind), e.name.c_str());
         }
@@ -167,9 +167,29 @@ int main() {
         CHECK(b.renderer == "none", "no display: the default renderer is `none`");
     }
     {
+        // A runtime with no display resolves as a `server` target (WO-086):
+        // a plain "forward-bgfx" asks for it there too, and is refused by name.
         const Boot b = boot(configFor(makeProject("bgfx-headless", R"({"renderer":"forward-bgfx"})")));
-        CHECK(b.initOk && b.renderer == "none",
-              "forward-bgfx asked for with no display: `none`, and the log says why (today's rule, until WO-086)");
+        CHECK(!b.initOk && has(b.error, "forward-bgfx") && has(b.error, "server"),
+              "forward-bgfx for every target, with no display: refused: %s", b.error.c_str());
+    }
+
+    // ── 3b. Per-target choices (WO-086) ──────────────────────────────────
+    {
+        const Boot b = boot(configFor(makeProject("per-target",
+            R"({"renderer":{"default":"forward-bgfx","server":"none"},"physics":{"default":"jolt","server":"none"}})")));
+        CHECK(b.initOk && b.providersOk && b.renderer == "none" && !b.physicsPublished,
+              "the `server` key wins with no display: renderer none, physics none");
+    }
+    {
+        const Boot b = boot(configFor(makeProject("per-target-platform",
+            R"({"physics":{"default":"none","macos":"jolt","linux":"jolt","windows":"jolt"}})")));
+        CHECK(b.initOk && b.providersOk && b.physicsPublished, "a platform key beats `default`");
+    }
+    {
+        const Boot b = boot(configFor(makeProject("bad-target-key", R"({"renderer":{"widnows":"none"}})")));
+        CHECK(!b.initOk && has(b.error, "'widnows' is not a target key"),
+              "an unknown target key is refused: %s", b.error.c_str());
     }
 
     // ── 4. Every kind refuses a name it does not have, by name ────────────
@@ -196,7 +216,7 @@ int main() {
     }
     {
         const Boot b = boot(configFor(makeProject("not-a-name", R"({"physics":3})")));
-        CHECK(!b.initOk && has(b.error, "physics (its value is not a provider name)"),
+        CHECK(!b.initOk && has(b.error, "the value must be a provider name"),
               "a value that is not a name is refused: %s", b.error.c_str());
     }
 
