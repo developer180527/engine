@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-11-11
+verified: 2026-11-27
 covers:
   - scripts/engine_audit.py
   - scripts/audit_cron.sh
@@ -64,6 +64,8 @@ rule nobody agreed to.
 | `OS-01` | in `src/core` and `src/runtime`, an `#else` after an OS check is `#error "port: …"` or marked `// any OS: <why>`; `docs/process/porting.md` is current | `src/core/os_family.h` |
 | `THREAD-01` | `std::thread(`, `std::jthread` and `std::async(` appear nowhere in `src/` but `src/core/thread_start.h`: the engine starts threads through `engine::threads::start` | `src/core/thread_start.h`, `src/core/memory/mem.h` |
 | `DOC-01` | every directory of code is covered by some document | `engineering-standards.md` §1 |
+| `PROV-01` | a provider's files (its manifest's `"files"`) include no other provider's files, except a header its kind shares as the contract (`"shares"`) | `docs/plans/provider-selection.md` §6, WO-087 |
+| `PROV-02` | a provider's files include none of the runtime's internals (`runtime/runtime.h`), the editor or the tools: it is given what it needs in a `ProviderContext` | `src/runtime/provider_registry.h`, WO-087 |
 
 `bx` is **not** treated as a graphics dependency, matching `check_gpu_seam.py`'s
 exclusion — it is the math library, and conflating the two would make

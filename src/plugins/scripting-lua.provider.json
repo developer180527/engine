@@ -7,5 +7,6 @@
   "needs": [],
   "sdk": [],
   "requires": [],
-  "capabilities": ["scripts.lua"]
+  "capabilities": ["scripts.lua"],
+  "files": ["lua_script_plugin.h"]
 }

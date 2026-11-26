@@ -1,6 +1,6 @@
 {
-  "generated": "2026-11-05T23:41:32+00:00",
-  "commit": "d8a1bed099106a831b2f257efe9f3ba762051e38",
+  "generated": "2026-11-26T20:24:38+00:00",
+  "commit": "1aa8935b3b863e18abe0640d1a7c621b0ec8a5bc",
   "note": "Accepted architectural debt. The gate fails on findings NOT listed here; shrinking this file is the cleanup, and nothing may be added to it without a reason in the commit.",
   "findings": {
     "LAYER-03": [
@@ -25,7 +25,6 @@
       "LAYER-03|src/plugins -> src/audio",
       "LAYER-03|src/plugins -> src/components",
       "LAYER-03|src/plugins -> src/core",
-      "LAYER-03|src/plugins -> src/project",
       "LAYER-03|src/plugins -> src/runtime",
       "LAYER-03|src/render -> src/animation",
       "LAYER-03|src/render -> src/components",
@@ -63,7 +62,6 @@
       "RHI-01|src/components/prev_transform.h",
       "RHI-01|src/components/rigid_body.h",
       "RHI-01|src/components/transform_hierarchy.h",
-      "RHI-01|src/core/debug_draw.h",
       "RHI-01|src/core/math_types.h",
       "RHI-01|src/core/transform.h",
       "RHI-01|src/core/transform_utils.h",

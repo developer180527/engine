@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-11-26
+verified: 2026-11-27
 covers:
   - src/plugins/
 tests:
@@ -26,6 +26,17 @@ name by name (WO-076). Every kind has a `none` provider, audio included
 (`engine_providers_built.h`; [provider-manifest.md](../../docs/reference/provider-manifest.md),
 WO-085). Jolt and miniaudio are linked through their provider's INTERFACE
 target, not by the runtime itself.
+
+**Providers are kept apart** (WO-087). The registry creates each with one
+`providers::ProviderContext`: the project's roots, the runtime's ScriptHost and
+the engine's debug-draw collector. Beyond that a provider uses only core's
+services (mem, jobs, the log). Audit rules PROV-01 and PROV-02 check that no
+provider includes another provider's files or the runtime's internals.
+`JoltPlugin::setDrawBodies` draws body bounds into the engine's collector,
+whichever renderer runs. The SDK's documented direct form
+(`std::make_shared<LuaScriptPlugin>()`, `include/engine/plugins.h`) still works:
+made with nothing, a provider takes the same few things from the `RuntimeContext`
+it is attached with.
 
 ## Plugin vs Kit (same interface, different deployment)
 `IEnginePlugin` is just the lifecycle hook — both built-in subsystems and

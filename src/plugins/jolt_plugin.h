@@ -45,6 +45,8 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 
 #include "runtime/scripting/script_services.h"
+#include "runtime/provider_registry.h"   // ProviderContext (WO-087)
+#include "core/debug_draw.h"              // the engine's line collector, not a renderer's
 #include <algorithm>
 
 // ── Physics layers ─────────────────────────────────────────────────────────
@@ -108,6 +110,32 @@ class JoltPlugin final : public IEnginePlugin, public IPhysicsService {
 public:
     const char* name()    const override { return "Physics"; }
     const char* version() const override { return "0.1.0-jolt5"; }
+
+    // Made by the registry with the engine's context (WO-087); a test may make
+    // one with none, and then it draws no debug shapes.
+    JoltPlugin() = default;
+    explicit JoltPlugin(const providers::ProviderContext& c) : m_debugDraw(c.debugDraw) {}
+
+    // Body bounds as debug lines, each frame, into the ENGINE's collector
+    // (core/debug_draw.h): green awake, grey asleep. Physics never learns which
+    // renderer draws them, or whether one does (provider-abi.md rule 9).
+    void setDrawBodies(bool on) { m_drawBodies = on; }
+    bool drawBodies() const { return m_drawBodies; }
+
+    void onFrame(flecs::world&, float) override {
+        if (!m_drawBodies || !m_debugDraw || !m_physics) return;
+        const JPH::BodyLockInterface& locks = m_physics->GetBodyLockInterfaceNoLock();
+        for (const auto& [entity, bid] : m_entityToBody) {
+            (void)entity;
+            JPH::BodyLockRead l(locks, bid);
+            if (!l.Succeeded()) continue;
+            const JPH::AABox b = l.GetBody().GetWorldSpaceBounds();
+            const JPH::Vec3 c = b.GetCenter(), e = b.GetExtent();
+            m_debugDraw->box({c.GetX(), c.GetY(), c.GetZ()}, {e.GetX(), e.GetY(), e.GetZ()},
+                             l.GetBody().IsActive() ? dbg::packRGBA(0.2f, 1.0f, 0.3f)
+                                                    : dbg::packRGBA(0.5f, 0.5f, 0.5f));
+        }
+    }
 
     void onAttach(RuntimeContext&) override {
         // All Jolt allocations land in the Physics heap (function pointers,
@@ -706,6 +734,8 @@ public:
     // step for as long as the entity exists, so without this it is one log line
     // per entity per frame.
     std::unordered_set<flecs::entity_t>                           m_warnedSpawn;
+    dbg::DebugDraw*                                               m_debugDraw  = nullptr;  // ProviderContext
+    bool                                                          m_drawBodies = false;
     std::map<flecs::entity_t, JPH::BodyID>                        m_entityToBody;
     std::unordered_map<JPH::BodyID, flecs::entity_t, BodyIDHash>  m_bodyToEntity;
 

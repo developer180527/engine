@@ -29,6 +29,12 @@ class EngineRuntime;
 // two providers with one name.
 bool registerStockProviders(providers::Registry& r, std::string* why = nullptr);
 
+// The context the engine's providers are created with (WO-087): the project's
+// roots, the runtime's script host, the engine's debug-draw collector. What
+// addProviders gives each factory; a test that builds a provider itself uses it
+// too, so the provider is made exactly as the engine makes it.
+providers::ProviderContext providerContextFor(EngineRuntime& engine);
+
 // Registers the build's list into the engine's registry, then adds the chosen
 // physics, scripting and audio providers to its plugin list, in that order
 // (attach order). A provider the host injected fills its

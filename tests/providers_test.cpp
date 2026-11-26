@@ -105,7 +105,7 @@ int main() {
         CHECK(r.find(providers::Kind::Renderer, "none") != nullptr, "renderer: none is registered");
         for (providers::Kind k : providers::kAllKinds)
             CHECK(r.find(k, "none") != nullptr, "%s has a `none` provider", providers::kindName(k));
-        CHECK(!r.addPlugin(providers::Kind::Physics, "jolt", "", [] { return nullptr; }, &why)
+        CHECK(!r.addPlugin(providers::Kind::Physics, "jolt", "", [](const providers::ProviderContext&) { return nullptr; }, &why)
               && has(why, "two physics providers named 'jolt'"),
               "a second provider with the same name is refused: %s", why.c_str());
         CHECK(!r.resolve(providers::Kind::Audio, "fmod", why) && has(why, "fmod")

@@ -1,8 +1,8 @@
 #pragma once
 #include "runtime/plugin.h"
 #include "core/logger.h"
-#include "runtime/runtime_context.h" // full RuntimeContext (plugin.h only fwd-decls it)
-#include "project/project_context.h"  // ProjectContext::projectRoot
+#include "runtime/provider_registry.h"  // ProviderContext: what this provider is given (WO-087)
+#include "runtime/runtime_context.h"   // only for the SDK's direct form, below
 #include "runtime/scripting/script_host.h"
 #include "runtime/scripting/lua_bindings.h"
 #include "components/script_component.h"
@@ -32,13 +32,23 @@ public:
     const char* name()    const override { return "Scripting"; }
     const char* version() const override { return "5.4-lua"; }
 
+    // Everything it needs, given once (WO-087): the project's roots and the
+    // runtime's ScriptHost, which it is the Lua frontend over. It reads nothing
+    // else of the runtime's.
+    explicit LuaScriptPlugin(const providers::ProviderContext& c)
+        : m_host(c.scriptHost), m_projectRoot(c.projectRoot), m_assetsRoot(c.assetsRoot), m_given(true) {}
+    // The SDK's documented direct form (include/engine/plugins.h, frozen):
+    // made with nothing, it takes the same three things from the context it is
+    // attached with, as it always has.
+    LuaScriptPlugin() = default;
+
     void onAttach(RuntimeContext& ec) override {
-        m_projectRoot = ec.project.projectRoot;
-        m_assetsRoot  = ec.project.assetsRoot;
-        // The runtime owns the canonical ScriptHost (shared with the C API);
-        // this plugin is just the Lua frontend over it.
-        m_host = ec.scriptHost;
-        if (!m_host) { LOG_ERROR("Script", "RuntimeContext has no ScriptHost"); return; }
+        if (!m_given) {
+            m_projectRoot = ec.project.projectRoot;
+            m_assetsRoot  = ec.project.assetsRoot;
+            m_host        = ec.scriptHost;
+        }
+        if (!m_host) { LOG_ERROR("Script", "the scripting provider was created with no ScriptHost"); return; }
         // Lua allocates EVERYTHING through one realloc-style callback — the
         // cleanest hook of the third parties. Scripting heap.
         m_L = lua_newstate(
@@ -354,9 +364,10 @@ private:
     }
 
     lua_State*  m_L    = nullptr;
-    ScriptHost* m_host = nullptr;   // runtime-owned (RuntimeContext::scriptHost)
+    ScriptHost* m_host = nullptr;   // runtime-owned, given in the ProviderContext
     std::filesystem::path m_projectRoot;
     std::filesystem::path m_assetsRoot;
+    bool m_given = false;   // made with a ProviderContext (the registry's way)
     std::unordered_map<std::string,int> m_moduleRefs;
     std::unordered_map<std::string,std::filesystem::file_time_type> m_moduleMtimes;
     std::vector<Instance>        m_instances;

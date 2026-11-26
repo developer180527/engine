@@ -14,6 +14,7 @@
 // (docs/plans/engine-api.md). Manifests, platforms and build-time resolution
 // feed this registry later (WO-085, WO-086); it assumes nothing beyond kind,
 // name and factory, so they can.
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -22,6 +23,8 @@
 
 class IEnginePlugin;
 struct IRenderer;
+class ScriptHost;
+namespace dbg { class DebugDraw; }
 
 namespace providers {
 
@@ -43,8 +46,21 @@ const char* kindName(Kind k);
 bool        kindFromName(std::string_view name, Kind& out);
 std::string allKindNames();                 // "physics, scripting, audio, renderer"
 
-using PluginFactory   = std::function<std::shared_ptr<IEnginePlugin>()>;
-using RendererFactory = std::function<std::unique_ptr<IRenderer>()>;
+// Everything a provider is given, once, when it is created (WO-087,
+// provider-abi.md rule 9). A provider reaches the engine's core services (mem,
+// jobs, the log) and what is here; never the runtime's internals, never
+// another provider, never a global environment. Anything that crosses
+// providers goes through a service the engine owns: debug shapes from physics
+// reach whichever renderer runs through `debugDraw`.
+struct ProviderContext {
+    std::filesystem::path projectRoot;     // empty: no project
+    std::filesystem::path assetsRoot;
+    ScriptHost*     scriptHost = nullptr;  // the scripting provider's host (the runtime owns it)
+    dbg::DebugDraw* debugDraw  = nullptr;  // the engine's per-frame line collector
+};
+
+using PluginFactory   = std::function<std::shared_ptr<IEnginePlugin>(const ProviderContext&)>;
+using RendererFactory = std::function<std::unique_ptr<IRenderer>(const ProviderContext&)>;
 
 struct Entry {
     Kind            kind;

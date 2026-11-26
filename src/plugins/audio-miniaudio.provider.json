@@ -7,5 +7,6 @@
   "needs": ["audio_output"],
   "sdk": [],
   "requires": ["engine.jobs.v1"],
-  "capabilities": ["spatial", "streaming"]
+  "capabilities": ["spatial", "streaming"],
+  "files": ["audio_plugin.h", "audio_impl.cpp", "../audio/miniaudio_provider.cpp"]
 }

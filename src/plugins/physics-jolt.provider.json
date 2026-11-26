@@ -7,5 +7,6 @@
   "needs": [],
   "sdk": [],
   "requires": ["engine.jobs.v1"],
-  "capabilities": ["rigid_bodies", "character", "determinism.same_binary"]
+  "capabilities": ["rigid_bodies", "character", "determinism.same_binary"],
+  "files": ["jolt_plugin.h", "jolt_jobs_adapter.h"]
 }

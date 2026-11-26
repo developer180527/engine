@@ -6,6 +6,7 @@
 // the last month landed — instancing, the draw ceiling, the submit counters. It is
 // its own unit now so that reading "how does a frame get submitted" does not mean
 // reading program creation and shadow matrices first.
+#include "render/pipeline/debug_lines.h"
 #include <cstring>   // std::memcpy/std::strlen — libc++ pulls these in
 #include "render/gpu_bgfx.h"   // toBgfx — renderer-internal, see G1
                      // transitively, libstdc++ does not, so the Linux legs
@@ -466,7 +467,8 @@ void ForwardPipeline::submitDebugLines(bgfx::ViewId id, RenderContext& ctx) {
         if (bgfx::getAvailTransientVertexBuffer(count, m_lineLayout) < count) return;
         bgfx::TransientVertexBuffer tvb;
         bgfx::allocTransientVertexBuffer(&tvb, count, m_lineLayout);
-        std::memcpy(tvb.data, verts.data(), count * sizeof(dbg::DebugVertex));
+        // Converted to this renderer's line layout (debug_lines.h, WO-087).
+        render::toLineVertices(verts.data(), count, reinterpret_cast<render::LineVertex*>(tvb.data));
         bgfx::setVertexBuffer(0, &tvb);
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
                        | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_PT_LINES);

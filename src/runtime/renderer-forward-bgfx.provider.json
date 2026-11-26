@@ -7,5 +7,7 @@
   "needs": ["display"],
   "sdk": [],
   "requires": [],
-  "capabilities": ["forward", "shadows", "skinning"]
+  "capabilities": ["forward", "shadows", "skinning"],
+  "files": ["../render/"],
+  "shares": ["../render/renderer_interface.h"]
 }

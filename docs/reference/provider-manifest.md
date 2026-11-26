@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-11-26
+verified: 2026-11-27
 covers:
   - cmake/EngineProviders.cmake
   - cmake/platforms/
@@ -43,6 +43,8 @@ fields and what happens when one is wrong.
 | `requires` | no | engine services it uses. Services, never other providers | recorded; checked by the resolver (WO-086) |
 | `capabilities` | no | what it can do, for the editor and gameplay queries | recorded |
 | `differences` | no | a document listing how it behaves unlike the kind's reference provider | recorded |
+| `files` | no | this provider's own files, relative to the manifest; a path ending in `/` is a directory. The most specific claim wins (`renderer-none` names `renderer_null.h` inside `forward-bgfx`'s `src/render/`) | read by audit rules PROV-01 and PROV-02 |
+| `shares` | no | headers this provider shares as its kind's contract (`renderer_interface.h`), which another provider of the kind may include | read by PROV-01 |
 
 ## Declaring it in CMake
 

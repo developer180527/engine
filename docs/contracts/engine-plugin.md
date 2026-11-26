@@ -19,7 +19,7 @@ covers:
   - src/plugins/stock_plugins.h
   - src/plugins/stock_providers.cpp
   - src/runtime/provider_registry.h
-verified: 2026-11-26
+verified: 2026-11-27
 ---
 
 # engine-plugin — physics, scripting, audio and kits as swappable providers
@@ -61,3 +61,9 @@ any choice was refused. The reason is in
 `EngineRuntime::bootError()`, and the C API returns it as `ENG_ERROR_NOT_FOUND`.
 A host may `inject()` its own provider object for a kind; the project's name for
 that kind is then not looked up.
+
+## What a provider is given
+One `providers::ProviderContext` at creation (WO-087): the project's roots, the
+runtime's ScriptHost, the engine's debug-draw collector. It uses that and core's
+services, never another provider (PROV-01) or the runtime's internals (PROV-02).
+Debug shapes from physics go to the collector, never to a renderer.

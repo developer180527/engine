@@ -827,6 +827,85 @@ def rule_doc_coverage() -> Rule:
     return r
 
 
+# ── PROV-01 / PROV-02: providers are kept apart (WO-087, DR-0037) ───────────
+# Each provider's manifest (<kind>-<name>.provider.json) lists its own files
+# ("files": paths or directories, relative to the manifest) and the headers it
+# shares as its kind's contract ("shares"). The build's provider list
+# (src/plugins/stock_providers.cpp) is not a provider: it names them all.
+PROVIDER_LIST_FILES = ("src/plugins/stock_providers.cpp", "src/plugins/stock_plugins.h")
+
+
+def provider_files() -> tuple[dict[str, str], set[str]]:
+    """{file: provider id} for every provider's own files, and the shared set.
+    The most specific claim wins: a file a manifest lists by name belongs to it
+    even when another lists its directory (renderer-none's renderer_null.h
+    inside forward-bgfx's src/render/)."""
+    owner: dict[str, tuple[int, str]] = {}
+    shared: set[str] = set()
+    src = tracked("src/*")
+    for m in tracked("src/*.provider.json"):
+        try:
+            j = json.loads(read(m))
+        except ValueError:
+            continue
+        pid = f"{j.get('kind', '?')} '{j.get('name', '?')}'"
+        base = os.path.dirname(m)
+        for f in j.get("files", []):
+            path = os.path.normpath(os.path.join(base, f))
+            if f.endswith("/"):
+                for rel in src:
+                    if rel.startswith(path + "/") and rel.endswith(SRC_EXT):
+                        if owner.get(rel, (-1, ""))[0] < len(path):
+                            owner[rel] = (len(path), pid)
+            else:
+                owner[path] = (10_000, pid)
+        for f in j.get("shares", []):
+            shared.add(os.path.normpath(os.path.join(base, f)))
+    return {k: v[1] for k, v in owner.items()}, shared
+
+
+def rule_providers_apart() -> Rule:
+    r = Rule("PROV-01", "a provider never includes another provider's files",
+             "docs/plans/provider-selection.md §6; provider-abi.md rule 9; DR-0037.",
+             "swapping one provider must never drag another with it. Anything "
+             "that crosses providers goes through a service the engine owns "
+             "(core/debug_draw.h for debug shapes), never another provider's header.")
+    owner, shared = provider_files()
+    for rel, pid in sorted(owner.items()):
+        q, _ = includes(rel)
+        for inc in q:
+            tgt = resolve(inc)
+            if not tgt or tgt in shared or tgt in PROVIDER_LIST_FILES:
+                continue
+            other = owner.get(tgt)
+            if other and other != pid:
+                r.findings.append(Finding(r.id, f"{rel}:{inc}",
+                    f"{rel} (the {pid} provider) includes {inc}, the {other} provider's"))
+    return r
+
+
+# The runtime's internals and the tools: a provider is given what it needs
+# (providers::ProviderContext) and reaches the engine's core services, never these.
+PROVIDER_FORBIDDEN = ("src/runtime/runtime.h", "src/editor/", "src/tools/")
+
+
+def rule_providers_reach_no_internals() -> Rule:
+    r = Rule("PROV-02", "a provider reaches no runtime internals",
+             "src/runtime/provider_registry.h (ProviderContext); WO-087.",
+             "a provider that includes the runtime can reach every subsystem in "
+             "it, which is CryEngine's gEnv by another name: every module "
+             "coupled to every other through one object.")
+    owner, _ = provider_files()
+    for rel, pid in sorted(owner.items()):
+        q, _ = includes(rel)
+        for inc in q:
+            tgt = resolve(inc) or ""
+            if any(tgt == f or (f.endswith("/") and tgt.startswith(f)) for f in PROVIDER_FORBIDDEN):
+                r.findings.append(Finding(r.id, f"{rel}:{inc}",
+                    f"{rel} (the {pid} provider) includes {inc}: take it through the ProviderContext"))
+    return r
+
+
 RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
          rule_acyclic_modules, rule_render_world_purity, rule_import_format_purity, rule_abi_group_wiring, rule_abi_offsets_tile,
          rule_abi_compat_coverage, rule_component_hash_membership,
@@ -834,7 +913,7 @@ RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
          rule_c_abi_header_purity, rule_bx_creep, rule_unknown_os_is_an_error,
          rule_threads_start_in_one_place,
          rule_one_camera_convention, rule_assimp_only_in_front_end,
-         rule_doc_coverage)
+         rule_doc_coverage, rule_providers_apart, rule_providers_reach_no_internals)
 
 # The checks that already exist as their own scripts. The farm wants ONE entry
 # point, and duplicating these here would mean two definitions of the same rule

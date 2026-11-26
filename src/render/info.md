@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-10-06
+verified: 2026-11-27
 covers:
   - src/render/
 tests:
@@ -297,6 +297,10 @@ Stage A fixed that without adding a feature:
   frame, and the first version's `id % 16` would have let view 17 clear with view
   1's colour — `render/clear_colour.h`, pinned by `colour_test` §5): 8-bit packing would turn the editor's 0.102 grey into 3/255 linear, which
   displays as 0.110. **Debug lines decode** their vertex colours in `fs_line.sc`.
+  The vertices come from the engine's collector (`core/debug_draw.h`, RGBA bytes,
+  no bgfx), and `pipeline/debug_lines.h` converts them field by field into this
+  renderer's line layout, rather than copying memory that happened to match
+  (WO-087).
   **Kelvin lights decode** `kelvinToRGB`'s sRGB output — 2700 K blue was ~3.6x too
   strong.
 * **Highlights still clip** above 1.0, after lighting instead of inside it. Mapping

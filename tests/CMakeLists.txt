@@ -516,6 +516,9 @@ engine_test(api_primitives_test)
 engine_test(ui_backend_test)
 engine_test(providers_test)
 engine_test(provider_resolve_test LIB engine_core)
+# Physics draws debug shapes through the engine's collector, whichever renderer
+# runs (WO-087).
+engine_test(provider_debug_draw_test)
 # Importer-dependent tests — dev posture only (the shipping build compiles
 # the source-import stack out; these have nothing to exercise there).
 if(ENGINE_WITH_SOURCE_IMPORTERS)

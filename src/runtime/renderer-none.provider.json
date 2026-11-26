@@ -7,5 +7,6 @@
   "needs": [],
   "sdk": [],
   "requires": [],
-  "capabilities": []
+  "capabilities": [],
+  "files": ["../render/renderer_null.h"]
 }

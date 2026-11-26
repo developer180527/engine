@@ -34,7 +34,8 @@
 // code streamed it too, but only because miniaudio was reading the file itself.
 #include "runtime/plugin.h"
 #include "core/logger.h"
-#include "runtime/runtime_context.h"
+#include "runtime/provider_registry.h"  // ProviderContext (WO-087)
+#include "runtime/runtime_context.h"   // only for the SDK's direct form, below
 #include "runtime/scripting/script_services.h"
 #include "audio/audio_host_services.h"
 #include "core/jobs/jobs.h"
@@ -55,8 +56,15 @@ public:
     const char* version() const override { return "0.2.0"; }
 
     // ── Editor lifecycle ────────────────────────────────────────────────
+    // Given once (WO-087): where the project's sounds are. Nothing else of
+    // the runtime's is read.
+    explicit AudioPlugin(const providers::ProviderContext& c) : m_assetsRoot(c.assetsRoot), m_given(true) {}
+    // The SDK's documented direct form (include/engine/plugins.h, frozen): it
+    // takes the assets root from the context it is attached with.
+    AudioPlugin() = default;
+
     void onAttach(RuntimeContext& ctx) override {
-        m_assetsRoot = ctx.project.assetsRoot;
+        if (!m_given) m_assetsRoot = ctx.project.assetsRoot;
         m_provider = engineAudioProviderV1();
         if (!m_provider) { LOG_ERROR("Audio", "no audio provider available"); return; }
         if (m_provider->version != ENGINE_AUDIO_PROVIDER_V) {
@@ -308,6 +316,7 @@ private:
     std::atomic<bool>            m_ready{false};
     jobs::JobHandle              m_openJob;
     std::filesystem::path        m_assetsRoot;
+    bool                         m_given = false;   // made with a ProviderContext
 
     std::unordered_map<std::string, EngineSoundId>  m_sounds;
     std::unordered_map<std::string, std::unique_ptr<StreamFile>> m_streams;

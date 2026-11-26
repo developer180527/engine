@@ -171,11 +171,11 @@ void EngineRuntime::registerRenderers(providers::Registry& r) {
     if (!r.claimList("renderers")) return;   // once per registry
 #if ENGINE_PROVIDER_RENDERER_FORWARD_BGFX
     r.addRenderer("forward-bgfx", "the bgfx forward renderer",
-                  [] { return std::unique_ptr<IRenderer>(std::make_unique<Renderer>()); });
+                  [](const providers::ProviderContext&) { return std::unique_ptr<IRenderer>(std::make_unique<Renderer>()); });
 #endif
 #if ENGINE_PROVIDER_RENDERER_NONE
     r.addRenderer("none", "no renderer: nothing is drawn",
-                  [] { return std::unique_ptr<IRenderer>(std::make_unique<NullRenderer>()); });
+                  [](const providers::ProviderContext&) { return std::unique_ptr<IRenderer>(std::make_unique<NullRenderer>()); });
 #endif
     // Declared but not built for this target, with the reason (WO-085).
     for (const providers::BuiltRow& d : providers::builtRows())
@@ -321,7 +321,10 @@ bool EngineRuntime::initRenderer(const EngineConfig& cfg) {
         return false;
     }
     m_rendererName = name;
-    m_renderer = entry->makeRenderer();
+    providers::ProviderContext pc;
+    if (hasProject()) { pc.projectRoot = m_project.projectRoot; pc.assetsRoot = m_project.assetsRoot; }
+    pc.debugDraw = &m_debugDraw;
+    m_renderer = entry->makeRenderer(pc);
     if (name == "none") {
         // No GPU work. ECS, assets, animation, physics and scripting still
         // run; render entry points do nothing, correctly.
