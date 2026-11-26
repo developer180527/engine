@@ -367,6 +367,8 @@ else()
     list(APPEND ENGINE_PLATFORM_SOURCES runtime/platform/hdr_surface_stub.cpp)
 endif()
 
+include(${CMAKE_SOURCE_DIR}/cmake/EngineProviders.cmake)
+
 add_library(engine_runtime STATIC
     # Runtime core — platform, frame loop, renderer, services
     runtime/runtime.cpp
@@ -426,14 +428,9 @@ add_library(engine_runtime STATIC
     # Cooked-binary loaders
     assets/loaders/mesh_loader.cpp
 
-    # Plugin backends, and the build's one list of providers (WO-076)
-    plugins/audio_impl.cpp
+    # The build's one list of providers (WO-076). The providers' own sources
+    # are added by engine_providers_apply below, only where they are built.
     plugins/stock_providers.cpp
-
-    # miniaudio behind EngineAudioProviderV1. Compiled INTO the engine (no
-    # dlopen in a shipping game) while the identical source also builds as a
-    # standalone module for the conformance suite — see the target below.
-    audio/miniaudio_provider.cpp
 
     # Shaders (HEADER_FILE_ONLY — listed to trigger compilation)
     ${ENGINE_SHADER_SOURCES}
@@ -520,15 +517,34 @@ add_library(engine_runtime_server STATIC
     runtime/platform/window_ops_null.cpp
 )
 
+# ── Providers: declared once, built where they can run (WO-085) ──────────────
+# Each provider's manifest sits beside its source; engine_provider() reads it
+# and engine_providers_apply() decides, per target, whether it is built here.
+# See cmake/EngineProviders.cmake. Applied after the server target copies the
+# runtime's sources, so each target gets the providers once.
+engine_provider(MANIFEST plugins/physics-jolt.provider.json
+    LINKS Jolt INCLUDES ${CMAKE_SOURCE_DIR}/third_party/JoltPhysics)
+engine_provider(MANIFEST plugins/physics-none.provider.json)
+engine_provider(MANIFEST plugins/scripting-lua.provider.json)
+engine_provider(MANIFEST plugins/scripting-none.provider.json)
+# miniaudio behind EngineAudioProviderV1. Compiled INTO the engine (no dlopen in
+# a shipping game), while the identical source also builds as a standalone
+# module for the conformance suite (engine_audio_miniaudio_module, below).
+engine_provider(MANIFEST plugins/audio-miniaudio.provider.json
+    SOURCES plugins/audio_impl.cpp audio/miniaudio_provider.cpp
+    INCLUDES ${CMAKE_SOURCE_DIR}/third_party/miniaudio)
+engine_provider(MANIFEST plugins/audio-none.provider.json)
+engine_provider(MANIFEST runtime/renderer-forward-bgfx.provider.json)   # beside the factory, runtime_boot.cpp
+engine_provider(MANIFEST runtime/renderer-none.provider.json)
+engine_providers_apply(engine_runtime FLAVOUR client
+    WRITE_LIST ${CMAKE_BINARY_DIR}/providers.json)
+engine_providers_apply(engine_runtime_server FLAVOUR server)
+
 # The one place the runtime names a concrete Renderer is initRenderer()'s
 # factory. This definition removes that branch — a factory is where a build-time
 # choice belongs, and it is the only #if this target needs.
 target_compile_definitions(engine_runtime_server PUBLIC ENGINE_SERVER_BUILD=1)
 
-target_include_directories(engine_runtime_server PUBLIC
-    ${CMAKE_SOURCE_DIR}/third_party/JoltPhysics
-    ${CMAKE_SOURCE_DIR}/third_party/miniaudio
-)
 
 # bgfx, bimg and the platform's window frameworks are ABSENT by construction.
 # bx stays: it is the maths library (see above).
@@ -536,7 +552,6 @@ target_link_libraries(engine_runtime_server PUBLIC
     engine_core
     bx
     flecs_static
-    Jolt
     lua
     ozz_animation ozz_animation_offline
     hid
@@ -545,8 +560,6 @@ target_link_libraries(engine_runtime_server PUBLIC
 
 
 target_include_directories(engine_runtime PUBLIC
-    ${CMAKE_SOURCE_DIR}/third_party/JoltPhysics
-    ${CMAKE_SOURCE_DIR}/third_party/miniaudio
     "${SHADER_OUTPUT_DIR}"
 )
 
@@ -560,7 +573,6 @@ target_link_libraries(engine_runtime PUBLIC
     engine_core
     bgfx bx bimg
     flecs_static
-    Jolt
     lua
     ozz_animation ozz_animation_offline   # skeletal animation backbone (+ import-time builders)
     hid                                   # raw-input module (modules/hid submodule)

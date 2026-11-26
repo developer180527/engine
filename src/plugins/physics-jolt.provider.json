@@ -1,0 +1,11 @@
+{
+  "kind": "physics",
+  "name": "jolt",
+  "contract": "engine-plugin",
+  "platforms": ["windows", "linux", "macos"],
+  "flavours": ["client", "server"],
+  "needs": [],
+  "sdk": [],
+  "requires": ["engine.jobs.v1"],
+  "capabilities": ["rigid_bodies", "character", "determinism.same_binary"]
+}

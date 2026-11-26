@@ -903,6 +903,32 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:asset_cook_request_test>)
     set_tests_properties(player_has_no_cook_stack PROPERTIES LABELS unit TIMEOUT 120)
 
+    # What a provider manifest may not say, and the reason given (WO-085):
+    # each case configures tests/provider_manifests and matches the message.
+    foreach(_case
+            "ok|provider physics a: built into target_under_test"
+            "unknown_platform|unknown platform 'playstation'"
+            "no_platforms|'platforms' is required"
+            "unknown_fact|needs 'quantum', which is not a platform fact"
+            "unknown_kind|unknown kind 'teleport'"
+            "wrong_file_name|the file must be named physics-a.provider.json"
+            "unknown_contract|contract 'nope' has no docs/contracts/nope.md"
+            "declared_twice|physics provider 'a' is declared twice"
+            "provider_links_provider|links engine_provider_physics_a, another[^a-z]+provider"
+            "other_platform|provider physics a: not built for target_under_test: it supports"
+            "missing_sdk|the SDK FAKE_PHYSICS_SDK was not found"
+            "server_flavour|not built for target_under_test: it is not built for server builds")
+        string(REPLACE "|" ";" _pair "${_case}")
+        list(GET _pair 0 _name)
+        list(GET _pair 1 _expect)
+        add_test(NAME provider_manifest_${_name}
+                 COMMAND ${CMAKE_COMMAND} -S ${CMAKE_SOURCE_DIR}/tests/provider_manifests
+                         -B ${CMAKE_BINARY_DIR}/provider_manifests/${_name}
+                         -G ${CMAKE_GENERATOR} -DCASE=${_name} -DENGINE_ROOT=${CMAKE_SOURCE_DIR})
+        set_tests_properties(provider_manifest_${_name} PROPERTIES LABELS unit TIMEOUT 120
+            PASS_REGULAR_EXPRESSION "${_expect}")
+    endforeach()
+
     # The shipped player lists the providers this build has, by kind (WO-076).
     add_test(NAME player_lists_providers
              COMMAND engine_player --list-providers --json)

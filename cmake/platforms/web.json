@@ -1,0 +1,5 @@
+{
+  "platform": "web",
+  "facts": { "display": true, "threads": false, "dlopen": false, "audio_output": true },
+  "gpu_apis": ["webgpu", "webgl2"]
+}

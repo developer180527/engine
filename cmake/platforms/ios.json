@@ -1,0 +1,5 @@
+{
+  "platform": "ios",
+  "facts": { "display": true, "threads": true, "dlopen": false, "audio_output": true },
+  "gpu_apis": ["metal"]
+}

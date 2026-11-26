@@ -1,0 +1,5 @@
+{
+  "platform": "windows",
+  "facts": { "display": true, "threads": true, "dlopen": true, "audio_output": true },
+  "gpu_apis": ["d3d12", "d3d11", "vulkan"]
+}

@@ -59,6 +59,17 @@ bool Registry::addRenderer(std::string name, std::string description,
     return add(std::move(e), why);
 }
 
+void Registry::addUnavailable(Kind k, std::string name, std::string whyNot) {
+    if (find(k, name) || whyUnavailable(k, name)) return;
+    m_unavailable.push_back({k, std::move(name), std::move(whyNot)});
+}
+
+const std::string* Registry::whyUnavailable(Kind k, std::string_view name) const {
+    for (const Unavailable& u : m_unavailable)
+        if (u.kind == k && u.name == name) return &u.whyNot;
+    return nullptr;
+}
+
 const Entry* Registry::find(Kind k, std::string_view name) const {
     for (const Entry& e : m_entries)
         if (e.kind == k && e.name == name) return &e;
@@ -67,6 +78,12 @@ const Entry* Registry::find(Kind k, std::string_view name) const {
 
 const Entry* Registry::resolve(Kind k, std::string_view name, std::string& why) const {
     if (const Entry* e = find(k, name)) return e;
+    if (const std::string* whyNot = whyUnavailable(k, name)) {
+        why = std::string("the ") + kindName(k) + " provider '" + std::string(name) +
+              "' is not built here: " + *whyNot +
+              (names(k).empty() ? std::string(" (none built)") : " (built: " + namesList(k) + ")");
+        return nullptr;
+    }
     const std::string known = namesList(k);
     why = std::string("no ") + kindName(k) + " provider named '" + std::string(name) +
           "' in this build (" + (known.empty() ? std::string("it has none") : "known: " + known) + ")";
@@ -113,6 +130,8 @@ std::string Registry::describe() const {
             }
             s += "\n";
         }
+        for (const Unavailable& u : m_unavailable)
+            if (u.kind == k) s += "  " + u.name + "  (not built: " + u.whyNot + ")\n";
     }
     return s;
 }
@@ -122,7 +141,10 @@ std::string Registry::describeJson() const {
     for (Kind k : kAllKinds) {
         nlohmann::json arr = nlohmann::json::array();
         for (const Entry& e : m_entries)
-            if (e.kind == k) arr.push_back({{"name", e.name}, {"description", e.description}});
+            if (e.kind == k) arr.push_back({{"name", e.name}, {"description", e.description},
+                                            {"built", true}});
+        for (const Unavailable& u : m_unavailable)
+            if (u.kind == k) arr.push_back({{"name", u.name}, {"built", false}, {"why_not", u.whyNot}});
         j[kindName(k)] = std::move(arr);
     }
     return j.dump(2);

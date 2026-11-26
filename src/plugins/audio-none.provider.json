@@ -1,0 +1,11 @@
+{
+  "kind": "audio",
+  "name": "none",
+  "contract": "audio-provider",
+  "platforms": ["windows", "linux", "macos", "android", "ios", "web"],
+  "flavours": ["client", "server"],
+  "needs": [],
+  "sdk": [],
+  "requires": [],
+  "capabilities": []
+}

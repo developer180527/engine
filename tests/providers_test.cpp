@@ -114,6 +114,41 @@ int main() {
               "the listing covers every kind, as text and JSON");
     }
 
+    // ── 1b. Manifests and the registry agree (WO-085) ────────────────────
+    // Every provider the build declares and built is registered; every one it
+    // declared and did not build is registered as unavailable, with the reason;
+    // nothing is registered that no manifest declares.
+    {
+        providers::Registry r;
+        registerStockProviders(r);
+        size_t declaredBuilt = 0;
+        for (const DeclaredProvider& d : declaredProviders()) {
+            providers::Kind k;
+            CHECK(providers::kindFromName(d.kind, k), "manifest kind '%s' is a kind", d.kind);
+            if (d.built) {
+                ++declaredBuilt;
+                CHECK(r.find(k, d.name) != nullptr, "%s '%s' is declared, built and registered", d.kind, d.name);
+            } else {
+                CHECK(r.find(k, d.name) == nullptr && r.whyUnavailable(k, d.name) != nullptr,
+                      "%s '%s' is not built here, and says why: %s", d.kind, d.name, d.whyNot);
+            }
+        }
+        for (const providers::Entry& e : r.entries()) {
+            bool declared = false;
+            for (const DeclaredProvider& d : declaredProviders())
+                declared |= d.built && e.name == d.name && std::string(providers::kindName(e.kind)) == d.kind;
+            CHECK(declared, "registered %s '%s' has a manifest", providers::kindName(e.kind), e.name.c_str());
+        }
+        CHECK(declaredBuilt == r.entries().size(), "as many registered as declared-and-built (%zu)", declaredBuilt);
+
+        providers::Registry u;
+        u.addUnavailable(providers::Kind::Physics, "havok", "the SDK HAVOK_SDK was not found");
+        std::string why;
+        CHECK(!u.resolve(providers::Kind::Physics, "havok", why) && has(why, "not built here")
+              && has(why, "HAVOK_SDK"), "choosing a provider that is not built gives the reason: %s", why.c_str());
+        CHECK(has(u.describe(), "not built: the SDK HAVOK_SDK"), "the listing shows it, with the reason");
+    }
+
     // ── 2. Explicit `none` everywhere: nothing published, audio a real plugin ──
     {
         const Boot b = boot(configFor(makeProject("none",

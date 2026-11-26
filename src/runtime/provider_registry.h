@@ -52,6 +52,12 @@ public:
     bool addRenderer(std::string name, std::string description,
                      RendererFactory f, std::string* why = nullptr);
 
+    // A provider this build declares but did not build here, and why
+    // ("it supports windows, linux, macos, not web"). It is never found or
+    // created; choosing it is refused with the reason (WO-085).
+    void addUnavailable(Kind k, std::string name, std::string whyNot);
+    const std::string* whyUnavailable(Kind k, std::string_view name) const;
+
     const Entry* find(Kind k, std::string_view name) const;
 
     // The entry for `name`, or nullptr with `why` naming what was asked for
@@ -80,6 +86,8 @@ public:
 private:
     bool add(Entry e, std::string* why);
     std::vector<Entry> m_entries;
+    struct Unavailable { Kind kind; std::string name, whyNot; };
+    std::vector<Unavailable> m_unavailable;
     std::vector<std::string> m_lists;
     std::shared_ptr<IEnginePlugin> m_injected[4];
 };

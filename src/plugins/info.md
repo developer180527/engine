@@ -21,7 +21,11 @@ runtime's `PluginRegistry`. Which ones is project data: `stock_providers.cpp` is
 the build's one list (kind, name, factory, registered by explicit calls), and
 `addProviders()` (`stock_plugins.h`) adds the chosen ones or refuses an unknown
 name by name (WO-076). Every kind has a `none` provider, audio included
-(`null_audio_plugin.h`).
+(`null_audio_plugin.h`). Each provider has a manifest beside it,
+`<kind>-<name>.provider.json`, and is registered only where CMake built it
+(`engine_providers_built.h`; [provider-manifest.md](../../docs/reference/provider-manifest.md),
+WO-085). Jolt and miniaudio are linked through their provider's INTERFACE
+target, not by the runtime itself.
 
 ## Plugin vs Kit (same interface, different deployment)
 `IEnginePlugin` is just the lifecycle hook — both built-in subsystems and

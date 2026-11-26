@@ -1,0 +1,11 @@
+{
+  "kind": "scripting",
+  "name": "none",
+  "contract": "script-services",
+  "platforms": ["windows", "linux", "macos", "android", "ios", "web"],
+  "flavours": ["client", "server"],
+  "needs": [],
+  "sdk": [],
+  "requires": [],
+  "capabilities": []
+}

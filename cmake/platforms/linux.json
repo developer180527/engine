@@ -1,0 +1,5 @@
+{
+  "platform": "linux",
+  "facts": { "display": true, "threads": true, "dlopen": true, "audio_output": true },
+  "gpu_apis": ["vulkan", "opengl"]
+}

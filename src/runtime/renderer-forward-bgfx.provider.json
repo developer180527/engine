@@ -1,0 +1,11 @@
+{
+  "kind": "renderer",
+  "name": "forward-bgfx",
+  "contract": "renderer",
+  "platforms": ["windows", "linux", "macos"],
+  "flavours": ["client"],
+  "needs": ["display"],
+  "sdk": [],
+  "requires": [],
+  "capabilities": ["forward", "shadows", "skinning"]
+}

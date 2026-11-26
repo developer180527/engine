@@ -1,0 +1,11 @@
+{
+  "kind": "scripting",
+  "name": "lua",
+  "contract": "script-services",
+  "platforms": ["windows", "linux", "macos"],
+  "flavours": ["client", "server"],
+  "needs": [],
+  "sdk": [],
+  "requires": [],
+  "capabilities": ["scripts.lua"]
+}

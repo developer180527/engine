@@ -1,0 +1,11 @@
+{
+  "kind": "physics",
+  "name": "none",
+  "contract": "engine-plugin",
+  "platforms": ["windows", "linux", "macos", "android", "ios", "web"],
+  "flavours": ["client", "server"],
+  "needs": [],
+  "sdk": [],
+  "requires": [],
+  "capabilities": []
+}

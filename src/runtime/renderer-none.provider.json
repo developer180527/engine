@@ -1,0 +1,11 @@
+{
+  "kind": "renderer",
+  "name": "none",
+  "contract": "renderer",
+  "platforms": ["windows", "linux", "macos", "android", "ios", "web"],
+  "flavours": ["client", "server"],
+  "needs": [],
+  "sdk": [],
+  "requires": [],
+  "capabilities": []
+}
