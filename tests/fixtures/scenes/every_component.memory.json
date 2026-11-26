@@ -1,0 +1,151 @@
+{
+  "entities": [
+    {
+      "camera": {
+        "clearColor": [
+          0.20000000298023224,
+          0.30000001192092896,
+          0.4000000059604645,
+          0.8999999761581421
+        ],
+        "farPlane": 250.0,
+        "fov": 72.5,
+        "isPrimary": false,
+        "nearPlane": 0.25,
+        "orthoSize": 4.0,
+        "projection": 1
+      },
+      "characterController": {
+        "gravityScale": 1.5,
+        "height": 1.75,
+        "mass": 80.0,
+        "maxSlopeDeg": 40.0,
+        "radius": 0.3499999940395355,
+        "stepHeight": 0.25
+      },
+      "colourGrading": {
+        "aperture": 2.799999952316284,
+        "exposureEV": -1.5,
+        "exposureMode": 1,
+        "iso": 400.0,
+        "lutPath": "assets/luts/warm.cube",
+        "shutterSeconds": 0.004000000189989805,
+        "toneMapper": 2
+      },
+      "id": 1001,
+      "light": {
+        "castShadows": true,
+        "color": [
+          1.0,
+          0.5,
+          0.25
+        ],
+        "intensity": 7.0,
+        "range": 30.0,
+        "spotInner": 10.0,
+        "spotOuter": 20.0,
+        "temperatureK": 3200.0,
+        "type": 2,
+        "useTemperature": true
+      },
+      "name": "Everything",
+      "reflected": {
+        "combat::Health": {
+          "current": 40,
+          "max": 120
+        }
+      },
+      "rigidBody": {
+        "bodyType": 1,
+        "friction": 0.8999999761581421,
+        "halfExtent": [
+          0.25,
+          1.0,
+          0.75
+        ],
+        "halfHeight": 0.800000011920929,
+        "mass": 12.0,
+        "radius": 0.4000000059604645,
+        "restitution": 0.10000000149011612,
+        "shape": 2,
+        "useGravity": false
+      },
+      "script": {
+        "path": "scripts/door.lua"
+      },
+      "transform": {
+        "position": [
+          1.5,
+          -2.25,
+          3.0
+        ],
+        "rotation": [
+          0.0,
+          0.7071067690849304,
+          0.0,
+          0.7071067690849304
+        ],
+        "scale": [
+          2.0,
+          2.0,
+          0.5
+        ]
+      }
+    },
+    {
+      "animator": {
+        "clipId": 7,
+        "clipIndex": 3,
+        "clipPath": "/abs/clips/walk.cclip",
+        "fade": 0.5,
+        "looping": false,
+        "playing": true,
+        "speed": 0.75,
+        "time": 1.25
+      },
+      "id": 1002,
+      "lodMesh": {
+        "coarsenBelow": [
+          0.4000000059604645,
+          0.10000000149011612
+        ],
+        "levels": [
+          {
+            "handleId": 10
+          },
+          {
+            "handleId": 11
+          }
+        ]
+      },
+      "meshRenderer": {
+        "handleId": 9,
+        "matOverrideId": 4
+      },
+      "name": "Child",
+      "parentId": 1001,
+      "skinnedMesh": {
+        "skeletonId": 5
+      },
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "version": 1
+}

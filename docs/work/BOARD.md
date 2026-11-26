@@ -15,14 +15,15 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 - [WO-038](WO-038-ci-green-on-every-leg.md) **CI green on every leg, and red is noticed** — 5/7 done. Still open:
   - a `workflow_dispatch` run of the full matrix is green on all six legs plus the sanitizer, SDK-only and shipping jobs (Windows may show more once it links)
   - a failed nightly notifies instead of sitting red for weeks
-- [WO-070](WO-070-engstep-and-main-window.md) **`engStep` and main-window control on today's internals — the C API's first, usable step** — 6/7 done. Still open:
-  - **checked by eye by the owner** (`build/eng_window_manual`): the window goes borderless fullscreen and back (and exclusive, where offered), the macOS green button does nothing, the first close is declined and the second accepted. These need a person; `eng_window_test` covers everything else
+- [WO-071](WO-071-schema-registry-and-generic-serializer.md) **A component schema registry and one generic scene serializer, with unknown components kept** — 5/7 done. Still open:
+  - a schema registry: name (namespaced, `core.Transform`), revision (`kAbiRevision`), fields with the draft's field types (`eng_world.h`, including the proposed ones), defaults, and an optional migration per revision
+  - the project file declares extensions as required or used; a missing required one fails at load by name (DR-0035)
 
 ## Next up
 
-1. [WO-071](WO-071-schema-registry-and-generic-serializer.md) **A component schema registry and one generic scene serializer, with unknown components kept** · P1 · size L — Every later step names components by registered schema: the change stream, the C world API, provider-namespaced components, migrations. Today the scene serializer is a hand-written list (`entity_serializer.h`, 11 schemas hard-coded in `meta_registry.h`) that drops any component it does not know, and `MeshRenderer` saves the bgfx renderer's registry ids.
-2. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
-3. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
+1. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
+2. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
+3. [WO-057](WO-057-rhi-module-home.md) **The RHI's home — a module that builds, tests and ships without the engine** · P1 · size S — DR-0012 makes the RHI a library for more than this engine. Independence that
 
 ## P0 — broken now — wrong output or lost data. Nothing else starts first.
 
@@ -34,8 +35,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-070](WO-070-engstep-and-main-window.md) | `engStep` and main-window control on today's internals — the C API's first, usable step | Providers & modules | M | **active** 6/7 | — |
-| [WO-071](WO-071-schema-registry-and-generic-serializer.md) | A component schema registry and one generic scene serializer, with unknown components kept | Asset import & cooking | L | **ready** | scene-service |
+| [WO-071](WO-071-schema-registry-and-generic-serializer.md) | A component schema registry and one generic scene serializer, with unknown components kept | Asset import & cooking | L | **active** 5/7 | scene-service |
 | [WO-072](WO-072-change-stream.md) | One change stream per registered component — free without subscribers, merged per read | Renderer & RHI | M | blocked by WO-071 | render-scene |
 | [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | blocked by WO-071, WO-072 | kit-abi |
 | [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API | Providers & modules | M | blocked by WO-073 | engine-plugin |
@@ -48,6 +48,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-062](WO-062-bgfx-sized-for-what-the-host-draws.md) | bgfx is sized for what the host draws, not for its defaults (about 49 MB down to about 21 MB) | Renderer & RHI | S | **ready** | — |
 | [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
 | [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
+| [WO-090](WO-090-first-librhi-renderer.md) | The first librhi renderer — a provider beside bgfx, the forward pipeline ported pass by pass, each bgfx assumption removed where the port meets it | Renderer & RHI | L | blocked by WO-071, WO-075 | renderer, gpu-seam |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -88,6 +89,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | size | until |
 |---|---|---|---|
+| [WO-070](WO-070-engstep-and-main-window.md) | `engStep` and main-window control on today's internals — the C API's first, usable step | M | the owner checks the window by eye (build/eng_window_manual), the one open item; everything else is done |
 | [WO-006](WO-006-unknown-os-is-a-compile-error.md) | An unknown OS is a compile error with a to-do list, not silently POSIX | M | WO-038 turns the Linux and Windows CI legs green; the one open item is that confirmation |
 | [WO-025](WO-025-static-module-registration.md) | Static module registration for platforms without dlopen | M | a console or iOS target is real |
 | [WO-027](WO-027-custom-rhi.md) | Custom RHI implementation | XL | WO-056 (the G2 prerequisites) is done, then split into G-phase orders of size L or less |

@@ -102,6 +102,10 @@ int main() {
         g.lutPath        = "grades/warm.cube";
         flecs::entity src = w.entity().set<ColourGrading>(g);
 
+        // Through the registry, the way every scene path reaches it (WO-071).
+        const EntitySerde::ComponentSchema& schema = *EntitySerde::schemas().byKey("colourGrading");
+        auto saveColourGrading = [&](flecs::entity e, json& out, const auto& c) { schema.save(e, out, c); };
+        auto loadColourGrading = [&](flecs::entity e, const json& in, auto& c) { schema.load(e, in, c); };
         json j;
         saveColourGrading(src, j, ctx);
         flecs::entity dst = w.entity();

@@ -2,8 +2,8 @@
 // ── Reflected component (de)serialization ────────────────────────────────────
 // The GENERIC half of scene serde, driven by flecs meta (the reflection
 // backbone — see components/meta_registry.h). Any component registered with
-// `.member<>()` (i.e. it has EcsStruct) that is NOT in the hand-written
-// EntitySerde table is saved/loaded automatically under the entity's
+// `.member<>()` (i.e. it has EcsStruct) that the schema registry does not
+// name (scene/component_schema.h) is saved/loaded automatically under the entity's
 // "reflected" sub-object, keyed by the component's full path:
 //
 //   "reflected": { "combat::Health": { "current": 50, "max": 100 } }
@@ -34,7 +34,7 @@ struct ReflectedPending {
     std::map<std::string, std::string> blobs;   // component path -> JSON object
 };
 
-// Hand-written EntitySerde table + engine internals + member-only math types —
+// The registry's components (by flecs path) + engine internals + member-only math types —
 // these are serialized (or deliberately not) by the explicit table, never here.
 inline bool isHandwritten(const std::string& path) {
     static const char* k[] = {

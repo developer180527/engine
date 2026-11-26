@@ -13,7 +13,7 @@
 
 // ── UndoStack ──────────────────────────────────────────────────────────────
 // Session-only. Entity references key on the stable EntityId. Full-entity
-// snapshots (add/delete) run through the SAME EntitySerde table as scene save,
+// snapshots (add/delete) run through the SAME schema registry as scene save,
 // so undo can no longer drift from the serializer: restoring a deleted entity
 // brings back every serialized component, not the partial set the old
 // hand-written snapshot captured. Respawn preserves the original id, so other
@@ -108,12 +108,9 @@ public:
     // ── Component snapshot (public — used by inspector capture) ─────────────
     static nlohmann::json snapshotComponent(flecs::entity e, const char* key) {
         EntitySerde::SerdeContext sctx; sctx.mode = EntitySerde::SerdeMode::Memory;
-        for (const auto& d : EntitySerde::table()) {
-            if (std::string(d.key) == key && d.has(e)) {
-                nlohmann::json j; d.save(e, j, sctx); return j;
-            }
-        }
-        return {};
+        const EntitySerde::ComponentSchema* s = EntitySerde::schemas().byKey(key);
+        if (!s || !s->has(e)) return {};
+        nlohmann::json j; s->save(e, j, sctx); return j;
     }
 
     void pushPropertyEdit(flecs::entity e, const char* compKey,
@@ -192,15 +189,12 @@ private:
 
     static void restoreComponent(flecs::entity e, const std::string& key, const nlohmann::json& data) {
         EntitySerde::SerdeContext sctx; sctx.mode = EntitySerde::SerdeMode::Memory;
-        for (const auto& d : EntitySerde::table())
-            if (key == d.key) { d.load(e, data, sctx); return; }
+        if (const EntitySerde::ComponentSchema* s = EntitySerde::schemas().byKey(key))
+            s->load(e, data, sctx);
     }
     static void removeComponentByKey(flecs::entity e, const std::string& key) {
-        if      (key == "camera")               e.remove<Camera>();
-        else if (key == "light")                e.remove<Light>();
-        else if (key == "rigidBody")            e.remove<RigidBody>();
-        else if (key == "characterController")  e.remove<CharacterController>();
-        else if (key == "script")               e.remove<ScriptComponent>();
+        if (const EntitySerde::ComponentSchema* s = EntitySerde::schemas().byKey(key))
+            s->remove(e);
     }
     static void applyPropertyEdit(flecs::world& ecs, const nlohmann::json& j) {
         flecs::entity e = findById(ecs, j.value("id",(uint64_t)0));

@@ -11,6 +11,7 @@ tests:
   - tests/scene_parents_test.cpp      # the hierarchy post-pass, hostile input
   - tests/scene_mesh_reference_test.cpp  # a mesh that fails to load is never saved away
   - tests/scene_material_roundtrip_test.cpp  # a material override survives save + load (BUG-0072)
+  - tests/scene_schema_test.cpp       # the format byte for byte; unknown kept; migrations (WO-071)
 ---
 # Scene
 
@@ -60,10 +61,34 @@ nlohmann stores a positive literal built in-process from an `int` as SIGNED, so
 that spelling rejected valid ids depending only on how the JSON was
 constructed — parsed-from-disk and built-in-memory disagreed.
 
+## The schema registry (WO-071, 2026-11-26)
+Every saved component is a schema in one registry (`component_schema.h`): a
+namespaced name (`core.Camera`), the key scenes already save it under
+(`"camera"`), a revision (its `kAbiRevision`), and how it is read and written.
+Plain-data components are declared field by field and one generic reader and
+writer handles them; four whose saved form is not their memory form (mesh, LOD
+chain, skinned mesh, animator) keep a codec of their own, registered the same
+way. Scene save, the Play snapshot and the undo stack all walk the registry.
+
+- **The format did not move.** `tests/fixtures/scenes/every_component.*.json`
+  were written by the hand-written table before it was removed; the registry
+  writes them byte for byte, and loads and saves them back unchanged. They are
+  never regenerated (`--write-fixtures` refuses to overwrite one).
+- **Nothing is dropped.** A component key nothing registered, data saved at a
+  revision newer than this engine's, and a revision no migration reaches are all
+  kept as `UnknownComponents` and saved back exactly, with a warning naming them
+  (DR-0034, DR-0035).
+- **Revisions.** Revision 0 writes no marker, which is every scene saved before
+  this; a later revision writes `"$rev"` in the component's object, and loading
+  older data runs the schema's migrations one revision at a time.
+- **Per-field tolerance.** A wrong-typed field now keeps its default and the
+  rest of the component loads; before, a wrong-typed bool or enum threw and the
+  whole component was skipped. Data that is not an object is still skipped.
+
 ## ColourGrading (2026-09-17)
-The colour stage B camera component serializes through the hand-written table as
+The colour stage B camera component serializes through the schema registry as
 `"colourGrading"`, after `camera`, and is listed in `reflected_serde.h`'s
-hand-written set so the generic path does not save it a second time. Tolerant:
+registry set so the generic path does not save it a second time. Tolerant:
 wrong-typed fields keep defaults; an unknown-but-in-range tone mapper id is kept
 as read, so a scene from a newer engine round-trips. `fuzz_entity_serde_test`
 generates it.
@@ -74,7 +99,8 @@ load, the play-mode snapshot, and the undo stack all share. Future home of
 prefabs.
 
 ## Contents
-- **`entity_serializer.h`** — the one component serde table. COOKED PATHS ARE
+- **`entity_serializer.h`** — the engine's component schemas (`registerBuiltinSchemas`),
+  their codecs where a saved form is not plain data, and `saveEntity`/`createEntity`. COOKED PATHS ARE
   PASSED RELATIVE: `cookedPath` comes out of the registry as `meshs/<uuid>.cooked`,
   relative to the project's `.cache`, and `AssetService::loadMesh` resolves relative
   paths against exactly that. Until 2026-08-05 this pre-joined the project ROOT,

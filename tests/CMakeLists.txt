@@ -156,6 +156,10 @@ engine_test(logger_test    LIB engine_core)
 # damage. Hermetic — "the type is not registered" is the whole condition, so this
 # needs no kit and no dlopen.
 engine_test(reflected_pending_test)
+# The scene format byte for byte (WO-071): fixtures written by the hand-written
+# serializer before the schema registry replaced it, loaded and saved back.
+engine_test(scene_schema_test)
+target_compile_definitions(scene_schema_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # WO-029: loading never deletes an authored mesh. A reference the loader cannot
 # resolve (missing file, failed or unfinished import, no importer in this build)
 # is kept in UnresolvedMesh and written back unchanged by the next save — disk

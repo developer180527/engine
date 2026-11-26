@@ -1,0 +1,30 @@
+{
+  "entities": [
+    {
+      "id": 2001,
+      "name": "Engine bell",
+      "thruster": {
+        "thrust": 2500.0
+      },
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "version": 1
+}

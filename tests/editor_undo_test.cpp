@@ -10,7 +10,7 @@
 // because a wrong undo silently destroys authored work and the user's only
 // signal is that their scene is subtly wrong later.
 //
-// It also runs entity snapshots through the SAME `EntitySerde` table as scene
+// It also runs entity snapshots through the SAME schema registry as scene
 // save, so it inherits that path's guarantees and its bugs. That is the point
 // of the design and worth pinning.
 //
@@ -288,7 +288,7 @@ int main() {
 
     // ── The snapshot goes through the shared serializer ─────────────────────
     // This is the design guarantee in the header: undo cannot drift from scene
-    // save, because both drive EntitySerde::table(). A component added to the
+    // save, because both walk EntitySerde::schemas(). A component added to the
     // table must therefore survive a delete/undo without anyone touching this
     // file — so the assertion is on a component the undo stack never names.
     {
@@ -310,7 +310,7 @@ int main() {
         if (bc)
             CHECK(std::fabs(bc->fov - 77.0f) < 1e-3f,
                   "...with its value (fov %.1f) — proof the snapshot really is "
-                  "the shared EntitySerde table and not a private copy", bc->fov);
+                  "the shared schema registry and not a private copy", bc->fov);
     }
 
     if (g_failures) {

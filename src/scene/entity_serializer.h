@@ -1,9 +1,10 @@
 #pragma once
 // ── EntitySerializer ─────────────────────────────────────────────────────────
 // The single component (de)serialization path. Scene save/load, the in-memory
-// editor->game snapshot, and the undo stack all drive this same descriptor
-// table, so a component serialized in one place can never drift from another.
-// Add a component once here and every path picks it up.
+// editor->game snapshot, and the undo stack all walk the same schema registry
+// (scene/component_schema.h), so a component serialized in one place can never
+// drift from another. Register a component once (builtinSchemas() below, or a
+// provider's own registration) and every path picks it up.
 //
 // Identity (EntityId) is owned by createEntity() via IdPolicy, not a table
 // entry. Parent links (ChildOf) are restored by callers in a post-pass, since
@@ -40,7 +41,9 @@
 #include "render/primitive_library.h"
 #include "scene/scene_assets.h"
 #include "core/lod_limit.h"
+#include "scene/component_schema.h"
 #include "scene/reflected_serde.h"
+#include "scene/unknown_components.h"
 #include "scene/unresolved_mesh.h"
 #include "core/logger.h"
 #include "core/json_read.h"
@@ -90,13 +93,10 @@ struct SerdeContext {
     AssetStorage*             storage      = nullptr;     // disk load: import target
     PrimitiveLibrary*         primitives   = nullptr;     // disk load: primitive shortcut
     std::vector<PendingMesh>* pendingAsync = nullptr;     // disk load: Assimp queue
-};
 
-struct ComponentSerde {
-    const char* key;                                                   // json sub-key
-    bool (*has)(flecs::entity);
-    void (*save)(flecs::entity, nlohmann::json&, const SerdeContext&);  // writes its sub-object
-    void (*load)(flecs::entity, const nlohmann::json&, SerdeContext&);  // reads its sub-object
+    // The schemas to read and write with. Null: the engine's own (schemas()). A
+    // test passes its own registry to load data under a revision it chose.
+    const SchemaRegistry*     schemas      = nullptr;
 };
 
 // Bounds- and type-safe JSON reads live in core/json_read.h — the same defect
@@ -106,21 +106,6 @@ using jsonread::finiteNumber;
 using jsonread::readFloat;
 using jsonread::readFloats;
 
-inline bool hasTransform(flecs::entity e) { return e.try_get<Transform>() != nullptr; }
-inline void saveTransform(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
-    const Transform* t = e.try_get<Transform>(); if (!t) return;
-    j["position"] = {t->position.x, t->position.y, t->position.z};
-    j["rotation"] = {t->rotation.x, t->rotation.y, t->rotation.z, t->rotation.w};
-    j["scale"]    = {t->scale.x, t->scale.y, t->scale.z};
-}
-inline void loadTransform(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
-    Transform t;
-    readFloats(j, "position", &t.position.x, 3);
-    readFloats(j, "rotation", &t.rotation.x, 4);
-    readFloats(j, "scale",    &t.scale.x,    3);
-    e.set<Transform>(t);
-}
-
 // ── Name (sub-json is a bare string) ─────────────────────────────────────────
 inline bool hasName(flecs::entity e) { return e.try_get<Name>() != nullptr; }
 inline void saveName(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
@@ -128,106 +113,6 @@ inline void saveName(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
 }
 inline void loadName(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
     e.set<Name>({ j.is_string() ? j.get<std::string>() : std::string("Entity") });
-}
-
-// ── Camera ────────────────────────────────────────────────────────────────────
-inline bool hasCamera(flecs::entity e) { return e.try_get<Camera>() != nullptr; }
-inline void saveCamera(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
-    const Camera* c = e.try_get<Camera>(); if (!c) return;
-    j["isPrimary"]  = c->isPrimary;
-    j["projection"] = (int)c->projection;
-    j["fov"]        = c->fov;
-    j["orthoSize"]  = c->orthoSize;
-    j["nearPlane"]  = c->nearPlane;
-    j["farPlane"]   = c->farPlane;
-    j["clearColor"] = {c->clearColor[0], c->clearColor[1], c->clearColor[2], c->clearColor[3]};
-}
-inline void loadCamera(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
-    Camera c;
-    c.isPrimary  = j.value("isPrimary", true);
-    c.projection = (ProjectionType)j.value("projection", 0);
-    c.fov        = readFloat(j, "fov", 60.0f);
-    c.orthoSize  = readFloat(j, "orthoSize", 10.0f);
-    c.nearPlane  = readFloat(j, "nearPlane", 0.1f);
-    c.farPlane   = readFloat(j, "farPlane", 1000.0f);
-    readFloats(j, "clearColor", c.clearColor, 4);
-    e.set<Camera>(c);
-}
-
-// ── ColourGrading (colour pipeline stage B) ──────────────────────────────────
-// Tolerant like every loader here: a wrong-typed or out-of-range field keeps its
-// default. An unknown enum value is kept AS READ — resolvedToneMapper() and
-// resolvedExposure() refuse it at use — so a scene saved by a newer engine with
-// a tone mapper this one lacks round-trips instead of being silently rewritten.
-inline bool hasColourGrading(flecs::entity e) { return e.try_get<ColourGrading>() != nullptr; }
-inline void saveColourGrading(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
-    const ColourGrading* g = e.try_get<ColourGrading>(); if (!g) return;
-    j["exposureMode"]   = g->exposureMode;
-    j["toneMapper"]     = g->toneMapper;
-    j["exposureEV"]     = g->exposureEV;
-    j["aperture"]       = g->aperture;
-    j["shutterSeconds"] = g->shutterSeconds;
-    j["iso"]            = g->iso;
-    if (!g->lutPath.empty()) j["lutPath"] = g->lutPath;
-}
-inline void loadColourGrading(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
-    ColourGrading g;
-    auto byteField = [&](const char* key, uint8_t& out) {
-        if (!j.is_object() || !j.contains(key) || !j[key].is_number_unsigned()) return;
-        const uint64_t v = j[key].get<uint64_t>();
-        if (v <= 255) out = (uint8_t)v;
-    };
-    byteField("exposureMode", g.exposureMode);
-    byteField("toneMapper",   g.toneMapper);
-    g.exposureEV     = readFloat(j, "exposureEV", 0.0f);
-    g.aperture       = readFloat(j, "aperture", 16.0f);
-    g.shutterSeconds = readFloat(j, "shutterSeconds", 0.01f);
-    g.iso            = readFloat(j, "iso", 100.0f);
-    if (j.is_object() && j.contains("lutPath") && j["lutPath"].is_string())
-        g.lutPath = j["lutPath"].get<std::string>();
-    e.set<ColourGrading>(std::move(g));
-}
-
-// ── RigidBody (incl. collider dims that the old undo snapshot dropped) ────────
-inline bool hasRigidBody(flecs::entity e) { return e.try_get<RigidBody>() != nullptr; }
-inline void saveRigidBody(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
-    const RigidBody* rb = e.try_get<RigidBody>(); if (!rb) return;
-    j["bodyType"]    = (int)rb->bodyType;
-    j["shape"]       = (int)rb->shape;
-    j["mass"]        = rb->mass;
-    j["restitution"] = rb->restitution;
-    j["friction"]    = rb->friction;
-    j["useGravity"]  = rb->useGravity;
-    j["halfExtent"]  = {rb->halfExtent.x, rb->halfExtent.y, rb->halfExtent.z};
-    j["radius"]      = rb->radius;
-    j["halfHeight"]  = rb->halfHeight;
-}
-inline void loadRigidBody(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
-    RigidBody rb;
-    rb.bodyType    = (PhysicsBodyType)j.value("bodyType", 1);
-    rb.shape       = (PhysicsShape)   j.value("shape", 0);
-    rb.mass        = readFloat(j, "mass", 1.0f);
-    rb.restitution = readFloat(j, "restitution", 0.3f);
-    rb.friction    = readFloat(j, "friction", 0.6f);
-    rb.useGravity  = j.value("useGravity", true);
-    readFloats(j, "halfExtent", &rb.halfExtent.x, 3);
-    rb.radius     = readFloat(j, "radius", 0.5f);
-    rb.halfHeight = readFloat(j, "halfHeight", 0.5f);
-    e.set<RigidBody>(rb);
-}
-
-// ── ScriptComponent (path only; instanceId/started are runtime-owned) ─────────
-inline bool hasScript(flecs::entity e) {
-    const ScriptComponent* s = e.try_get<ScriptComponent>();
-    return s && !s->scriptPath.empty();
-}
-inline void saveScript(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
-    const ScriptComponent* s = e.try_get<ScriptComponent>(); if (!s) return;
-    j["path"] = s->scriptPath;
-}
-inline void loadScript(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
-    ScriptComponent sc; sc.scriptPath = j.value("path", std::string{});
-    e.set<ScriptComponent>(sc);
 }
 
 // ── MeshRenderer (mode-aware: the one component that differs disk vs memory) ──
@@ -503,57 +388,6 @@ inline void loadLodMesh(flecs::entity e, const nlohmann::json& j, SerdeContext& 
     if (lm.count) e.set<LodMesh>(lm);
 }
 
-// ── The one table ─────────────────────────────────────────────────────────────
-// ── CharacterController (capsule controller; 'grounded' is runtime-only) ──────
-inline bool hasCharacterController(flecs::entity e) { return e.try_get<CharacterController>() != nullptr; }
-inline void saveCharacterController(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
-    const CharacterController* cc = e.try_get<CharacterController>(); if (!cc) return;
-    j["radius"]       = cc->radius;
-    j["height"]       = cc->height;
-    j["maxSlopeDeg"]  = cc->maxSlopeDeg;
-    j["stepHeight"]   = cc->stepHeight;
-    j["mass"]         = cc->mass;
-    j["gravityScale"] = cc->gravityScale;
-}
-inline void loadCharacterController(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
-    CharacterController cc;
-    cc.radius       = readFloat(j, "radius", 0.3f);
-    cc.height       = readFloat(j, "height", 1.8f);
-    cc.maxSlopeDeg  = readFloat(j, "maxSlopeDeg", 45.0f);
-    cc.stepHeight   = readFloat(j, "stepHeight", 0.3f);
-    cc.mass         = readFloat(j, "mass", 70.0f);
-    cc.gravityScale = readFloat(j, "gravityScale", 1.0f);
-    e.set<CharacterController>(cc);
-}
-
-// ── Light (parameters only; world pos/dir derive from Transform at extraction) ─
-inline bool hasLight(flecs::entity e) { return e.try_get<Light>() != nullptr; }
-inline void saveLight(flecs::entity e, nlohmann::json& j, const SerdeContext&) {
-    const Light* l = e.try_get<Light>(); if (!l) return;
-    j["type"]        = (int)l->type;
-    j["color"]       = {l->color.x, l->color.y, l->color.z};
-    j["intensity"]   = l->intensity;
-    j["range"]       = l->range;
-    j["spotInner"]   = l->spotInner;
-    j["spotOuter"]   = l->spotOuter;
-    j["castShadows"] = l->castShadows;
-    j["useTemperature"] = l->useTemperature;
-    j["temperatureK"]   = l->temperatureK;
-}
-inline void loadLight(flecs::entity e, const nlohmann::json& j, SerdeContext&) {
-    Light l;
-    l.type        = (LightType)j.value("type", 0);
-    readFloats(j, "color", &l.color.x, 3);
-    l.intensity   = readFloat(j, "intensity", 3.0f);
-    l.range       = readFloat(j, "range", 15.0f);
-    l.spotInner   = readFloat(j, "spotInner", 25.0f);
-    l.spotOuter   = readFloat(j, "spotOuter", 35.0f);
-    l.castShadows = j.value("castShadows", false);
-    l.useTemperature = j.value("useTemperature", false);
-    l.temperatureK   = readFloat(j, "temperatureK", 6500.0f);
-    e.set<Light>(l);
-}
-
 // ── SkinnedMesh (skeleton handle is session-local — NEVER hits disk) ─────────
 // On disk the component is a presence marker: the skeleton always comes from
 // the entity's mesh source file, and the async import callback wires the
@@ -621,24 +455,123 @@ inline void loadAnimator(flecs::entity e, const nlohmann::json& j, SerdeContext&
     e.set<Animator>(a);
 }
 
-inline const std::vector<ComponentSerde>& table() {
-    static const std::vector<ComponentSerde> t = {
-        { "transform",    hasTransform, saveTransform, loadTransform },
-        { "name",         hasName,      saveName,      loadName      },
-        { "meshRenderer", hasMesh,      saveMesh,      loadMesh      },
-        // After meshRenderer, and it has to stay there: a chain describes the
-        // coarser levels of THAT mesh, and load order is the table order.
-        { "lodMesh",      hasLodMesh,   saveLodMesh,   loadLodMesh   },
-        { "camera",       hasCamera,    saveCamera,    loadCamera    },
-        { "colourGrading", hasColourGrading, saveColourGrading, loadColourGrading },
-        { "rigidBody",    hasRigidBody, saveRigidBody, loadRigidBody },
-        { "script",       hasScript,    saveScript,    loadScript    },
-        { "characterController", hasCharacterController, saveCharacterController, loadCharacterController },
-        { "light",        hasLight,      saveLight,     loadLight     },
-        { "skinnedMesh",  hasSkinnedMesh, saveSkinnedMesh, loadSkinnedMesh },
-        { "animator",     hasAnimator,    saveAnimator,    loadAnimator    },
-    };
-    return t;
+// ── The registry ──────────────────────────────────────────────────────────────
+// The engine's components, in load order. Field-by-field where the saved form is
+// the component's own data; a codec of its own where it is not (a mesh is saved
+// as an asset reference and loaded through the asset system; a skeleton handle
+// is session-local and never reaches disk).
+//
+// Each key is what scenes on disk already use, and must stay so: changing one is
+// a format change, which is a revision with a migration (DR-0034), and
+// tests/scene_schema_test.cpp holds the format byte for byte.
+inline ComponentSchema customSchema(const char* name, const char* key, uint32_t revision,
+                                    bool (*has)(flecs::entity),
+                                    void (*save)(flecs::entity, nlohmann::json&, const SerdeContext&),
+                                    void (*load)(flecs::entity, const nlohmann::json&, SerdeContext&),
+                                    void (*remove)(flecs::entity)) {
+    ComponentSchema s;
+    s.name = name; s.key = key; s.revision = revision;
+    s.has = has; s.save = save; s.load = load; s.remove = remove;
+    return s;
+}
+
+inline void registerBuiltinSchemas(SchemaRegistry& r) {
+    r.add(SchemaBuilder<Transform>("core.Transform", "transform")
+        .floats<3>("position", &Transform::position)
+        .floats<4>("rotation", &Transform::rotation)
+        .floats<3>("scale",    &Transform::scale)
+        .build());
+    // Name's saved form is a bare string, not an object: the one legacy shape kept.
+    r.add(customSchema("core.Name", "name", Name::kAbiRevision, hasName, saveName, loadName,
+                       [](flecs::entity e) { e.remove<Name>(); }));
+    r.add(customSchema("core.MeshRenderer", "meshRenderer", MeshRenderer::kAbiRevision,
+                       hasMesh, saveMesh, loadMesh,
+                       [](flecs::entity e) { e.remove<MeshRenderer>(); e.remove<UnresolvedMesh>();
+                                             e.remove<MeshPlaceholder>(); }));
+    // After meshRenderer, and it has to stay there: a chain describes the
+    // coarser levels of THAT mesh, and load order is the registry's order.
+    r.add(customSchema("core.LodMesh", "lodMesh", 0, hasLodMesh, saveLodMesh, loadLodMesh,
+                       [](flecs::entity e) { e.remove<LodMesh>(); }));
+    r.add(SchemaBuilder<Camera>("core.Camera", "camera")
+        .boolean("isPrimary",            &Camera::isPrimary)
+        .enumeration("projection",       &Camera::projection)
+        .f32("fov",                      &Camera::fov)
+        .f32("orthoSize",                &Camera::orthoSize)
+        .f32("nearPlane",                &Camera::nearPlane)
+        .f32("farPlane",                 &Camera::farPlane)
+        .floats<4>("clearColor",         &Camera::clearColor)
+        .build());
+    // An unknown enum byte is kept AS READ: resolvedToneMapper() and
+    // resolvedExposure() refuse it at use, so a scene saved by a newer engine
+    // with a tone mapper this one lacks round-trips instead of being rewritten.
+    r.add(SchemaBuilder<ColourGrading>("core.ColourGrading", "colourGrading")
+        .u8("exposureMode",              &ColourGrading::exposureMode)
+        .u8("toneMapper",                &ColourGrading::toneMapper)
+        .f32("exposureEV",               &ColourGrading::exposureEV)
+        .f32("aperture",                 &ColourGrading::aperture)
+        .f32("shutterSeconds",           &ColourGrading::shutterSeconds)
+        .f32("iso",                      &ColourGrading::iso)
+        .string("lutPath",               &ColourGrading::lutPath, /*omitEmpty*/ true)
+        .build());
+    r.add(SchemaBuilder<RigidBody>("core.RigidBody", "rigidBody")
+        .enumeration("bodyType",         &RigidBody::bodyType)
+        .enumeration("shape",            &RigidBody::shape)
+        .f32("mass",                     &RigidBody::mass)
+        .f32("restitution",              &RigidBody::restitution)
+        .f32("friction",                 &RigidBody::friction)
+        .boolean("useGravity",           &RigidBody::useGravity)
+        .floats<3>("halfExtent",         &RigidBody::halfExtent)
+        .f32("radius",                   &RigidBody::radius)
+        .f32("halfHeight",               &RigidBody::halfHeight)
+        .build());
+    // The path only: instanceId and started are the script backend's, at run time.
+    r.add(SchemaBuilder<ScriptComponent>("core.Script", "script")
+        .string("path",                  &ScriptComponent::scriptPath)
+        .savedWhen([](const ScriptComponent& s) { return !s.scriptPath.empty(); })
+        .build());
+    // `grounded` and `footOffset` are run-time state, never saved.
+    r.add(SchemaBuilder<CharacterController>("core.CharacterController", "characterController")
+        .f32("radius",                   &CharacterController::radius)
+        .f32("height",                   &CharacterController::height)
+        .f32("maxSlopeDeg",              &CharacterController::maxSlopeDeg)
+        .f32("stepHeight",               &CharacterController::stepHeight)
+        .f32("mass",                     &CharacterController::mass)
+        .f32("gravityScale",             &CharacterController::gravityScale)
+        .build());
+    // Parameters only: a light's world position and direction come from its
+    // Transform at extraction.
+    r.add(SchemaBuilder<Light>("core.Light", "light")
+        .enumeration("type",             &Light::type)
+        .floats<3>("color",              &Light::color)
+        .f32("intensity",                &Light::intensity)
+        .f32("range",                    &Light::range)
+        .f32("spotInner",                &Light::spotInner)
+        .f32("spotOuter",                &Light::spotOuter)
+        .boolean("castShadows",          &Light::castShadows)
+        .boolean("useTemperature",       &Light::useTemperature)
+        .f32("temperatureK",             &Light::temperatureK)
+        .build());
+    r.add(customSchema("core.SkinnedMesh", "skinnedMesh", SkinnedMesh::kAbiRevision,
+                       hasSkinnedMesh, saveSkinnedMesh, loadSkinnedMesh,
+                       [](flecs::entity e) { e.remove<SkinnedMesh>(); }));
+    r.add(customSchema("core.Animator", "animator", Animator::kAbiRevision,
+                       hasAnimator, saveAnimator, loadAnimator,
+                       [](flecs::entity e) { e.remove<Animator>(); }));
+}
+
+// The engine's registry. Built on first use, then only read; a provider adds its
+// components at boot, before any scene loads.
+inline SchemaRegistry& schemas() {
+    static SchemaRegistry r = [] { SchemaRegistry s; registerBuiltinSchemas(s); return s; }();
+    return r;
+}
+inline const SchemaRegistry& schemasOf(const SerdeContext& ctx) {
+    return ctx.schemas ? *ctx.schemas : schemas();
+}
+
+// The keys of an entity's object that are not components.
+inline bool isEntityField(const std::string& key) {
+    return key == "id" || key == "parentId" || key == "reflected";
 }
 
 // ── Primitives every path shares ──────────────────────────────────────────────
@@ -650,10 +583,19 @@ inline nlohmann::json saveEntity(flecs::entity e, const SerdeContext& ctx) {
     flecs::entity par = e.target(flecs::ChildOf);
     if (par && par.is_alive())
         if (const EntityId* pid = par.try_get<EntityId>()) je["parentId"] = pid->value;
-    for (const auto& d : table())
-        if (d.has(e)) { nlohmann::json sub; d.save(e, sub, ctx); je[d.key] = std::move(sub); }
-    // Generic path: every meta-registered component NOT in the table above
-    // (kit components, future engine components) + still-pending blobs.
+    for (const ComponentSchema& s : schemasOf(ctx).all()) {
+        if (!s.has(e)) continue;
+        nlohmann::json sub; s.save(e, sub, ctx);
+        if (s.revision > 0 && sub.is_object()) sub[kRevisionKey] = s.revision;
+        je[s.key] = std::move(sub);
+    }
+    // Components this engine could not read, exactly as they were loaded.
+    if (const UnknownComponents* u = e.try_get<UnknownComponents>())
+        for (const auto& [key, blob] : u->blobs)
+            if (!je.contains(key))
+                je[key] = nlohmann::json::parse(blob, nullptr, false);
+    // Generic path: every meta-registered component the registry does not name
+    // (kit components) + still-pending blobs.
     { nlohmann::json r; reflected::save(e, r); if (!r.empty()) je["reflected"] = std::move(r); }
     return je;
 }
@@ -705,9 +647,32 @@ inline flecs::entity createEntity(flecs::world& w, const nlohmann::json& je,
         do { id = generateEntityId(); } while (findById(w, id).is_alive());
     }
     e.set<EntityId>({id});
-    for (const auto& d : table())
-        if (je.contains(d.key))
-            tolerant(d.key, [&] { d.load(e, je[d.key], ctx); });
+    if (!je.is_object()) return e;
+    const SchemaRegistry& reg = schemasOf(ctx);
+    // Unknown first, so a component kept here is never also loaded below.
+    auto keep = [&e](const std::string& key, const nlohmann::json& data) {
+        if (!e.has<UnknownComponents>()) e.set<UnknownComponents>({});
+        e.get_mut<UnknownComponents>().blobs[key] = data.dump();
+    };
+    for (auto it = je.begin(); it != je.end(); ++it)
+        if (!isEntityField(it.key()) && !reg.byKey(it.key())) {
+            LOG_WARN("Scene", "component \"%s\" is not registered here — kept, and "
+                     "saved back unchanged", it.key().c_str());
+            keep(it.key(), it.value());
+        }
+    for (const ComponentSchema& s : reg.all()) {
+        auto it = je.find(s.key);
+        if (it == je.end()) continue;
+        nlohmann::json data = *it;
+        std::string why;
+        if (!migrateToCurrent(s, data, why)) {
+            LOG_WARN("Scene", "%s (\"%s\") cannot be read here: %s — kept, and saved "
+                     "back unchanged", s.name.c_str(), s.key.c_str(), why.c_str());
+            keep(s.key, *it);
+            continue;
+        }
+        tolerant(s.key.c_str(), [&] { s.load(e, data, ctx); });
+    }
     // Generic path: apply reflected components that resolve now; stash the
     // rest in ReflectedPending until their kit registers the type. Kit-authored
     // components are the LEAST trustworthy shape in the file — the engine has
