@@ -118,8 +118,24 @@ including kinds the engine has never heard of.
 
 **Built:** providers are chosen from a hard-coded switch
 (`src/plugins/stock_plugins.h`), and an unknown name falls back to the default.
-**Planned:** a registry: providers register by name and by service, an unknown
-name is refused, and exported games link their providers statically (WO-025).
+
+**Planned** ([provider-selection.md](docs/plans/provider-selection.md), DR-0037):
+- **Declared once.** Each provider has a manifest beside its source: kind, name,
+  contract, an allow list of platforms, platform needs, SDKs and required services.
+  CMake builds a provider only for platforms it lists (WO-085).
+- **Chosen per target.** `project.json` picks one provider per kind, optionally
+  per platform and flavour, for example `"renderer": {"default": "aaa", "web": "web",
+  "server": "none"}`.
+- **Resolved before the game runs.** One resolver, run by `engine_build --platform`
+  and at development startup, refuses an impossible choice by name (WO-086).
+- **Linked statically in shipped games.** The chosen providers are registered from
+  a generated list, and the shipped game has no resolver or loader.
+- **Kept apart.** A provider depends only on engine services, never on another
+  provider (WO-087).
+- **Three layers fail in three places.** The provider fails at build time, the
+  librhi graphics backend picks from a declared order at startup, and device
+  capabilities are checked at startup (WO-089). Graphics APIs are librhi
+  backends, never providers.
 
 ## 7. One frame
 
@@ -245,7 +261,7 @@ libgui is a separate decision.
 | what to do next | [docs/work/BOARD.md](docs/work/BOARD.md) |
 | why something is the way it is | [docs/process/decisions/](docs/process/decisions/README.md) |
 | the target shape in detail | [engine-architecture.md](docs/plans/engine-architecture.md), [engine-api.md](docs/plans/engine-api.md), [renderer-contract.md](docs/plans/renderer-contract.md) |
-| how code attaches to the engine | [extension-model.md](docs/architecture/extension-model.md), [provider-abi.md](docs/architecture/provider-abi.md) |
+| how code attaches to the engine | [extension-model.md](docs/architecture/extension-model.md), [provider-abi.md](docs/architecture/provider-abi.md), [provider-selection.md](docs/plans/provider-selection.md) |
 | contracts between parts | [docs/contracts/](docs/contracts/README.md) |
 | all documentation | [docs/README.md](docs/README.md) |
 

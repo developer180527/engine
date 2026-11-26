@@ -130,6 +130,17 @@ any of these is not a variation, it is a mistake we have already made.
    iteration count. **The test before adding any function: could an FMOD or Wwise
    (or PhysX, or Havok) adapter implement it?** If not, it describes our
    implementation rather than the domain.
+9. **No global environment, and no other provider.** A provider's create call
+   receives one context struct: host services, log, allocator tags, jobs, and
+   the surface if it draws. It reaches nothing else. It never includes or links
+   another provider. Anything that crosses providers, such as physics debug
+   shapes reaching the screen, goes through a service the engine owns. CryEngine's
+   `gEnv` shows how a global environment couples every module to every other.
+   (`provider-selection.md` §6, WO-087.)
+
+How a provider is declared, chosen per platform and linked is
+[`provider-selection.md`](../plans/provider-selection.md) (DR-0037). This document is
+only the shape of the interface.
 
 ## 3. The two rules that stop a seam from rotting
 

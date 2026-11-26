@@ -6,7 +6,7 @@ program: providers
 priority: P2
 size: L
 state: todo
-depends: [WO-076]
+depends: [WO-076, WO-085]
 contracts: [engine-plugin, audio-provider]
 touches:
   - src/plugins/audio_plugin.h
@@ -29,6 +29,7 @@ A developer should be able to try another physics, audio or renderer provider wi
 - [ ] audio: in a development build the registry (WO-076) can load an audio provider from a shared library by name (`"audio": "miniaudio"` finds `providers/libengine_audio_miniaudio`), through the module loader's checks; the conformance suite and the engine load the same file
 - [ ] a provider is swapped while the simulation is stopped, in the editor and in `engine_host`: the old one detaches, the new one attaches, and the next play uses it. Tested headless: play with `jolt`, stop, swap to `none`, play (nothing falls), swap back, play (same world hash as a fresh `jolt` run)
 - [ ] a swap asked for while the simulation runs is refused by name, not queued silently
+- [ ] the provider library is found through its manifest (WO-085), and the swap runs the same resolver checks as `engine_build` (WO-086), so a choice refused for shipping is refused here too
 - [ ] `engine_host --provider physics=none` and the same in `engine_player` (development builds only) override `project.json` for one run
 - [ ] a provider that needs a cook profile the project has not cooked asks for it as a cook request (WO-018), and the swap completes when the cook does
 - [ ] under the shipping build setting (WO-066) the loader and the swap are absent from the binary, checked by the symbol check

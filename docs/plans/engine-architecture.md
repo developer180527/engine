@@ -93,6 +93,13 @@ asset, `.db` file, shader source, or provider the project did not choose.
   made by `engine_build`, per platform. Prerequisite: static registration
   (WO-025).
 - **The same provider code in both:** only the link mode differs.
+- **Declared once, resolved before the game runs** (DR-0037,
+  [provider-selection.md](provider-selection.md)). A manifest per provider
+  states its platforms (an allow list), needs and required services. One
+  resolver runs in `engine_build --platform` and at development startup, and
+  refuses an impossible choice by name. `project.json` may choose per platform
+  and flavour. A shipped game registers its providers from a generated list,
+  so self-registration and WO-025 are not needed for providers.
 
 ## 3. The world, behind engine types
 
@@ -222,7 +229,8 @@ A provider developer is not limited to the kinds above.
 **One gap shared by every kind:** an unknown provider name logs an error and
 falls back to the default provider (`plugins/stock_plugins.h`), so a typo in
 `project.json` runs a different provider than the one asked for. Under §6 it is
-refused at startup, by name, with the list of providers this build has.
+refused at startup, by name, with the list of providers this build has (WO-076).
+After that it is refused even earlier, at `engine_build` (WO-086).
 
 ## 7a. Every tool is a CLI over the library
 
@@ -251,8 +259,9 @@ Each step leaves a working engine.
 6. **Capabilities and optional interfaces** for every provider kind, with a
    conformance suite per kind.
 7. **The registry, injection and services** (§2b, §6a): providers registered by
-   name and by service, unknown names refused, static linking per platform in
-   `engine_build` once WO-025 lands.
+   name and by service, unknown names refused, then manifests and the resolver
+   with static linking per platform in `engine_build`
+   ([provider-selection.md](provider-selection.md) §11: WO-076, WO-085 to WO-089).
 8. **The development-time list checked** (§2a): the symbol check and the
    exported-folder check, in CI.
 9. **The `engine` CLI** (§7a), the existing tools as its subcommands.

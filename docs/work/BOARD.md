@@ -49,6 +49,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-062](WO-062-bgfx-sized-for-what-the-host-draws.md) | bgfx is sized for what the host draws, not for its defaults (about 49 MB down to about 21 MB) | Renderer & RHI | S | **ready** | — |
 | [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
 | [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
+| [WO-085](WO-085-provider-manifests.md) | Provider manifests and platform tables — each provider declared once, built only where it can run | Providers & modules | M | blocked by WO-076 | — |
+| [WO-086](WO-086-provider-resolver-and-build-time-refusal.md) | The provider resolver — per-target choice in project.json, refused by name at engine_build | Providers & modules | M | blocked by WO-085 | — |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -64,12 +66,15 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-066](WO-066-shipping-build-absent-not-disabled.md) | Shipping build — development machinery absent from the binary, not switched off | Process & context | L | **ready** | — |
 | [WO-068](WO-068-nothing-cooked-at-runtime.md) | Nothing is cooked or compiled at runtime — shaders' final driver step is the only exception | Asset import & cooking | L | blocked by WO-069 | — |
 | [WO-069](WO-069-engine-owned-animation-and-audio-formats.md) | Cooked animation and audio in the engine's own formats, so changing a provider never changes them | Asset import & cooking | L | **ready** | audio-provider |
-| [WO-077](WO-077-swap-providers-at-dev-time.md) | Swap a provider at development time — loaded by name, changed when the simulation stops | Providers & modules | L | blocked by WO-076 | engine-plugin, audio-provider |
+| [WO-077](WO-077-swap-providers-at-dev-time.md) | Swap a provider at development time — loaded by name, changed when the simulation stops | Providers & modules | L | blocked by WO-076, WO-085 | engine-plugin, audio-provider |
 | [WO-079](WO-079-job-system-follow-ups.md) | Job system follow-ups — the last private threads, a frame-start wake, other platforms, retiring enkiTS | Process & context | M | **ready** | — |
 | [WO-081](WO-081-farm-phase-0.md) | The home server, phase 0 — pulls main, builds four trees, quiet enough to measure, noise floor known | Process & context | M | blocked by WO-080 | — |
 | [WO-082](WO-082-farm-results-db.md) | The farm's results database, A/B statistics and nightly report | Process & context | M | blocked by WO-081 | — |
 | [WO-083](WO-083-farm-engine-benchmarks.md) | Engine benchmarks and profiling on the farm — headless workloads through the C API, instructions retired, flame graphs | Process & context | L | blocked by WO-082 | — |
 | [WO-084](WO-084-farm-soak-fuzz-determinism.md) | Days-long soak, fuzzing at scale and the determinism lane on the farm | Process & context | L | blocked by WO-082 | — |
+| [WO-087](WO-087-providers-kept-apart.md) | Providers kept apart — engine services between them, one create context, no globals | Providers & modules | S | **ready** | — |
+| [WO-088](WO-088-test-the-shipped-player.md) | Test what ships — the static shipped player built and run in CI, per platform and selection | Providers & modules | M | blocked by WO-086 | — |
+| [WO-089](WO-089-rhi-backend-order-and-capabilities.md) | librhi's backend order from project.json, and device capabilities refused by name | Renderer & RHI | M | blocked by WO-086 | — |
 
 ## P3 — later. Real, but nothing is waiting on it.
 

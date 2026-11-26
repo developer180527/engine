@@ -41,3 +41,4 @@ backfilled only when someone trips on them (WO-022).
 | [DR-0034](DR-0034-old-data-migrates.md) | Old data migrates, never breaks; unknown components are kept | 2026-11-06 | decided |
 | [DR-0035](DR-0035-refuse-by-name.md) | Refuse by name; never fall back silently | 2026-11-06 | decided |
 | [DR-0036](DR-0036-the-job-system-is-the-engines-own.md) | The job system is the engine's own work-stealing scheduler, on threads, in standard C++ | 2026-11-14 | decided |
+| [DR-0037](DR-0037-providers-are-declared-once-and-resolved-before-the-game-runs.md) | Providers are declared once and resolved before the game runs | 2026-11-26 | decided |

@@ -22,7 +22,7 @@ source: review 2026-11-06 (how engine_build strips a game); engine-architecture.
 - [ ] one build setting, `ENGINE_SHIPPING`, set by `engine_build` for the player it builds, alongside `ENGINE_WITH_SOURCE_IMPORTERS=OFF`
 - [ ] under it the profiler and stats channels (`frame_stats_channel`, `mem_channel`, `input_latency_channel`), hot reload, and engine-category logging are compiled out; first, list what is actually live in a shipped player today, and record that list in this order
 - [ ] `player_has_no_cook_stack` grows into `player_has_no_dev_machinery`: the symbol list covers every item above, and a mutation run (put one back) makes it fail
-- [ ] `dist/` is checked after every `engine_build`: it fails on a source asset, `registry.db`, shader source, or a provider the project did not choose
+- [ ] `dist/` is checked after every `engine_build`: it fails on a source asset, `registry.db`, shader source, or a provider the project did not choose (once WO-086 exists, checked against `providers.lock.json`)
 - [ ] audio and scripts ship by reference (what scenes, materials and kits name), not by extension; anything referenced but missing is a warning, `--strict` makes it fatal
 - [ ] Lua ships precompiled, or the order records why not
 - [ ] the size report names each category (code, scenes, meshes, textures, audio, scripts) so growth is visible
