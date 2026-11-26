@@ -694,11 +694,16 @@ pub use dl::load;
 
 pub struct Report {
     pub checks: Vec<(bool, String)>,
+    // Measurements worth seeing on EVERY run, pass or fail (see `print`).
+    pub notes: Vec<String>,
 }
 
 impl Report {
     fn new() -> Self {
-        Report { checks: Vec::new() }
+        Report { checks: Vec::new(), notes: Vec::new() }
+    }
+    fn note(&mut self, what: impl Into<String>) {
+        self.notes.push(what.into());
     }
     fn check(&mut self, ok: bool, what: impl Into<String>) {
         self.checks.push((ok, what.into()));
@@ -710,6 +715,14 @@ impl Report {
         println!("── conformance: {label} ──");
         for (ok, what) in &self.checks {
             println!("  {}  {what}", if *ok { "ok  " } else { "FAIL" });
+        }
+        // Notes go straight to stderr: the test harness swallows println! and
+        // eprintln! from a passing test, so CI's passing runs left no numbers
+        // to compare a failure against (macOS, 2026-11-26: the clock check
+        // read 130.7 vs 262.3 ms, then 29.3 vs 5003 ms).
+        use std::io::Write;
+        for n in &self.notes {
+            let _ = writeln!(std::io::stderr(), "[conformance] {label}: {n}");
         }
     }
 }
@@ -1129,6 +1142,12 @@ pub unsafe fn run(p: &ProviderV1) -> Report {
                 && implied_ns > 0.0
                 && (implied_ns / d_host_ns) > 0.5
                 && (implied_ns / d_host_ns) < 2.0;
+            r.note(format!(
+                "clock: {:.1} ms of samples vs {:.1} ms of host (ratio {:.2}; passes between 0.5 and 2.0)",
+                implied_ns / 1e6,
+                d_host_ns / 1e6,
+                if d_host_ns > 0.0 { implied_ns / d_host_ns } else { 0.0 }
+            ));
             r.check(
                 ok,
                 format!(
