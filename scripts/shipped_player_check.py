@@ -125,26 +125,41 @@ def conformance_runs(player: Path, dist: Path, name: str, lock: dict, failures: 
             return "FAILED: a game's player ran it"
         return "absent, refused by name"
     names = {p["kind"]: p["name"] for p in lock["providers"]}
-    r = run([player, "--conformance", "audio"], cwd=dist)
+    r = run([player, "--conformance", "audio"], cwd=dist, env=NO_HARDWARE)
     out = r.stdout + r.stderr
     passed = r.returncode == 0 and "every check passed" in out
     if not passed:
         failures.append(f"{name}: the audio suite failed against the linked provider "
-                        f"'{names.get('audio')}' (exit {r.returncode}):\n{out[-4000:]}")
-    m = run([player, "--conformance", "audio", "--mutate"], cwd=dist)
+                        f"'{names.get('audio')}' (exit {r.returncode}):\n{suite_lines(out)}")
+    m = run([player, "--conformance", "audio", "--mutate"], cwd=dist, env=NO_HARDWARE)
     mout = m.stdout + m.stderr
     caught = m.returncode == 1 and "FAILED" in mout and "unknown sound yields NO_VOICE" in mout
     if not caught:
         failures.append(f"{name}: the mutated provider (play claims a voice for an invalid sound) "
-                        f"was not caught by the in-player suite (exit {m.returncode}):\n{mout[-3000:]}")
+                        f"was not caught by the in-player suite (exit {m.returncode}):\n{suite_lines(mout)}")
     checks = len(re.findall(r"^\s+(ok  |FAIL)\s", out, re.M))
     return (f"audio: {checks} checks passed" if passed else "audio: FAILED") + \
            ("; mutation caught" if caught else "; mutation NOT caught")
 
 
-def run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
+def run(cmd: list[str], cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
     print("$", " ".join(str(c) for c in cmd), flush=True)
-    return subprocess.run([str(c) for c in cmd], cwd=cwd, capture_output=True, text=True)
+    full = {**os.environ, **env} if env else None
+    return subprocess.run([str(c) for c in cmd], cwd=cwd, capture_output=True, text=True, env=full)
+
+
+# What the cargo suite is run with in ctest (tests/CMakeLists.txt,
+# audio_abi_conformance): no CI runner has dependable audio hardware, and on
+# Linux ALSA hands back a dummy device whose timing is the scheduler's. The
+# provider may then fall back to miniaudio's null backend. A game never sets it.
+NO_HARDWARE = {"ENGINE_AUDIO_NO_HARDWARE": "1"}
+
+
+def suite_lines(out: str) -> str:
+    """The suite's own lines: ALSA's complaints about a missing card drown them."""
+    keep = [l for l in out.splitlines()
+            if not l.startswith("ALSA lib") and ("FAIL" in l or "conformance" in l or "engine_player" in l)]
+    return "\n".join(keep[-60:])
 
 
 def package(build: Path, work: Path, name: str, providers: dict | None,
