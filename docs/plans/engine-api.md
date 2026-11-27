@@ -293,6 +293,40 @@ said:
 10. **Validating a project path must not create it.** `ProjectContext::load`
     creates a project's folders, so existence is checked first.
 
+## 10b. What building the world taught (WO-073 part 1, 2026-11-28)
+
+`include/eng/eng_world.h` now holds entities, components by schema, one-entity
+access, batched queries and the change stream, implemented over flecs in
+`src/capi/eng_world.cpp` (`eng_world_test` in plain C, `eng_world_scene_test`,
+`eng_query_bench`). Systems and blobs come next, then modules and a kit.
+
+1. **One world, the engine's own.** `engCreateWorld` hands out the simulation
+   world, and a second one held at once is refused. `engDestroyWorld` releases
+   the handle (its queries and streams end) and leaves the entities, because
+   the world lives as long as the engine. More worlds need the runtime to own
+   more than one, which it does not.
+2. **A component registered from C is a real scene component.** It gets a
+   scene schema built from its field list (`scene/dynamic_schema.h`), so it
+   saves and loads field by field under its name. It is also classified as
+   simulation state and hashed field by field, so padding never reaches the
+   determinism gate. That needed a context pointer on the sim hash's
+   function, because one function serves every C layout.
+3. **The component table lives in the world, not the handle.** The sim hash
+   keeps a pointer into it, so it must outlive any handle: it is a singleton
+   of the world (exempted from the hash, with that reason).
+4. **ASSET and BLOB fields, and `migrate`, are refused by name.** Assets need
+   the asset API's handles; blobs are the next step; a C migration needs the
+   old layout, which a saved scene does not carry.
+5. **The cost is nothing.** A query batch through the C API measured the same
+   as the same terms on flecs directly: 0.45 against 0.44 ns per entity, at
+   50 000 entities in 8 tables (release, this Mac). With a change stream
+   watching the written component it is 32 ns per entity. That is the
+   stream's per-entity merge (a hash map insert), WO-072's own cost, and the
+   first thing to make cheaper if a provider watches a column that big.
+6. **`core.Transform` is the only engine component exposed as bytes.** Its
+   bytes are `EngTransform`'s. Others come as their C layouts are frozen in
+   `eng_components.h`.
+
 ## 11. Questions for the owner
 
 1. ~~**One C API for everything, with C++ as a wrapper?**~~ **Answered

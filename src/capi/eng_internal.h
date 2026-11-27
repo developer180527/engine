@@ -10,3 +10,14 @@ class EngineRuntime;
 // The runtime under `engine`, starting it headless if it has not started.
 // NULL (with engGetLastErrorMessage set) if it cannot start.
 EngineRuntime* engInternalRuntime(EngEngine* engine);
+
+// ── Between eng_capi.cpp and eng_world.cpp (WO-073) ──────────────────────────
+#include <string>
+// The engine's one world handle, or null; eng_world.cpp sets it.
+EngWorld*& engInternalWorldSlot(EngEngine* engine);
+// Called by engDestroyEngine before the runtime shuts down.
+void engInternalDestroyWorld(EngWorld* world);
+// Sets this thread's engGetLastErrorMessage.
+void engInternalSetError(std::string message);
+// The flecs id behind a component handle, for tests and benches; 0 if none.
+uint64_t engInternalComponentId(EngWorld* world, EngComponent component);

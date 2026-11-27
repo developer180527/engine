@@ -12,20 +12,22 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-Nothing. Start the first order under **Next up**.
-
+- [WO-073](WO-073-world-c-api.md) **The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary** — 2/5 done. Still open:
+  - `eng_world.h` implemented over flecs: entities with stable ids, component registration by schema (WO-071), single-entity access, batched queries, systems in phases with `run_after`, the change stream (WO-072), and `EngBlob` storage for variable-length fields (2026-11-28: all but systems and blobs, see the log)
+  - one first-party kit ported to it (`docs/plans/engine-api-draft/examples/kit.c` is the shape), loading with no flecs or engine C++ include
+  - an `engine_audit` rule: no flecs include in `include/engine/` or `src/plugins/`, with today's findings as a baseline that only shrinks, mutation-checked
 
 ## Next up
 
-1. [WO-073](WO-073-world-c-api.md) **The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary** · P1 · size L — Kits and providers see flecs today: `game_module.h` hands kits an `ecs_world_t*`, `EngineEntity` is a flecs id, and the Jolt plugin takes `flecs::world`. The ECS is core (DR-0029) and stays flecs inside; what games, kits and providers use is the engine's own world (DR-0028).
-2. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
-3. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
+1. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
+2. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
+3. [WO-057](WO-057-rhi-module-home.md) **The RHI's home — a module that builds, tests and ships without the engine** · P1 · size S — DR-0012 makes the RHI a library for more than this engine. Independence that
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | **ready** | kit-abi |
+| [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | **active** 2/5 | kit-abi |
 | [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API | Providers & modules | M | blocked by WO-073 | engine-plugin |
 | [WO-075](WO-075-renderer-contract-headers.md) | The renderer contract as headers, with a conformance suite the null renderer passes first | Renderer & RHI | M | blocked by WO-073 | renderer |
 | [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | **ready** | kit-abi, engine-plugin, script-services |

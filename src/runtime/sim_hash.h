@@ -89,6 +89,9 @@ enum class Classification { SimState, SimExempt };
 // references or handles need context to canonicalise, and adding the parameter
 // later would mean touching every hasher ever written.
 using HashFn = void (*)(flecs::entity, const void* comp, Digest&);
+// The same, for a component with no C++ type (one registered through the C
+// API, WO-073): one function serves every such layout, and `ctx` says which.
+using HashCtxFn = void (*)(flecs::entity, const void* comp, const void* ctx, Digest&);
 
 // Per-world singleton — component ids are world-local, so the registry must be
 // too. Mirrors EventRegistry (components/event_component.h), which is the
@@ -99,8 +102,13 @@ struct SimStateRegistry {
         uint32_t        canonicalIndex = 0;  // ORDERING. Never the name.
         std::string     debugName;           // diagnostics only
         Classification  cls = Classification::SimExempt;
-        HashFn          hash = nullptr;      // required iff SimState
+        HashFn          hash = nullptr;      // required iff SimState (or hashCtx)
         const char*     reason = nullptr;    // required iff SimExempt
+        HashCtxFn       hashCtx = nullptr;   // instead of hash, with its context
+        const void*     ctx = nullptr;       // must live as long as the world
+        void run(flecs::entity e, const void* p, Digest& d) const {
+            if (hash) hash(e, p, d); else hashCtx(e, p, ctx, d);
+        }
     };
     std::vector<Entry> entries;              // in canonicalIndex order
 };
@@ -126,6 +134,7 @@ struct SimStateRegistry {
 // has to become explicit rather than positional.
 bool declareId(flecs::world&, flecs::entity comp, HashFn);
 bool exemptId (flecs::world&, flecs::entity comp, const char* reason);
+bool declareIdWithContext(flecs::world&, flecs::entity comp, HashCtxFn, const void* ctx);
 
 template <typename T>
 inline bool declare(flecs::world& w, HashFn fn) {

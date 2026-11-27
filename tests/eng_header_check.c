@@ -9,6 +9,7 @@
 #include <eng/eng_base.h>
 #include <eng/eng_engine.h>
 #include <eng/eng_window.h>
+#include <eng/eng_world.h>
 #include <eng/engine.h>
 
 int eng_header_check_anchor(void);
@@ -25,5 +26,12 @@ int eng_header_check_anchor(void) {
         + sizeof(EngMonitorInfo)
         + sizeof(EngWindowDesc)
         + sizeof(EngWindowInfo)
-        + sizeof(EngEvent));
+        + sizeof(EngEvent)
+        + sizeof(EngWorldDesc)
+        + sizeof(EngFieldDesc)
+        + sizeof(EngComponentDesc)
+        + sizeof(EngQueryTerm)
+        + sizeof(EngQueryDesc)
+        + sizeof(EngQueryBatch)
+        + sizeof(EngChange));
 }

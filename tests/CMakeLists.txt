@@ -242,6 +242,25 @@ set_target_properties(eng_window_test PROPERTIES LINKER_LANGUAGE CXX
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} C_STANDARD 99 C_STANDARD_REQUIRED ON)
 add_test(NAME eng_window_test COMMAND eng_window_test)
 set_tests_properties(eng_window_test PROPERTIES LABELS unit TIMEOUT 120 SKIP_RETURN_CODE 77)
+# WO-073: the world through the C API, from plain C11 with only <eng/engine.h>:
+# a kit's component by schema, entities, query columns read and written in
+# place, the change stream under WRITE and WRITE_MARKED, stale handles.
+add_executable(eng_world_test eng_world_test.c)
+target_link_libraries(eng_world_test PRIVATE engine_capi)
+set_target_properties(eng_world_test PROPERTIES LINKER_LANGUAGE CXX
+                      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} C_STANDARD 11 C_STANDARD_REQUIRED ON)
+add_test(NAME eng_world_test COMMAND eng_world_test)
+set_tests_properties(eng_world_test PROPERTIES LABELS unit TIMEOUT 120)
+# And what C cannot see: a C API component saved and loaded with scenes (an
+# entity field linked again), and classified and hashed by the sim hash.
+engine_test(eng_world_scene_test LIB engine_capi)
+target_include_directories(eng_world_scene_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+# Not a test: what a query batch through the C API costs against the same
+# query straight on flecs, at 50 000 entities (WO-073's measurement).
+add_executable(eng_query_bench eng_query_bench.cpp)
+target_link_libraries(eng_query_bench PRIVATE engine_capi)
+target_include_directories(eng_query_bench PRIVATE ${CMAKE_SOURCE_DIR}/src)
+set_target_properties(eng_query_bench PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 # Built, never run by ctest: needs a person (fullscreen switches, a declined
 # close). `build/eng_window_manual`; WO-070's last box.
 add_executable(eng_window_manual eng_window_manual.c)

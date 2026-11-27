@@ -10,6 +10,7 @@
 // one window, created before the first engStep; VSYNC presentation only; no
 // frame limit (WO-061); no module list; no log callback.
 #include <eng/engine.h>
+#include "capi/eng_internal.h"
 
 #include "plugins/stock_plugins.h"
 #include "project/project_context.h"
@@ -119,6 +120,7 @@ struct EngEngine {
     std::chrono::steady_clock::time_point last;
     bool     firstStep = true;
     uint64_t frame = 0;
+    EngWorld* world = nullptr;   // eng_world.cpp's, while a handle is held
 
     EngWindow windowHandle() const { return windowAlive ? ((windowGeneration << 8) | 1u) : 0; }
     bool validWindow(EngWindow w) const { return windowAlive && w == windowHandle(); }
@@ -376,6 +378,7 @@ EngResult engCreateEngine(const EngEngineDesc* in, EngEngine** out) {
 void engDestroyEngine(EngEngine* e) {
     guard<int>(0, [&] {
         if (!e) return 0;
+        if (e->world) { engInternalDestroyWorld(e->world); e->world = nullptr; }
         if (e->rt) {
             e->rt->stopSimulation();
             e->rt->shutdown();
@@ -768,6 +771,9 @@ EngBool engNextEvent(EngEngine* e, EngEvent* out) {
 } // extern "C"
 
 #include "capi/eng_internal.h"
+
+void engInternalSetError(std::string message) { t_lastError = std::move(message); }
+EngWorld*& engInternalWorldSlot(EngEngine* e) { return e->world; }
 
 EngineRuntime* engInternalRuntime(EngEngine* e) {
     if (!e) return nullptr;

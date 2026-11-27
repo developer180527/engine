@@ -70,12 +70,13 @@ void Digest::str(std::string_view s) {
 // ── Declaration ─────────────────────────────────────────────────────────────
 namespace {
 bool registerEntry(flecs::world& w, flecs::entity comp, Classification cls,
-                   HashFn fn, const char* reason) {
+                   HashFn fn, const char* reason,
+                   HashCtxFn ctxFn = nullptr, const void* ctx = nullptr) {
     if (!comp.is_valid()) {
         LOG_ERROR("SimHash", "classify called with an invalid component");
         return false;
     }
-    if (cls == Classification::SimState && !fn) {
+    if (cls == Classification::SimState && !fn && !ctxFn) {
         LOG_ERROR("SimHash", "%s declared SimState with no hasher",
                   comp.path("::", "").c_str());
         return false;
@@ -102,7 +103,7 @@ bool registerEntry(flecs::world& w, flecs::entity comp, Classification cls,
     reg.entries.push_back({ comp.id(),
                             static_cast<uint32_t>(reg.entries.size()),
                             comp.path("::", "").c_str(),
-                            cls, fn, reason });
+                            cls, fn, reason, ctxFn, ctx });
     return true;
 }
 }  // namespace
@@ -112,6 +113,9 @@ bool declareId(flecs::world& w, flecs::entity comp, HashFn fn) {
 }
 bool exemptId(flecs::world& w, flecs::entity comp, const char* reason) {
     return registerEntry(w, comp, Classification::SimExempt, nullptr, reason);
+}
+bool declareIdWithContext(flecs::world& w, flecs::entity comp, HashCtxFn fn, const void* ctx) {
+    return registerEntry(w, comp, Classification::SimState, nullptr, nullptr, fn, ctx);
 }
 
 // ── Auditability ────────────────────────────────────────────────────────────
@@ -154,7 +158,7 @@ uint64_t hashWorld(flecs::world& w, HashReport* detail) {
             const void* p = ecs_get_id(w, raw, entry.comp);
             if (!p) continue;
             ed.u32(entry.canonicalIndex);       // WHICH component, not just its value
-            entry.hash(e, p, ed);
+            entry.run(e, p, ed);
         }
 
         // ── The ChildOf target ─────────────────────────────────────────────
@@ -197,7 +201,7 @@ uint64_t hashWorld(flecs::world& w, HashReport* detail) {
                 const void* p = ecs_get_id(w, raw, entry.comp);
                 if (!p) continue;
                 td.u64(raw);
-                entry.hash(flecs::entity(w, raw), p, td);
+                entry.run(flecs::entity(w, raw), p, td);
             }
             detail->perType.emplace_back(entry.debugName, td.h);
         }
