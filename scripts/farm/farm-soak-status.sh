@@ -13,6 +13,11 @@ if [ -d "$L" ]; then
     echo "  running: $(( $(wc -l <"$L/metrics.csv") - 1 )) minutes"
     tail -n 1 "$L/metrics.csv" | awk -F, '{printf "  rss %.0f MB, peak %.0f MB, %s threads, %s fds\n",$2/1024,$3/1024,$4,$5}'
     grep "cycle" "$L/soak.log" | tail -n 1 | sed 's/^ */  /'
+    run_build=$(readlink "$L"); run_build=${run_build##*-}   # <date>-<time>-<tree>-<build>
+    newest=$(readlink "$BIN/${FARM_SOAK_TREE:-release}/current" 2>/dev/null || echo none)
+    if [ "$newest" != "$run_build" ]; then
+      echo "  on build $run_build; the next run starts on $newest (a run is not cut short by a newer build)"
+    fi
   fi
 fi
 echo "past runs:"

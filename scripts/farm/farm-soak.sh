@@ -12,6 +12,14 @@
 #   - a leak the process itself cannot see: resident memory growing faster than
 #     FARM_SOAK_MAX_RSS_MB_PER_HOUR after the first hour, or descriptors growing
 #     by more than FARM_SOAK_MAX_FD_GROWTH
+# A newer build does NOT end the run (FARM_SOAK_SUPERSEDE=no, the default): the
+# soak exists to run for days, and with a build every hour it never ran more
+# than one (2026-11-27: every run "superseded" after 57 to 60 minutes). The
+# next run starts on the newest good build. FARM_SOAK_SUPERSEDE=yes restores
+# ending the run when a newer build arrives.
+# The build a run uses is pinned (bin/<tree>/.soak-pin) so farm-update.sh does
+# not prune it mid-run; after a `fail` it stays pinned, so the core still has
+# its binary.
 # Exit codes, which the systemd unit relies on:
 #   0  finished its minutes, or a newer build arrived (the unit starts the next run)
 #   1  a finding: the unit stays stopped until a person looks (farm-soak-status.sh)
@@ -27,11 +35,16 @@ mkdir -p "$RUN"
 cp "$CUR/machine.txt" "$CUR/commit" "$RUN/" 2>/dev/null || true
 "$REPO/scripts/farm/farm-state.sh" >"$RUN/machine-at-start.txt"
 ln -sfn "$(basename "$RUN")" "$RESULTS/soak/latest"   # relative: survives moving FARM_HOME
+PIN="$BIN/$TREE/.soak-pin"
+echo "$BUILD" >"$PIN"   # farm-update.sh keeps this build while the soak runs on it
 
 finish() {   # verdict, reason
   printf 'verdict=%s\nreason=%s\nbuild=%s\ntree=%s\nended=%s\n' \
     "$1" "$2" "$BUILD" "$TREE" "$(date -u +%FT%TZ)" >"$RUN/verdict.txt"
   log "soak $1: $2 ($RUN)"
+  # A finding keeps its build (the core needs the binary that made it); any
+  # other end lets the next update prune it as usual.
+  [ "$1" = fail ] || rm -f "$PIN"
 }
 
 export SOAK_MINUTES=${FARM_SOAK_MINUTES:-2880}
@@ -86,8 +99,8 @@ while kill -0 "$PID" 2>/dev/null; do
       finish fail "open descriptors grew from $fd0 to $fds"; exit 1
     fi
   fi
-  # A newer build: end this run cleanly; the unit starts the next one on it.
-  if [ "$(readlink "$CUR")" != "$BUILD" ]; then
+  # A newer build ends the run only when asked to (see the header).
+  if [ "${FARM_SOAK_SUPERSEDE:-no}" = yes ] && [ "$(readlink "$CUR")" != "$BUILD" ]; then
     kill -TERM "$PID"; wait "$PID" 2>/dev/null || true
     finish superseded "build $(readlink "$CUR") arrived after $minute minutes, no finding"; exit 0
   fi

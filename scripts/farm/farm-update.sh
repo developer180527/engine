@@ -13,7 +13,7 @@
 #   3. build each tree in $FARM_HOME/build/<tree> (incremental)
 #   4. on success, copy the binaries the farm runs to bin/<tree>/<sha>/ and point
 #      bin/<tree>/current at it; on failure, current stays on the last good build
-#   5. keep the newest 5 builds per tree
+#   5. keep the newest 5 builds per tree, and the one a soak is pinned to
 # The soak notices a new bin/release/current within a minute and restarts on it.
 #
 #   farm-update.sh            normal run (the systemd timer)
@@ -92,8 +92,13 @@ for t in $todo; do
     log "[$t] ok"
     # Keep the newest 5 builds of this tree. Real directories only: a glob like
     # */ also matches the `current` symlink, and rm -rf current/ would follow it.
+    # Never the build a soak is running on, or kept after a finding
+    # (bin/<tree>/.soak-pin, farm-soak.sh): a run lasts days, past 5 builds.
+    pinned=$(cat "$BIN/$t/.soak-pin" 2>/dev/null || true)
     find "$BIN/$t" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
-      | sort -rn | tail -n +6 | cut -d' ' -f2- | xargs -r rm -rf --
+      | sort -rn | tail -n +6 | cut -d' ' -f2- \
+      | { if [ -n "$pinned" ]; then grep -vxF "$BIN/$t/$pinned" || true; else cat; fi; } \
+      | xargs -r rm -rf --
   else
     log "[$t] FAILED (bin/$t/current stays on the last good build); tail of the log:"
     tail -n 30 "$logf" | sed 's/^/    /'

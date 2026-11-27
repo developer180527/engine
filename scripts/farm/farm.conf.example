@@ -23,6 +23,11 @@ FARM_MIN_FREE_GB=20
 # output counts as a hang (soak_engine prints every 10 cycles).
 FARM_SOAK_MINUTES=2880
 FARM_SOAK_HANG_MINUTES=10
+# Whether a newer build ends the soak early. `no`: a run lasts its minutes and
+# the next one starts on the newest build, so a soak really runs for days.
+# `yes`: every new build restarts it, which with hourly builds means no run
+# lasts more than an hour.
+FARM_SOAK_SUPERSEDE=no
 # Which tree the soak runs from: release (trends) or tsan (races, ~10x slower).
 FARM_SOAK_TREE=release
 # Cores the soak may use (taskset list), empty for any. Keep it OFF the

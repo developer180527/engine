@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-11-26
+verified: 2026-11-27
 covers:
   - scripts/farm/
 ---
@@ -39,7 +39,11 @@ arguments for isolated benchmark cores (a GRUB edit and a reboot).
 A soak run ends three ways, written to `verdict.txt` in its folder under
 `/srv/engine-farm/results/soak/`:
 - **pass** — it ran its minutes. The next run starts.
-- **superseded** — a newer build arrived. The next run starts on it.
+- **superseded** — a newer build arrived and `FARM_SOAK_SUPERSEDE=yes`. Off by
+  default: with a build every hour, no run lasted more than one (every run on
+  2026-11-26/27 ended this way after 57 to 60 minutes). Now a run lasts its
+  minutes, and the next one starts on the newest good build; `farm-soak-status.sh`
+  says when a newer build is waiting.
 - **fail** — a finding: an invariant `soak_engine` checks, a crash or sanitizer
   report, a hang (no output for 10 minutes; it is sent SIGABRT so the core has
   every thread), or resident memory or open descriptors growing. The service
@@ -57,6 +61,8 @@ A soak run ends three ways, written to `verdict.txt` in its folder under
 /srv/engine-farm/results/builds/      build logs
 /srv/engine-farm/results/soak/<run>/  soak.log, metrics.csv, verdict.txt, machine*.txt
 /srv/engine-farm/farm.lock            builds and fuzzing take it; benchmarks will; the soak never
+/srv/engine-farm/bin/<tree>/.soak-pin the build a soak runs on: never pruned. Kept after a
+                                      `fail`, so the core has its binary; delete it once read
 ```
 
 ## Not here yet
