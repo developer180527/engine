@@ -69,7 +69,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-082](WO-082-farm-results-db.md) | The farm's results database, A/B statistics and nightly report | Process & context | M | blocked by WO-081 | — |
 | [WO-083](WO-083-farm-engine-benchmarks.md) | Engine benchmarks and profiling on the farm — headless workloads through the C API, instructions retired, flame graphs | Process & context | L | blocked by WO-082 | — |
 | [WO-084](WO-084-farm-soak-fuzz-determinism.md) | Days-long soak, fuzzing at scale and the determinism lane on the farm | Process & context | L | blocked by WO-082 | — |
-| [WO-089](WO-089-rhi-backend-order-and-capabilities.md) | librhi's backend order from project.json, and device capabilities refused by name | Renderer & RHI | M | **ready** | — |
 | [WO-093](WO-093-conformance-in-the-shipped-player.md) | Conformance suites run against the providers a shipped player links | Providers & modules | M | **ready** | audio-provider |
 
 ## P3 — later. Real, but nothing is waiting on it.
@@ -98,6 +97,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-089](WO-089-rhi-backend-order-and-capabilities.md) | librhi's backend order from project.json, and device capabilities refused by name | 2026-11-27 | CI run 45918980872 (aeeba9c) green on all six desktop legs, device_select_test on each; engine_host on macOS logs the backend and refuses a wrong rhi order by name |
 | [WO-088](WO-088-test-the-shipped-player.md) | Test what ships — the static shipped player built and run in CI, per platform and selection | 2026-11-27 | CI run 45913071217 (77ef297), the Shipped player step green on all six desktop legs; ctest shipped_player_check_refuses_extra_providers |
 | [WO-087](WO-087-providers-kept-apart.md) | Providers kept apart — engine services between them, one create context, no globals | 2026-11-27 | audit PROV-01 and PROV-02 (mutation-checked: a planted include of another provider's header, and of runtime/runtime.h, each named), tests/provider_debug_draw_test.cpp |
 | [WO-091](WO-091-cooked-scene-carries-every-component.md) | The cooked scene carries every component — the shipped player loads through the schema registry, not a fixed 256-byte record | 2026-11-26 | tests/cooked_scene_test.cpp (10 checks), cooker_test, sdk_only_game_test through SceneService, both scene fuzzers on format 4; mesh_ownership_test section 8 (BUG-0077); unit, fuzz and docs lanes 146/146; CI green on 977e66b |
