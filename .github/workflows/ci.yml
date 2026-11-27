@@ -754,6 +754,34 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # ── One compiler cache per leg (WO-038) ──────────────────────────────────
+  # Every leg saves a new cache each run (the key carries a timestamp), about
+  # 8 GB a run against the repository's 10 GB, so GitHub evicted the oldest:
+  # always Windows arm64's, the one leg that runs only on the full matrix, which
+  # then compiled cold (23.5 min of build against Windows x64's 6, 2026-11-27).
+  # After every leg has saved, this deletes the older copies of each leg's
+  # cache, keeping the newest: about 7 GB, one per leg. scripts/ci_cache_prune.py.
+  # main only: a pull request's token cannot delete caches.
+  cache-prune:
+    name: Prune old compiler caches
+    needs: [plan, build, shipping-runtime, sdk-only-game, sanitizers]
+    if: always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci_cache_prune.py
+          sparse-checkout-cone-mode: false
+      - name: Keep the newest cache per leg
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/ci_cache_prune.py
+
   # ── The nightly alarm (WO-038) ─────────────────────────────────────────────
   # A red nightly sat unseen for weeks, more than once (this order's log). This
   # keeps ONE open issue labelled `nightly-red` while the nightly is red: opened

@@ -1000,6 +1000,10 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME ci_nightly_alarm_decides
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/ci_nightly_alarm.py --self-test)
     set_tests_properties(ci_nightly_alarm_decides PROPERTIES LABELS unit TIMEOUT 30)
+    # Which compiler caches CI deletes: only the older copies of a leg's (WO-038).
+    add_test(NAME ci_cache_prune_keeps_newest
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/ci_cache_prune.py --self-test)
+    set_tests_properties(ci_cache_prune_keeps_newest PROPERTIES LABELS unit TIMEOUT 30)
 
     # The shipped player lists the providers this build has, by kind (WO-076).
     add_test(NAME player_lists_providers
