@@ -12,8 +12,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-- [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) **The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components** — 5/5 done. Still open:
-  - (all ticked: close it)
+Nothing. Start the first order under **Next up**.
+
 
 ## Next up
 
@@ -38,7 +38,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
 | [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
 | [WO-090](WO-090-first-librhi-renderer.md) | The first librhi renderer — a provider beside bgfx, the forward pipeline ported pass by pass, each bgfx assumption removed where the port meets it | Renderer & RHI | L | blocked by WO-075 | renderer, gpu-seam |
-| [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) | The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components | Asset import & cooking | M | **active** 5/5 | scene-service |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -87,6 +86,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | done | evidence |
 |---|---|---|---|
+| [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) | The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components | 2026-11-28 | CI push run 45951559897 and nightly 45984556986 (e3d375d) green on every leg; 50 000 cooked entities load in 29.7–31.3 ms against format 3's 32 ms (tests/scene_load_bench.cpp, release, this Mac) |
 | [WO-093](WO-093-conformance-in-the-shipped-player.md) | Conformance suites run against the providers a shipped player links | 2026-11-27 | CI run 45926707390 (bfdce2d), full matrix green; on all six desktop legs the packaged player ran the audio suite (49 checks) against its linked provider and the mutation failed it |
 | [WO-089](WO-089-rhi-backend-order-and-capabilities.md) | librhi's backend order from project.json, and device capabilities refused by name | 2026-11-27 | CI run 45918980872 (aeeba9c) green on all six desktop legs, device_select_test on each; engine_host on macOS logs the backend and refuses a wrong rhi order by name |
 | [WO-088](WO-088-test-the-shipped-player.md) | Test what ships — the static shipped player built and run in CI, per platform and selection | 2026-11-27 | CI run 45913071217 (77ef297), the Shipped player step green on all six desktop legs; ctest shipped_player_check_refuses_extra_providers |

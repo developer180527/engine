@@ -5,7 +5,9 @@ title: The cooked scene loads as fast as the fixed record did — a schema-drive
 program: assets
 priority: P1
 size: M
-state: active
+state: done
+done: 2026-11-28
+evidence: CI push run 45951559897 and nightly 45984556986 (e3d375d) green on every leg; 50 000 cooked entities load in 29.7–31.3 ms against format 3's 32 ms (tests/scene_load_bench.cpp, release, this Mac)
 depends: [WO-091]
 contracts: [scene-service]
 touches:
