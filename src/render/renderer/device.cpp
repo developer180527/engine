@@ -15,6 +15,8 @@
 #include <cstdio>
 #include <cstdlib>   // getenv: ENGINE_RENDER_TABLE
 #include <cstring>
+#include <set>
+#include <string>
 
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
@@ -109,26 +111,99 @@ bool Renderer::init(void* nwh, int width, int height,
         return false;
     }
 
-    bgfx::Init init;
-    init.allocator = &s_bgfxAllocator;   // Rendering heap (see above)
-    // Let bgfx pick the best backend for this platform:
-    //   macOS  → Metal    Windows → Direct3D11/12    Linux → Vulkan/OpenGL
-    // Compile-time choice, kept on bgfx: the RHI must choose at runtime (docs/rhi/design-api.md §4.7, WO-024).
+    // ── The backend (WO-089): the project's order, and nothing past it ──────
+    // bgfx, asked for one backend, falls back through every other it was built
+    // with when that one fails, down to Noop, and says so only in a trace. So
+    // each attempt checks which backend bgfx actually made, and undoes it if it
+    // was not the one asked for. The order is the only fallback (DR-0037).
+    m_initError.clear();
+    m_backendName.clear();
+    std::vector<std::string> order = m_device.backendOrder;
+    std::string chosenBy = m_device.orderChosenBy;
+    if (order.empty()) {   // a renderer made outside the runtime: this platform's order
 #if defined(__APPLE__)
-    init.type              = bgfx::RendererType::Metal;
+        order = {"metal"};
 #elif defined(_WIN32)
-    init.type              = bgfx::RendererType::Direct3D12;
+        order = {"d3d12"};
 #else
-    init.type              = bgfx::RendererType::Vulkan;
+        order = {"vulkan"};
 #endif
-    init.platformData.nwh  = nwh;
-    init.resolution.width  = (uint32_t)width;
-    init.resolution.height = (uint32_t)height;
-    m_backW = width; m_backH = height;
-    init.resolution.reset  = BGFX_RESET_VSYNC;
-    if (!bgfx::init(init)) {
-        LOG_ERROR("Renderer", "bgfx init failed — no GPU device");
+        chosenBy = "the renderer's own default";
+    }
+    bgfx::RendererType::Enum supported[bgfx::RendererType::Count];
+    const uint8_t nSupported = bgfx::getSupportedRenderers(bgfx::RendererType::Count, supported);
+    bool afterShutdown = false;
+    const rhisel::TryResult tried = rhisel::tryInOrder(order, chosenBy, [&](const std::string& b) -> std::string {
+        bgfx::RendererType::Enum type;
+        if      (b == "d3d12")    type = bgfx::RendererType::Direct3D12;
+        else if (b == "d3d11")    type = bgfx::RendererType::Direct3D11;
+        else if (b == "vulkan")   type = bgfx::RendererType::Vulkan;
+        else if (b == "metal")    type = bgfx::RendererType::Metal;
+        else if (b == "opengl")   type = bgfx::RendererType::OpenGL;
+        else if (b == "gles")     type = bgfx::RendererType::OpenGLES;
+        else return "this renderer has no " + b + " backend";
+        bool built = false;
+        for (uint8_t i = 0; i < nSupported; ++i) built = built || supported[i] == type;
+        if (!built) return "not compiled into this build";
+        // Single-threaded again (see above), but only after a shutdown: that
+        // clears bgfx's flag, while a failed init keeps it and a second call
+        // would trip bgfx's render-thread check.
+        if (afterShutdown) { bgfx::renderFrame(); afterShutdown = false; }
+        bgfx::Init init;
+        init.allocator = &s_bgfxAllocator;   // Rendering heap (see above)
+        init.type              = type;
+        init.platformData.nwh  = nwh;
+        init.resolution.width  = (uint32_t)width;
+        init.resolution.height = (uint32_t)height;
+        init.resolution.reset  = BGFX_RESET_VSYNC;
+        if (!bgfx::init(init)) return "no device: bgfx could not initialise it";
+        if (bgfx::getRendererType() != type) {
+            const std::string made = bgfx::getRendererName(bgfx::getRendererType());
+            bgfx::shutdown();
+            afterShutdown = true;
+            return "no device: it failed, and bgfx fell back to " + made + " on its own";
+        }
+        return {};
+    });
+    for (const rhisel::Attempt& a : tried.failed)
+        LOG_WARN("Renderer", "graphics backend %s not used: %s", a.backend.c_str(), a.whyNot.c_str());
+    if (!tried.ok()) {
+        m_initError = tried.refusal;
+        LOG_ERROR("Renderer", "%s", m_initError.c_str());
         return false;
+    }
+    m_backendName = tried.used;
+    LOG_INFO("Renderer", "graphics backend: %s (%s: %s)", tried.used.c_str(), chosenBy.c_str(),
+             [&] { std::string s; for (const std::string& b : order) s += (s.empty() ? "" : ", ") + b; return s; }().c_str());
+    m_backW = width; m_backH = height;
+
+    // ── The device's capabilities, against the manifest's (WO-089) ──────────
+    {
+        const bgfx::Caps* caps = bgfx::getCaps();
+        std::set<std::string> have;
+        if (caps->supported & BGFX_CAPS_INDEX32)          have.insert("index32");
+        if (caps->supported & BGFX_CAPS_INSTANCING)       have.insert("instancing");
+        if (caps->supported & BGFX_CAPS_COMPUTE)          have.insert("compute");
+        if (caps->supported & BGFX_CAPS_TEXTURE_2D_ARRAY) have.insert("texture_2d_array");
+        if (caps->formats[bgfx::TextureFormat::D32F] & BGFX_CAPS_FORMAT_TEXTURE_FRAMEBUFFER)
+            have.insert("depth_d32f");
+        if (caps->formats[bgfx::TextureFormat::RGBA16F] & BGFX_CAPS_FORMAT_TEXTURE_FRAMEBUFFER)
+            have.insert("render_rgba16f");
+        if ((caps->supported & BGFX_CAPS_TEXTURE_3D) &&
+            (caps->formats[bgfx::TextureFormat::RGBA16F] & BGFX_CAPS_FORMAT_TEXTURE_3D))
+            have.insert("texture3d_rgba16f");
+        const rhisel::CapResult cr = rhisel::checkDevice(m_device.decl, have);
+        if (!cr.ok()) {
+            m_initError = cr.refusal("forward-bgfx", m_backendName);
+            LOG_ERROR("Renderer", "%s", m_initError.c_str());
+            bgfx::shutdown();
+            return false;
+        }
+        // Each fallback's own pass says what it does instead (OutputPass, the
+        // opaque pass); this is the one line that lists them all at startup.
+        for (const std::string& c : cr.fellBack)
+            LOG_WARN("Renderer", "device capability '%s' missing on %s: the renderer's fallback is used",
+                     c.c_str(), m_backendName.c_str());
     }
     // Open the asset path's upload seam. Until this, gpu::create* returns
     // invalid handles and gpu::copy returns null, so a headless process can

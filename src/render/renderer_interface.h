@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <string>
 
 #include <flecs.h>
 
@@ -125,6 +126,10 @@ struct IRenderer {
     // nothing, so a renderer without an HDR path is correct by inheritance.
     virtual void requestHdrBackbuffer(bool /*on*/) {}
     virtual bool hdrBackbufferActive() const { return false; }
+    // Why init() returned false, by name (WO-089): no backend in the order
+    // created a device, or the device lacks a capability the renderer needs.
+    // Empty for a renderer that does not say.
+    virtual std::string initError() const { return {}; }
 
     // ── Bring-your-own-system draw submission ──────────────────────────────
     // The ONE method here that is per-DRAW rather than per-frame: kit code

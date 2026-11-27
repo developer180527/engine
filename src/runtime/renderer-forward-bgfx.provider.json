@@ -8,6 +8,10 @@
   "sdk": [],
   "requires": [],
   "capabilities": ["forward", "shadows", "skinning"],
+  "device": {
+    "needs": ["index32", "depth_d32f"],
+    "fallbacks": ["instancing", "render_rgba16f", "texture3d_rgba16f"]
+  },
   "files": ["../render/"],
   "shares": ["../render/renderer_interface.h"]
 }

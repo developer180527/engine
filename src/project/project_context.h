@@ -111,6 +111,11 @@ struct ProjectContext {
     int                   version       = 1;
     std::vector<Kit>      kits;          // plugged-in gameplay kits (see Kit)
     Providers             providers;     // engine service selection (see above)
+    // The graphics backend order, per platform (WO-089, core/device_select.h):
+    //   "rhi": { "windows": ["d3d12", "vulkan"], "linux": ["vulkan"] }
+    // As written; null: no block, each platform takes its own order. Checked
+    // at engine_build, and again at startup before the renderer is made.
+    nlohmann::json        rhi;
     Graphics              graphics;      // quality knobs (see above)
     Extensions            extensions;    // required and used (see above)
 
@@ -160,6 +165,7 @@ struct ProjectContext {
         else j["providers"] = {{"physics",   providers.physics},
                                {"scripting", providers.scripting},
                                {"audio",     providers.audio}};
+        if (!rhi.is_null()) j["rhi"] = rhi;
         j["graphics"]  = {{"shadowResolution", graphics.shadowResolution}};
 
         std::ofstream f(projectRoot / "project.json");
@@ -184,6 +190,8 @@ struct ProjectContext {
                 ctx.assetsRoot = std::filesystem::weakly_canonical(ctx.projectRoot / ar);
                 if (auto p = j.find("providers"); p != j.end())
                     ctx.providers.raw = *p;    // resolved, and checked, at startup
+                if (auto r = j.find("rhi"); r != j.end())
+                    ctx.rhi = *r;              // checked at startup (WO-089)
                 if (auto x = j.find("extensions"); x != j.end()) {
                     ctx.extensions.raw = *x;
                     // Names only. Anything else is recorded in `malformed`, and

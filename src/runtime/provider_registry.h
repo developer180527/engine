@@ -21,6 +21,8 @@
 #include <string_view>
 #include <vector>
 
+#include "core/device_select.h"
+
 class IEnginePlugin;
 struct IRenderer;
 class ScriptHost;
@@ -35,6 +37,7 @@ struct BuiltRow {
     const char* kind; const char* name; bool built; const char* whyNot;
     const char* contract; const char* platforms; const char* flavours;
     const char* needs; const char* requiresList; const char* provides;
+    const char* deviceNeeds; const char* deviceFallbacks;   // a renderer's (WO-089)
 };
 // The rows for the target this runtime was built as (defined in runtime_boot.cpp).
 const std::vector<BuiltRow>& builtRows();
@@ -57,6 +60,10 @@ struct ProviderContext {
     std::filesystem::path assetsRoot;
     ScriptHost*     scriptHost = nullptr;  // the scripting provider's host (the runtime owns it)
     dbg::DebugDraw* debugDraw  = nullptr;  // the engine's per-frame line collector
+    // A renderer's device (WO-089, core/device_select.h): the backends to try,
+    // in order, and the capabilities its manifest names. The renderer tries
+    // the list, nothing past it, and holds the device to the manifest.
+    rhisel::DeviceRequest device;
 };
 
 using PluginFactory   = std::function<std::shared_ptr<IEnginePlugin>(const ProviderContext&)>;

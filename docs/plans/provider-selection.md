@@ -8,7 +8,9 @@ covers:
 # Provider selection — declared once, resolved before the game runs
 
 > **Status: plan, 2026-11-26.** Built so far: the registry (WO-076), manifests and
-> platform tables (WO-085), and the resolver with `engine_build --platform` (WO-086).
+> platform tables (WO-085), the resolver with `engine_build --platform` (WO-086),
+> providers kept apart (WO-087), the shipped player tested in CI (WO-088), and the
+> backend order and device check (WO-089, `src/core/device_select.h`).
 > It turns the research in
 > [`provider-selection-research.md`](provider-selection-research.md) (how Unreal,
 > Unity, Godot, O3DE, CryEngine, Bevy and the graphics libraries do it) into
@@ -108,8 +110,16 @@ means every target; an object picks per target.
 - **An unknown key is refused** (`widnows`), as an unknown name is.
 - **Every kind's null provider is called `none`** and is chosen by name, for
   dedicated servers and the headless farm. It is never a fallback.
-- **`rhi`** is optional. Leaving it out takes librhi's per-platform order.
-  Apple platforms have Metal only, so they take no list.
+- **`rhi`** is optional. Leaving it out takes the first backend in the platform
+  table's `gpu_apis`, and only that one: the table lists what the platform has,
+  not a fallback chain, so a project that never wrote `rhi` gets one backend.
+  Listing more than one is how a project asks for a fallback. Apple platforms
+  have Metal only, so a list there can only say `["metal"]`.
+- **A renderer's manifest names the device capabilities it uses** (WO-089):
+  `"device": {"needs": [...], "fallbacks": [...]}`, from the names in
+  `core/device_select.h`. A missing need is refused by name at startup; a
+  missing fallback is logged, and the renderer's fallback runs. A name outside
+  that list is refused when the manifest is read.
 - Today's files keep working: `"physics": "jolt"` is a plain string, and a
   project with no `"renderer"` gets the engine default.
 

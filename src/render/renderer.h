@@ -10,6 +10,7 @@ class ShaderLibrary;   // render/shader/shader_library.h
 #include <vector>
 #include "render/gpu.h"
 #include "render/renderer_interface.h"
+#include "core/device_select.h"   // rhisel::DeviceRequest (WO-089)
 #include <flecs.h>
 
 #include "render/render_pipeline.h"   // IRenderPipeline, RenderView, RenderItem, LightItem, RenderTarget, Mat4, Vec4
@@ -83,6 +84,11 @@ public:
     void setDisplayTransform(DisplayView view, const DisplayTransform& t) override;
     void requestHdrBackbuffer(bool on) override { m_wantHdrBackbuffer = on; }
     bool hdrBackbufferActive() const override { return m_hdrBackbuffer; }
+    // Before init (WO-089): the backends to try, in order, and the device
+    // capabilities this renderer's manifest names. Empty order: the platform's.
+    void setDevice(rhisel::DeviceRequest d) { m_device = std::move(d); }
+    std::string initError() const override { return m_initError; }
+    const std::string& backendName() const { return m_backendName; }
     void renderGameView(const float view[16], const float proj[16],
                         const float clearColor[4], flecs::world* gameWorld) override;
     // Standalone-game path: render a world straight to the backbuffer (no
@@ -353,6 +359,9 @@ private:
     // caps during it. resize() must keep the format or the swapchain silently
     // reverts to 8-bit on the first window resize.
     bool m_wantHdrBackbuffer = false;
+    rhisel::DeviceRequest m_device;       // WO-089
+    std::string m_initError;              // why init() failed, by name
+    std::string m_backendName;            // the backend that made the device
     bool m_hdrBackbuffer     = false;
     // Stage B: what each display output applies — indexed by DisplayView.
     std::array<DisplayTransform, (size_t)DisplayView::Count> m_display;

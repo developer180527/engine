@@ -201,6 +201,18 @@ Result resolve(const Inputs& in) {
             if (!contains(available, s))
                 r.refusals.push_back("the " + d->kind + " provider '" + d->name + "' requires the service '" +
                                      s + "', which neither core nor another chosen provider provides");
+
+    // 8. The backend order (WO-089): every platform whose backends are known.
+    std::map<std::string, std::vector<std::string>> known;
+    for (const auto& [name, p] : in.platforms) if (!p.gpuApis.empty()) known[name] = p.gpuApis;
+    for (std::string& why : rhisel::checkRhi(in.rhi, platformNames(in), known))
+        r.refusals.push_back(std::move(why));
+    if (r.ok()) {
+        auto p = in.platforms.find(in.target.platform);
+        r.rhiOrder = rhisel::orderFor(in.rhi, in.target.platform,
+                                      p != in.platforms.end() ? p->second.gpuApis : std::vector<std::string>{},
+                                      &r.rhiChosenBy);
+    }
     return r;
 }
 
@@ -224,6 +236,19 @@ bool declFromManifest(const nlohmann::json& m, Decl& d, std::string& why) {
     d.requires_ = stringList(m, "requires", why, ok);
     d.provides  = stringList(m, "provides", why, ok);
     if (!ok) return false;
+    if (auto dev = m.find("device"); dev != m.end()) {
+        // A renderer's device capabilities (WO-089): { "needs": [...], "fallbacks": [...] }.
+        if (!dev->is_object()) { why = "'device' must be an object of needs and fallbacks"; return false; }
+        for (auto it = dev->begin(); it != dev->end(); ++it)
+            if (it.key() != "needs" && it.key() != "fallbacks") {
+                why = "'device': '" + it.key() + "' is not a key (keys: needs, fallbacks)";
+                return false;
+            }
+        d.device.needs     = stringList(*dev, "needs", why, ok);
+        d.device.fallbacks = stringList(*dev, "fallbacks", why, ok);
+        if (!ok) { why = "'device'." + why; return false; }
+        if (std::string bad = rhisel::checkDeviceDecl(d.device); !bad.empty()) { why = "'device': " + bad; return false; }
+    }
     if (!m.contains("flavours")) d.flavours = flavours();
     if (d.platforms.empty()) { why = "'platforms' is required"; return false; }
     return true;
@@ -241,6 +266,16 @@ bool platformFromTable(const nlohmann::json& t, Platform& p, std::string& why) {
         if (!it.value().is_boolean()) { why = "fact '" + it.key() + "' must be true or false"; return false; }
         p.facts[it.key()] = it.value().get<bool>();
     }
+    if (auto g = t.find("gpu_apis"); g != t.end()) {
+        if (!g->is_array()) { why = "'gpu_apis' must be a list of backends"; return false; }
+        for (const auto& e : *g) {
+            if (!e.is_string() || !contains(rhisel::backends(), e.get<std::string>())) {
+                why = "'gpu_apis': " + e.dump() + " is not a backend";
+                return false;
+            }
+            p.gpuApis.push_back(e.get<std::string>());
+        }
+    }
     return true;
 }
 
@@ -253,6 +288,8 @@ std::string explainText(const Result& r) {
         for (const Alternative& a : k.others)
             s += "      not " + a.name + ": " + (a.whyNot.empty() ? std::string("usable, not chosen") : a.whyNot) + "\n";
     }
+    if (!r.rhiOrder.empty())
+        s += "  rhi       " + join(r.rhiOrder) + "  (" + r.rhiChosenBy + ")\n";
     for (const std::string& why : r.refusals) s += "  REFUSED: " + why + "\n";
     return s;
 }
@@ -271,6 +308,7 @@ nlohmann::json explainJson(const Result& r) {
         ks.push_back({{"kind", k.kind}, {"chosen", k.chosen}, {"asked", k.asked}, {"key", k.key}, {"others", others}});
     }
     j["kinds"] = ks;
+    j["rhi"] = {{"order", r.rhiOrder}, {"chosen_by", r.rhiChosenBy}};
     return j;
 }
 

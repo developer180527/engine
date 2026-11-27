@@ -489,6 +489,7 @@ int main(int argc, char** argv) {
             std::ifstream f(project / "project.json");
             const nlohmann::json pj = nlohmann::json::parse(f);
             if (auto it = pj.find("providers"); it != pj.end()) pin.providers = *it;
+            if (auto it = pj.find("rhi"); it != pj.end()) pin.rhi = *it;   // WO-089
         } catch (const std::exception& e) {
             return failed(std::string("bad project.json: ") + e.what());
         }
@@ -782,6 +783,7 @@ int main(int argc, char** argv) {
             list.push_back({{"kind", k.kind}, {"name", k.chosen}, {"contract", contract}, {"chosen_by", k.key}});
         }
         lock["providers"] = list;
+        lock["rhi"] = {{"order", providers.rhiOrder}, {"chosen_by", providers.rhiChosenBy}};   // WO-089
         std::ofstream f(dist / "providers.lock.json");
         f << lock.dump(2) << "\n";
     }

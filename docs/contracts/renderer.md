@@ -12,7 +12,7 @@ tests:
   - tests/null_renderer_test.cpp
 covers:
   - src/render/renderer_interface.h
-verified: 2026-09-27
+verified: 2026-11-27
 ---
 
 # renderer — what the runtime asks of a renderer
@@ -37,4 +37,11 @@ Not yet written.
 Not yet written.
 
 ## Errors
-Not yet written.
+- `init()` returns false when the renderer cannot start, and `initError()` then
+  says why, by name (WO-089): no backend in the project's order created a
+  device (each one tried, and why not), or the device lacks a capability the
+  renderer's manifest lists under `device.needs`. The runtime reports that text
+  as its boot error. A renderer that does not say gets a generic message.
+- A capability listed under `device.fallbacks` never fails `init()`: the
+  renderer logs that it is using its fallback (`core/device_select.h`).
+- The rest is not yet written.

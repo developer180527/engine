@@ -28,16 +28,20 @@
 //   3. its platforms include the target's;          4. its flavours too;
 //   5. the target's platform has every fact in its needs;
 //   6. it was built (an SDK found, and so on), when that is known;
-//   7. every service it requires comes from core or another chosen provider.
+//   7. every service it requires comes from core or another chosen provider;
+//   8. the project's "rhi" order names only backends each platform has, and
+//      the target's order is worked out (core/device_select.h, WO-089).
 // One provider per kind holds by construction: each kind gets one choice.
 //
-// Pure: the standard library and nlohmann::json. No engine headers.
+// Pure: the standard library, nlohmann::json and core/device_select.h.
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
+
+#include "core/device_select.h"
 
 namespace provsel {
 
@@ -54,11 +58,13 @@ struct Decl {
     std::vector<std::string> platforms, flavours, needs, sdk, requires_, provides;
     bool built = true;          // false: not built for this target, and why
     std::string whyNotBuilt;
+    rhisel::DeviceDecl device;  // a renderer's device capabilities (WO-089)
 };
 
 struct Platform {
     std::string name;
     std::map<std::string, bool> facts;
+    std::vector<std::string> gpuApis;   // the backends it has; the first is its default. Empty: unknown
 };
 
 struct Target { std::string platform, flavour; };
@@ -76,12 +82,15 @@ struct Result {
     Target target;
     std::vector<KindResult> kinds;
     std::vector<std::string> refusals;
+    std::vector<std::string> rhiOrder;  // the target's backend order (WO-089)
+    std::string rhiChosenBy;            // "project.json \"rhi\".windows", or "the windows default"
     bool ok() const { return refusals.empty(); }
     const std::string* chosen(const std::string& kind) const;
 };
 
 struct Inputs {
     nlohmann::json providers;                                      // the project's block; null: none
+    nlohmann::json rhi;                                            // the project's "rhi" block; null: none
     std::vector<std::pair<std::string, std::string>> overrides;    // (kind, name): beat the project
     Target target;
     std::vector<Decl> decls;

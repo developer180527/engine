@@ -516,6 +516,9 @@ engine_test(api_primitives_test)
 engine_test(ui_backend_test)
 engine_test(providers_test)
 engine_test(provider_resolve_test LIB engine_core)
+# The graphics backend order and the device check, with a fake device (WO-089).
+engine_test(device_select_test LIB engine_core)
+target_compile_definitions(device_select_test PRIVATE ENGINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 # Physics draws debug shapes through the engine's collector, whichever renderer
 # runs (WO-087).
 engine_test(provider_debug_draw_test)
