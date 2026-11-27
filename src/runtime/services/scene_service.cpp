@@ -150,8 +150,9 @@ uint32_t SceneService::loadScene(const char* cookedPath) {
             LOG_ERROR("SceneService", "Failed to load scene %s: %s", cookedPath, why.c_str());
             return 0;
         }
-        const EntitySerde::PackedSchemas match =
+        EntitySerde::PackedSchemas match =
             EntitySerde::matchPackedSchemas(view, EntitySerde::schemasOf(ctx));
+        EntitySerde::withComponentIds(match, m_world);   // entities made in their final table
         created.reserve(view.entityCount());
         packed::Entity pe;
         bool bad = false;

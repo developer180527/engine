@@ -12,8 +12,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-- [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) **The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components** — 4/5 done. Still open:
-  - `tests/scene_load_bench.cpp` at 50 000 entities within the measurement's noise of format 3's 32 ms on the same machine (format 3's loader rebuilt for the comparison, as WO-091 did), and the numbers recorded here
+- [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) **The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components** — 5/5 done. Still open:
+  - (all ticked: close it)
 
 ## Next up
 
@@ -38,7 +38,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
 | [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
 | [WO-090](WO-090-first-librhi-renderer.md) | The first librhi renderer — a provider beside bgfx, the forward pipeline ported pass by pass, each bgfx assumption removed where the port meets it | Renderer & RHI | L | blocked by WO-075 | renderer, gpu-seam |
-| [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) | The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components | Asset import & cooking | M | **active** 4/5 | scene-service |
+| [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) | The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components | Asset import & cooking | M | **active** 5/5 | scene-service |
 
 ## P2 — the planned programmes, in dependency order.
 

@@ -697,6 +697,7 @@ inline void registerBuiltinSchemas(SchemaRegistry& r) {
             return true;
         };
         name.packedFields = { {"", FieldType::String, 1} };
+        name.packedComponent = [](flecs::world_t* w) { return flecs::_::type<Name>::id(w); };
         r.add(std::move(name));
     }
     {
@@ -1246,7 +1247,18 @@ inline cooked_scene::Packer scenePacker() {
 struct PackedSchemas {
     std::vector<const ComponentSchema*> same;    // by cooked index; null: not the same
     std::vector<const ComponentSchema*> byName;  // by cooked index; null: not registered
+    // By cooked index: the component a `same` record's unpack sets, resolved
+    // in the load's world by withComponentIds(); 0: none to pre-add.
+    std::vector<flecs::entity_t> component;
+    flecs::entity_t entityId = 0;                // EntityId, which every entity gets
 };
+// The flecs ids of what each record sets, in `w`: once per load, not per entity.
+inline void withComponentIds(PackedSchemas& m, flecs::world& w) {
+    m.component.assign(m.same.size(), 0);
+    for (std::size_t i = 0; i < m.same.size(); ++i)
+        if (m.same[i] && m.same[i]->packedComponent) m.component[i] = m.same[i]->packedComponent(w.c_ptr());
+    m.entityId = flecs::_::type<EntityId>::id(w.c_ptr());
+}
 inline PackedSchemas matchPackedSchemas(const packed::View& view, const SchemaRegistry& reg) {
     PackedSchemas m;
     for (const packed::Schema& c : view.schemas()) {
@@ -1269,7 +1281,22 @@ inline PackedSchemas matchPackedSchemas(const packed::View& view, const SchemaRe
 inline bool createEntityPacked(flecs::world& w, const packed::View& view, const packed::Entity& pe,
                                const PackedSchemas& match, SerdeContext& ctx, IdPolicy policy,
                                flecs::entity& out) {
-    flecs::entity e = w.entity();
+    // Made in its final table (WO-092): EntityId and every component a record
+    // unpacks are known from the record headers, so the table is found through
+    // flecs' cached graph and each set below writes in place. Before, each set
+    // moved the entity to a new table, four or five times per entity. Only for
+    // the packed path: there the list is free, and for CBOR it needed a walk
+    // that cost more than the moves (2026-11-26, this order's log).
+    flecs::entity e;
+    if (!match.component.empty()) {
+        ecs_table_t* table = ecs_table_add_id(w.c_ptr(), nullptr, match.entityId);
+        for (const packed::Record& rec : pe.records)
+            if (rec.schema < match.component.size() && match.component[rec.schema] != 0)
+                table = ecs_table_add_id(w.c_ptr(), table, match.component[rec.schema]);
+        e = flecs::entity(w, ecs_new_w_table(w.c_ptr(), table));
+    } else {
+        e = w.entity();
+    }
     out = e;
     const bool ownRefs = beginEntityRefs(ctx);
     struct EndRefs { SerdeContext& c; flecs::world w; bool own;

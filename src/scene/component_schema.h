@@ -129,6 +129,11 @@ struct ComponentSchema {
     std::function<bool(const nlohmann::json& value, packed::Writer&)> pack;
     std::function<bool(flecs::entity, packed::Reader&, SerdeContext&)> unpack;
     std::vector<FieldInfo> packedFields;
+    // The one component `unpack` sets when it succeeds, as a flecs id in `w`
+    // (WO-092). The packed loader adds them all at once, so an entity is made
+    // in its final table instead of moving tables at every set. Null: unpack
+    // sets something else, or more than one component, and it is not pre-added.
+    flecs::entity_t (*packedComponent)(flecs::world_t* w) = nullptr;
 
     // Reads nothing but its own value, so it may load in whatever order the
     // keys come (the CBOR reader does it as it meets them). False for a codec
@@ -597,6 +602,7 @@ public:
             }
             return true;
         };
+        m_s.packedComponent = [](flecs::world_t* w) { return flecs::_::type<T>::id(w); };
         m_s.unpack = [fields, base](flecs::entity e, packed::Reader& r, SerdeContext& ctx) {
             T t = *base;
             const bool ownRefs = beginEntityRefs(ctx);
