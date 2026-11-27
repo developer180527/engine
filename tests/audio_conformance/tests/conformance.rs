@@ -66,7 +66,14 @@ fn reference_provider_conforms() {
 }
 
 #[test]
-fn native_provider_conforms() {
+fn native_provider_passes_the_suite() {
+    // Every part of conf::SUITE: the contract (a provider says NO correctly)
+    // and playback (it can say yes: real WAV bytes, decoded, played, clocked,
+    // streamed from memory and pulled through a reader; the reference decodes
+    // nothing, so that part only means something against a native provider).
+    // The same list a CI-built shipped player runs against the provider it
+    // linked (ffi/, WO-093), so the two cannot hold a provider to different
+    // rules.
     let Ok(path) = std::env::var("ENGINE_AUDIO_PROVIDER") else {
         println!("ENGINE_AUDIO_PROVIDER unset — skipping the native provider.");
         println!("Point it at a built provider module to hold it to this contract.");
@@ -76,27 +83,9 @@ fn native_provider_conforms() {
         Ok(p) => p,
         Err(e) => panic!("could not load provider '{path}': {e}"),
     };
-    let report = unsafe { conf::run(p) };
-    report.print(&format!("native provider ({path})"));
-    assert_eq!(report.failures(), 0, "native provider violated the contract");
-}
-
-#[test]
-fn native_provider_actually_plays_audio() {
-    // The contract suite proves a provider says NO correctly. This proves it can
-    // say yes: real WAV bytes, decoded, played, clocked, streamed from memory,
-    // and pulled through a reader. The reference provider decodes nothing, so
-    // this only means something against a native one — and without it, a
-    // backend that rejected every sound in existence would pass everything.
-    let Ok(path) = std::env::var("ENGINE_AUDIO_PROVIDER") else {
-        println!("ENGINE_AUDIO_PROVIDER unset — skipping playback.");
-        return;
-    };
-    let p = match conf::load(&path) {
-        Ok(p) => p,
-        Err(e) => panic!("could not load provider '{path}': {e}"),
-    };
-    let report = unsafe { conf::run_playback(p) };
-    report.print(&format!("playback ({path})"));
-    assert_eq!(report.failures(), 0, "native provider failed real playback");
+    for (label, part) in conf::SUITE {
+        let report = unsafe { part(p) };
+        report.print(&format!("native provider {label} ({path})"));
+        assert_eq!(report.failures(), 0, "native provider failed the suite's {label} part");
+    }
 }

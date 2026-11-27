@@ -713,6 +713,50 @@ set_target_properties(engine_player PROPERTIES
     ENABLE_EXPORTS ON
 )
 
+# The conformance suites inside the player (WO-093). OFF for every game:
+# engine_build turns it on only for --conformance, which CI's packages use
+# (scripts/shipped_player_check.py). It links the audio suite, a Rust static
+# library (tests/audio_conformance/ffi), so it needs cargo.
+option(ENGINE_PLAYER_CONFORMANCE "Build engine_player with --conformance (CI's test packages only)" OFF)
+if(ENGINE_PLAYER_CONFORMANCE)
+    find_program(CARGO_EXECUTABLE cargo)
+    if(NOT CARGO_EXECUTABLE)
+        message(FATAL_ERROR "ENGINE_PLAYER_CONFORMANCE needs cargo: the audio suite is Rust "
+                            "(tests/audio_conformance). Install rustup, or package without --conformance.")
+    endif()
+    set(_conf_dir ${CMAKE_SOURCE_DIR}/tests/audio_conformance)
+    set(_conf_target_dir ${CMAKE_BINARY_DIR}/rust-conformance)
+    if(MSVC)
+        set(_conf_lib ${_conf_target_dir}/release/engine_audio_conformance_ffi.lib)
+    else()
+        set(_conf_lib ${_conf_target_dir}/release/libengine_audio_conformance_ffi.a)
+    endif()
+    add_custom_command(
+        OUTPUT  ${_conf_lib}
+        COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${_conf_target_dir}"
+                ${CARGO_EXECUTABLE} build --release --manifest-path ${_conf_dir}/ffi/Cargo.toml
+        DEPENDS ${_conf_dir}/src/lib.rs ${_conf_dir}/src/reference.rs ${_conf_dir}/Cargo.toml
+                ${_conf_dir}/ffi/src/lib.rs ${_conf_dir}/ffi/Cargo.toml
+        COMMENT "Building the audio conformance suite (Rust) for engine_player"
+        VERBATIM)
+    add_custom_target(engine_audio_conformance_cargo DEPENDS ${_conf_lib})
+    add_dependencies(engine_player engine_audio_conformance_cargo)
+    target_sources(engine_player PRIVATE tools/player_conformance.cpp)
+    target_compile_definitions(engine_player PRIVATE ENGINE_PLAYER_CONFORMANCE=1)
+    # What this player linked: ENGINE_PROVIDER_AUDIO_MINIAUDIO and the rest.
+    target_include_directories(engine_player PRIVATE ${CMAKE_BINARY_DIR}/generated/providers/engine_runtime)
+    target_link_libraries(engine_player PRIVATE ${_conf_lib})
+    # A Rust static library carries no std dependencies (see modules/net).
+    if(APPLE)
+        target_link_libraries(engine_player PRIVATE "-framework CoreFoundation" "-framework Security")
+    elseif(UNIX)
+        target_link_libraries(engine_player PRIVATE pthread dl m)
+    elseif(WIN32)
+        target_link_libraries(engine_player PRIVATE ws2_32 userenv ntdll bcrypt advapi32 synchronization)
+    endif()
+    message(STATUS "engine_player: --conformance built in (ENGINE_PLAYER_CONFORMANCE, a test package)")
+endif()
+
 # ── engine_module_probe — "why won't my kit load?" ──────────────────────────
 # Runs ModuleLibrary's compatibility gauntlet against a shared library and
 # reports accept/refuse, without a window, a GPU or a project. Also the process

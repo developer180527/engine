@@ -17,6 +17,12 @@ nobody tests. So this, on every CI leg:
   5. runs the headless package headless for 120 frames: it must start, step
      and exit cleanly; and runs the default package headless for 1 frame: it
      must refuse, by name, because its renderer needs a display.
+  6. conformance inside the player (WO-093): the default package is built with
+     `engine_build --conformance`, and `engine_player --conformance audio` runs
+     the audio suite against the provider that player linked; then again with
+     --mutate (play claims a voice for an invalid sound), which must FAIL. The
+     headless package is built without it, as every game is: its symbols must
+     not contain the suite, and its player must refuse --conformance by name.
 
 "headless" stands where WO-088 says "server": engine_build refuses
 --flavour server because no server player exists yet, so the second selection
@@ -66,11 +72,16 @@ MARKERS = {
 # Never in a shipped player (DR-0032): the resolver (engine_build resolved),
 # and the manifest reader with it.
 NEVER = {"the provider resolver (project/provider_resolve.h)": r"provsel"}
+# In a test package's player and in no other (WO-093, engine_build --conformance).
+CONFORMANCE = r"engine_audio_conformance_run"
 
 SELECTIONS = {
     "default":  None,                                     # the engine's defaults
     "headless": {"renderer": "none", "audio": "none"},
 }
+# Built with engine_build --conformance: a test package (WO-093). The other is
+# built as a game is, so the check that a game's player lacks the suite runs too.
+WITH_CONFORMANCE = {"default"}
 
 
 def check_symbols(binary: Path, lock: dict) -> list[str]:
@@ -96,7 +107,39 @@ def check_symbols(binary: Path, lock: dict) -> list[str]:
     for what, pat in NEVER.items():
         if any(re.search(pat, l) for l in text):
             problems.append(f"{what} is in the player")
+    has_conf = any(re.search(CONFORMANCE, l) for l in text)
+    if lock.get("conformance") and not has_conf:
+        problems.append("the conformance suite is not in this test package's player")
+    if not lock.get("conformance") and has_conf:
+        problems.append("the conformance suite is in the player, and this package was built as a game's")
     return problems
+
+
+def conformance_runs(player: Path, dist: Path, name: str, lock: dict, failures: list[str]) -> str:
+    """WO-093: the suites inside the player, or their absence from a game's."""
+    if not lock.get("conformance"):
+        r = run([player, "--conformance", "audio"], cwd=dist)
+        if r.returncode == 0 or "only in players built to test" not in (r.stdout + r.stderr):
+            failures.append(f"{name}: a game's player should refuse --conformance by name "
+                            f"(exit {r.returncode}):\n{r.stdout[-1500:]}{r.stderr[-1500:]}")
+            return "FAILED: a game's player ran it"
+        return "absent, refused by name"
+    names = {p["kind"]: p["name"] for p in lock["providers"]}
+    r = run([player, "--conformance", "audio"], cwd=dist)
+    out = r.stdout + r.stderr
+    passed = r.returncode == 0 and "every check passed" in out
+    if not passed:
+        failures.append(f"{name}: the audio suite failed against the linked provider "
+                        f"'{names.get('audio')}' (exit {r.returncode}):\n{out[-4000:]}")
+    m = run([player, "--conformance", "audio", "--mutate"], cwd=dist)
+    mout = m.stdout + m.stderr
+    caught = m.returncode == 1 and "FAILED" in mout and "unknown sound yields NO_VOICE" in mout
+    if not caught:
+        failures.append(f"{name}: the mutated provider (play claims a voice for an invalid sound) "
+                        f"was not caught by the in-player suite (exit {m.returncode}):\n{mout[-3000:]}")
+    checks = len(re.findall(r"^\s+(ok  |FAIL)\s", out, re.M))
+    return (f"audio: {checks} checks passed" if passed else "audio: FAILED") + \
+           ("; mutation caught" if caught else "; mutation NOT caught")
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -104,7 +147,8 @@ def run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run([str(c) for c in cmd], cwd=cwd, capture_output=True, text=True)
 
 
-def package(build: Path, work: Path, name: str, providers: dict | None) -> tuple[Path, float, list[str]]:
+def package(build: Path, work: Path, name: str, providers: dict | None,
+            conformance: bool = False) -> tuple[Path, float, list[str]]:
     proj = work / name / "project"
     dist = work / name / "dist"
     shutil.rmtree(work / name, ignore_errors=True)
@@ -116,7 +160,8 @@ def package(build: Path, work: Path, name: str, providers: dict | None) -> tuple
         pj["providers"] = providers
         (proj / "project.json").write_text(json.dumps(pj, indent=2))
     t0 = time.monotonic()
-    r = run([build / f"engine_build{EXE}", proj, "--dist", dist, "--strict"])
+    r = run([build / f"engine_build{EXE}", proj, "--dist", dist, "--strict"]
+            + (["--conformance"] if conformance else []))
     took = time.monotonic() - t0
     if r.returncode != 0:
         out = (r.stdout + r.stderr).splitlines()
@@ -155,13 +200,13 @@ def main() -> int:
     a.build, a.work = a.build.resolve(), a.work.resolve()
     a.work.mkdir(parents=True, exist_ok=True)
     failures: list[str] = []
-    summary = ["| selection | engine_build | providers | symbols | run |", "|---|---|---|---|---|"]
+    summary = ["| selection | engine_build | providers | symbols | run | conformance |", "|---|---|---|---|---|---|"]
     for name, providers in SELECTIONS.items():
         print(f"\n== {name} ==", flush=True)
-        dist, took, errs = package(a.build, a.work, name, providers)
+        dist, took, errs = package(a.build, a.work, name, providers, name in WITH_CONFORMANCE)
         if errs:
             failures += errs
-            summary.append(f"| {name} | failed after {took:.0f} s | | | |")
+            summary.append(f"| {name} | failed after {took:.0f} s | | | | |")
             continue
         lock = json.loads((dist / "providers.lock.json").read_text())
         names = {p["kind"]: p["name"] for p in lock["providers"]}
@@ -197,8 +242,9 @@ def main() -> int:
                 failures.append(f"{name}: with no display the packaged player should refuse its "
                                 f"renderer by name (exit {r.returncode}):\n{r.stdout[-2000:]}{r.stderr[-2000:]}")
             run_note = "refused with no display, by name" if refused else "FAILED"
+        conf_note = conformance_runs(player, dist, name, lock, failures)
         summary.append(f"| {name} | {took:.0f} s | {'ok' if lock_ok else 'WRONG'} | "
-                       f"{'ok' if not sym else 'WRONG'} | {run_note} |")
+                       f"{'ok' if not sym else 'WRONG'} | {run_note} | {conf_note} |")
         print(f"   {name}: engine_build {took:.0f} s, providers {names}", flush=True)
 
     print("\n" + "\n".join(summary))

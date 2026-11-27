@@ -727,6 +727,17 @@ impl Report {
     }
 }
 
+/// Every part of the suite, in order: what a native provider is held to.
+///
+/// THE list (WO-093). `cargo test` runs it against a provider module it loads
+/// (tests/conformance.rs), and a CI-built shipped player runs it against the
+/// provider it linked (ffi/, `engine_player --conformance audio`). A part added
+/// here runs in both; there is no second list to forget.
+pub const SUITE: &[(&str, unsafe fn(&ProviderV1) -> Report)] = &[
+    ("contract", run),
+    ("playback", run_playback),
+];
+
 /// Run the whole contract against one provider.
 ///
 /// # Safety

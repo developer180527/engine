@@ -10,7 +10,8 @@ covers:
 > **Status: plan, 2026-11-26.** Built so far: the registry (WO-076), manifests and
 > platform tables (WO-085), the resolver with `engine_build --platform` (WO-086),
 > providers kept apart (WO-087), the shipped player tested in CI (WO-088), and the
-> backend order and device check (WO-089, `src/core/device_select.h`).
+> backend order and device check (WO-089, `src/core/device_select.h`), and the
+> conformance suite inside the shipped player (WO-093).
 > It turns the research in
 > [`provider-selection-research.md`](provider-selection-research.md) (how Unreal,
 > Unity, Godot, O3DE, CryEngine, Bevy and the graphics libraries do it) into
@@ -193,8 +194,12 @@ available:
   package must refuse, by name, to start with no display, because CI has none.
   "Headless" stands where this plan said `server`, until a server player
   exists to package.
-- **Conformance in the shipped player** is WO-093: the one suite (audio) loads
-  a provider as a shared library, which a static player does not have.
+- **Conformance in the shipped player** (WO-093): the one suite (audio) also
+  builds as a static library. A player packaged with `engine_build
+  --conformance`, and only that one, runs it against the provider it linked
+  (`engine_player --conformance audio`), plus a mutated provider that must fail.
+  The other package is built as a game's, and the step checks the suite is not
+  in it.
 - **The home server keeps the A/B number** (`provider-abi.md` §3): the default
   provider linked direct against the same provider through its table.
   C function tables cannot be devirtualised by LTO, so this is the only honest

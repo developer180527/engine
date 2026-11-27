@@ -3,6 +3,8 @@
 //   engine_player [project-dir]        (default: auto-detect from cwd)
 //   engine_player --list-providers [--json]   the providers this build has
 //   engine_player [project-dir] --headless --frames N   no window: a smoke run
+//   engine_player --conformance <kind> [--mutate]   only in players CI builds to
+//                                    test (ENGINE_PLAYER_CONFORMANCE, WO-093)
 //
 // What a PLAYER ships and engine_host doesn't: nothing. What engine_host
 // carries and this deliberately does not: dev-module hot-reload + watching,
@@ -32,6 +34,9 @@
 #include "project/project_context.h"       // finding the project from the cwd
 #include "render/render_stats_channel.h"   // --gpu-stats (measure on target)
 #include "plugins/stock_plugins.h"          // --list-providers
+#if ENGINE_PLAYER_CONFORMANCE
+#include "tools/player_conformance.h"       // --conformance (WO-093)
+#endif
 
 namespace fs = std::filesystem;
 
@@ -58,6 +63,21 @@ int main(int argc, char** argv) {
         registerStockProviders(r);
         std::fputs((json ? r.describeJson() + "\n" : r.describe()).c_str(), stdout);
         return 0;
+    }
+    // --conformance <kind> [--mutate]: the kind's suite against the provider
+    // this player linked, then exit. No project, no window. A game's player
+    // has no such flag (WO-093).
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) != "--conformance") continue;
+#if ENGINE_PLAYER_CONFORMANCE
+        bool mutate = false;
+        for (int k = 1; k < argc; ++k) mutate |= std::string(argv[k]) == "--mutate";
+        return runPlayerConformance(i + 1 < argc ? argv[i + 1] : "", mutate);
+#else
+        std::fprintf(stderr, "engine_player: --conformance is only in players built to test "
+                             "(engine_build --conformance)\n");
+        return 2;
+#endif
     }
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];

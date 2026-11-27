@@ -393,6 +393,9 @@ static int usage() {
         "                          emits is a defect in the shipped package, so CI\n"
         "                          is expected to pass this; a human iterating is\n"
         "                          not.\n"
+        "  --conformance           build the player with --conformance (the provider\n"
+        "                          suites against what it linked). For CI's test\n"
+        "                          packages only: never ship one (WO-093)\n"
         "  --addon-manifest        print this tool's Add-on manifest and exit\n");
     return addon::exitCode(addon::Exit::Usage);
 }
@@ -403,12 +406,14 @@ int main(int argc, char** argv) {
     std::string projectArg, distArg;
     std::string platform = hostPlatform(), flavour = "client";
     bool explain = false, explainJson = false;
+    bool conformance = false;   // --conformance: a test package (WO-093)
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--addon-manifest") { emitManifest(); return addon::exitCode(addon::Exit::Ran); }
         if (a == "--strict")         { g_strict = true; continue; }
         if (a == "--explain-providers") { explain = true; continue; }
         if (a == "--json")           { explainJson = true; continue; }
+        if (a == "--conformance")    { conformance = true; continue; }
         if (a == "--platform" || a == "--flavour") {
             if (i + 1 >= argc) {
                 std::fprintf(stderr, "engine_build: %s needs a value\n", a.c_str());
@@ -539,7 +544,10 @@ int main(int argc, char** argv) {
 #endif
     if (run("cmake -S " + q(engineRoot) + " -B " + q(shipTree) + generator +
             " -DENGINE_WITH_SOURCE_IMPORTERS=OFF -DCMAKE_BUILD_TYPE=Release" +
-            " \"-DENGINE_PROVIDERS_SELECTED=" + selected + "\"") != 0)
+            " \"-DENGINE_PROVIDERS_SELECTED=" + selected + "\"" +
+            // Stated every time, ON or OFF: the shipping tree is reused, and a
+            // cached ON from a test package must never reach a game's player.
+            (conformance ? " -DENGINE_PLAYER_CONFORMANCE=ON" : " -DENGINE_PLAYER_CONFORMANCE=OFF")) != 0)
         return failed("configuring the shipping tree failed");
     // What the shipping tree could build, now that CMake has looked (an SDK
     // found or not): every chosen provider must be in it. Refused before the
@@ -783,6 +791,7 @@ int main(int argc, char** argv) {
             list.push_back({{"kind", k.kind}, {"name", k.chosen}, {"contract", contract}, {"chosen_by", k.key}});
         }
         lock["providers"] = list;
+        lock["conformance"] = conformance;   // a test package, never a game's (WO-093)
         lock["rhi"] = {{"order", providers.rhiOrder}, {"chosen_by", providers.rhiChosenBy}};   // WO-089
         std::ofstream f(dist / "providers.lock.json");
         f << lock.dump(2) << "\n";

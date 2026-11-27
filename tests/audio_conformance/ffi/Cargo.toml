@@ -1,0 +1,20 @@
+[package]
+name    = "engine_audio_conformance_ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The audio conformance suite as a C-callable static library, for the players CI packages (WO-093)."
+
+# A static library a C++ player links. The suite itself is the crate one
+# directory up: this adds one C entry point and no checks of its own, so the
+# in-player run and `cargo test` cannot drift apart.
+[lib]
+name       = "engine_audio_conformance_ffi"
+path       = "src/lib.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+engine_audio_conformance = { path = ".." }
+
+# Nested inside the suite's directory, but its own build: no workspace.
+[workspace]
