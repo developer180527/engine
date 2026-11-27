@@ -6,7 +6,9 @@ program: renderer
 priority: P1
 rank: 4
 size: M
-state: active
+state: done
+done: 2026-11-28
+evidence: CI run 46061007680 (6760c49) green on the full matrix, sanitizers included; change_stream_test (38 checks) mutation-checked four ways; diff mode green on the 50 000-object fuzz scene for 900 frames with its spinners turning and 1 500 with 12 506 falling bodies
 depends: [WO-071]
 contracts: [render-scene]
 touches:
