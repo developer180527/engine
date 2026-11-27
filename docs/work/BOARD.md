@@ -12,8 +12,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-- [WO-038](WO-038-ci-green-on-every-leg.md) **CI green on every leg, and red is noticed** — 7/7 done. Still open:
-  - (all ticked: close it)
 - [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) **The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components** — 4/5 done. Still open:
   - `tests/scene_load_bench.cpp` at 50 000 entities within the measurement's noise of format 3's 32 ms on the same machine (format 3's loader rebuilt for the comparison, as WO-091 did), and the numbers recorded here
 
@@ -22,12 +20,6 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 1. [WO-072](WO-072-change-stream.md) **One change stream per registered component — free without subscribers, merged per read** · P1 · size M — Every provider that keeps its own copy of the world (the renderer's GPU scene, physics bodies, audio voices, replication) needs to know what changed since it last looked. WO-019 built this for the renderer alone, as a rebuild-and-diff table; every provider moving onto the C API needs it general.
 2. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
 3. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
-
-## P0 — broken now — wrong output or lost data. Nothing else starts first.
-
-| order | title | area | size | status | contracts |
-|---|---|---|---|---|---|
-| [WO-038](WO-038-ci-green-on-every-leg.md) | CI green on every leg, and red is noticed | Portability | M | **active** 7/7 | — |
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
@@ -99,6 +91,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-089](WO-089-rhi-backend-order-and-capabilities.md) | librhi's backend order from project.json, and device capabilities refused by name | 2026-11-27 | CI run 45918980872 (aeeba9c) green on all six desktop legs, device_select_test on each; engine_host on macOS logs the backend and refuses a wrong rhi order by name |
 | [WO-088](WO-088-test-the-shipped-player.md) | Test what ships — the static shipped player built and run in CI, per platform and selection | 2026-11-27 | CI run 45913071217 (77ef297), the Shipped player step green on all six desktop legs; ctest shipped_player_check_refuses_extra_providers |
 | [WO-087](WO-087-providers-kept-apart.md) | Providers kept apart — engine services between them, one create context, no globals | 2026-11-27 | audit PROV-01 and PROV-02 (mutation-checked: a planted include of another provider's header, and of runtime/runtime.h, each named), tests/provider_debug_draw_test.cpp |
+| [WO-038](WO-038-ci-green-on-every-leg.md) | CI green on every leg, and red is noticed | 2026-11-27 | CI run 45926707390 green on the full matrix; run 45940719083 (1224782) green with the nightly alarm and cache prune jobs, Windows arm64 in 16 min from a kept cache |
 | [WO-091](WO-091-cooked-scene-carries-every-component.md) | The cooked scene carries every component — the shipped player loads through the schema registry, not a fixed 256-byte record | 2026-11-26 | tests/cooked_scene_test.cpp (10 checks), cooker_test, sdk_only_game_test through SceneService, both scene fuzzers on format 4; mesh_ownership_test section 8 (BUG-0077); unit, fuzz and docs lanes 146/146; CI green on 977e66b |
 | [WO-086](WO-086-provider-resolver-and-build-time-refusal.md) | The provider resolver — per-target choice in project.json, refused by name at engine_build | 2026-11-26 | tests/provider_resolve_test.cpp (one case per check, web and server targets), providers_test 3b, ctest engine_build_* (explain, refusal for web, a web project, an unknown platform), a shipping tree built with a fixed selection: --list-providers showed only the four chosen, nm found no provsel, Jolt or miniaudio symbols |
 | [WO-085](WO-085-provider-manifests.md) | Provider manifests and platform tables — each provider declared once, built only where it can run | 2026-11-26 | ctest provider_manifest_* (12 configure cases, each refusal by name), providers_test 1b (manifests and registry agree), configure prints built/not built per provider and target |

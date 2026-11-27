@@ -5,7 +5,9 @@ title: CI green on every leg, and red is noticed
 program: portability
 priority: P0
 size: M
-state: active
+state: done
+done: 2026-11-27
+evidence: CI run 45926707390 green on the full matrix; run 45940719083 (1224782) green with the nightly alarm and cache prune jobs, Windows arm64 in 16 min from a kept cache
 touches:
   - .github/workflows/ci.yml
   - src/CMakeLists.txt
@@ -66,3 +68,4 @@ New platforms or architectures. They are worth adding only on top of a green bas
 - 2026-11-27, **the full matrix green:** `workflow_dispatch` run 45926707390 (bfdce2d) passed on all six legs (macOS arm64, Linux x64 GCC and Clang, Linux arm64, Windows x64 and arm64), both sanitizer jobs, the SDK-only game and the shipping runtime, with the shipped-player step (WO-088, WO-093) on every leg.
 - 2026-11-27, **red is noticed:** the nightly's last job, `nightly-alarm`, runs `scripts/ci_nightly_alarm.py`. It keeps one open issue labelled `nightly-red` while the nightly is red: opened on the first red night, which notifies the owner; commented on each red night after, with the failed jobs; closed by the first green nightly. It uses the workflow's own token (`issues: write`), so no secret is involved. A failed or cancelled job counts as red. The legs marked experimental would count too, which is what is wanted, since none are experimental today. `ctest ci_nightly_alarm_decides` checks the decision table. The `gh` calls run only in the nightly, or in a manual run with `-f test_alarm=true`, which titles the issue as a test.
 - 2026-11-27, **Windows arm64 compiled cold on every full run:** 23.5 minutes of build against Windows x64's 6, and its shipping tree cold as well. It had no compiler cache at all. Every leg saves a new cache each run under a timestamped key, about 8 GB a run against the repository's 10 GB, and GitHub evicts the least recently used entry. That was always Windows arm64's, the one leg that runs only on the full matrix, while TSan, ASan and Windows x64 each held two copies (3.2 GB of stale ones). The run's last job, `cache-prune` (`scripts/ci_cache_prune.py`), now deletes the older copies of each leg's cache once every leg has saved: one copy per leg, about 7 GB. `ctest ci_cache_prune_keeps_newest` checks which entries it picks; a dry run against the real caches picked exactly the three stale copies.
+- 2026-11-27, **both checked on CI** (run 45940719083, 1224782, `test_alarm=true`): all eleven jobs green. The alarm job ran with its permissions working: it created its label, listed issues, and found the run green with no open issue, so it did nothing, which is correct. Its red path (open, comment, close) is covered by the decision table, and the first red nightly is its first live use. The prune job deleted five older copies (2.7 GB) and kept one per leg. Windows arm64, with its cache kept, took 16 minutes for the whole job, against 23.5 minutes for the build alone the run before.
