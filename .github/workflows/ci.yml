@@ -39,6 +39,11 @@ on:
   schedule:
     - cron: '0 2 * * *'
   workflow_dispatch:
+    inputs:
+      test_alarm:
+        description: "Also run the nightly alarm, with its issue titled as a test (WO-038)"
+        type: boolean
+        default: false
 
 # Supersede in-flight runs for PULL REQUESTS only: a PR's older run is
 # genuinely stale, and iterating on a PR should not queue four builds.
@@ -748,3 +753,37 @@ jobs:
           path: build-${{ matrix.slug }}/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
           retention-days: 14
+
+  # ── The nightly alarm (WO-038) ─────────────────────────────────────────────
+  # A red nightly sat unseen for weeks, more than once (this order's log). This
+  # keeps ONE open issue labelled `nightly-red` while the nightly is red: opened
+  # on the first red night (GitHub notifies the owner), commented on each red
+  # night after, closed by the first green one. scripts/ci_nightly_alarm.py.
+  # Only the nightly: a push is watched by whoever pushed it. A manual run with
+  # test_alarm checks the path itself, with the issue titled as a test.
+  nightly-alarm:
+    name: Nightly alarm
+    needs: [plan, build, shipping-runtime, sdk-only-game, sanitizers]
+    if: always() && (github.event_name == 'schedule' || inputs.test_alarm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci_nightly_alarm.py
+          sparse-checkout-cone-mode: false
+      - name: Open, comment on or close the nightly-red issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # Red if any job this run depends on failed or was cancelled.
+          STATE: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'red' || 'green' }}
+        run: >
+          python3 scripts/ci_nightly_alarm.py --state "$STATE"
+          --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --run-id "${{ github.run_id }}"
+          ${{ inputs.test_alarm && '--test' || '' }}

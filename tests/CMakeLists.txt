@@ -994,6 +994,13 @@ if(Python3_Interpreter_FOUND)
                      --mutation $<TARGET_FILE:engine_player>)
     set_tests_properties(shipped_player_check_refuses_extra_providers PROPERTIES LABELS unit TIMEOUT 120)
 
+    # The nightly alarm's decision table (WO-038): a red nightly opens one
+    # issue, comments while red, closes when green. The rest is the `gh` calls,
+    # which only the nightly itself can exercise.
+    add_test(NAME ci_nightly_alarm_decides
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/ci_nightly_alarm.py --self-test)
+    set_tests_properties(ci_nightly_alarm_decides PROPERTIES LABELS unit TIMEOUT 30)
+
     # The shipped player lists the providers this build has, by kind (WO-076).
     add_test(NAME player_lists_providers
              COMMAND engine_player --list-providers --json)

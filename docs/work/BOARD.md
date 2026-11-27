@@ -12,9 +12,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-- [WO-038](WO-038-ci-green-on-every-leg.md) **CI green on every leg, and red is noticed** — 5/7 done. Still open:
-  - a `workflow_dispatch` run of the full matrix is green on all six legs plus the sanitizer, SDK-only and shipping jobs (Windows may show more once it links)
-  - a failed nightly notifies instead of sitting red for weeks
+- [WO-038](WO-038-ci-green-on-every-leg.md) **CI green on every leg, and red is noticed** — 7/7 done. Still open:
+  - (all ticked: close it)
 - [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) **The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components** — 4/5 done. Still open:
   - `tests/scene_load_bench.cpp` at 50 000 entities within the measurement's noise of format 3's 32 ms on the same machine (format 3's loader rebuilt for the comparison, as WO-091 did), and the numbers recorded here
 
@@ -28,7 +27,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-038](WO-038-ci-green-on-every-leg.md) | CI green on every leg, and red is noticed | Portability | M | **active** 5/7 | — |
+| [WO-038](WO-038-ci-green-on-every-leg.md) | CI green on every leg, and red is noticed | Portability | M | **active** 7/7 | — |
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 

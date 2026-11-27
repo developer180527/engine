@@ -13,6 +13,7 @@ touches:
   - tests/perf/CMakeLists.txt
   - tests/fixtures/abi_gate_module.cpp
   - tests/thread_qos_test.cpp
+  - scripts/ci_nightly_alarm.py
 source: review 2026-09-30 ("should we run CI on multiple platforms and CPU architectures?")
 ---
 ## Why
@@ -26,8 +27,8 @@ A red CI teaches everyone to ignore it. WO-006's "confirmed by the next nightly"
 - [x] Windows (both legs): `engine::headers` defines `flecs_STATIC`, so SDK modules stop declaring flecs as a DLL import; the ABI-gate fixtures link a private flecs on Windows (a DLL resolves at link time); the probe takes bx's compat directory per compiler, not `compat/osx`; the seam-cost benchmark sits in its own directory so MSVC Debug can drop `/RTC1`, which `/O2` refuses.
 - [x] macOS: `thread_qos_test` waits, bounded, for a pool worker instead of assuming one wins a race against the calling thread (0 of 48 failed under full CPU contention).
 - [x] Sanitizers and Linux x64: `mem::realloc` reallocated at 8-byte alignment, and Jolt grows arrays of 16-byte `CharacterVirtual::Contact` through it. UBSan on macOS; a real segfault in SSE code on x86-64 (`determinism_gate`, `sim_replay`). `realloc` now keeps `max_align_t`, with an overload for more, and Jolt's hook passes 16.
-- [ ] a `workflow_dispatch` run of the full matrix is green on all six legs plus the sanitizer, SDK-only and shipping jobs (Windows may show more once it links)
-- [ ] a failed nightly notifies instead of sitting red for weeks
+- [x] a `workflow_dispatch` run of the full matrix is green on all six legs plus the sanitizer, SDK-only and shipping jobs (Windows may show more once it links)
+- [x] a failed nightly notifies instead of sitting red for weeks
 
 ## Contract
 Changes `kit-abi`'s build surface: `engine::headers` now carries `flecs_STATIC`, matching how the engine links flecs. A Windows module still needs the host to export flecs to run (WO-025). Nothing changes for Linux or macOS modules.
@@ -61,3 +62,5 @@ New platforms or architectures. They are worth adding only on top of a green bas
 - 2026-11-25, nightlies red since 2026-11-20, two causes, both from tests written 2026-11-11..14:
   - **Windows (both legs):** `eng_step_test.cpp` did not compile: MSVC refuses `1.0 / 0.0` in a constant expression (C2124). Now `std::numeric_limits<double>::infinity()`.
   - **Linux arm64:** `mem_test` crashed at exit about one run in three (reproduced in a Debian trixie arm64 container: 1 of 3 before, 0 of 30 after). Its foreign-tail check mapped a page with `MAP_FIXED`, which silently replaces whatever is mapped at that address; on Linux arm64 that address often held the process's own memory, which the test then clobbered and unmapped. Now a hint without `MAP_FIXED`: the check runs where the address is free (macOS) and says it was skipped where it is not (Linux arm64).
+- 2026-11-27, **the full matrix green:** `workflow_dispatch` run 45926707390 (bfdce2d) passed on all six legs (macOS arm64, Linux x64 GCC and Clang, Linux arm64, Windows x64 and arm64), both sanitizer jobs, the SDK-only game and the shipping runtime, with the shipped-player step (WO-088, WO-093) on every leg.
+- 2026-11-27, **red is noticed:** the nightly's last job, `nightly-alarm`, runs `scripts/ci_nightly_alarm.py`. It keeps one open issue labelled `nightly-red` while the nightly is red: opened on the first red night, which notifies the owner; commented on each red night after, with the failed jobs; closed by the first green nightly. It uses the workflow's own token (`issues: write`), so no secret is involved. A failed or cancelled job counts as red. The legs marked experimental would count too, which is what is wanted, since none are experimental today. `ctest ci_nightly_alarm_decides` checks the decision table. The `gh` calls run only in the nightly, or in a manual run with `-f test_alarm=true`, which titles the issue as a test.
