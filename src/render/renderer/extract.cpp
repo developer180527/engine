@@ -278,13 +278,39 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     // point, so the scene, game and backbuffer views of one frame never see
     // the table change between them. The row is captured BEFORE applyLod:
     // LOD is per view (camera-dependent), the table holds level 0 (§9.4).
+    //
+    // P3b (WO-072): which rows to capture comes from the world's change
+    // streams (render/retained_input.h). `full` rewrites the table; otherwise
+    // a row is captured only when needsRow says so. Diff mode captures every row for
+    // the oracle and still WRITES only the dirty ones.
     rworld::RenderScene* scene = nullptr;
+    RetainedWorld*       slot  = nullptr;
+    bool                 full  = false;
     if (m_tableOn) {
-        auto& slot = m_scenes[&world];
-        if (!slot) slot = std::make_unique<rworld::RenderScene>();
-        if (!slot->appliedThisFrame(m_frameNo)) scene = slot.get();
+        RetainedWorld& sl = m_scenes[&world];
+        if (!sl.scene || !sl.scene->appliedThisFrame(m_frameNo)) {
+            rworld::RetainedInput::Frame f;
+            f.meshRevision     = m_assets ? m_assets->revision() : 0;
+            f.skeletonRevision = m_skeletons ? m_skeletons->revision() : 0;
+            f.alpha            = m_simAlpha;
+            full = sl.input.read(world, f);
+            // A full frame keeps the table: apply() rewrites it wholesale,
+            // retiring through the fence like any other frame.
+            if (!sl.scene) sl.scene = std::make_unique<rworld::RenderScene>();
+            slot  = &sl;
+            scene = sl.scene.get();
+        }
+    } else if (!m_scenes.empty()) {
+        // Turned off: stop recording. The world is alive (it is being drawn),
+        // so its streams are ended rather than left filling up unread.
+        auto it = m_scenes.find(&world);
+        if (it != m_scenes.end()) {
+            it->second.input.stop(world);
+            m_scenes.erase(it);
+        }
     }
-    const bool capture = scene != nullptr;
+    const bool capture    = scene != nullptr;
+    const bool captureAll = capture && (full || m_tableDiff);
     auto captureRow = [](const MeshRenderer& mr, const SkinnedMesh* skin,
                          const RenderItem& it, const CullSphere& sp, uint64_t kb) {
         rworld::RowData r;
@@ -328,9 +354,14 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
             localMatrixLerp(c.tr[i], c.prev ? &c.prev[i] : nullptr,
                             m_simAlpha, it.model.m);
             rworld::writeCullEntry(it, sp[n], sk[n]);
-            if (capture)   // before LOD: the table holds level 0 (§9.4)
-                m_capture[c.outBegin + n] = {c.ids[i],
-                    captureRow(c.mr[i], c.skin ? &c.skin[i] : nullptr, it, sp[n], sk[n])};
+            if (capture) {  // before LOD: the table holds level 0 (§9.4)
+                rworld::CapturedRow& cr = m_capture[c.outBegin + n];
+                cr.dirty = slot->input.needsRow(c.ids[i], c.tr[i], c.prev ? &c.prev[i] : nullptr);
+                if (cr.dirty || captureAll) {
+                    cr.owner = c.ids[i];
+                    cr.row   = captureRow(c.mr[i], c.skin ? &c.skin[i] : nullptr, it, sp[n], sk[n]);
+                }
+            }
             if (c.lod) applyLod(c.mr[i], c.lod[i], sp[n], it, sk[n]);
             ++n;
         }
@@ -351,7 +382,9 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
         // mean side arrays for a handful of items. One append, everything in hand.
         CullSphere sp; uint64_t kb;
         rworld::writeCullEntry(it, sp, kb);
-        if (capture) m_capture.push_back({e.id(), captureRow(mr, skin, it, sp, kb)});
+        // Always written: a child's matrix depends on every ancestor, which
+        // its own stream entries do not cover, and children are few.
+        if (capture) m_capture.push_back({e.id(), captureRow(mr, skin, it, sp, kb), true});
         if (lod) applyLod(mr, *lod, sp, it, kb);
         m_items.push_back(it);
         m_cull.sphere.push_back(sp);
@@ -516,7 +549,22 @@ RenderView Renderer::buildView(flecs::world& world, const float view[16],
     if (capture) {
         assert(m_capture.size() == m_items.size());
         ENGINE_PROFILE_SCOPE("Render.table");
-        scene->apply(m_capture, m_frameNo);
+        if (full) scene->apply(m_capture, m_frameNo);
+        else      scene->applyChanged(m_capture, slot->input.touched(), m_frameNo);
+        slot->full = full;
+        slot->rowsWritten = 0;
+        for (const rworld::CapturedRow& c : m_capture) slot->rowsWritten += c.dirty ? 1 : 0;
+        slot->windowWritten += slot->rowsWritten;
+        slot->windowRows    += scene->liveCount();
+        slot->windowFull    += full ? 1 : 0;
+        if (++slot->windowFrames == 300) {
+            LOG_INFO("Renderer", "retained table: %.1f of %.1f rows written per frame over %llu frames "
+                     "(%llu full rewrites)%s",
+                     slot->windowWritten / 300.0, slot->windowRows / 300.0,
+                     (unsigned long long)slot->windowFrames, (unsigned long long)slot->windowFull,
+                     m_tableDiff ? ", each checked against a rebuild" : "");
+            slot->windowWritten = slot->windowRows = slot->windowFrames = slot->windowFull = 0;
+        }
         if (m_tableDiff) {
             const std::string d = scene->diff(m_capture);
             if (!d.empty()) {
@@ -592,3 +640,4 @@ LodCensus Renderer::lodCensus() const {
     c.trisFull  = m_lodTrisFull.load(std::memory_order_relaxed);
     return c;
 }
+

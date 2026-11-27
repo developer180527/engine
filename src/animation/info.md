@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-26
+verified: 2026-11-28
 parses-external-input: true
 covers:
   - src/animation/
@@ -111,6 +111,9 @@ arrays (parent index always < child index) for cache-friendly evaluation.
   matrices + IBM multiply (the precision-clean baseline for skinning).
 - **Registries** (`skeleton_registry.h`, `clip_registry.h`) — `Handle<Tag>`
   dense-vector storage, slot 0 reserved as null.
+  `SkeletonRegistry::revision()` is bumped by every add, remove and clear: a
+  handle can start or stop resolving with no component changing, so a reader
+  that keeps a copy (the retained render scene, WO-072) re-reads on a change.
 - **`ClipLibrary`** (`clip_library.h`) — clips as STANDALONE assets (the Mixamo
   layout: character FBX + separate clip FBXs). Loads a clip and BINDS it to a
   target skeleton by bone name. A cooked clip is read here; an uncooked one

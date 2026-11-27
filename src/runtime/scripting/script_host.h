@@ -9,6 +9,7 @@
 #include "core/debug_draw.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
+#include "components/change_stream.h"   // declared writes (WO-072)
 #include "runtime/input/input.h"
 #include "runtime/input/input_event.h"
 #include "core/logger.h"
@@ -308,7 +309,10 @@ public:
         const bool moved = p && p->teleport(*m_world, e.id(), x, y, z, nullptr);
         // No body, or no service: the Transform is still the caller's to set,
         // and for an entity physics does not own it is the whole operation.
-        if (Transform* t = e.try_get_mut<Transform>()) t->position = {x, y, z};
+        if (Transform* t = e.try_get_mut<Transform>()) {
+            t->position = {x, y, z};
+            changes::markChanged<Transform>(e);   // in place: declared (WO-072)
+        }
         return moved;
     }
     void charJump(flecs::entity e, float speed) {
@@ -402,6 +406,7 @@ public:
         MeshRenderer* mr = e.try_get_mut<MeshRenderer>();
         if (!mr) return false;
         mr->materialOverride = MaterialHandle{ materialId };
+        changes::markChanged<MeshRenderer>(e);    // in place: declared (WO-072)
         return true;
     }
 

@@ -36,6 +36,7 @@
 #include "components/lod_mesh.h"
 #include "components/mesh_placeholder.h"
 #include "components/animator.h"
+#include "components/spinner.h"
 #include "render/asset_registry.h"
 #include "assets/asset_ref.h"
 #include "assets/asset_storage.h"
@@ -783,6 +784,13 @@ inline void registerBuiltinSchemas(SchemaRegistry& r) {
         .boolean("castShadows",          &Light::castShadows)
         .boolean("useTemperature",       &Light::useTemperature)
         .f32("temperatureK",             &Light::temperatureK)
+        .build());
+    // A constant turn, radians per second about local Y then X. Saved since
+    // 2026-11-28 (core.Spinner): it used to double as the demo grid's marker,
+    // which components/demo_grid.h now is, so a scene's "spinner" never loaded.
+    r.add(SchemaBuilder<Spinner>("core.Spinner", "spinner")
+        .f32("speedYaw",                 &Spinner::speedYaw)
+        .f32("speedPitch",               &Spinner::speedPitch)
         .build());
     r.add(customSchema("core.SkinnedMesh", "skinnedMesh", SkinnedMesh::kAbiRevision,
                        hasSkinnedMesh, saveSkinnedMesh, loadSkinnedMesh,

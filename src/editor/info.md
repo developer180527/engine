@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: prototype
-verified: 2026-11-27
+verified: 2026-11-28
 covers:
   - src/editor/
 tests:
@@ -262,6 +262,12 @@ Two kinds of isolation, by construction:
   camera is deliberately *not* gated: flying it during play is a debug view.)
 
 ## Invariants
+- **Writes in place are declared** (WO-072). The gizmo, the Transform
+  inspector, undo and the hierarchy's reparent write `Transform` through
+  `get_mut`, and the material section may write `MeshRenderer`'s override;
+  each marks it with `changes::markChanged<T>(e)`, so the retained render scene
+  sees an edit. The inspector marks every frame it is shown, which reports one
+  entity that may not have changed: the allowed direction.
 - `EngineContext` is stack-only, one frame lifetime.
 - `imguiNewFrame()` before any ImGui call; gizmo BeginFrame outside any
   Begin/End block.

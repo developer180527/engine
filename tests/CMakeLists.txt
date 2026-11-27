@@ -199,6 +199,13 @@ engine_test(render_scene_test)
 # nothing; a body arriving mid-play creates the world; outgrowing it rebuilds
 # it, and bodies resting through the rebuild see no spurious collision event.
 engine_test(physics_capacity_test)
+# WO-072: the change stream. Subscribe, read, unsubscribe per component; free
+# with no subscriber; merged per read; ids not reused under a reader; declared
+# writes (a whole column, or marked rows). Then the production writers in a
+# real runtime with Jolt (sleeping bodies not reported), and the retained
+# render scene written incrementally from the streams, with the rebuild-and-
+# diff check catching a write that did not mark.
+engine_test(change_stream_test)
 # WO-050: the budget that turns red when something is sized for a big game up
 # front again. Stock plugins, empty simulation: every tagged heap together and
 # the median tick, against fixed limits.

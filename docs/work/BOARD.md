@@ -12,20 +12,20 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-Nothing. Start the first order under **Next up**.
-
+- [WO-072](WO-072-change-stream.md) **One change stream per registered component — free without subscribers, merged per read** — 6/6 done. Still open:
+  - (all ticked: close it)
 
 ## Next up
 
-1. [WO-072](WO-072-change-stream.md) **One change stream per registered component — free without subscribers, merged per read** · P1 · size M — Every provider that keeps its own copy of the world (the renderer's GPU scene, physics bodies, audio voices, replication) needs to know what changed since it last looked. WO-019 built this for the renderer alone, as a rebuild-and-diff table; every provider moving onto the C API needs it general.
-2. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
-3. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
+1. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
+2. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
+3. [WO-057](WO-057-rhi-module-home.md) **The RHI's home — a module that builds, tests and ships without the engine** · P1 · size S — DR-0012 makes the RHI a library for more than this engine. Independence that
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-072](WO-072-change-stream.md) | One change stream per registered component — free without subscribers, merged per read | Renderer & RHI | M | **ready** | render-scene |
+| [WO-072](WO-072-change-stream.md) | One change stream per registered component — free without subscribers, merged per read | Renderer & RHI | M | **active** 6/6 | render-scene |
 | [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | blocked by WO-072 | kit-abi |
 | [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API | Providers & modules | M | blocked by WO-073 | engine-plugin |
 | [WO-075](WO-075-renderer-contract-headers.md) | The renderer contract as headers, with a conformance suite the null renderer passes first | Renderer & RHI | M | blocked by WO-073 | renderer |

@@ -100,7 +100,12 @@ inline void getWorldMatrix(flecs::entity e, float out[16], int depth = 0) {
 // getWorldMatrixLerpFrom, in components/transform_hierarchy.h.
 inline void localMatrixLerp(const Transform& t, const PrevTransform* prev,
                             float alpha, float local[16]) {
-    const PrevTransform* p = alpha < 1.0f ? prev : nullptr;
+    // A pose equal to its history is NOT interpolated (WO-072). bx::lerp(a, a,
+    // t) is t*a + (a - t*a), which is not exactly `a` for every t, so a resting
+    // object's matrix used to move by an ulp as alpha changed: every row of the
+    // retained scene would have been "changed" every frame, and a scene that
+    // does not move must cost nothing to keep.
+    const PrevTransform* p = alpha < 1.0f && prev && !samePose(t, *prev) ? prev : nullptr;
     if (!p) {
         t.getMatrix(local);
     } else {

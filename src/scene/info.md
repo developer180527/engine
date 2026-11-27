@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-27
+verified: 2026-11-28
 parses-external-input: true
 covers:
   - src/scene/
@@ -221,6 +221,10 @@ on a context where nothing set it, so material overrides were never saved.
 
 ## Invariants
 - Caller runs `assignMissingIds()` before save (set<> is illegal mid-query).
+- The demo grid (`DemoGrid`, components/demo_grid.h) is never saved and never
+  copied into a Play snapshot. Until 2026-11-28 that rule was "has a Spinner",
+  which also dropped a user's spinning entity on save; Spinner is now an
+  ordinary schema (`core.Spinner`).
 - Parent links restore in a post-pass (all entities must exist first).
 - Scene saves auto-cook the binary twin (editor keeps both in sync).
 

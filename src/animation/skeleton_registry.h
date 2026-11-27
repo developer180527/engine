@@ -16,6 +16,7 @@ public:
     }
 
     SkeletonHandle add(Skeleton&& skel) {
+        ++m_revision;
         if (!m_freeSlots.empty()) {
             uint32_t slot = m_freeSlots.back();
             m_freeSlots.pop_back();
@@ -29,6 +30,7 @@ public:
     bool remove(SkeletonHandle h) {
         if (!h.valid() || h.id >= m_skeletons.size()) return false;
         if (m_skeletons[h.id].bones.empty()) return false;  // already removed
+        ++m_revision;
         m_skeletons[h.id] = Skeleton{};
         m_freeSlots.push_back(h.id);
         return true;
@@ -49,11 +51,19 @@ public:
     size_t count() const { return m_skeletons.size() - 1 - m_freeSlots.size(); }
 
     void clear() {
+        ++m_revision;
         m_skeletons.clear();
         m_freeSlots.clear();
     }
 
+    // Bumped by every add and remove. What a mesh or skeleton handle resolves
+    // to can change without any component changing, so a reader that keeps
+    // a copy (the retained render scene, WO-072) re-reads everything when
+    // this moves.
+    uint64_t revision() const { return m_revision; }
+
 private:
+    uint64_t m_revision = 0;
     std::vector<Skeleton> m_skeletons;
     std::vector<uint32_t> m_freeSlots;
 };

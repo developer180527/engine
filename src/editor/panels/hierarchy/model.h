@@ -11,10 +11,12 @@
 // table is locked), and a front end draws the tree FROM a query. So delete and
 // reparent are REQUESTED while drawing and carried out by apply() afterwards —
 // the rule both front ends must follow, which is why it lives here.
+#include "components/change_stream.h"
 #include "editor/engine_context.h"
 #include "editor/panels/asset_browser/spawn.h"   // uniqueEntityName
 
 #include "components/camera.h"
+#include "components/demo_grid.h"
 #include "components/entity_id_util.h"
 #include "components/light.h"
 #include "components/name.h"
@@ -32,15 +34,15 @@ namespace hier {
 
 // ── What is listed, and how it nests ────────────────────────────────────────
 // Listed: entities with a Name. Roots: those whose parent is missing, dead or
-// unnamed. Spinners (the demo grid) are left out at the root, as they always
-// have been.
+// unnamed. The demo grid (components/demo_grid.h) is left out at the root, as
+// it always has been.
 inline bool isRoot(flecs::entity e) {
     flecs::entity p = e.target(flecs::ChildOf);
     return !p || !p.is_alive() || !p.has<Name>();
 }
 
 template <class F> void forEachRoot(flecs::world& ecs, F&& f) {
-    ecs.query_builder<const Name>().without<Spinner>().build()
+    ecs.query_builder<const Name>().without<DemoGrid>().build()
         .each([&](flecs::entity e, const Name&) { if (isRoot(e)) f(e); });
 }
 
@@ -56,7 +58,7 @@ inline bool hasChildren(flecs::entity e) {
 
 inline int entityCount(flecs::world& ecs) {
     int n = 0;
-    ecs.query_builder<const Name>().without<Spinner>().build()
+    ecs.query_builder<const Name>().without<DemoGrid>().build()
         .each([&](flecs::entity, const Name&) { ++n; });
     return n;
 }
@@ -188,6 +190,7 @@ public:
             const bool toParent = r.newParent && r.newParent.is_alive();
             if (toParent) r.child.add(flecs::ChildOf, r.newParent);
             Transform& t = r.child.get_mut<Transform>();
+            changes::markChanged<Transform>(r.child);   // written in place below (WO-072)
             if (toParent) {
                 float parentWorld[16];
                 getWorldMatrix(r.newParent, parentWorld);

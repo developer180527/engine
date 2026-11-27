@@ -1,5 +1,6 @@
 #pragma once
 
+#include "components/change_stream.h"
 #include <imgui.h>
 #include <flecs.h>
 
@@ -40,6 +41,7 @@ inline void drawMeshMaterialSection(EngineContext& ctx, flecs::entity e) {
 
     // Resolve material (primitives may have none — skip gracefully)
     MeshRenderer& mrMut = e.get_mut<MeshRenderer>();
+    changes::markChanged<MeshRenderer>(e);   // its override may be written below (WO-072)
     MaterialHandle resolvedH = mrMut.materialOverride.valid()
         ? mrMut.materialOverride : (mesh ? mesh->material : MaterialHandle{});
     Material* mat = resolvedH.valid()

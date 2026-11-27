@@ -28,6 +28,7 @@
 #include <nlohmann/json.hpp>
 
 #include "components/meta_registry.h"
+#include "components/spinner.h"
 #include "scene/entity_serializer.h"
 #include "scene/extensions.h"
 
@@ -388,6 +389,25 @@ int main(int argc, char** argv) {
         CHECK(!e.has<Camera>(), "a camera saved at a revision this engine lacks is not "
                                 "loaded as a default camera");
         CHECK(e.has<Transform>() && e.has<Name>(), "the entity's other components still load");
+    }
+    {
+        // core.Spinner (2026-11-28): a scene's "spinner" loads and saves back.
+        // Before, Spinner doubled as the demo grid's "never saved" marker, so
+        // the key was kept as unknown data and the entity never turned (the
+        // fuzz scene's movers), and a user's entity given a Spinner in the
+        // inspector was dropped from the file on save.
+        const json in = {{"id", 7}, {"name", "turner"},
+                         {"transform", {{"position", {1.0, 2.0, 3.0}}, {"rotation", {0.0, 0.0, 0.0, 1.0}},
+                                        {"scale", {1.0, 1.0, 1.0}}}},
+                         {"spinner", {{"speedYaw", 1.5}, {"speedPitch", -0.25}}}};
+        flecs::world w = makeWorld();
+        SerdeContext ctx; ctx.mode = SerdeMode::Disk;
+        flecs::entity e = createEntity(w, in, ctx, IdPolicy::Preserve);
+        const Spinner* sp = e.try_get<Spinner>();
+        CHECK(sp && sp->speedYaw == 1.5f && sp->speedPitch == -0.25f, "a scene's spinner loads as a Spinner");
+        const json out = saveEntity(e, ctx);
+        CHECK(out.contains("spinner") && out["spinner"]["speedYaw"] == 1.5 && out["spinner"]["speedPitch"] == -0.25,
+              "and saves back under the same key: %s", out.dump().c_str());
     }
 
     std::printf("\n-- old data migrates (DR-0034) --\n");

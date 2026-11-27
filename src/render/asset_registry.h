@@ -32,6 +32,7 @@ public:
     // Reuses freed slots when available; otherwise appends.
     // Index 0 is reserved as "invalid" (matches Handle's default).
     MeshHandle addMesh(Mesh&& mesh) {
+        ++m_revision;
         if (!m_freeSlots.empty()) {
             uint32_t slot = m_freeSlots.back();
             m_freeSlots.pop_back();
@@ -49,6 +50,7 @@ public:
     bool removeMesh(MeshHandle h) {
         if (!h.valid() || h.id >= m_meshes.size()) return false;
         if (!m_meshes[h.id].valid()) return false;  // already removed
+        ++m_revision;
         m_meshes[h.id] = Mesh{};   // RAII releases the GPU buffers
         m_freeSlots.push_back(h.id);
         return true;
@@ -71,6 +73,7 @@ public:
     // Free all GPU resources and reset the free list. Called at engine shutdown.
     // Mesh destructors do the actual work via RAII.
     void clear() {
+        ++m_revision;
         m_meshes.clear();
         m_freeSlots.clear();
         // Re-reserve slot 0. Every constructor seeds it because handle id 0 is
@@ -83,7 +86,14 @@ public:
         m_meshes.emplace_back();
     }
 
+    // Bumped by every add and remove. What a mesh or skeleton handle resolves
+    // to can change without any component changing, so a reader that keeps
+    // a copy (the retained render scene, WO-072) re-reads everything when
+    // this moves.
+    uint64_t revision() const { return m_revision; }
+
 private:
+    uint64_t m_revision = 0;
     std::vector<Mesh>     m_meshes;     // Index = handle id. Slot 0 is unused.
     std::vector<uint32_t> m_freeSlots;  // Indices of removed slots available for reuse.
 };

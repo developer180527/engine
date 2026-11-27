@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-11-27
+verified: 2026-11-28
 covers:
   - src/plugins/
 tests:
@@ -230,6 +230,14 @@ would round-trip gameplay's own value through a velocity integration that does
 not land exactly on its target (measured: 5.0 comes back as 4.99999952). The
 plan's authority table had Kinematic as physics-owned; implementing it is what
 showed that was wrong. Decision record: DR-0001.
+
+**A marked write (WO-072).** `writeBackTransforms` and
+`writeBackCharacters` still write every pose, but report to the change stream
+only the bodies whose pose MOVED. A sleeping body's pose does not, so resting
+bodies are not reported and the renderer re-uploads nothing for them
+(`change_stream_test` §6, which turns red if the mark is removed). Writing
+every body is kept because a sleeping child's local pose depends on a parent
+that may move.
 
 **Teleport is the pose change gameplay *is* allowed to make** (BUG-0057). A raw
 `Transform` write on a dynamic body is still discarded, deliberately — physics

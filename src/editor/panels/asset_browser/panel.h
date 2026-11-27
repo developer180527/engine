@@ -7,6 +7,7 @@
 // floating windows are drawn after the Assets window's End() so they're real
 // top-level windows. Fully self-contained — no editor_app changes required.
 
+#include "components/demo_grid.h"
 #include "types.h"
 #include "registry.h"
 #include "spawn.h"
@@ -307,7 +308,7 @@ inline void drawAssetBrowserPanel(EngineContext& ctx, AsyncLoader& loader,
         std::vector<flecs::entity> toDelete;
         ctx.ecs.query_builder<MeshRenderer>().build()
             .each([&](flecs::entity e, MeshRenderer&) {
-                if (!e.has<Spinner>()) toDelete.push_back(e);
+                if (!e.has<DemoGrid>()) toDelete.push_back(e);
             });
         for (auto e : toDelete) e.destruct();
         ctx.editor.selected = flecs::entity{};

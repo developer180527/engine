@@ -96,7 +96,7 @@ inline void registerAll(flecs::world& ecs) {
         .member("shutterSeconds", &ColourGrading::shutterSeconds)
         .member("iso",            &ColourGrading::iso);
 
-    // Spinner: editor-only, excluded from game world snapshots
+    // Spinner: a constant turn, saved like any component (core.Spinner)
     ecs.component<Spinner>()
         .member<float>("speedYaw")
         .member<float>("speedPitch");

@@ -10,19 +10,24 @@ implementations:
   - null: src/render/world/render_scene.h#NullRenderScene
 tests:
   - tests/render_scene_test.cpp
+  - tests/change_stream_test.cpp
 covers:
   - src/render/world/render_scene.h
   - src/render/world/render_scene.cpp
-verified: 2026-10-01
+verified: 2026-11-28
 ---
 
 # render-scene — the retained scene's rows
 
 `create / update / destroy → RenderObjectId`: one row per drawable object, the
 table the renderer will remember instead of rebuilding every frame
-(`docs/plans/renderer-program.md` §9). P3a (WO-019) built it and proves it; the
-renderer writes it wholesale from extraction (`RenderScene::apply`) when
-`ENGINE_RENDER_TABLE=1`, and nothing reads it until P3c.
+(`docs/plans/renderer-program.md` §9). P3a (WO-019) built it and proves it.
+Since P3b (WO-072) the renderer writes it INCREMENTALLY when
+`ENGINE_RENDER_TABLE=1`: `RenderScene::applyChanged` writes the rows the
+world's change streams report and retires reported owners with no row;
+`apply` (wholesale) is used for frames that must rewrite everything. The
+rebuild-and-diff mode (`diff`) is unchanged and stays the oracle. Nothing reads
+the table until P3c.
 
 ## Nothing
 `NullRenderScene`, for a build with no renderer: `create` returns an invalid id

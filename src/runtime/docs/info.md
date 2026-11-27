@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-11-27
+verified: 2026-11-28
 parses-external-input: true
 covers:
   - src/runtime/
@@ -1036,6 +1036,13 @@ trigger that would revisit it:
   `Sim.prevSnapshot` went from 12.7 ms to 0.63 ms per step at 50 000 objects by
   doing per-archetype work instead of per-entity structural ops (issues.md H.0).
   The lesson both share: reach for the query shape before reaching for cores.
+- **Declared writes, for the change stream (WO-072).** The runtime's own
+  in-place writers mark what they write (`components/change_stream.h`):
+  `Sim.prevSnapshot` marks only the PrevTransform rows whose history moves
+  (`samePose`), so a resting scene reports nothing; `stepSpinners` marks every
+  spinner; a teleport marks its Transform and PrevTransform; `script_host`'s
+  `teleport` and `entitySetMaterial` mark theirs. Each is one null check when
+  nothing subscribes.
 - **Snapshot play mode via full serialization** — editor-only cost.
   Trigger: noticeable Play-button latency on large scenes.
 - **Input singletons + single window** — InputSystem/InputMap are global,

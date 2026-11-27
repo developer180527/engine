@@ -37,7 +37,7 @@
 //   * memcmp of component bytes: Name, ScriptComponent, Animator and
 //     CollisionEvents hold heap pointers, and padding is indeterminate. Their
 //     bytes differ every run for reasons that are not divergence.
-//   * SceneSerializer: queries <Name, Transform>, skips Spinner, drops tags,
+//   * SceneSerializer: queries <Name, Transform>, skips the demo grid, drops tags,
 //     drops all pairs including (EventStale,T), drops SerdeTransient, and
 //     remaps entity ids. Every one of those is right for scene authoring and
 //     fatal here.

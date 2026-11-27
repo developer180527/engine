@@ -11,7 +11,7 @@
 
 #include "core/transform.h"
 #include "components/name.h"
-#include "components/spinner.h"
+#include "components/demo_grid.h"
 #include "components/camera.h"
 #include "components/rigid_body.h"
 #include "components/script_component.h"
@@ -134,7 +134,7 @@ inline bool save(const std::filesystem::path& path,
     scene["entities"] = nlohmann::json::array();
     ecs.query_builder<const Name, const Transform>().build()
         .each([&](flecs::entity e, const Name&, const Transform&) {
-            if (e.has<Spinner>()) return;               // procedural — not persisted
+            if (e.has<DemoGrid>()) return;              // made by code — not persisted
             scene["entities"].push_back(EntitySerde::saveEntity(e, ctx));
         });
 
@@ -264,7 +264,7 @@ inline std::string saveToString(flecs::world& ecs, AssetStorage& assets) {
     scene["entities"] = nlohmann::json::array();
     ecs.query_builder<const Name, const Transform>().build()
         .each([&](flecs::entity e, const Name&, const Transform&) {
-            if (e.has<Spinner>()) return;
+            if (e.has<DemoGrid>()) return;
             scene["entities"].push_back(EntitySerde::saveEntity(e, ctx));
         });
     return scene.dump();

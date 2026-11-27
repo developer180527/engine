@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-10-01
+verified: 2026-11-28
 covers:
   - src/systems/
 tests:
@@ -23,6 +23,11 @@ tests:
 Per-frame ECS systems that are part of the engine core (not plugins).
 
 ## Contents
+- **Declared writes (WO-072).** The animator writes `SkinnedMesh` in place on
+  the job pool, so it records each entity's palette slot and skinned flag
+  before the step and, after the join, marks the entities where either
+  changed (`markSkins`). The palette's CONTENTS are not a change of the
+  component: a reader holds the slot.
 - **`AnimatorSystem`** (`animator_system.h`) — queries `Animator +
   SkinnedMesh`, advances clip time (looping/clamping, speed scale), samples
   the clip into a `Pose`, computes world + skin matrices into

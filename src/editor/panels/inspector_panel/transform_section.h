@@ -1,5 +1,6 @@
 #pragma once
 
+#include "components/change_stream.h"
 #include <imgui.h>
 #include <flecs.h>
 
@@ -14,6 +15,7 @@ inline void drawTransformSection(EngineContext& ctx, flecs::entity e) {
 
     sectionHeader("Transform");
     Transform& t = e.get_mut<Transform>();
+    changes::markChanged<Transform>(e);   // the widgets write it in place (WO-072)
 
     // One drag = one undo step (inspector model's TransformEdit), driven by
     // ImGui's activation signals.

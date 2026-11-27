@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: hardened
-verified: 2026-10-06
+verified: 2026-11-28
 covers:
   - src/components/
 tests:
@@ -11,6 +11,7 @@ tests:
   - tests/event_test.cpp
   - tests/sim_purity_check.cpp
   - tests/stress_churn.cpp
+  - tests/change_stream_test.cpp   # the change stream (WO-072)
 ---
 # Components
 
@@ -89,7 +90,14 @@ the ABI is the plain-data structs listed below, not the helpers beside them.
 - `rigid_body.h`, `character_controller.h`, `collision_events.h` — physics. `CollisionEvents` holds THIS tick's contact starts and ends; a body keeps the component once it has had a contact, and a quiet tick is two empty lists, never a missing component (WO-048)
   (consumed by JoltPlugin).
 - `script_component.h` — Lua script path (consumed by LuaScriptPlugin).
-- `spinner.h` — demo component (default scene cubes).
+- `spinner.h` — a constant turn (radians per second about local Y, then X).
+  Saved like any component since 2026-11-28 (`core.Spinner`, key `spinner`).
+  It used to double as the demo grid's "never saved, not listed" marker, which
+  dropped a user's spinning entity from the file on save and meant a scene's
+  `spinner` never loaded (the fuzz scene's movers never moved).
+- `demo_grid.h` — `DemoGrid`, the tag on the default scene's 3x3 cube grid:
+  made by code each boot with a primitive mesh, so never saved, never copied
+  into a Play snapshot, not listed in the hierarchy, kept by Clear Scene.
 - `entity_id.h` — stable serialization identity.
 - `entity_id_util.h` — the helpers over `EntityId`: `generateEntityId`,
   `ensureEntityId`, `assignMissingIds`, and `EntityIdIndex`. Loaders build the
@@ -112,6 +120,23 @@ the ABI is the plain-data structs listed below, not the helpers beside them.
   the animator). Moved from `src/runtime/` (WO-046): it is ECS infrastructure,
   and render and systems including it from runtime made both depend on the
   orchestration layer.
+- `change_stream.h` — what changed in a component since you last looked
+  (WO-072). A provider that keeps its own copy of the world subscribes to a
+  component (or a tag, or a pair such as `(ChildOf, *)`), reads ADDED /
+  CHANGED / REMOVED per entity, and unsubscribes; the C world API (WO-073) is
+  a thin layer over it. Nothing exists until something subscribes: an empty
+  game creates no stream and no observer (`empty_game_budget_test`).
+  Structural changes, `set<T>()` and `modified<T>()` are seen by an observer;
+  a write IN PLACE is declared by the writer with `changes::Marks<T>`
+  (`column(it)` for every row of a batch, `rows(it, first, count)` for the
+  rows it wrote, `entity(e)` for one) or `changes::markChanged<T>(e)`. Merged
+  per read: an entity appears once between two reads. Subscribing queues
+  everything that already has the component as ADDED. Held in the world's
+  context pointer (`ecs_set_ctx`), which nothing else uses.
+- `prev_transform.h` — the interpolation history, and `samePose(t, p)`
+  (bitwise). A pose equal to its history is not interpolated
+  (`localMatrixLerp`), so a resting object's matrix does not move by an ulp
+  as alpha changes.
 - `serde_transient.h` — `SerdeTransient` type tag: runtime state, never saved.
 - `event_component.h` — the EVENT model. `events::declare<T>(world)` marks a
   component type a one-shot message (implies SerdeTransient) that the runtime's
@@ -184,5 +209,12 @@ asks what a divergence would be observable in.
   Touching only the first makes the component silently vanish from cooked
   scenes. Also: changing any component's LAYOUT invalidates hot-reload
   modules (engine_abi::componentLayoutHash) — restart engine_host.
+- **A write in place must be declared** (WO-072). Writing through a mutable
+  query column, `get_mut` or `try_get_mut` is invisible to the change stream;
+  mark it with `changes::Marks<T>` or `changes::markChanged<T>(e)`, or use
+  `set<T>()`. Over-reporting is allowed, missing a write is the bug, and
+  `ENGINE_RENDER_TABLE_DIFF=1` names the entity and column of a write that
+  was not marked. Mark on the world's own thread: a parallel writer collects
+  what it wrote and marks after the join (the animator does).
 - Asset references serialize as registry ids/UUIDs, never raw `Handle`
   values (handles are session-local).

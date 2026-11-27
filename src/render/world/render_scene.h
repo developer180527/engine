@@ -163,6 +163,9 @@ private:
 struct CapturedRow {
     uint64_t owner = 0;
     RowData  row;
+    // Whether applyChanged() writes it (WO-072). A row captured only for the
+    // rebuild-and-diff oracle is false: the retained table must already hold it.
+    bool     dirty = true;
 };
 
 // The retained scene of ONE world: a static table and a skinned table (§9.2 #13:
@@ -181,6 +184,15 @@ public:
     // An owner that switches table (gained or lost a skin) is retired from one
     // and created in the other. Then collects what the fence allows.
     void apply(const std::vector<CapturedRow>& rows, uint64_t frame);
+
+    // Write only what CHANGED (P3b, WO-072): every row marked dirty is created
+    // or updated, and every owner in `touched` (the owners the change streams
+    // reported, whether or not they produced a row) that has no dirty row this
+    // frame is retired. Every other row is left as it was: that is the point,
+    // and it is what the rebuild-and-diff check then holds to account. Then
+    // collects what the fence allows, as apply() does.
+    void applyChanged(const std::vector<CapturedRow>& rows,
+                      const std::vector<uint64_t>& touched, uint64_t frame);
 
     // THE REBUILD-AND-DIFF CHECK (§9.7). Builds a fresh scene from `rows` and
     // compares it against this one: the same owners LIVE, each in the same
@@ -209,6 +221,8 @@ private:
         uint64_t       seen    = 0;    // the frame it was last captured
     };
     RenderTable& tableFor(bool skinned) { return skinned ? m_skinned : m_static; }
+    void write(const CapturedRow& c, uint64_t frame);   // create or update one row
+    void finish(uint64_t frame);                        // collect, and stamp the frame
 
     RenderTable m_static;
     RenderTable m_skinned;

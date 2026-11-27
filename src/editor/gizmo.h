@@ -1,5 +1,6 @@
 #pragma once
 
+#include "components/change_stream.h"
 #include <flecs.h>
 #include <imgui.h>
 #include <ImGuizmo.h>
@@ -101,6 +102,7 @@ inline void drawGizmo(EngineContext& ctx,
     if (!ctx.editor.selected.has<Transform>()) return;
 
     Transform& t = ctx.editor.selected.get_mut<Transform>();
+    changes::markChanged<Transform>(ctx.editor.selected);   // written in place below (WO-072)
 
     // The gizmo always works in WORLD space. For a parented entity the world
     // pose is parentWorld * local, so the handles sit on the object instead of

@@ -112,23 +112,50 @@ RowData RenderTable::rowAt(uint32_t i) const {
 }
 
 // ── RenderScene ───────────────────────────────────────────────────────────────
-void RenderScene::apply(const std::vector<CapturedRow>& rows, uint64_t frame) {
-    for (const CapturedRow& c : rows) {
-        const bool skinned = (c.row.flags & kRowSkinned) != 0;
-        auto [it, fresh] = m_entries.try_emplace(c.owner);
-        Entry& e = it->second;
-        if (!fresh && e.skinned != skinned) {        // changed table: re-home it
-            tableFor(e.skinned).destroy(e.id, frame);
-            fresh = true;
-        }
-        if (fresh) {
-            e.id      = tableFor(skinned).create(c.owner, c.row);
-            e.skinned = skinned;
-        } else {
-            tableFor(skinned).update(e.id, c.row);
-        }
-        e.seen = frame;
+void RenderScene::write(const CapturedRow& c, uint64_t frame) {
+    const bool skinned = (c.row.flags & kRowSkinned) != 0;
+    auto [it, fresh] = m_entries.try_emplace(c.owner);
+    Entry& e = it->second;
+    if (!fresh && e.skinned != skinned) {        // changed table: re-home it
+        tableFor(e.skinned).destroy(e.id, frame);
+        fresh = true;
     }
+    if (fresh) {
+        e.id      = tableFor(skinned).create(c.owner, c.row);
+        e.skinned = skinned;
+    } else {
+        tableFor(skinned).update(e.id, c.row);
+    }
+    e.seen = frame;
+}
+
+void RenderScene::finish(uint64_t frame) {
+    if (frame >= kFramesInFlight) {
+        m_static.collect(frame - kFramesInFlight);
+        m_skinned.collect(frame - kFramesInFlight);
+    }
+    m_lastApplied = frame;
+    m_applied     = true;
+}
+
+void RenderScene::applyChanged(const std::vector<CapturedRow>& rows,
+                               const std::vector<uint64_t>& touched, uint64_t frame) {
+    for (const CapturedRow& c : rows)
+        if (c.dirty) write(c, frame);
+    // A reported owner with no row this frame is gone (destroyed, lost its
+    // mesh or Transform, disabled, or its mesh no longer resolves).
+    for (uint64_t owner : touched) {
+        auto it = m_entries.find(owner);
+        if (it != m_entries.end() && it->second.seen != frame) {
+            tableFor(it->second.skinned).destroy(it->second.id, frame);
+            m_entries.erase(it);
+        }
+    }
+    finish(frame);
+}
+
+void RenderScene::apply(const std::vector<CapturedRow>& rows, uint64_t frame) {
+    for (const CapturedRow& c : rows) write(c, frame);
     // Owners not captured this frame are gone (destroyed, lost their mesh, or
     // their mesh failed to resolve): retire their rows.
     for (auto it = m_entries.begin(); it != m_entries.end();) {
@@ -139,12 +166,7 @@ void RenderScene::apply(const std::vector<CapturedRow>& rows, uint64_t frame) {
             ++it;
         }
     }
-    if (frame >= kFramesInFlight) {
-        m_static.collect(frame - kFramesInFlight);
-        m_skinned.collect(frame - kFramesInFlight);
-    }
-    m_lastApplied = frame;
-    m_applied     = true;
+    finish(frame);
 }
 
 RenderObjectId RenderScene::idOf(uint64_t owner) const {

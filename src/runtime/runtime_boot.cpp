@@ -47,6 +47,7 @@
 #include <utility>
 
 #include "animation/clip_library.h"
+#include "components/demo_grid.h"
 #include "components/meta_registry.h"
 #include "components/name.h"
 #include "components/mesh_renderer.h"
@@ -522,7 +523,8 @@ void EngineRuntime::buildDefaultScene() {
                 .set<Transform>(t)
                 .set<MeshRenderer>({cubeHandle})
                 .set<Name>({name})
-                .set<Spinner>({0.3f, 0.1f});
+                .set<Spinner>({0.3f, 0.1f})
+                .add<DemoGrid>();   // made by code: never saved, not listed
         }
     }
 }

@@ -20,6 +20,7 @@ class ShaderLibrary;   // render/shader/shader_library.h
 #include "components/mesh_renderer.h"
 #include "components/skinned_mesh.h"
 #include "components/lod_mesh.h"         // optional query term in extraction
+#include "render/retained_input.h"        // the retained scene's input (WO-072)
 #include "components/light.h"
 #include "animation/skeleton_registry.h"
 #include "render/world/cull_stream.h"   // CullStreamStore (extraction fills it)
@@ -315,14 +316,38 @@ private:
     bool     m_tableOn   = false;
     bool     m_tableDiff = false;
     uint64_t m_frameNo   = 1;   // advanced by endFrame(); the fence's clock
-    std::unordered_map<const flecs::world*, std::unique_ptr<rworld::RenderScene>> m_scenes;
+    //
+    // P3b (WO-072): the table is written INCREMENTALLY, from the world's
+    // change streams. render/retained_input.h decides which rows; in diff
+    // mode every row is still captured, for the oracle, and only the dirty
+    // ones are written, so a writer that forgot to mark shows up as a stale
+    // column.
+    struct RetainedWorld {
+        std::unique_ptr<rworld::RenderScene> scene;
+        rworld::RetainedInput input;
+        uint64_t rowsWritten = 0;   // last apply: rows written (tests, the log)
+        bool     full = true;       // last apply rewrote the whole table
+        // Logged every 300 applies, so a run shows the table is written
+        // incrementally and not rebuilt: rows written against rows held.
+        uint64_t windowWritten = 0, windowRows = 0, windowFrames = 0, windowFull = 0;
+    };
+    std::unordered_map<const flecs::world*, RetainedWorld> m_scenes;
     std::vector<rworld::CapturedRow> m_capture;
 public:
     // For tests and tools: the retained scene of `world`, or null when the
     // table is off or the world has not been drawn yet.
     const rworld::RenderScene* renderScene(const flecs::world& world) const {
         auto it = m_scenes.find(&world);
-        return it == m_scenes.end() ? nullptr : it->second.get();
+        return it == m_scenes.end() ? nullptr : it->second.scene.get();
+    }
+    // Rows the last apply of `world` wrote, and whether it rewrote them all.
+    uint64_t retainedRowsWritten(const flecs::world& world) const {
+        auto it = m_scenes.find(&world);
+        return it == m_scenes.end() ? 0 : it->second.rowsWritten;
+    }
+    bool retainedFullRewrite(const flecs::world& world) const {
+        auto it = m_scenes.find(&world);
+        return it != m_scenes.end() && it->second.full;
     }
     void setRetainedTable(bool on, bool diff = false) { m_tableOn = on || diff; m_tableDiff = diff; }
 private:

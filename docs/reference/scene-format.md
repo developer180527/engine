@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-11-27
+verified: 2026-11-28
 covers:
   - src/assets/cookers/scene/scene_cooker.cpp
   - src/core/json_read.h
@@ -443,6 +443,17 @@ kept and saved back unchanged.
 | `castShadows` | bool | `false` |
 | `useTemperature` | bool | `false` |
 | `temperatureK` | float, kelvin | `6500.0` |
+
+### `spinner`
+
+A constant turn, applied every simulation step: yaw about the entity's local Y,
+then pitch about its local X. Loaded and saved since 2026-11-28; before that a
+scene's `spinner` was kept as unknown data and the entity did not turn.
+
+| Field | Type | Default |
+|---|---|---|
+| `speedYaw` | float, radians per second | `0.0` |
+| `speedPitch` | float, radians per second | `0.0` |
 
 ---
 

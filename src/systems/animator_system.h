@@ -46,6 +46,7 @@
 #include "animation/clip_registry.h"
 #include "components/animator.h"
 #include "components/skinned_mesh.h"
+#include "components/change_stream.h"   // declared writes (WO-072)
 #include "core/jobs/jobs.h"
 #include "components/world_query_cache.h"
 #include "core/logger.h"
@@ -108,11 +109,13 @@ public:
         if (!m_skeletons || !m_clips) return;
         collect(m_query, m_initWorld);
         stepAll(dt, Phase::Advance);
+        markSkins(const_cast<flecs::world_t*>(m_initWorld));
     }
     void sample() {
         if (!m_skeletons || !m_clips) return;
         collect(m_query, m_initWorld);
         stepAll(0.0f, Phase::Sample);
+        markSkins(const_cast<flecs::world_t*>(m_initWorld));
     }
 
     // Tick an arbitrary world — the play-mode snapshot world. The query is
@@ -157,6 +160,19 @@ private:
         }
         collect(m_worldQuery.get(world), world.c_ptr());
         stepAll(dt, phase);
+        markSkins(world.c_ptr());
+    }
+
+    // The declared write of SkinnedMesh (WO-072), serial, after the parallel
+    // step: an entity is reported when its palette slot or its skinned flag
+    // changed. The palette's CONTENTS change every sampled frame and are not
+    // a change of the component: a reader holds the slot, not the bones.
+    void markSkins(flecs::world_t* w) const {
+        const changes::Marks<SkinnedMesh> marks(w);
+        if (!marks.on()) return;
+        for (const WorkItem& wi : m_work)
+            if (wi.skin->paletteSlot != wi.paletteWas || wi.skin->hasSkinMatrices != wi.skinnedWas)
+                marks.entity(wi.entity);
     }
 
 public:
@@ -341,6 +357,12 @@ private:
         Animator*    anim;
         SkinnedMesh* skin;
         AnimContext* ctx;
+        // What the renderer's row reads of the skin, before the step: the
+        // step runs in parallel, so its writes are marked after the join
+        // (WO-072), and only when one of these changed.
+        flecs::entity_t entity      = 0;
+        uint32_t        paletteWas  = 0;
+        bool            skinnedWas  = false;
     };
 
     // SERIAL: query iteration + context inserts (rehash) live here, so the
@@ -375,7 +397,7 @@ private:
         q.each([&](flecs::entity e, Animator& anim, SkinnedMesh& skin) {
             AnimContext& ctx = wc.map[e.id()];
             ctx.seenEpoch = wc.epoch;
-            m_work.push_back({&anim, &skin, &ctx});
+            m_work.push_back({&anim, &skin, &ctx, e.id(), skin.paletteSlot, skin.hasSkinMatrices});
         });
         if (wc.map.size() > m_work.size()) {
             for (auto it = wc.map.begin(); it != wc.map.end();) {

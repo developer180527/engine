@@ -1,4 +1,5 @@
 #pragma once
+#include "components/change_stream.h"
 #include <string>
 #include <deque>
 #include <nlohmann/json.hpp>
@@ -170,7 +171,7 @@ private:
     static void applyTransform(flecs::world& ecs, const nlohmann::json& j) {
         flecs::entity e = findById(ecs, j.value("id",(uint64_t)0));
         if (!e.is_alive()) { LOG_WARN("Undo", "transform target id not found"); return; }
-        Transform& t = e.get_mut<Transform>(); desTf(j, t);
+        Transform& t = e.get_mut<Transform>(); desTf(j, t); changes::markChanged<Transform>(e);
     }
     static void applyReparent(flecs::world& ecs, const nlohmann::json& j) {
         flecs::entity e = findById(ecs, j.value("id",(uint64_t)0));
@@ -181,7 +182,7 @@ private:
             flecs::entity p = findById(ecs, pid);
             if (p.is_alive() && p != e && !isAncestorOf(e, p)) e.add(flecs::ChildOf, p);
         }
-        if (j.contains("transform")) { Transform& t = e.get_mut<Transform>(); desTf(j["transform"], t); }
+        if (j.contains("transform")) { Transform& t = e.get_mut<Transform>(); desTf(j["transform"], t); changes::markChanged<Transform>(e); }
     }
     static void destroyById(flecs::world& ecs, uint64_t id) {
         flecs::entity e = findById(ecs, id); if (e.is_alive()) e.destruct();

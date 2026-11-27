@@ -24,6 +24,7 @@
 #include "scene/reflected_serde.h"
 #include "components/meta_registry.h"
 #include "components/prev_transform.h"
+#include "components/change_stream.h"     // declared writes (WO-072)
 #include "components/camera.h"
 #include "core/transform.h"
 #include "scene/entity_serializer.h"
@@ -243,8 +244,13 @@ void EngineRuntime::tickSimulation(float dt) {
         // Entities that already have a PrevTransform — everything, after its
         // first step. Overwriting fields in place: no defer, no command buffer,
         // no per-entity lookup. This is the pass that runs 60 times a second.
+        // A MARKED write (WO-072): only the rows whose history actually moves
+        // are reported, so a scene of resting objects reports nothing here.
+        // Off, and free, when nothing subscribes to PrevTransform.
+        const changes::Marks<PrevTransform> prevMarks(w);
         m_prevSnapQuery.get(w, [](auto& b) { b.template without<Camera>(); })
-            .each([](const Transform& t, PrevTransform& p) {
+            .each([&prevMarks](flecs::entity e, const Transform& t, PrevTransform& p) {
+                if (prevMarks.on() && !samePose(t, p)) prevMarks.entity(e.id());
                 p.position = t.position;
                 p.rotation = t.rotation;
                 p.scale    = t.scale;
@@ -789,7 +795,9 @@ void EngineRuntime::dispatchMoves(flecs::world& w) {
             if (PrevTransform* p = e.try_get_mut<PrevTransform>()) {
                 p->position = t->position;
                 p->rotation = t->rotation;
+                changes::markChanged<PrevTransform>(e);
             }
+            changes::markChanged<Transform>(e);   // in place: declared (WO-072)
         }
         ++m_teleportsDispatched;
     }
@@ -836,8 +844,11 @@ EngineRuntime::recordedTick(size_t ticksAgo) const {
 }
 
 void EngineRuntime::stepSpinners(flecs::world& w, float dt) {
+    // Every spinner turns every step: the whole column is written (WO-072).
+    const changes::Marks<Transform> marks(w);
     m_spinnerQuery.get(w)
-        .each([dt](flecs::entity, Transform& t, const Spinner& s) {
+        .each([dt, &marks](flecs::entity e, Transform& t, const Spinner& s) {
+            marks.entity(e.id());
             const bx::Quaternion qY = bx::fromAxisAngle({0,1,0}, s.speedYaw   * dt);
             const bx::Quaternion qP = bx::fromAxisAngle({1,0,0}, s.speedPitch * dt);
             t.rotation = bx::normalize(bx::mul(qP, bx::mul(qY, t.rotation)));

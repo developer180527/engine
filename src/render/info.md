@@ -1,7 +1,7 @@
 ---
 status: as-built
 tier: working
-verified: 2026-11-27
+verified: 2026-11-28
 covers:
   - src/render/
 tests:
@@ -110,6 +110,13 @@ Two layers:
 ## Key Data
 - **Registries** — `AssetRegistry` (meshes), `TextureRegistry`,
   `MaterialRegistry`: `Handle<Tag>` dense vectors, slot 0 = null handle.
+  `AssetRegistry::revision()` is bumped by every add, remove and clear, for
+  the retained scene (WO-072): what a mesh handle resolves to changed.
+- **`retained_input.h`** (WO-072) — which rows of the retained scene to write
+  each frame: the world's change streams, rows still interpolating, parented
+  rows, and full rewrites when a registry revision moves. Not in `world/`
+  because it knows flecs; not inside `Renderer` so `change_stream_test` drives
+  exactly what extraction uses without a GPU.
 - **Vertex formats** — `vertex.h` (**48** bytes: pos 12 + normal 12 + tangent 16
   + uv 8 — this said 52 until 2026-09-04, when `gpu.cpp`'s `static_assert`
   settled it), `skinned_vertex.h` (68 bytes: the same plus 4×uint8 joints +

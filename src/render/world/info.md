@@ -1,12 +1,13 @@
 ---
 status: as-built
 tier: working
-verified: 2026-10-01
+verified: 2026-11-28
 covers:
   - src/render/world/
 tests:
   - tests/render_world_test.cpp
   - tests/render_scene_test.cpp   # the retained scene: ids, fence, apply, diff (P3a)
+  - tests/change_stream_test.cpp  # written incrementally from the change streams (P3b, WO-072)
 ---
 # Render world — the machinery half of the renderer
 
@@ -35,6 +36,47 @@ green for 900 frames. What the diff can and cannot catch in P3a: lifetime
 bookkeeping (a missing, leaked, stale or mis-homed row), because the table
 is written from the same capture it is compared with. Missed CHANGE HOOKS
 are what it catches once P3b makes the writes incremental.
+
+## The retained scene, phase two: written from the change streams (WO-072)
+
+Since WO-072 the table is written INCREMENTALLY. `RenderScene::applyChanged`
+writes only the rows marked dirty and retires the reported owners that
+produced no row; `apply` (wholesale) is kept for the frames that rewrite
+everything. Which rows are dirty is decided by `render/retained_input.h`
+(it knows flecs and the components, so it is not in this directory): the
+world's change streams for Transform, PrevTransform, MeshRenderer,
+SkinnedMesh, Disabled, Prefab and `(ChildOf, *)`; a row still interpolating
+(alpha < 1, history differs); and every parented row, whose matrix depends on
+ancestors its own reports do not cover. The first frame, a mesh or skeleton
+added or removed (`AssetRegistry::revision`, `SkeletonRegistry::revision`),
+and interpolation switching on or off rewrite the table.
+
+The rebuild-and-diff check now means what P3a said it would: diff mode
+captures every row, writes only the dirty ones, and compares against a
+rebuild, so a writer that did not mark is named by entity and column
+(`change_stream_test` §7 shows one caught).
+
+Measured 2026-11-28 on the same `gen_fuzz_scene --objects 50000 --seed 1`,
+`build-prof`, windowed `engine_host`. **Its 12 506 movers had never moved**,
+in WO-019's measurement either: the scene's `"spinner"` key had no reader
+(Spinner doubled as the demo grid's never-saved marker). Since `core.Spinner`
+they turn. A copy with 12 506 dynamic rigid bodies dropped onto a floor was
+also run, for physics' marked write and bodies going to sleep.
+
+| | `Render.extract` | `Render.table` | rows written per frame |
+|---|---|---|---|
+| table off, spinners turning | 4.2 ms | — | — |
+| table on, spinners turning | 5.8 ms | 0.21 ms | 18 184 (spinners and the 7 550 parented rows) |
+| table on, bodies falling | 5.3–5.9 ms | 0.13–0.30 ms | ~9 600 moving, then 7 556 asleep |
+| diff mode, spinners, 900 frames | 10.3–10.4 ms | 4.4 ms | green on every frame |
+| diff mode, bodies falling, 1 500 frames | 10.0–10.8 ms | 4.7–5.0 ms | green on every frame |
+
+With the table on, the declared writes cost something too: `Sim.prevSnapshot`
+1.7 → 2.15 ms and `Sim.spinner` 0.55 → 0.85 ms per step for ~12 500 marks.
+With nothing subscribed they cost nothing.
+
+Extraction still computes every item, so turning the table on still costs
+about what it did; P3c, extraction reading the table, is what removes that.
 
 ## Two frusta, one extractor
 `extractFrustumPlanes` turns a view*proj into six inward normalized planes. It is

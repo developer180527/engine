@@ -18,6 +18,8 @@
 #include "components/character_controller.h"
 #include "core/transform.h"
 #include "components/transform_hierarchy.h"
+#include "components/change_stream.h"   // marked writes (WO-072)
+#include <cstring>
 
 // Jolt headers — Jolt.h must be first
 #include <Jolt/Jolt.h>
@@ -1124,10 +1126,15 @@ public:
     }
 
     void writeBackCharacters(flecs::world& ecs) {
+        // A MARKED write (WO-072): a character is reported only when its
+        // position moved. CharacterController's `grounded` is not reported:
+        // nothing that keeps a copy of the world reads it.
+        const changes::Marks<Transform> marks(ecs);
         ecs.query_builder<Transform, CharacterController>().build()
             .each([&](flecs::entity e, Transform& t, CharacterController& cc) {
                 auto it = m_characters.find(e.id());
                 if (it == m_characters.end()) return;
+                const bx::Vec3 was = t.position;
                 JPH::RVec3 p = it->second->GetPosition();
                 // Lift the render origin back above the feet by footOffset.
                 const float rx = (float)p.GetX();
@@ -1149,6 +1156,8 @@ public:
                 }
                 auto sit = m_charState.find(e.id());
                 cc.grounded = (sit != m_charState.end()) && sit->second.grounded;
+                if (marks.on() && std::memcmp(&was, &t.position, sizeof was) != 0)
+                    marks.entity(e.id());
             });
     }
 
@@ -1234,6 +1243,14 @@ public:
 
     void writeBackTransforms(flecs::world& ecs) {
         auto& bi = m_physics->GetBodyInterface();
+        // ── A MARKED WRITE (WO-072) ────────────────────────────────────────
+        // Every dynamic body's pose is written back every step, but only the
+        // ones that MOVED are reported to the change stream. A sleeping body's
+        // pose does not move, so a scene of resting boxes reports nothing and
+        // the renderer re-uploads nothing. Every body is still written, as
+        // before: a sleeping child's local pose depends on its parent, which
+        // may move. Off, and free, when nothing subscribes to Transform.
+        const changes::Marks<Transform> marks(ecs);
         ecs.query_builder<Transform, const RigidBody>().build()
             .each([&](flecs::entity e, Transform& t, const RigidBody& rb) {
                 // ── ONLY DYNAMIC BODIES ARE WRITTEN BACK ───────────────────
@@ -1247,6 +1264,7 @@ public:
                 if (rb.bodyType != PhysicsBodyType::Dynamic) return;
                 auto it = m_entityToBody.find(e.id());
                 if (it == m_entityToBody.end()) return;
+                const Transform was = t;
                 JPH::Vec3 p = bi.GetPosition(it->second);
                 JPH::Quat q = bi.GetRotation(it->second);
                 // Jolt returns a WORLD pose, but Transform is LOCAL and
@@ -1268,6 +1286,9 @@ public:
                     t.position = {p.GetX(), p.GetY(), p.GetZ()};
                     t.rotation = {q.GetX(), q.GetY(), q.GetZ(), q.GetW()};
                 }
+                if (marks.on() && (std::memcmp(&was.position, &t.position, sizeof t.position) != 0
+                                || std::memcmp(&was.rotation, &t.rotation, sizeof t.rotation) != 0))
+                    marks.entity(e.id());
             });
     }
 };

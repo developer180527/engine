@@ -15,6 +15,13 @@
 // needs them regenerated is a change to the cooked format (bump the layout or
 // the version, and re-cook), not an edit here.
 //
+// One exception, and why it is not one: a packed file carries the table of
+// every schema the cooking engine had registered, so REGISTERING A COMPONENT
+// changes the packed golden's bytes with no change to the format. Then the old
+// golden is kept under a new name and must still read (the READ step below),
+// and the new one is cooked with --write-fixtures. That happened once, for
+// core.Spinner (2026-11-28): every_component.before_spinner.packed.cooked.
+//
 // On each platform:
 //   1. WRITE: cooking the fixture here gives the golden bytes exactly. A struct
 //      padded differently, a bool or enum of another width, another byte order,
@@ -60,6 +67,11 @@ const fs::path kFixtures = fs::path(ENGINE_SOURCE_DIR) / "tests" / "fixtures" / 
 const fs::path kSource   = kFixtures / "every_component.disk.json";
 const fs::path kPacked   = kFixtures / "every_component.packed.cooked";
 const fs::path kCbor     = kFixtures / "every_component.cbor.cooked";
+// The packed golden as cooked before core.Spinner was registered (2026-11-28).
+// A packed file names every schema the cooking engine had, so adding a
+// component changes every packed file's bytes; this one is kept to show a file
+// cooked by an engine with fewer schemas still loads, entity for entity.
+const fs::path kPackedBeforeSpinner = kFixtures / "every_component.before_spinner.packed.cooked";
 
 std::vector<uint8_t> readBytes(const fs::path& p) {
     std::ifstream f(p, std::ios::binary);
@@ -262,6 +274,7 @@ int main(int argc, char** argv) {
 
     std::printf("\n-- the golden files, read here --\n");
     checkRead("packed", kPacked, {"packed"});
+    checkRead("packed, cooked before core.Spinner", kPackedBeforeSpinner, {"packed"});
     checkRead("cbor", kCbor, {"cbor in place", "cbor through the tree"});
 
     std::printf("\n-- what the layout assumes, on this compiler --\n");

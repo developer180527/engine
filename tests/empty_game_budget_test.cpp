@@ -19,6 +19,7 @@
 #include <memory>
 #include <vector>
 
+#include "components/change_stream.h"
 #include "core/memory/mem.h"
 #include "plugins/stock_plugins.h"
 #include "runtime/platform/headless_platform.h"
@@ -76,6 +77,12 @@ int main() {
         total += mb;
         std::printf("        %-10s %7.3f MB live\n", r.name, mb);
     }
+    // WO-072: the change stream is free with no subscriber. Nothing in an
+    // empty game subscribes, so none exists, no observer was created, and
+    // every declared write this game ran (prevSnapshot, physics, spinners)
+    // cost one null check.
+    CHECK(changes::Streams::of(engine.simWorld().c_ptr()) == nullptr,
+          "an empty game records no changes: no change stream exists in its world");
     CHECK(mem::stats(mem::Tag::Physics).currentBytes < 64 * 1024,
           "physics holds nothing with nothing to simulate (%llu bytes; was 78 MB)",
           (unsigned long long)mem::stats(mem::Tag::Physics).currentBytes);
