@@ -5,7 +5,9 @@ title: Test what ships — the static shipped player built and run in CI, per pl
 program: providers
 priority: P2
 size: M
-state: todo
+state: done
+done: 2026-11-27
+evidence: CI run 45913071217 (77ef297), the Shipped player step green on all six desktop legs; ctest shipped_player_check_refuses_extra_providers
 depends: [WO-086]
 touches:
   - .github/workflows/ci.yml
@@ -17,7 +19,7 @@ source: provider-selection.md §8 (DR-0037); research 2026-11-26 (O3DE's monolit
 A shipped game links its providers statically from a generated list. A development build loads them differently. If the tests only ever run the development build, the build that players get is the one nobody tests. O3DE is the example: its monolithic game build switches tests off. The shipped player has to be built and run in CI, with the selections games actually use.
 
 ## Done when
-- [ ] on every CI desktop leg, `engine_build --platform <that leg>` packages a sample for two selections, the default and `server`, and the job runs the packaged player headless on a smoke scene
+- [x] on every CI desktop leg, `engine_build --platform <that leg>` packages a sample for two selections, the default and `server`, and the job runs the packaged player headless on a smoke scene
 - [x] the conformance suites that exist run against the statically linked providers in that player: **moved to WO-093**. The one suite (audio) is a Rust crate that loads a provider as a shared library, and a static player has none to load
 - [x] the symbol check confirms the packaged player contains the chosen providers and no other provider's symbols; a mutation run (link one extra provider) makes it fail
 - [x] a selection that cannot resolve on that leg (for example a provider not listed for it) is a test that expects the refusal, so the refusal path is exercised in CI too
@@ -29,7 +31,7 @@ Nothing for users. CI gets slower by two packaging runs per leg; record the time
 - Consoles and phones as CI legs. They get the same check when they become targets.
 - Performance of the shipped player: the home server's A/B (`provider-abi.md` §3, WO-083).
 
-## Notes (2026-11-27, waiting on CI; left `todo`, not `active`: two orders are active already)
+## Notes (2026-11-27)
 - **Built:** `scripts/shipped_player_check.py`, and CI's "Shipped player" step on every leg when the full matrix runs (nightly, on demand, portability-sensitive pushes). It scaffolds `basic3d` twice: the engine's defaults, and **headless** (renderer `none`, audio `none`). "Headless" stands where this order said `server`, because `engine_build` refuses `--flavour server` until a server player exists. Each is packaged with `engine_build --strict`. The step checks `providers.lock.json`, then the player's symbols against it (chosen providers present, others and the resolver absent). It runs the headless package for 120 frames with `engine_player --headless --frames N`, which is new. The default package must refuse to start with no display, by name. CI has no display, so the default package is built and checked but not run.
 - **Mutation:** ctest `shipped_player_check_refuses_extra_providers` runs the symbol check on the development player, which has every provider, against a lock that chose fewer. It must fail, and does, naming each extra provider and the resolver.
 - **Refusal in CI:** `engine_build_refuses_web_by_name` (WO-086) already runs on every leg's unit lane.
@@ -41,4 +43,5 @@ Nothing for users. CI gets slower by two packaging runs per leg; record the time
   - On Windows the cook never started. `engine_build` runs its commands through `std::system`, that is `cmd.exe /c`, and cmd strips the first and last quote of a command that starts with one and holds more. `"…\engine_cook" "…\project"` became a broken command. `engine_build` had never run on Windows before; it now wraps the whole command in one more pair of quotes there.
   - Before the failure, macOS and Linux packaged the default game: about 15 minutes for the first package, almost all of it the cold Release build of the engine. A cached compiler (sccache) should cut that on later runs.
 - **CI's second run (40f1bc2):** macOS, Linux GCC and Linux arm64 green. Windows packaged both games and ran both players correctly. The quoting fix worked: 1 148 s for the first package, the cold Release build, and 46 s for the second. The symbol check then failed there, by design ("nothing read is not a pass"): MSVC writes symbols to a link map beside the shipping tree's player, and `dist/` does not carry it. `engine_player` now asks for `/MAP` on MSVC in `src/CMakeLists.txt`, not only in `tests/`, and the script copies that map beside the packaged player for the check only. Linux Clang failed to build the shipping player, its first Release build; the cause was hidden by the script's short tail, which now prints the compiler's error lines.
-- **Open:** the first item, until CI has run the step green on all six legs.
+- **CI's third run (795296a):** both Windows legs green, the symbols read from the link map. Linux Clang's error lines now showed the cause: `libJolt.a: error adding symbols: file format not recognized`. Jolt turns LTO on for Release by default, so under Clang its archive was LLVM bitcode, which Ubuntu's ld.bfd cannot read (BUG-0085). Jolt's LTO is now forced off; nothing else in the engine uses LTO.
+- **CI's fourth run (77ef297): green on all six legs.** Both selections on every leg: lock ok, symbols ok, the headless package ran 120 frames, the default package refused with no display, by name. Time added per leg, on that run's tree: the default package 33–224 s, the headless one 3–16 s (the Windows legs slowest). A cold Release tree costs far more (about 15 minutes on the first run); a compiler cache would cut it.
