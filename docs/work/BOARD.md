@@ -14,6 +14,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 - [WO-094](WO-094-c-kits-in-the-editor-and-player.md) **C kits in the editor and engine_player — the manifest loads C modules, and Play is a C world** — 4/5 done. Still open:
   - the C combat kit replaces the C++ CombatKit in a project, and the FPS and AI kits deal damage through the C components (or the order records why they cannot yet)
+- [WO-095](WO-095-cpp-wrapper-over-the-c-world.md) **The C++ wrapper over the C world API — RAII handles, Result, typed components — so C++ kits and providers stop reaching into flecs** — 5/5 done. Still open:
+  - (all ticked: close it)
 
 ## Next up
 
@@ -37,7 +39,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
 | [WO-090](WO-090-first-librhi-renderer.md) | The first librhi renderer — a provider beside bgfx, the forward pipeline ported pass by pass, each bgfx assumption removed where the port meets it | Renderer & RHI | L | blocked by WO-075 | renderer, gpu-seam |
 | [WO-094](WO-094-c-kits-in-the-editor-and-player.md) | C kits in the editor and engine_player — the manifest loads C modules, and Play is a C world | Providers & modules | L | **active** 4/5 | kit-abi |
-| [WO-095](WO-095-cpp-wrapper-over-the-c-world.md) | The C++ wrapper over the C world API — RAII handles, Result, typed components — so C++ kits and providers stop reaching into flecs | Providers & modules | M | **ready** | — |
+| [WO-095](WO-095-cpp-wrapper-over-the-c-world.md) | The C++ wrapper over the C world API — RAII handles, Result, typed components — so C++ kits and providers stop reaching into flecs | Providers & modules | M | **active** 5/5 | — |
 
 ## P2 — the planned programmes, in dependency order.
 

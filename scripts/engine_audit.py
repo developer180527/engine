@@ -964,6 +964,46 @@ def rule_kits_see_no_flecs() -> Rule:
     return r
 
 
+# ── HDR-02: the engine's API headers include only each other and the standard
+# library (WO-095). include/eng/ is what a C module, a C++ kit through eng.hpp
+# and every language binding compile against with nothing else on the path;
+# one include beyond it (an engine header, flecs, a third party) is a build
+# failure for them, or worse, a quiet second definition. Not baselinable.
+STD_HEADERS = frozenset("""
+    stddef.h stdint.h stdbool.h string.h stdlib.h limits.h float.h
+    cstddef cstdint cstring cstdlib climits cfloat
+    memory new string type_traits utility vector array initializer_list
+""".split())
+
+
+def rule_api_headers_self_contained() -> Rule:
+    r = Rule("HDR-02", "include/eng/ includes only include/eng/ and the standard library",
+             "docs/plans/engine-api.md §8; DR-0028; WO-095.",
+             "a module or kit is built with only include/ on its path: an include "
+             "outside include/eng/ breaks its build, or pulls the engine's "
+             "insides into a kit that must not see them.",
+             baselinable=False)
+    for rel in tracked("include/eng/"):
+        if not rel.endswith(SRC_EXT):
+            continue
+        q, a = includes(rel)
+        for inc in q:
+            # Normalised, so "../../src/x.h" (a real file) is not inside.
+            tgt = os.path.normpath(f"include/eng/{inc}").replace("\\", "/")
+            if not (tgt.startswith("include/eng/") and (REPO / tgt).is_file()):
+                r.findings.append(Finding(r.id, f"{rel}:{inc}",
+                                          f"{rel} includes \"{inc}\", which is not in include/eng/"))
+        for inc in a:
+            tgt = os.path.normpath(f"include/{inc}").replace("\\", "/")
+            if tgt.startswith("include/eng/") and (REPO / tgt).is_file():
+                continue
+            if inc not in STD_HEADERS:
+                r.findings.append(Finding(r.id, f"{rel}:<{inc}>",
+                                          f"{rel} includes <{inc}>: neither include/eng/ nor the standard "
+                                          "library headers this rule allows"))
+    return r
+
+
 RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
          rule_acyclic_modules, rule_render_world_purity, rule_import_format_purity, rule_abi_group_wiring, rule_abi_offsets_tile,
          rule_abi_compat_coverage, rule_component_hash_membership,
@@ -972,7 +1012,7 @@ RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
          rule_threads_start_in_one_place,
          rule_one_camera_convention, rule_assimp_only_in_front_end,
          rule_doc_coverage, rule_providers_apart, rule_providers_reach_no_internals,
-         rule_kits_see_no_flecs)
+         rule_kits_see_no_flecs, rule_api_headers_self_contained)
 
 # The checks that already exist as their own scripts. The farm wants ONE entry
 # point, and duplicating these here would mean two definitions of the same rule

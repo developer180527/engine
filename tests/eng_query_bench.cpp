@@ -7,6 +7,10 @@
 //   C API      engQueryBegin / engQueryNext / engQueryEnd
 //   C API, watched   the same, with a change stream subscribed to the
 //              written component, so ENG_ACCESS_WRITE marks every row
+//   eng.hpp    the same pass through the C++ wrapper (WO-095): Query<Read,
+//              Write>::each, typed columns; it must cost what the C API does
+//   marked, C / eng.hpp   WRITE_MARKED, every row written, watched: one
+//              engMarkChanged per batch by hand, against MarkedColumn::write
 // Median of 51 passes each, after warm-up.
 //   cmake --build build-rel --target eng_query_bench && build-rel/eng_query_bench
 #include <algorithm>
@@ -15,7 +19,7 @@
 #include <cstring>
 #include <vector>
 
-#include <eng/engine.h>
+#include <eng/eng.hpp>
 #include <flecs.h>
 
 #include "capi/eng_internal.h"
@@ -120,12 +124,72 @@ int main() {
         do { n = (uint32_t)drainBuf.size(); engReadChanges(world, s, drainBuf.data(), &n); } while (n == drainBuf.size());
     };
     const double watchedMs = medianMs(viaCWatched);
+    engUnsubscribeChanges(world, s);
+
+    // The same pass through eng.hpp.
+    const eng::World ew(world);
+    const eng::Component<EngTransform> etr{transform};
+    const eng::Component<Health> ehe{health};
+    eng::Query<eng::Read<EngTransform>, eng::Write<Health>> wq(ew, etr, ehe);
+    auto viaHpp = [&] {
+        wq.each([](auto& b) {
+            auto t = b.template column<0>();
+            auto h = b.template column<1>();
+            for (uint32_t i = 0; i < b.count(); ++i) h[i].current = t[i].position.x * 0.5f;
+        });
+    };
+    const double hppMs = medianMs(viaHpp);
+
+    // WRITE_MARKED, every row written, with a stream watching: by hand in C
+    // (one mark per batch), and through MarkedColumn::write (coalesced to one).
+    EngQueryTerm mterms[2] = {{transform, ENG_ACCESS_READ, {0, 0}}, {health, ENG_ACCESS_WRITE_MARKED, {0, 0}}};
+    EngQueryDesc mqd = ENG_INIT(EngQueryDesc);
+    mqd.term_count = 2; mqd.terms = mterms;
+    EngQuery mq = 0;
+    engCreateQuery(world, &mqd, &mq);
+    eng::Query<eng::Read<EngTransform>, eng::WriteMarked<Health>> wmq(ew, etr, ehe);
+    engSubscribeChanges(world, health, &s);
+    auto drainAll = [&] {
+        uint32_t n;
+        do { n = (uint32_t)drainBuf.size(); engReadChanges(world, s, drainBuf.data(), &n); } while (n == drainBuf.size());
+    };
+    auto markedC = [&] {
+        EngQueryIter* it = nullptr;
+        engQueryBegin(world, mq, &it);
+        EngQueryBatch b = ENG_INIT(EngQueryBatch);
+        while (engQueryNext(it, &b)) {
+            const EngTransform* t = (const EngTransform*)b.columns[0];
+            Health* h = (Health*)b.columns[1];
+            for (uint32_t i = 0; i < b.count; ++i) h[i].current = t[i].position.x * 0.5f;
+            engMarkChanged(it, 1, 0, b.count);
+        }
+        engQueryEnd(it);
+        drainAll();
+    };
+    auto markedHpp = [&] {
+        wmq.each([](auto& b) {
+            auto t = b.template column<0>();
+            auto h = b.template column<1>();
+            for (uint32_t i = 0; i < b.count(); ++i) h.write(i).current = t[i].position.x * 0.5f;
+        });
+        drainAll();
+    };
+    const double markedCMs = medianMs(markedC);
+    const double markedHppMs = medianMs(markedHpp);
+    engUnsubscribeChanges(world, s);
+    engDestroyQuery(world, mq);
 
     std::printf("eng_query_bench: %d entities, %u batches (tables), median of 51\n", N, batches);
     std::printf("  flecs, direct        %7.3f ms  %5.2f ns/entity\n", flecsMs, flecsMs * 1e6 / N);
     std::printf("  C API                %7.3f ms  %5.2f ns/entity  (%+.3f ms)\n", cMs, cMs * 1e6 / N, cMs - flecsMs);
     std::printf("  C API, watched       %7.3f ms  %5.2f ns/entity  (WRITE marks every row; read back)\n",
                 watchedMs, watchedMs * 1e6 / N);
+    std::printf("  eng.hpp              %7.3f ms  %5.2f ns/entity  (%+.3f ms against the C API)\n",
+                hppMs, hppMs * 1e6 / N, hppMs - cMs);
+    std::printf("  marked, C            %7.3f ms  %5.2f ns/entity  (WRITE_MARKED, every row, watched)\n",
+                markedCMs, markedCMs * 1e6 / N);
+    std::printf("  marked, eng.hpp      %7.3f ms  %5.2f ns/entity  (%+.3f ms: MarkedColumn::write per row)\n",
+                markedHppMs, markedHppMs * 1e6 / N, markedHppMs - markedCMs);
     ecs_query_fini(fq);
     engDestroyWorld(world);
     engDestroyEngine(engine);

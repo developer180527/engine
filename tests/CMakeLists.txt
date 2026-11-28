@@ -288,6 +288,28 @@ target_include_directories(c_kit_host_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMA
 target_compile_definitions(c_kit_host_test PRIVATE
     C_KIT_COMBAT="$<TARGET_FILE:combat_c_module>" C_KIT_COUNTER="$<TARGET_FILE:c_module_counter>")
 add_dependencies(c_kit_host_test combat_c_module c_module_counter)
+# The C++ wrapper over the C world (WO-095): eng.hpp, header-only. Its test and
+# its kit are built with no exceptions and no RTTI, as a game may be. The kit
+# is a shared library like the C ones, with only include/ on its path: a flecs
+# or engine C++ include in eng.hpp fails to compile here.
+add_executable(eng_cpp_test eng_cpp_test.cpp)
+target_link_libraries(eng_cpp_test PRIVATE engine_capi)
+target_compile_options(eng_cpp_test PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fno-exceptions -fno-rtti -Wall -Wextra>)
+set_target_properties(eng_cpp_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_test(NAME eng_cpp_test COMMAND eng_cpp_test)
+set_tests_properties(eng_cpp_test PROPERTIES LABELS unit TIMEOUT 120)
+add_library(cpp_module_regen MODULE fixtures/cpp_module_regen.cpp)
+target_include_directories(cpp_module_regen PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_compile_definitions(cpp_module_regen PRIVATE ENG_CLIENT)
+target_compile_options(cpp_module_regen PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-fno-exceptions -fno-rtti -Wall -Wextra>)
+set_target_properties(cpp_module_regen PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON PREFIX ""
+                      CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON
+                      LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c_modules)
+engine_test(cpp_kit_host_test LIB engine_capi)
+target_include_directories(cpp_kit_host_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/samples/combat_c)
+target_compile_definitions(cpp_kit_host_test PRIVATE
+    C_KIT_COMBAT="$<TARGET_FILE:combat_c_module>" CPP_KIT_REGEN="$<TARGET_FILE:cpp_module_regen>")
+add_dependencies(cpp_kit_host_test combat_c_module cpp_module_regen)
 # And what C cannot see: a C API component saved and loaded with scenes (an
 # entity field linked again), and classified and hashed by the sim hash.
 engine_test(eng_world_scene_test LIB engine_capi)
