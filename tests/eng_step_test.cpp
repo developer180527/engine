@@ -175,7 +175,7 @@ int main() {
     }
     {
         EngEngineDesc d = desc(); d.module_count = 1;
-        refused(engCreateEngine(&d, &e), ENG_ERROR_UNSUPPORTED, "modules", "a module list");
+        refused(engCreateEngine(&d, &e), ENG_ERROR_INVALID_ARGUMENT, "modules is NULL", "a module count with no list (eng_module_test has the rest)");
         d = desc(); d.log_fn = [](void*, EngLogLevel, const char*, const char*) {};
         refused(engCreateEngine(&d, &e), ENG_ERROR_UNSUPPORTED, "log_fn", "a log callback");
         d = desc(); d.project_path = "/no/such/project";

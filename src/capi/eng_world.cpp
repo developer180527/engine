@@ -637,6 +637,8 @@ EngResult engCreateWorld(EngEngine* engine, const EngWorldDesc* desc, EngWorld**
                 return fail(ENG_ERROR_UNSUPPORTED, "this version runs one fixed step, 1/60 s; fixed_step_seconds was " +
                                                    std::to_string(d.fixed_step_seconds));
         }
+        if (engInternalInModuleCall(engine))
+            return fail(ENG_ERROR_REFUSED, "engCreateWorld refused: called from a module's callback");
         EngWorld*& slot = engInternalWorldSlot(engine);
         if (slot) return fail(ENG_ERROR_UNSUPPORTED, "this version has one world, and its handle is held "
                                                      "(engDestroyWorld it first)");
@@ -650,6 +652,13 @@ EngResult engCreateWorld(EngEngine* engine, const EngWorldDesc* desc, EngWorld**
         w->last = std::make_unique<PhaseEdge>(w.get(), false);
         rt->plugins().setEdges(w->first.get(), w->last.get());
         slot = w.get();
+        // The modules' on_world_start, in order. One failing: the world is
+        // gone again and the slot free, as if the call had not happened.
+        if (EngResult r = engInternalStartModules(engine, w.get()); r != ENG_OK) {
+            slot = nullptr;
+            engInternalDestroyWorld(w.release());
+            return r;
+        }
         *out = w.release();
         return ENG_OK;
     });
@@ -666,6 +675,12 @@ void engDestroyWorld(EngWorld* w) {
             engInternalSetError("engDestroyWorld refused: called from inside a system");
             return 0;
         }
+        if (engInternalInModuleCall(w->engine)) {
+            engInternalSetError("engDestroyWorld refused: called from a module's callback");
+            return 0;
+        }
+        // The modules stop first, in reverse, while the world still works.
+        engInternalStopModules(w->engine, w);
         engInternalWorldSlot(w->engine) = nullptr;
         engInternalDestroyWorld(w);
         return 0;

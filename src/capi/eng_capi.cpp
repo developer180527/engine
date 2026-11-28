@@ -122,11 +122,34 @@ struct EngEngine {
     uint64_t frame = 0;
     EngWorld* world = nullptr;   // eng_world.cpp's, while a handle is held
 
+    // EngEngineDesc.modules, in list order (eng_module.h). The desc is the
+    // module's and outlives the engine; d is what was read of it.
+    struct Module {
+        EngModuleDesc d{};
+        std::string name;
+        void* state = nullptr;
+        bool loaded = false, worldStarted = false;
+    };
+    std::vector<Module> modules;
+    bool inModuleCall = false;   // a callback is running: no world created or destroyed under it
+
     EngWindow windowHandle() const { return windowAlive ? ((windowGeneration << 8) | 1u) : 0; }
     bool validWindow(EngWindow w) const { return windowAlive && w == windowHandle(); }
 };
 
 namespace {
+
+// on_unload for every module loaded, in reverse.
+void unloadModules(EngEngine* e) {
+    for (auto it = e->modules.rbegin(); it != e->modules.rend(); ++it) {
+        if (!it->loaded) continue;
+        it->loaded = false;
+        if (!it->d.on_unload) continue;
+        e->inModuleCall = true;
+        it->d.on_unload(e, it->state);
+        e->inModuleCall = false;
+    }
+}
 
 EngResult checkWindow(EngEngine* e, EngWindow w) {
     if (!e) return fail(ENG_ERROR_INVALID_ARGUMENT, "engine is NULL");
@@ -327,9 +350,24 @@ EngResult engCreateEngine(const EngEngineDesc* in, EngEngine** out) {
         if (const char* why = versionMismatch(d.api_version)) return fail(ENG_ERROR_ABI_MISMATCH, why);
         if (d.reserved0) return fail(ENG_ERROR_INVALID_ARGUMENT, "reserved0 must be zero");
         if (d.pacing > ENG_PACING_HOST) return fail(ENG_ERROR_INVALID_ARGUMENT, "unknown pacing value");
-        if (d.module_count)
-            return fail(ENG_ERROR_UNSUPPORTED, "EngEngineDesc.modules is not implemented in this version "
-                                               "(kits load from the project's manifest)");
+        if (d.module_count && !d.modules)
+            return fail(ENG_ERROR_INVALID_ARGUMENT, "module_count is not zero but modules is NULL");
+        std::vector<EngEngine::Module> mods;
+        for (uint32_t i = 0; i < d.module_count; ++i) {
+            const std::string at = "modules[" + std::to_string(i) + "]";
+            EngEngine::Module m;
+            if (!readIn(d.modules[i], m.d)) return fail(ENG_ERROR_INVALID_ARGUMENT, at + " is NULL or has no struct_size");
+            if (!m.d.name || !*m.d.name) return fail(ENG_ERROR_INVALID_ARGUMENT, at + " has no name");
+            m.name = m.d.name;
+            const std::string who = "module '" + m.name + "'" + (m.d.version ? std::string(" ") + m.d.version : "");
+            if (const char* why = versionMismatch(m.d.api_version)) return fail(ENG_ERROR_ABI_MISMATCH, who + ": " + why);
+            if (m.d.reserved) return fail(ENG_ERROR_INVALID_ARGUMENT, who + ": reserved must be zero");
+            if (m.d.requires_service_count)
+                return fail(ENG_ERROR_UNSUPPORTED, who + " requires services, which are not in this version");
+            for (const EngEngine::Module& o : mods)
+                if (o.name == m.name) return fail(ENG_ERROR_INVALID_ARGUMENT, "two modules are named '" + m.name + "'");
+            mods.push_back(std::move(m));
+        }
         if (d.log_fn) return fail(ENG_ERROR_UNSUPPORTED, "EngEngineDesc.log_fn is not implemented in this version");
 
         auto e = std::make_unique<EngEngine>();
@@ -370,6 +408,22 @@ EngResult engCreateEngine(const EngEngineDesc* in, EngEngine** out) {
         }
         e->platform = makeDefaultPlatform();
         e->plat = e->platform.get();
+        e->modules = std::move(mods);
+        // on_load, in order. One failing unloads the ones before it, in
+        // reverse, and fails the create with the module's name.
+        for (EngEngine::Module& m : e->modules) {
+            if (!m.d.on_load) { m.loaded = true; continue; }
+            t_lastError.clear();
+            e->inModuleCall = true;
+            const EngResult r = m.d.on_load(e.get(), &m.state);
+            e->inModuleCall = false;
+            if (r != ENG_OK) {
+                const std::string why = t_lastError;
+                unloadModules(e.get());
+                return fail(r, "module '" + m.name + "': on_load failed" + (why.empty() ? "" : ": " + why));
+            }
+            m.loaded = true;
+        }
         *out = e.release();
         return ENG_OK;
     });
@@ -378,11 +432,20 @@ EngResult engCreateEngine(const EngEngineDesc* in, EngEngine** out) {
 void engDestroyEngine(EngEngine* e) {
     guard<int>(0, [&] {
         if (!e) return 0;
-        if (e->world) { engInternalDestroyWorld(e->world); e->world = nullptr; }
+        if (e->inModuleCall) {
+            engInternalSetError("engDestroyEngine refused: called from a module's callback");
+            return 0;
+        }
+        if (e->world) {
+            engInternalStopModules(e, e->world);
+            engInternalDestroyWorld(e->world);
+            e->world = nullptr;
+        }
         if (e->rt) {
             e->rt->stopSimulation();
             e->rt->shutdown();
         }
+        unloadModules(e);
         delete e;
         return 0;
     });
@@ -774,6 +837,37 @@ EngBool engNextEvent(EngEngine* e, EngEvent* out) {
 
 void engInternalSetError(std::string message) { t_lastError = std::move(message); }
 EngWorld*& engInternalWorldSlot(EngEngine* e) { return e->world; }
+
+bool engInternalInModuleCall(EngEngine* e) { return e && e->inModuleCall; }
+
+EngResult engInternalStartModules(EngEngine* e, EngWorld* w) {
+    for (EngEngine::Module& m : e->modules) {
+        if (m.d.on_world_start) {
+            t_lastError.clear();
+            e->inModuleCall = true;
+            const EngResult r = m.d.on_world_start(w, m.state);
+            e->inModuleCall = false;
+            if (r != ENG_OK) {
+                const std::string why = t_lastError;
+                engInternalStopModules(e, w);
+                return fail(r, "module '" + m.name + "': on_world_start failed" + (why.empty() ? "" : ": " + why));
+            }
+        }
+        m.worldStarted = true;
+    }
+    return ENG_OK;
+}
+
+void engInternalStopModules(EngEngine* e, EngWorld* w) {
+    for (auto it = e->modules.rbegin(); it != e->modules.rend(); ++it) {
+        if (!it->worldStarted) continue;
+        it->worldStarted = false;
+        if (!it->d.on_world_stop) continue;
+        e->inModuleCall = true;
+        it->d.on_world_stop(w, it->state);
+        e->inModuleCall = false;
+    }
+}
 
 EngineRuntime* engInternalRuntime(EngEngine* e) {
     if (!e) return nullptr;

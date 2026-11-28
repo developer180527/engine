@@ -6,4 +6,5 @@
 #include "eng_engine.h"
 #include "eng_window.h"
 #include "eng_world.h"
+#include "eng_module.h"
 #endif

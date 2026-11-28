@@ -1,6 +1,6 @@
 {
-  "generated": "2026-11-27T21:36:48+00:00",
-  "commit": "e8d7a57c99af40accd703e65ccc85d3f578e1b5d",
+  "generated": "2026-11-28T00:59:18+00:00",
+  "commit": "0978bd8153ef28c42eb3d953ebbbdf288cfdb01c",
   "note": "Accepted architectural debt. The gate fails on findings NOT listed here; shrinking this file is the cleanup, and nothing may be added to it without a reason in the commit.",
   "findings": {
     "LAYER-03": [
@@ -78,6 +78,20 @@
       "RHI-01|src/runtime/camera_util.h",
       "RHI-01|src/runtime/runtime_sim.cpp",
       "RHI-01|src/runtime/sim_classification.cpp"
+    ],
+    "KIT-01": [
+      "KIT-01|include/engine/components.h",
+      "KIT-01|include/engine/engine.h",
+      "KIT-01|include/engine/game_module.h",
+      "KIT-01|include/engine/plugin.h",
+      "KIT-01|include/engine/plugins.h",
+      "KIT-01|src/plugins/audio_plugin.h",
+      "KIT-01|src/plugins/jolt_plugin.h",
+      "KIT-01|src/plugins/lua_script_plugin.h",
+      "KIT-01|src/plugins/null_audio_plugin.h",
+      "KIT-01|src/plugins/null_physics_plugin.h",
+      "KIT-01|src/plugins/null_script_plugin.h",
+      "KIT-01|src/plugins/stock_providers.cpp"
     ]
   }
 }

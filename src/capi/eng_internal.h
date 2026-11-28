@@ -21,3 +21,12 @@ void engInternalDestroyWorld(EngWorld* world);
 void engInternalSetError(std::string message);
 // The flecs id behind a component handle, for tests and benches; 0 if none.
 uint64_t engInternalComponentId(EngWorld* world, EngComponent component);
+
+// ── Modules (eng_module.h, WO-073 part 3) ────────────────────────────────────
+// True while a module's callback runs: no world is created or destroyed then.
+bool engInternalInModuleCall(EngEngine* engine);
+// on_world_start for every module, in order. One failing stops the ones
+// started, in reverse, and the error names it.
+EngResult engInternalStartModules(EngEngine* engine, EngWorld* world);
+// on_world_stop for every module started, in reverse.
+void engInternalStopModules(EngEngine* engine, EngWorld* world);

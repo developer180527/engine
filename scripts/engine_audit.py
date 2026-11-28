@@ -906,6 +906,64 @@ def rule_providers_reach_no_internals() -> Rule:
     return r
 
 
+# ── KIT-01: what kits and providers include reaches no flecs (WO-073) ──────
+# The ECS is core and stays flecs inside (DR-0029); what kits, providers and
+# games see is the engine's own world, eng_world.h (DR-0028). Followed through
+# our own headers, because the coupling is the same whether a file names
+# <flecs.h> or reaches it through runtime/plugin.h. Today's are the baseline,
+# and it only shrinks: a provider or kit header moved onto the C API leaves it.
+KIT_FACING = ("include/engine/", "include/eng/", "src/plugins/", "samples/combat_c/")
+
+
+def flecs_chain(rel: str, memo: dict[str, list[str] | None], stack: set[str]) -> list[str] | None:
+    """The include chain from rel to flecs, through files in this repo; None if none."""
+    if rel in memo:
+        return memo[rel]
+    if rel in stack:          # a cycle is LAYER-03's business; here it reaches nothing new
+        return None
+    stack.add(rel)
+    q, a = includes(rel)
+    found: list[str] | None = None
+    for inc in a:
+        if third_party_of(inc) == "flecs":
+            found = [f"<{inc}>"]
+            break
+    if found is None:
+        here = Path(rel).parent.as_posix()
+        for inc in q + a:
+            # A quoted include is looked for beside the file first, as the
+            # compiler does; resolve() alone misses "audio_plugin.h" from
+            # src/plugins/audio_impl.cpp.
+            local = os.path.normpath(f"{here}/{inc}").replace("\\", "/")
+            tgt = local if inc in q and (REPO / local).is_file() else resolve(inc)
+            if not tgt or tgt == rel:
+                continue
+            sub = flecs_chain(tgt, memo, stack)
+            if sub is not None:
+                found = [tgt] + sub
+                break
+    stack.discard(rel)
+    memo[rel] = found
+    return found
+
+
+def rule_kits_see_no_flecs() -> Rule:
+    r = Rule("KIT-01", "kit-facing code reaches no flecs",
+             "docs/plans/engine-api.md §9 step 3; DR-0028, DR-0029; WO-073.",
+             "a kit or provider that sees flecs is built against the engine's "
+             "insides: it breaks when the ECS's version or layout moves, and it "
+             "cannot be written in C, loaded from another language, or kept when "
+             "the world behind eng_world.h changes.")
+    memo: dict[str, list[str] | None] = {}
+    for rel in tracked(*KIT_FACING):
+        if not rel.endswith(SRC_EXT):
+            continue
+        chain = flecs_chain(rel, memo, set())
+        if chain is not None:
+            r.findings.append(Finding(r.id, rel, f"{rel} reaches flecs: " + " -> ".join(chain)))
+    return r
+
+
 RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
          rule_acyclic_modules, rule_render_world_purity, rule_import_format_purity, rule_abi_group_wiring, rule_abi_offsets_tile,
          rule_abi_compat_coverage, rule_component_hash_membership,
@@ -913,7 +971,8 @@ RULES = (rule_core_purity, rule_editor_isolation, rule_declared_edges,
          rule_c_abi_header_purity, rule_bx_creep, rule_unknown_os_is_an_error,
          rule_threads_start_in_one_place,
          rule_one_camera_convention, rule_assimp_only_in_front_end,
-         rule_doc_coverage, rule_providers_apart, rule_providers_reach_no_internals)
+         rule_doc_coverage, rule_providers_apart, rule_providers_reach_no_internals,
+         rule_kits_see_no_flecs)
 
 # The checks that already exist as their own scripts. The farm wants ONE entry
 # point, and duplicating these here would mean two definitions of the same rule

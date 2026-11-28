@@ -298,8 +298,8 @@ said:
 `include/eng/eng_world.h` now holds entities, components by schema, one-entity
 access, batched queries and the change stream, implemented over flecs in
 `src/capi/eng_world.cpp` (`eng_world_test` in plain C, `eng_world_scene_test`,
-`eng_query_bench`). Systems and blobs followed (§10c); modules and a kit come
-next.
+`eng_query_bench`). Systems and blobs followed (§10c), then modules and the
+first C kit (§10d).
 
 1. **One world, the engine's own.** `engCreateWorld` hands out the simulation
    world, and a second one held at once is refused. `engDestroyWorld` releases
@@ -356,6 +356,39 @@ next.
    field (`scene-format.md`). The schema registry is the process's and blobs
    are the world's, so a schema finds the store through a world singleton,
    never a pointer it captured.
+
+## 10d. What modules and the first C kit taught (WO-073 part 3, 2026-11-28)
+
+`include/eng/eng_module.h` holds `EngModuleDesc`, passed in
+`EngEngineDesc.modules`; the combat kit is ported to it in
+`samples/combat_c/` (`eng_module_test`).
+
+1. **Four moments, two of them per world.** `on_load` and `on_unload` belong
+   to the engine; `on_world_start` and `on_world_stop` to each world, so a
+   world created again starts every module again. Start runs in list order,
+   stop and unload in reverse.
+2. **A failure undoes, and names the module.** The modules already started
+   (or loaded) are stopped in reverse, and the error carries the message the
+   module's own calls left. Components it registered stay registered: this
+   version cannot unregister one.
+3. **No world is created or destroyed from inside a callback.** Refused by
+   name, like `engDestroyWorld` from inside a system.
+4. **Services and `engLoadModule` are not in this version.** A module that
+   requires services is refused by name. A C kit is linked in, and C++ kits
+   still load from the project's manifest. So the editor and engine_player do
+   not run a C kit yet: that needs the manifest loader to know C modules and
+   the editor's Play world to be a C world (WO-094).
+5. **The port needed nothing the API lacked.** Drain an inbox, change Health,
+   tag the dead: a query, one system, and one-entity access inside the batch,
+   with the structural changes queued. The C++ kit's event sweeper became a
+   plain remove, and its editor slider has no C equivalent yet (no UI API).
+6. **The dealer's contract is a header of names and layouts** with one inline
+   function (`combatDealDamage`). Kits cooperate through components, found by
+   name, as the C++ kits did through flecs.
+7. **The boundary is now measured.** `engine_audit` KIT-01 follows includes
+   through our own headers. 12 kit-facing files reach flecs today, all
+   through `runtime/plugin.h`, `runtime/runtime.h`, `collision_events.h` or
+   `game_module.h`. That is the list to empty.
 
 ## 11. Questions for the owner
 

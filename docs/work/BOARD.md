@@ -12,9 +12,8 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-- [WO-073](WO-073-world-c-api.md) **The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary** — 3/5 done. Still open:
-  - one first-party kit ported to it (`docs/plans/engine-api-draft/examples/kit.c` is the shape), loading with no flecs or engine C++ include
-  - an `engine_audit` rule: no flecs include in `include/engine/` or `src/plugins/`, with today's findings as a baseline that only shrinks, mutation-checked
+- [WO-073](WO-073-world-c-api.md) **The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary** — 5/5 done. Still open:
+  - (all ticked: close it)
 
 ## Next up
 
@@ -26,7 +25,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | **active** 3/5 | kit-abi |
+| [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | **active** 5/5 | kit-abi |
 | [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API | Providers & modules | M | blocked by WO-073 | engine-plugin |
 | [WO-075](WO-075-renderer-contract-headers.md) | The renderer contract as headers, with a conformance suite the null renderer passes first | Renderer & RHI | M | blocked by WO-073 | renderer |
 | [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | **ready** | kit-abi, engine-plugin, script-services |
@@ -38,6 +37,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
 | [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
 | [WO-090](WO-090-first-librhi-renderer.md) | The first librhi renderer — a provider beside bgfx, the forward pipeline ported pass by pass, each bgfx assumption removed where the port meets it | Renderer & RHI | L | blocked by WO-075 | renderer, gpu-seam |
+| [WO-094](WO-094-c-kits-in-the-editor-and-player.md) | C kits in the editor and engine_player — the manifest loads C modules, and Play is a C world | Providers & modules | L | blocked by WO-073 | kit-abi |
 
 ## P2 — the planned programmes, in dependency order.
 

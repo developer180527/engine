@@ -47,9 +47,10 @@ typedef struct EngEngineDesc {
     const EngProviderChoice* providers;
     uint32_t provider_count;
     EngPacing pacing;
-    /* Kits and providers linked into this program. iOS, consoles and the web
-     * can only use this path; desktop may also use engLoadModule. Not
-     * implemented in this version: a non-zero count is refused by name. */
+    /* Kits linked into this program (eng_module.h), called back in this
+     * order. iOS, consoles and the web can only use this path. Each entry
+     * must outlive the engine; a NULL entry, a duplicate name or a module
+     * that needs services is refused by name. */
     const EngModuleDesc* const* modules;
     uint32_t module_count;
     uint32_t reserved0;         /* must be zero */

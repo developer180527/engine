@@ -66,6 +66,7 @@ rule nobody agreed to.
 | `DOC-01` | every directory of code is covered by some document | `engineering-standards.md` §1 |
 | `PROV-01` | a provider's files (its manifest's `"files"`) include no other provider's files, except a header its kind shares as the contract (`"shares"`) | `docs/plans/provider-selection.md` §6, WO-087 |
 | `PROV-02` | a provider's files include none of the runtime's internals (`runtime/runtime.h`), the editor or the tools: it is given what it needs in a `ProviderContext` | `src/runtime/provider_registry.h`, WO-087 |
+| `KIT-01` | what kits and providers include reaches no flecs, followed through our own headers: `include/engine/`, `include/eng/`, `src/plugins/` and the C kit (`samples/combat_c/`). The 12 found on 2026-11-28 are the baseline, which only shrinks as headers move onto the C API | `docs/plans/engine-api.md` §9 step 3, DR-0028, WO-073 |
 
 `bx` is **not** treated as a graphics dependency, matching `check_gpu_seam.py`'s
 exclusion — it is the math library, and conflating the two would make

@@ -258,6 +258,18 @@ set_target_properties(eng_systems_test PROPERTIES LINKER_LANGUAGE CXX
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} C_STANDARD 11 C_STANDARD_REQUIRED ON)
 add_test(NAME eng_systems_test COMMAND eng_systems_test)
 set_tests_properties(eng_systems_test PROPERTIES LABELS unit TIMEOUT 120)
+# Modules linked into a program, and the combat kit ported to C on them (WO-073
+# part 3). The kit is its own library with only include/ on its path, and it
+# links nothing: a flecs or engine C++ include in it fails to compile here.
+add_library(combat_c STATIC ${CMAKE_SOURCE_DIR}/samples/combat_c/combat.c)
+target_include_directories(combat_c PUBLIC ${CMAKE_SOURCE_DIR}/samples/combat_c PRIVATE ${CMAKE_SOURCE_DIR}/include)
+set_target_properties(combat_c PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
+add_executable(eng_module_test eng_module_test.c)
+target_link_libraries(eng_module_test PRIVATE combat_c engine_capi)
+set_target_properties(eng_module_test PROPERTIES LINKER_LANGUAGE CXX
+                      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} C_STANDARD 11 C_STANDARD_REQUIRED ON)
+add_test(NAME eng_module_test COMMAND eng_module_test)
+set_tests_properties(eng_module_test PROPERTIES LABELS unit TIMEOUT 120)
 # And what C cannot see: a C API component saved and loaded with scenes (an
 # entity field linked again), and classified and hashed by the sim hash.
 engine_test(eng_world_scene_test LIB engine_capi)

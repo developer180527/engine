@@ -16,6 +16,8 @@ touches:
   - include/engine/engine_api.h
   - include/engine/game_module.h
   - scripts/engine_audit.py
+  - include/eng/eng_module.h
+  - samples/combat_c/combat.c
 source: docs/plans/engine-api.md §9 step 3; engine-architecture.md §3; roadmap §2.8; DR-0028, DR-0029
 ---
 ## Why
@@ -24,8 +26,8 @@ Kits and providers see flecs today: `game_module.h` hands kits an `ecs_world_t*`
 ## Done when
 - [x] `eng_world.h` implemented over flecs: entities with stable ids, component registration by schema (WO-071), single-entity access, batched queries, systems in phases with `run_after`, the change stream (WO-072), and `EngBlob` storage for variable-length fields (2026-11-28: parts 1 and 2, see the log; `parallel` systems are refused by name)
 - [x] `engine_runtime`'s own tests drive it, and one test reads a query's columns from C with no C++ in the test (2026-11-28: `eng_world_test.c`, plain C11 with only `<eng/engine.h>`, 38 checks; `eng_world_scene_test` for what C cannot see)
-- [ ] one first-party kit ported to it (`docs/plans/engine-api-draft/examples/kit.c` is the shape), loading with no flecs or engine C++ include
-- [ ] an `engine_audit` rule: no flecs include in `include/engine/` or `src/plugins/`, with today's findings as a baseline that only shrinks, mutation-checked
+- [x] one first-party kit ported to it (`docs/plans/engine-api-draft/examples/kit.c` is the shape), loading with no flecs or engine C++ include (2026-11-28: the combat kit, `samples/combat_c/`, linked in through `EngEngineDesc.modules`; built with only `include/` on its path. Loading it in the editor and engine_player is WO-094)
+- [x] an `engine_audit` rule: no flecs include in `include/engine/` or `src/plugins/`, with today's findings as a baseline that only shrinks, mutation-checked (2026-11-28: KIT-01, followed through our own headers, also over `include/eng/` and the C kit; 12 baselined)
 - [x] the cost of a query batch measured against a direct flecs query on the 50 000-object scene, and recorded (2026-11-28: 0.45 against 0.44 ns per entity; `eng_query_bench`, see the log)
 
 ## Contract
@@ -154,3 +156,51 @@ Nothing: today's kit ABI keeps loading old kits until `engine-api.md` §11.3 is 
       blob, bad text keeping the default, and the hash reading bytes, not
       handles (also broken on purpose and caught).
     - `eng_header_check` covers the two new structs.
+- 2026-11-28 — **Part 3 of 3: modules, the combat kit in C, and the audit
+  rule.**
+  - **Modules** (`include/eng/eng_module.h`, `EngEngineDesc.modules`).
+    - Four optional callbacks:
+      - `on_load` at `engCreateEngine`, in list order;
+      - `on_world_start` at `engCreateWorld`, in list order;
+      - `on_world_stop` at `engDestroyWorld` (or `engDestroyEngine` with a
+        world held), in reverse;
+      - `on_unload` at `engDestroyEngine`, in reverse.
+    - Each callback gets back the state its module's `on_load` wrote.
+    - **A failing `on_load` or `on_world_start`** fails the call. The modules
+      before it are undone in reverse, and the error names the module and
+      carries the message its own calls left.
+    - **No world is created or destroyed from a callback;** refused by name.
+    - **Refused by name:** a NULL entry (by index), a name twice, no name, a
+      wrong `api_version`, `reserved` not zero, and services (not in this
+      version).
+  - **The combat kit in C** (`samples/combat_c/`). The C++ CombatKit lives in
+    its own repository (`kits/CombatKit`, ignored here), which CI never
+    builds, so the port lives in this repo. Same rule as the C++ kit: damage
+    in an inbox, drained once per step into Health, only entities with Health
+    hurt, Died added once and the entity left for the game.
+    - `combat.h` is the dealer's contract: three layouts, their names, and
+      `combatDealDamage`.
+    - Built as its own library with only `include/` on its path and nothing
+      linked, so a flecs or engine C++ include fails to compile (tried).
+    - The C++ kit stays for the editor, the FPS and AI kits; WO-094 moves them.
+  - **KIT-01** in `engine_audit`: what `include/engine/`, `include/eng/`,
+    `src/plugins/` and the C kit include reaches no flecs, followed through our
+    own headers (quoted includes looked for beside the file first, as the
+    compiler does). 12 today, baselined:
+    - all five plugin headers, through `runtime/plugin.h`;
+    - `stock_providers.cpp`, through `runtime/runtime.h`;
+    - `include/engine/`'s `engine.h`, `plugin.h`, `plugins.h`, `components.h`
+      (through `collision_events.h`) and `game_module.h`.
+  - **Tests.** `eng_module_test.c`, plain C11, 46 checks. Each of these was
+    broken on purpose and caught:
+    - stopping in list order (3 failures)
+    - not undoing a failed `on_world_start` (1)
+    - the kit not draining the inbox (5)
+    - for KIT-01: `<flecs.h>` in `combat.h`, and `eng_module.h` reaching it
+      through `engine/plugin.h`; an include in a comment is not one.
+
+    Removing the kit's "died already" check was not caught, and cannot be:
+    `engAddComponent` refuses a component the entity has, so `Died` is added
+    once either way. `eng_step_test`'s check that modules are refused now
+    checks a count with no list.
+
