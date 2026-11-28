@@ -168,6 +168,56 @@ int main() {
     engSetComponent(world, a, route, &r, sizeof r);
     CHECK(h2 != h0 && simhash::hashWorld(w) == h0, "a blob's bytes reach the hash; its handle does not");
 
+
+    // ── A vector read as SchemaBuilder reads one (review, 2026-11-28) ───────
+    // dynamic_schema.h says its rules are SchemaBuilder's, and the scene format
+    // promises short arrays fill what they can: [1, 2] into a VEC4 is
+    // (1, 2, default, default), and a bad element keeps only its own default.
+    {
+        std::vector<SerdeContext::EntityRef> refs3;
+        SerdeContext c3; c3.mode = SerdeMode::Disk; c3.entityRefs = &refs3;
+        json sv = savedA;
+        sv["id"] = 900010;
+        sv.erase("apollo.Route");
+        sv["apollo.Thruster"]["dir"] = json::array({1.0, 2.0});
+        flecs::entity sh = createEntity(w, sv, c3, IdPolicy::Preserve);
+        json sw = savedA;
+        sw["id"] = 900011;
+        sw.erase("apollo.Route");
+        sw["apollo.Thruster"]["dir"] = json::array({3.0, "x", 5.0, 6.0});
+        flecs::entity bad = createEntity(w, sw, c3, IdPolicy::Preserve);
+        resolveEntityRefs(w, c3);
+        Thruster s1{}, s2{};
+        engGetComponent(world, sh.id(), thruster, &s1, sizeof s1);
+        engGetComponent(world, bad.id(), thruster, &s2, sizeof s2);
+        CHECK(s1.dir[0] == 1.0f && s1.dir[1] == 2.0f && s1.dir[2] == 0.0f && s1.dir[3] == 0.0f,
+              "a short array fills what it has, the rest default (%g %g %g %g)", s1.dir[0], s1.dir[1], s1.dir[2], s1.dir[3]);
+        CHECK(s2.dir[0] == 3.0f && s2.dir[1] == 0.0f && s2.dir[2] == 5.0f && s2.dir[3] == 6.0f,
+              "an element that is not a number keeps its own default (%g %g %g %g)", s2.dir[0], s2.dir[1], s2.dir[2], s2.dir[3]);
+    }
+
+    // ── What a kit made goes when it stops, slot reused or not (review) ─────
+    // WO-094: a kit's queries are destroyed at its stop. The second Play reuses
+    // the slots the first one freed.
+    {
+        static const int kitA = 0;
+        const EngQueryTerm term{thruster, ENG_ACCESS_READ, {0, 0}};
+        EngQueryDesc qd = ENG_INIT(EngQueryDesc);
+        qd.terms = &term; qd.term_count = 1;
+        for (int play = 1; play <= 2; ++play) {
+            const void* was = engInternalSetOwner(world, &kitA);
+            EngQuery q = 0;
+            engCreateQuery(world, &qd, &q);
+            engInternalSetOwner(world, was);
+            const uint32_t dropped = engInternalDropOwned(world, &kitA);
+            EngQueryIter* it = nullptr;
+            const EngResult r = engQueryBegin(world, q, &it);
+            if (it) engQueryEnd(it);
+            CHECK(dropped == 1 && r == ENG_ERROR_STALE_HANDLE,
+                  "play %d: the kit's query is destroyed at its stop (dropped %u)", play, dropped);
+        }
+    }
+
     engDestroyWorld(world);
     engDestroyEngine(engine);
     std::printf(g_failures ? "\nFAILED: %d\n" : "\nall passed\n", g_failures);

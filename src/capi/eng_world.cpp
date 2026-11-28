@@ -1041,6 +1041,11 @@ EngResult engCreateQuery(EngWorld* w, const EngQueryDesc* in, EngQuery* out) {
         qd.cache_kind = EcsQueryCacheAuto;
         qe.q = ecs_query_init(raw(w), &qd);
         if (!qe.q) return fail(ENG_ERROR_INTERNAL, "the query could not be built");
+        // The C kit whose code runs now owns it, so it goes at the kit's stop
+        // (engInternalDropOwned), in a reused slot as in a new one. It was set
+        // only on the new-slot path, so a kit's second Play left its queries
+        // behind (review, 2026-11-28; eng_world_scene_test).
+        qe.owner = w->owner;
         // Reuse a free slot, with its generation bumped, so a stale handle is refused.
         for (size_t i = 0; i < w->queries.size(); ++i) {
             if (w->queries[i].q) continue;
@@ -1052,7 +1057,6 @@ EngResult engCreateQuery(EngWorld* w, const EngQueryDesc* in, EngQuery* out) {
         }
         if (w->queries.size() >= 0xFFFF) { ecs_query_fini(qe.q); return fail(ENG_ERROR_OUT_OF_MEMORY, "65 535 queries are held"); }
         qe.gen = 1;
-        qe.owner = w->owner;
         w->queries.push_back(std::move(qe));
         *out = ((EngQuery)1 << 16) | (EngQuery)w->queries.size();
         return ENG_OK;

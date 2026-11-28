@@ -176,15 +176,18 @@ inline void loadValue(uint32_t t, uint8_t* p, const nlohmann::json& v) {
         case F64: if (v.is_number()) { const double d = v.get<double>(); if (std::isfinite(d)) std::memcpy(p, &d, 8); } return;
         case F32: if (v.is_number()) { const float f = v.get<float>(); if (std::isfinite(f)) std::memcpy(p, &f, 4); } return;
         default: {
+            // As SchemaBuilder (jsonread::readFloats): an array; as many
+            // elements as it has, up to the type's; each a finite number, or
+            // that element keeps what it held. Before, a short array or one bad
+            // element left the whole vector untouched (review, 2026-11-28).
             const uint32_t n = floatsOf(t);
-            if (!v.is_array() || v.size() != n) return;
-            float tmp[16];
-            for (uint32_t i = 0; i < n; ++i) {
-                if (!v[i].is_number()) return;
-                tmp[i] = v[i].get<float>();
-                if (!std::isfinite(tmp[i])) return;
+            if (!v.is_array()) return;
+            const size_t have = v.size() < n ? v.size() : n;
+            for (size_t i = 0; i < have; ++i) {
+                if (!v[i].is_number()) continue;
+                const float f = v[i].get<float>();
+                if (std::isfinite(f)) std::memcpy(p + 4 * i, &f, 4);
             }
-            std::memcpy(p, tmp, 4 * n);
         }
     }
 }

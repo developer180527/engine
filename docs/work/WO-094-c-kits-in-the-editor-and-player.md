@@ -74,3 +74,4 @@ Nothing: until this lands, a project's `kits` load as C++ plugins only, and a C 
     the C world (an `EngWorld*` beside the flecs world they are given), or
     they are ported too.
 
+- 2026-11-28, review: part 2's question (give the C++ kits an `EngWorld*`, or port them) has the plan's answer in DR-0028 and engine-api.md §8, a C++ wrapper over the C world, which no order built. That is WO-095; part 2 is written on it. Also fixed in review: a kit's queries created at a second Play were not destroyed at its stop (BUG-0086).
