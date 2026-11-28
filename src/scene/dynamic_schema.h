@@ -12,13 +12,16 @@
 // whole scene exists. Not packed (no `pack`): the cooker keeps such a
 // component as CBOR, which the packed loader reads.
 //
-// Field types here are the C API's (EngFieldType); asset and blob fields are
-// refused before this is reached.
+// Field types here are the C API's (EngFieldType); asset fields are refused
+// before this is reached. A blob field holds a handle into the world's
+// DynamicBlobStore (below): saved as its bytes in base64, loaded into a new
+// blob whose handle the field then holds.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -29,6 +32,19 @@
 #include "scene/component_schema.h"
 
 namespace EntitySerde {
+
+// Where a world keeps the bytes behind blob fields. The C API's store
+// (src/capi/eng_world.cpp) implements it and sets DynamicBlobsRef on the
+// world, so a schema (process-wide) finds the store of the entity's own world.
+class DynamicBlobStore {
+public:
+    virtual ~DynamicBlobStore() = default;
+    // The bytes of blob h; false for 0 or a handle that is not live.
+    virtual bool bytes(uint64_t h, const uint8_t*& p, uint32_t& n) const = 0;
+    // A new blob nobody holds yet; 0 when it cannot be made.
+    virtual uint64_t create(const uint8_t* p, uint32_t n) = 0;
+};
+struct DynamicBlobsRef { std::shared_ptr<DynamicBlobStore> store; };
 
 struct DynamicField {
     std::string name;
@@ -47,7 +63,7 @@ enum : uint32_t {
 inline uint32_t valueSize(uint32_t t) {
     switch (t) {
         case Bool32: case I32: case U32: case F32: return 4;
-        case I64: case U64: case F64: case Entity: return 8;
+        case I64: case U64: case F64: case Entity: case Blob: return 8;
         case U8: case I8: case FixedString: return 1;
         case U16: case I16: return 2;
         case Vec2: return 8;
@@ -71,9 +87,50 @@ inline FieldType schemaType(uint32_t t) {
         case F64: return FieldType::F64;      case Vec2: return FieldType::Vec2;
         case Vec3: return FieldType::Vec3;    case Vec4: return FieldType::Vec4;
         case Quat: return FieldType::Quat;    case Mat4: return FieldType::Mat4;
-        case FixedString: return FieldType::String;
+        case FixedString: case Blob: return FieldType::String;   // a blob is a base64 string on disk
         default: return FieldType::Entity;
     }
+}
+
+// RFC 4648 base64, with padding.
+inline std::string base64(const uint8_t* p, size_t n) {
+    static const char k[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((n + 2) / 3 * 4);
+    for (size_t i = 0; i < n; i += 3) {
+        const uint32_t v = (uint32_t)p[i] << 16 | (i + 1 < n ? (uint32_t)p[i + 1] << 8 : 0u) | (i + 2 < n ? p[i + 2] : 0u);
+        out += k[v >> 18 & 63];
+        out += k[v >> 12 & 63];
+        out += i + 1 < n ? k[v >> 6 & 63] : '=';
+        out += i + 2 < n ? k[v & 63] : '=';
+    }
+    return out;
+}
+// false for anything that is not canonical padded base64.
+inline bool unbase64(const std::string& s, std::vector<uint8_t>& out) {
+    out.clear();
+    if (s.size() % 4) return false;
+    auto val = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    };
+    out.reserve(s.size() / 4 * 3);
+    for (size_t i = 0; i < s.size(); i += 4) {
+        const bool last = i + 4 == s.size();
+        const int a = val(s[i]), b = val(s[i + 1]);
+        const int c = (last && s[i + 2] == '=') ? -2 : val(s[i + 2]);
+        const int d = (last && s[i + 3] == '=') ? -2 : val(s[i + 3]);
+        if (a < 0 || b < 0 || c == -1 || d == -1 || (c == -2 && d != -2)) return false;
+        const uint32_t v = (uint32_t)a << 18 | (uint32_t)b << 12 | (uint32_t)(c < 0 ? 0 : c) << 6 | (uint32_t)(d < 0 ? 0 : d);
+        out.push_back((uint8_t)(v >> 16));
+        if (c >= 0) out.push_back((uint8_t)(v >> 8));
+        if (d >= 0) out.push_back((uint8_t)v);
+    }
+    return true;
 }
 
 template <class I> inline void writeInt(uint8_t* p, const nlohmann::json& v) {
@@ -164,6 +221,13 @@ inline ComponentSchema dynamicSchema(const std::string& name, uint32_t revision,
                 out[f.name] = std::string(reinterpret_cast<const char*>(p), strnlen(reinterpret_cast<const char*>(p), f.count));
                 continue;
             }
+            if (f.type == dyn::Blob) {
+                uint64_t h; std::memcpy(&h, p, 8);
+                const DynamicBlobsRef* ref = e.world().try_get<DynamicBlobsRef>();
+                const uint8_t* bp = nullptr; uint32_t bn = 0;
+                out[f.name] = (h && ref && ref->store && ref->store->bytes(h, bp, bn)) ? dyn::base64(bp, bn) : std::string();
+                continue;
+            }
             const uint32_t vs = dyn::valueSize(f.type);
             auto one = [&](const uint8_t* q) -> nlohmann::json {
                 if (f.type != dyn::Entity) return dyn::saveValue(f.type, q);
@@ -192,6 +256,21 @@ inline ComponentSchema dynamicSchema(const std::string& name, uint32_t revision,
                 const std::string str = it->get<std::string>();
                 std::memset(p, 0, f.count);
                 std::memcpy(p, str.data(), std::min<size_t>(str.size(), f.count - 1));
+                continue;
+            }
+            if (f.type == dyn::Blob) {
+                // A new blob from the text; the field then holds it, and the
+                // one it held before is freed (the store's OnSet does both).
+                std::vector<uint8_t> bytes;
+                if (!it->is_string() || !dyn::unbase64(it->get<std::string>(), bytes)) continue;
+                uint64_t h = 0;
+                if (!bytes.empty()) {
+                    const DynamicBlobsRef* ref = e.world().try_get<DynamicBlobsRef>();
+                    if (!ref || !ref->store) continue;   // no store in this world: keep what is there
+                    h = ref->store->create(bytes.data(), (uint32_t)bytes.size());
+                    if (!h) continue;
+                }
+                std::memcpy(p, &h, 8);
                 continue;
             }
             const uint32_t vs = dyn::valueSize(f.type);

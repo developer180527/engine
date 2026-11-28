@@ -41,37 +41,40 @@ public:
             guarded(**it, "onDetach", [&] { (*it)->onDetach(); });
     }
 
+    // ── The two edges ──────────────────────────────────────────────────────
+    // Optional plugins broadcast before every registered plugin and after
+    // every one, whatever order plugins were added or reloaded in. Not owned,
+    // never attached or detached here, and not in all(). The C world API
+    // (src/capi/eng_world.cpp) puts its systems' phases here (WO-073): UPDATE
+    // before every kit's onFrame, LATE_UPDATE after all of them. nullptr
+    // clears an edge.
+    void setEdges(IEnginePlugin* first, IEnginePlugin* last) { m_first = first; m_last = last; }
+
     // ── Simulation broadcasts ──────────────────────────────────────────────
     // gameWorld is the freshly-populated game ECS — plugins may register
     // their own systems into it during onSimulationStart.
     void broadcastSimStart(flecs::world& gameWorld) {
-        for (auto& p : m_plugins)
-            guarded(*p, "onSimulationStart", [&] { p->onSimulationStart(gameWorld); });
+        each("onSimulationStart", [&](IEnginePlugin& p) { p.onSimulationStart(gameWorld); });
     }
 
     void broadcastSimStop() {
-        for (auto& p : m_plugins)
-            guarded(*p, "onSimulationStop", [&] { p->onSimulationStop(); });
+        each("onSimulationStop", [&](IEnginePlugin& p) { p.onSimulationStop(); });
     }
 
     // Per-frame phases while SimState == Playing (Paused skips them). Called in
     // this order each frame, before rendering: pre-physics -> step -> post.
     void broadcastUpdate(flecs::world& gameWorld, float dt) {
-        for (auto& p : m_plugins)
-            guarded(*p, "onUpdate", [&] { p->onUpdate(gameWorld, dt); });
+        each("onUpdate", [&](IEnginePlugin& p) { p.onUpdate(gameWorld, dt); });
     }
     // RENDER-RATE (real dt, after the fixed sim steps): presentation-only.
     void broadcastFrame(flecs::world& gameWorld, float dt) {
-        for (auto& p : m_plugins)
-            guarded(*p, "onFrame", [&] { p->onFrame(gameWorld, dt); });
+        each("onFrame", [&](IEnginePlugin& p) { p.onFrame(gameWorld, dt); });
     }
     void broadcastPhysicsStep(flecs::world& gameWorld, float dt) {
-        for (auto& p : m_plugins)
-            guarded(*p, "onPhysicsStep", [&] { p->onPhysicsStep(gameWorld, dt); });
+        each("onPhysicsStep", [&](IEnginePlugin& p) { p.onPhysicsStep(gameWorld, dt); });
     }
     void broadcastPostPhysics(flecs::world& gameWorld) {
-        for (auto& p : m_plugins)
-            guarded(*p, "onPostPhysics", [&] { p->onPostPhysics(gameWorld); });
+        each("onPostPhysics", [&](IEnginePlugin& p) { p.onPostPhysics(gameWorld); });
     }
 
     // Editor UI is NOT broadcast here — a host walks all() and calls
@@ -81,6 +84,15 @@ public:
     }
 
 private:
+    // The first edge, every plugin in order, then the last edge.
+    template <typename Fn>
+    void each(const char* phase, Fn&& fn) {
+        if (m_first) guarded(*m_first, phase, [&] { fn(*m_first); });
+        for (auto& p : m_plugins)
+            guarded(*p, phase, [&] { fn(*p); });
+        if (m_last) guarded(*m_last, phase, [&] { fn(*m_last); });
+    }
+
     // Exception fence: one plugin throwing must not take down the frame or
     // skip its peers. Honest limit — segfaults/aborts remain uncatchable;
     // this guards the recoverable failure class only.
@@ -97,4 +109,6 @@ private:
     }
 
     std::vector<std::shared_ptr<IEnginePlugin>> m_plugins;
+    IEnginePlugin* m_first = nullptr;
+    IEnginePlugin* m_last  = nullptr;
 };

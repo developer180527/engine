@@ -22,7 +22,7 @@ source: docs/plans/engine-api.md §9 step 3; engine-architecture.md §3; roadmap
 Kits and providers see flecs today: `game_module.h` hands kits an `ecs_world_t*`, `EngineEntity` is a flecs id, and the Jolt plugin takes `flecs::world`. The ECS is core (DR-0029) and stays flecs inside; what games, kits and providers use is the engine's own world (DR-0028).
 
 ## Done when
-- [ ] `eng_world.h` implemented over flecs: entities with stable ids, component registration by schema (WO-071), single-entity access, batched queries, systems in phases with `run_after`, the change stream (WO-072), and `EngBlob` storage for variable-length fields (2026-11-28: all but systems and blobs, see the log)
+- [x] `eng_world.h` implemented over flecs: entities with stable ids, component registration by schema (WO-071), single-entity access, batched queries, systems in phases with `run_after`, the change stream (WO-072), and `EngBlob` storage for variable-length fields (2026-11-28: parts 1 and 2, see the log; `parallel` systems are refused by name)
 - [x] `engine_runtime`'s own tests drive it, and one test reads a query's columns from C with no C++ in the test (2026-11-28: `eng_world_test.c`, plain C11 with only `<eng/engine.h>`, 38 checks; `eng_world_scene_test` for what C cannot see)
 - [ ] one first-party kit ported to it (`docs/plans/engine-api-draft/examples/kit.c` is the shape), loading with no flecs or engine C++ include
 - [ ] an `engine_audit` rule: no flecs include in `include/engine/` or `src/plugins/`, with today's findings as a baseline that only shrinks, mutation-checked
@@ -94,4 +94,63 @@ Nothing: today's kit ABI keeps loading old kits until `engine-api.md` §11.3 is 
     The C API costs nothing measurable. The watched case is the stream's own
     per-entity merge (WO-072's hash map), worth making cheaper before a
     provider watches a column that large every frame.
-
+- 2026-11-28 — **Part 2 of 3: systems and blobs.**
+  - **Systems** (`engCreateSystem`, `engDestroySystem`).
+    - Three phases:
+      - FIXED_UPDATE runs once per simulation step, at exactly 1/60, where
+        kits' `onUpdate` runs: before physics, inside the command window and
+        the authority check.
+      - UPDATE runs once per frame, before every kit's `onFrame`.
+      - LATE_UPDATE runs once per frame, after all of them.
+    - They hang on two new **edges** of the plugin registry (`setEdges`),
+      broadcast before and after every plugin whatever order kits load or
+      hot-reload in. Without a C world the edges are null and nothing changes.
+    - **Order within a phase.** Systems run in creation order, moved only as
+      `run_after` requires. A name not created yet counts once it is.
+    - **Refused by name:** a cycle (the message prints it,
+      `t.y -> t.x -> t.y`), a name in another phase (whichever system comes
+      second), a name taken, a name not namespaced, running after itself.
+    - **`parallel` is refused, not ignored.** Batches on the pool need the
+      change stream's marks to be thread-safe, and they are not.
+    - **With a query** the system is called once per batch, and its context
+      carries the iteration for `engMarkChanged`. A query a live system runs
+      cannot be destroyed.
+    - **From inside a system,** a new system runs from the phase's next run,
+      and a destroyed one does not run again. `engDestroyWorld` from inside a
+      system is refused.
+  - **Blobs** (`engCreateBlob`, `engGetBlob`, `engSetBlob`; `ENG_FIELD_BLOB`
+    is no longer refused).
+    - **Owned by the field that holds them.** Storing a handle takes the blob.
+      Storing a handle another field holds stores a copy, so two fields never
+      share bytes. A blob is freed when its field lets go: set to another
+      handle or 0, the component removed, or the entity destroyed.
+    - **One rule in one place** (`BlobStore::reconcile`). It runs on OnSet
+      (add, set, scene load) and on every row a query's WRITE column handed
+      out, because a write in place fires no OnSet. It costs nothing for a
+      component without blob fields.
+    - **Handles carry a generation,** so a freed one is refused and never
+      reused.
+    - **`engSetBlob` counts as a change** of the component holding the blob
+      (the change stream reports it).
+    - **Saved** as base64 (`scene/dynamic_schema.h`) and loaded into a blob of
+      its own. Text that is not base64 keeps the default.
+    - **Hashed by its bytes,** never its handle.
+    - The store is the world's, found through a `DynamicBlobsRef` singleton
+      (exempt from the hash), because scene schemas are the process's.
+    - At most 16 MiB a blob, a BLOB field is one handle, and its default must
+      be 0.
+  - **Tests.**
+    - `eng_systems_test.c`, plain C11, 64 checks. Each of these was broken on
+      purpose and caught:
+      - the run_after edges
+      - copying a held blob
+      - settling a WRITE batch
+      - freeing on remove
+      - the order of the frame's phases
+      - the change mark from `engSetBlob`
+      - the handle generation (this one first slipped past a check that did
+        not compare against the slot just freed; tightened)
+    - `eng_world_scene_test`: the blob saved as base64, loaded into its own
+      blob, bad text keeping the default, and the hash reading bytes, not
+      handles (also broken on purpose and caught).
+    - `eng_header_check` covers the two new structs.

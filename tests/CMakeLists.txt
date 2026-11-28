@@ -251,6 +251,13 @@ set_target_properties(eng_world_test PROPERTIES LINKER_LANGUAGE CXX
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} C_STANDARD 11 C_STANDARD_REQUIRED ON)
 add_test(NAME eng_world_test COMMAND eng_world_test)
 set_tests_properties(eng_world_test PROPERTIES LABELS unit TIMEOUT 120)
+# Systems and blobs, from plain C as well (WO-073 part 2).
+add_executable(eng_systems_test eng_systems_test.c)
+target_link_libraries(eng_systems_test PRIVATE engine_capi)
+set_target_properties(eng_systems_test PROPERTIES LINKER_LANGUAGE CXX
+                      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} C_STANDARD 11 C_STANDARD_REQUIRED ON)
+add_test(NAME eng_systems_test COMMAND eng_systems_test)
+set_tests_properties(eng_systems_test PROPERTIES LABELS unit TIMEOUT 120)
 # And what C cannot see: a C API component saved and loaded with scenes (an
 # entity field linked again), and classified and hashed by the sim hash.
 engine_test(eng_world_scene_test LIB engine_capi)

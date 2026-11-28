@@ -1,11 +1,11 @@
 /* UNSTABLE (0.x): see eng_base.h.
  *
- * eng_world.h: entities, components, queries and the change stream. flecs
- * lives behind this and is named nowhere. A component is plain bytes with a
- * registered schema: no constructors, no pointers. Refer to other entities by
- * handle. The design is docs/plans/engine-api-draft/eng/eng_world.h; this
- * header holds what is implemented (WO-073, its first part). Systems and
- * blobs are declared when they exist. */
+ * eng_world.h: entities, components, queries, blobs, systems and the change
+ * stream. flecs lives behind this and is named nowhere. A component is plain
+ * bytes with a registered schema: no constructors, no pointers. Refer to
+ * other entities by handle, and to variable-length bytes by blob. The design
+ * is docs/plans/engine-api-draft/eng/eng_world.h; this header holds what is
+ * implemented (WO-073). */
 #ifndef ENG_WORLD_H
 #define ENG_WORLD_H
 #include "eng_base.h"
@@ -15,14 +15,17 @@ ENG_EXTERN_C_BEGIN
 /* This version has one world: the engine's simulation world, which lives as
  * long as the engine. engCreateWorld starts the engine headless if it has not
  * started, and a second engCreateWorld while one is held is
- * ENG_ERROR_UNSUPPORTED. engDestroyWorld releases the handle: the queries and
- * change streams made through it end, and the world's entities stay. */
+ * ENG_ERROR_UNSUPPORTED. engDestroyWorld releases the handle: the queries,
+ * systems and change streams made through it end, and the world's entities
+ * (and their blobs) stay. */
 typedef struct EngWorldDesc {
     uint32_t struct_size;
     uint32_t reserved;          /* must be zero */
     double fixed_step_seconds;  /* 0: 1/60, the only step this version runs */
 } EngWorldDesc;
 ENG_API EngResult engCreateWorld(EngEngine* engine, const EngWorldDesc* desc, EngWorld** out);
+/* Its systems end with it; refused while a query iteration is open, or from
+ * inside a system. */
 ENG_API void engDestroyWorld(EngWorld* world);
 
 /* ── Entities ──
@@ -54,7 +57,9 @@ enum {
     ENG_FIELD_U8, ENG_FIELD_I8, ENG_FIELD_U16, ENG_FIELD_I16,
     ENG_FIELD_VEC2, ENG_FIELD_VEC4, /* VEC4 also carries colours */
     ENG_FIELD_MAT4,                 /* 16 floats, column-major */
-    ENG_FIELD_BLOB                  /* not in this version: refused at registration */
+    /* An EngBlob: variable-length bytes the engine owns (a list of contacts, a
+     * path, a spline's points). count must be 0 or 1. See "Blobs" below. */
+    ENG_FIELD_BLOB
 };
 /* Passed as an array, so it can never grow. */
 typedef struct EngFieldDesc {
@@ -152,6 +157,79 @@ ENG_API void engQueryEnd(EngQueryIter* iter);
 /* For an ENG_ACCESS_WRITE_MARKED term, rows [first, first + count) of the
  * current batch changed. Rows not marked are not reported. */
 ENG_API void engMarkChanged(EngQueryIter* iter, uint32_t term, uint32_t first, uint32_t count);
+
+/* ── Blobs: the bytes behind an ENG_FIELD_BLOB field ──
+ * A blob field holds an EngBlob, or 0 for no bytes. The component stays plain
+ * bytes; the blob is saved and loaded with the scene (base64 on disk), hashed
+ * by its bytes, and freed with the field that holds it.
+ *
+ * Ownership. engCreateBlob makes a blob nobody holds yet. Storing its handle
+ * in a blob field (engAddComponent, engSetComponent, or a WRITE column of a
+ * query) gives it to that field. Storing a handle another field already holds
+ * stores a COPY: the engine writes a new handle into the field, so two fields
+ * never share bytes. A held blob is freed when its field stops holding it:
+ * the field is set to another handle or 0, the component is removed, or the
+ * entity is destroyed. A blob never stored is freed with the world.
+ *
+ * A stale handle (freed) is ENG_ERROR_STALE_HANDLE; a new blob never reuses
+ * one. A blob is at most 16 MiB in this version. */
+ENG_API EngResult engCreateBlob(EngWorld* world, const void* bytes_or_null, uint32_t size, EngBlob* out);
+/* *out_bytes is valid until the blob is next set or freed; NULL when size is 0. */
+ENG_API EngResult engGetBlob(EngWorld* world, EngBlob blob, const void** out_bytes, uint32_t* out_size);
+/* Replaces the bytes, keeping the handle. Counts as a change of the component
+ * that holds it. */
+ENG_API EngResult engSetBlob(EngWorld* world, EngBlob blob, const void* bytes_or_null, uint32_t size);
+
+/* ── Systems: your code in the engine's frame ──
+ * A system runs only while the simulation runs (engStep starts it).
+ *   FIXED_UPDATE  each simulation step, at 1/60 s, where kits' onUpdate runs:
+ *                 before physics, deterministic, replayed. The phase that
+ *                 writes simulation state.
+ *   UPDATE        once per frame, after the frame's steps, before any kit's
+ *                 onFrame. delta_seconds is the frame's.
+ *   LATE_UPDATE   once per frame after every kit's onFrame, just before
+ *                 rendering reads the world.
+ * Within a phase, systems run in the order they were created, moved only as
+ * run_after requires. */
+typedef uint32_t EngPhase;
+enum {
+    ENG_PHASE_FIXED_UPDATE = 0,
+    ENG_PHASE_UPDATE = 1,
+    ENG_PHASE_LATE_UPDATE = 2
+};
+typedef struct EngSystemContext {
+    uint32_t struct_size;
+    uint32_t reserved;     /* zero */
+    double delta_seconds;
+    uint64_t tick;         /* simulation steps taken, this one included in FIXED_UPDATE */
+    EngWorld* world;
+    void* user;
+    /* With a query: the iteration the batch comes from, for engMarkChanged.
+     * Without one: NULL. */
+    EngQueryIter* iter;
+} EngSystemContext;
+/* With a query: called once per batch (never for an empty one). Without one:
+ * called once, batch NULL. */
+typedef void (*EngSystemFn)(const EngSystemContext* context, const EngQueryBatch* batch);
+
+typedef struct EngSystemDesc {
+    uint32_t struct_size;
+    EngPhase phase;
+    const char* name;      /* namespaced and unique: "apollo.descent_engine" */
+    EngQuery query;        /* 0: none. Not destroyable while a system uses it */
+    EngBool parallel;      /* not in this version: ENG_TRUE is refused by name */
+    EngSystemFn fn;
+    void* user;
+    /* Names of systems in the same phase that must run first. A name not
+     * created yet counts once it is. A cycle, or a name in another phase, is
+     * refused by name, whichever system comes second. */
+    const char* const* run_after;
+    uint32_t run_after_count;
+    uint32_t reserved;     /* must be zero */
+} EngSystemDesc;
+ENG_API EngResult engCreateSystem(EngWorld* world, const EngSystemDesc* desc, EngSystem* out);
+/* Also from inside a system: it does not run again. */
+ENG_API void engDestroySystem(EngWorld* world, EngSystem system);
 
 /* ── The change stream: what changed since you last looked ──
  * Costs nothing for a component nobody subscribes to (DR-0011). A new stream

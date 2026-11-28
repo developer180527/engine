@@ -4,6 +4,8 @@
 // by field under its name, an entity field is saved as the target's stable id
 // and linked again on load, a value it cannot read keeps the default, and the
 // determinism gate classifies and hashes it (field by field, never padding).
+// A BLOB field (part 2) saves its bytes as base64, loads into a blob of its
+// own, and hashes by its bytes, never by its handle.
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -31,6 +33,11 @@ struct Thruster {
     EngEntity target;
     float    dir[4];      // VEC4
     char     label[16];   // FIXED_STRING
+};
+struct Route {
+    EngBlob  points;      // BLOB
+    float    width;
+    uint32_t pad;
 };
 
 int main() {
@@ -73,6 +80,21 @@ int main() {
     std::strcpy(t.label, "descent");
     CHECK(engAddComponent(world, a, thruster, &t) == ENG_OK, "set on an entity, naming another entity");
 
+    const EngFieldDesc routeFields[] = {
+        {"points", ENG_FIELD_BLOB, offsetof(Route, points), 1, 0},
+        {"width",  ENG_FIELD_F32,  offsetof(Route, width),  1, 0},
+    };
+    EngComponentDesc rd = ENG_INIT(EngComponentDesc);
+    rd.name = "apollo.Route"; rd.size = sizeof(Route); rd.align = alignof(Route);
+    rd.fields = routeFields; rd.field_count = 2;
+    EngComponent route = 0;
+    CHECK(engRegisterComponent(world, &rd, &route) == ENG_OK, "a kit's component with a BLOB field");
+    const unsigned char pts[] = {'a', 'b', 'c', 0x00, 0xFF};
+    EngBlob blob = 0;
+    engCreateBlob(world, pts, sizeof pts, &blob);
+    Route r{blob, 1.5f, 0};
+    CHECK(engAddComponent(world, a, route, &r) == ENG_OK, "holding a blob of five bytes, a NUL and 0xFF among them");
+
     flecs::world& w = engInternalRuntime(engine)->simWorld();
     assignMissingIds(w);   // as every scene save does first
     SerdeContext ctx;
@@ -84,6 +106,8 @@ int main() {
     CHECK(th.is_object() && th["thrust"] == 2500.0 && th["armed"] == true && th["label"] == "descent"
           && th["dir"] == json::array({0.0, 1.0, 0.0, 0.5}) && th["target"] == bStable,
           "saved field by field under its name, the target as its stable id: %s", th.dump().c_str());
+    CHECK(savedA["apollo.Route"]["points"] == "YWJjAP8=" && savedA["apollo.Route"]["width"] == 1.5,
+          "a blob saved as its bytes in base64: %s", savedA["apollo.Route"].dump().c_str());
 
     // Load both into the world again, as a scene loader does: refs linked once all exist.
     std::vector<SerdeContext::EntityRef> refs;
@@ -102,6 +126,27 @@ int main() {
           && back.armed == 1 && std::strcmp(back.label, "descent") == 0 && back.dir[3] == 0.5f,
           "loaded back, the entity field linked to the loaded target");
     CHECK(back.thrust == 7.5f, "a value it cannot read keeps the registered default (%.1f)", back.thrust);
+    Route rb{};
+    const void* bp = nullptr;
+    uint32_t bn = 0;
+    CHECK(engGetComponent(world, la.id(), route, &rb, sizeof rb) == ENG_OK && rb.points && rb.points != blob
+          && engGetBlob(world, rb.points, &bp, &bn) == ENG_OK && bn == sizeof pts && std::memcmp(bp, pts, bn) == 0,
+          "loaded into a blob of its own, the same five bytes");
+    {
+        json sc = savedA;
+        sc["id"] = 900003;
+        sc.erase("apollo.Thruster");
+        sc["apollo.Route"]["points"] = "not base64!";
+        std::vector<SerdeContext::EntityRef> refs2;
+        SerdeContext c2;
+        c2.mode = SerdeMode::Disk;
+        c2.entityRefs = &refs2;
+        flecs::entity lc = createEntity(w, sc, c2, IdPolicy::Preserve);
+        Route rc{};
+        CHECK(engGetComponent(world, lc.id(), route, &rc, sizeof rc) == ENG_OK && rc.points == 0 && rc.width == 1.5f,
+              "text that is not base64 keeps the default (no blob), and the rest loads");
+        engDestroyEntity(world, lc.id());
+    }
 
     // The determinism gate: classified, and hashed by value.
     std::vector<std::string> unclassified;
@@ -114,6 +159,14 @@ int main() {
     t.thrust = 2500.0f;
     engSetComponent(world, a, thruster, &t, sizeof t);
     CHECK(h0 != h1 && simhash::hashWorld(w) == h0, "a field change changes the world's hash, and setting it back restores it");
+    const unsigned char other[] = {'a', 'b', 'd', 0x00, 0xFF};
+    engSetBlob(world, blob, other, sizeof other);
+    const uint64_t h2 = simhash::hashWorld(w);
+    EngBlob same = 0;
+    engCreateBlob(world, pts, sizeof pts, &same);
+    r.points = same;   // a new handle with the first bytes; the changed one is freed
+    engSetComponent(world, a, route, &r, sizeof r);
+    CHECK(h2 != h0 && simhash::hashWorld(w) == h0, "a blob's bytes reach the hash; its handle does not");
 
     engDestroyWorld(world);
     engDestroyEngine(engine);

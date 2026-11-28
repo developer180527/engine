@@ -85,9 +85,12 @@ way. Scene save, the Play snapshot and the undo stack all walk the registry.
 - **Revisions.** Revision 0 writes no marker, which is every scene saved before
   this; a later revision writes `"$rev"` in the component's object, and loading
   older data runs the schema's migrations one revision at a time.
-- **Field types.** The engine API draft's (`eng_world.h`) but BLOB: bool, the
+- **Field types.** The engine API draft's (`eng_world.h`): bool, the
   eight integers (range-checked), f32, f64, vec2/3/4, quat, mat4, string, entity
-  and asset. Each schema states its fields with their types, and its defaults as
+  and asset. A C API component's BLOB field (`dynamic_schema.h`) is saved as a
+  base64 string. It is loaded into a new blob from the world's
+  `DynamicBlobStore`, which the world names through its `DynamicBlobsRef`
+  singleton, because the schema is the process's and the store is the world's. Each schema states its fields with their types, and its defaults as
   saved. An entity field saves the stable id of the entity it names and is set
   once every entity of the scene exists: a loader passes `SerdeContext::entityRefs`
   and calls `resolveEntityRefs` after the last one; a lone entity resolves its own.

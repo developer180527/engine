@@ -12,8 +12,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-- [WO-073](WO-073-world-c-api.md) **The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary** — 2/5 done. Still open:
-  - `eng_world.h` implemented over flecs: entities with stable ids, component registration by schema (WO-071), single-entity access, batched queries, systems in phases with `run_after`, the change stream (WO-072), and `EngBlob` storage for variable-length fields (2026-11-28: all but systems and blobs, see the log)
+- [WO-073](WO-073-world-c-api.md) **The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary** — 3/5 done. Still open:
   - one first-party kit ported to it (`docs/plans/engine-api-draft/examples/kit.c` is the shape), loading with no flecs or engine C++ include
   - an `engine_audit` rule: no flecs include in `include/engine/` or `src/plugins/`, with today's findings as a baseline that only shrinks, mutation-checked
 
@@ -27,7 +26,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | **active** 2/5 | kit-abi |
+| [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | **active** 3/5 | kit-abi |
 | [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API | Providers & modules | M | blocked by WO-073 | engine-plugin |
 | [WO-075](WO-075-renderer-contract-headers.md) | The renderer contract as headers, with a conformance suite the null renderer passes first | Renderer & RHI | M | blocked by WO-073 | renderer |
 | [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | **ready** | kit-abi, engine-plugin, script-services |

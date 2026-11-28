@@ -1,6 +1,6 @@
 ---
 status: as-built
-verified: 2026-11-27
+verified: 2026-11-28
 covers:
   - scripts/engine_audit.py
   - scripts/audit_cron.sh
@@ -99,6 +99,10 @@ reason from.
 Current state (2026-10-01): **67 findings, all baselined, 0 new.** 46 are the
 module→module edges recorded as the declared dependency graph. The rest, and
 what the rules have caught and closed:
+
+*(2026-11-28: 72 baselined, 0 new. Among the newest are three edges added by
+design: the C world API, `src/capi`, reaching `components`, `core` and `scene`
+(WO-073), because a C component is a real scene component.)*
 
 - **The module graph was one cycle (found 2026-09-30, by hand, not by a
   rule).** Eight of 13 modules, `core` among them, were strongly connected:

@@ -11,6 +11,10 @@
 //                 context it hands out, last exactly as long as the world
 //   EngQuery      an index and a generation into this handle's query table
 //   EngChangeStream  a components/change_stream.h stream id
+//   EngBlob       an index and a generation into the world's BlobStore, which
+//                 a world singleton (DynamicBlobsRef) keeps alive
+//   EngSystem     an index and a generation into this handle's system table;
+//                 the phases run from the plugin registry's two edges
 //
 // Every entry point catches every exception: none may cross a C boundary.
 #include <eng/engine.h>
@@ -22,6 +26,9 @@
 #include "components/name.h"
 #include "components/transform_hierarchy.h"
 #include "core/transform.h"
+#include "core/logger.h"
+#include "runtime/plugin.h"
+#include "runtime/plugin_registry.h"
 #include "runtime/runtime.h"
 #include "runtime/sim_hash.h"
 #include "scene/dynamic_schema.h"
@@ -37,6 +44,7 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 static_assert(sizeof(EngTransform) == sizeof(Transform), "EngTransform is core.Transform's bytes");
@@ -73,7 +81,169 @@ struct CompEntry {
     bool engine = false;
     std::vector<EntitySerde::DynamicField> fields;
     std::vector<uint8_t> defaults;   // size bytes
+    std::vector<uint32_t> blobOffsets;   // the BLOB fields' offsets, in field order
+    class BlobStore* blobs = nullptr;    // the world's, when blobOffsets is not empty
 };
+
+// ── The blob store ───────────────────────────────────────────────────────────
+// Every blob of one world. A handle is (generation << 32) | (slot + 1); a freed
+// slot's generation moves on, so an old handle is refused and never aliases a
+// new blob. A slot whose generation would wrap is retired, never reused.
+//
+// Ownership is per field: `owners` maps (entity, component) to the handles its
+// BLOB fields hold, in field order. reconcile() is the one place it changes:
+// it runs on OnSet (every engAddComponent, engSetComponent and scene load),
+// and on every row a query WRITE column handed out. OnRemove frees what the
+// removed component held.
+constexpr uint32_t kMaxBlobBytes = 16u << 20;
+
+class BlobStore final : public EntitySerde::DynamicBlobStore {
+public:
+    struct Slot {
+        std::vector<uint8_t> bytes;
+        uint32_t gen = 0;
+        bool live = false, held = false;
+        flecs::entity_t entity = 0, component = 0;   // the holder, when held
+    };
+
+    bool bytes(uint64_t h, const uint8_t*& p, uint32_t& n) const override {
+        const Slot* s = find(h);
+        if (!s) return false;
+        p = s->bytes.empty() ? nullptr : s->bytes.data();
+        n = (uint32_t)s->bytes.size();
+        return true;
+    }
+    uint64_t create(const uint8_t* p, uint32_t n) override {
+        if (n > kMaxBlobBytes) return 0;
+        uint32_t i;
+        if (!m_free.empty()) { i = m_free.back(); m_free.pop_back(); }
+        else { i = (uint32_t)m_slots.size(); m_slots.emplace_back(); }
+        Slot& s = m_slots[i];
+        s.gen += 1;
+        s.live = true;
+        s.held = false;
+        s.entity = s.component = 0;
+        s.bytes.assign(p, p + (p ? n : 0));
+        if (!p) s.bytes.assign(n, 0);
+        ++m_live;
+        return (uint64_t)s.gen << 32 | (uint64_t)(i + 1);
+    }
+    const Slot* find(uint64_t h) const {
+        const uint32_t i = (uint32_t)h, gen = (uint32_t)(h >> 32);
+        if (!i || i > m_slots.size()) return nullptr;
+        const Slot& s = m_slots[i - 1];
+        return s.live && s.gen == gen ? &s : nullptr;
+    }
+    Slot* find(uint64_t h) { return const_cast<Slot*>(static_cast<const BlobStore*>(this)->find(h)); }
+    void free(uint64_t h) {
+        Slot* s = find(h);
+        if (!s) return;
+        s->live = false;
+        s->held = false;
+        std::vector<uint8_t>().swap(s->bytes);
+        --m_live;
+        if (s->gen != 0xFFFFFFFFu) m_free.push_back((uint32_t)(h & 0xFFFFFFFFu) - 1);
+    }
+    size_t live() const { return m_live; }
+
+    // The handles in the BLOB fields at `offsets` of (e, c)'s bytes become
+    // what (e, c) holds. A handle it held and still holds stays; one nobody
+    // holds is taken; one another field holds is copied, and the copy's
+    // handle written into the field; anything else (0, freed, garbage) leaves
+    // the field 0. What it held and no longer holds is freed.
+    void reconcile(flecs::entity_t e, flecs::entity_t c, const std::vector<uint32_t>& offsets, uint8_t* bytes) {
+        const Key k{e, c};
+        auto found = m_owners.find(k);
+        std::vector<uint64_t> old = found != m_owners.end() ? found->second : std::vector<uint64_t>();
+        old.resize(offsets.size(), 0);
+        std::vector<bool> kept(offsets.size(), false);
+        std::vector<uint64_t> now(offsets.size(), 0);
+        bool any = false;
+        for (size_t f = 0; f < offsets.size(); ++f) {
+            uint64_t h;
+            std::memcpy(&h, bytes + offsets[f], 8);
+            if (!h) continue;
+            size_t j = 0;
+            while (j < old.size() && !(old[j] == h && !kept[j])) ++j;
+            if (j < old.size()) { kept[j] = true; now[f] = h; any = true; continue; }
+            Slot* s = find(h);
+            uint64_t mine = 0;
+            if (s && !s->held) mine = h;
+            else if (s) {
+                const std::vector<uint8_t> copy = s->bytes;   // create() may move the slots
+                mine = create(copy.data(), (uint32_t)copy.size());
+            }
+            if (Slot* m = mine ? find(mine) : nullptr) { m->held = true; m->entity = e; m->component = c; any = true; }
+            std::memcpy(bytes + offsets[f], &mine, 8);
+            now[f] = mine;
+        }
+        for (size_t j = 0; j < old.size(); ++j)
+            if (old[j] && !kept[j]) free(old[j]);
+        if (any) m_owners[k] = std::move(now);
+        else if (found != m_owners.end()) m_owners.erase(k);
+    }
+    void released(flecs::entity_t e, flecs::entity_t c) {
+        auto found = m_owners.find(Key{e, c});
+        if (found == m_owners.end()) return;
+        for (uint64_t h : found->second) free(h);
+        m_owners.erase(found);
+    }
+
+private:
+    struct Key {
+        flecs::entity_t e, c;
+        bool operator==(const Key& o) const { return e == o.e && c == o.c; }
+    };
+    struct KeyHash {
+        size_t operator()(const Key& k) const { return std::hash<uint64_t>()(k.e * 0x9E3779B97F4A7C15ull ^ k.c); }
+    };
+    std::vector<Slot> m_slots;
+    std::vector<uint32_t> m_free;
+    std::unordered_map<Key, std::vector<uint64_t>, KeyHash> m_owners;
+    size_t m_live = 0;
+};
+
+// The world's store, made on first use. A singleton keeps it, and each blob
+// observer keeps it too, so it outlives every OnRemove of the world's end.
+std::shared_ptr<BlobStore> blobsOf(flecs::world& w) {
+    if (const EntitySerde::DynamicBlobsRef* r = w.try_get<EntitySerde::DynamicBlobsRef>())
+        return std::static_pointer_cast<BlobStore>(r->store);
+    simhash::exemptId(w, w.component<EntitySerde::DynamicBlobsRef>(),
+                      "C API bookkeeping — where blob bytes live; each blob is hashed through the field that holds it");
+    auto store = std::make_shared<BlobStore>();
+    w.set<EntitySerde::DynamicBlobsRef>({store});
+    return store;
+}
+
+struct BlobWatch {
+    std::shared_ptr<BlobStore> store;
+    flecs::entity_t id;
+    std::vector<uint32_t> offsets;
+};
+void onBlobEvent(ecs_iter_t* it) {
+    if (ecs_is_fini(it->real_world)) return;   // the store goes with the world
+    BlobWatch& bw = *static_cast<BlobWatch*>(it->ctx);
+    if (it->event == EcsOnRemove) {
+        for (int32_t i = 0; i < it->count; ++i) bw.store->released(it->entities[i], bw.id);
+        return;
+    }
+    uint8_t* col = static_cast<uint8_t*>(ecs_field_w_size(it, (size_t)ecs_get_type_info(it->world, bw.id)->size, 0));
+    const size_t stride = (size_t)ecs_get_type_info(it->world, bw.id)->size;
+    for (int32_t i = 0; i < it->count; ++i)
+        bw.store->reconcile(it->entities[i], bw.id, bw.offsets, col + (size_t)i * stride);
+}
+void watchBlobs(flecs::world& w, const CompEntry& c) {
+    ecs_observer_desc_t d = {};
+    d.query.terms[0].id = c.id;
+    d.query.terms[0].src.id = EcsSelf;
+    d.query.flags = EcsQueryMatchPrefab | EcsQueryMatchDisabled;
+    d.events[0] = EcsOnSet;
+    d.events[1] = EcsOnRemove;
+    d.callback = &onBlobEvent;
+    d.ctx = new BlobWatch{blobsOf(w), c.id, c.blobOffsets};
+    d.ctx_free = [](void* p) { delete static_cast<BlobWatch*>(p); };
+    ecs_observer_init(w.c_ptr(), &d);
+}
 
 // The world's table of C API components, as a singleton of that world: the
 // sim hash keeps a pointer into it (std::deque never moves an element).
@@ -90,6 +260,14 @@ void hashFields(flecs::entity, const void* p, const void* ctx, simhash::Digest& 
         const uint8_t* q = b + f.offset;
         if (f.type == dyn::FixedString) {
             d.str(std::string_view(reinterpret_cast<const char*>(q), strnlen(reinterpret_cast<const char*>(q), f.count)));
+            continue;
+        }
+        if (f.type == dyn::Blob) {   // its bytes, never its handle
+            uint64_t h; std::memcpy(&h, q, 8);
+            const uint8_t* bp = nullptr; uint32_t bn = 0;
+            if (!h || !c.blobs || !c.blobs->bytes(h, bp, bn)) { d.u64(0); d.u64(0); continue; }
+            d.u64(1); d.u64(bn);
+            if (bn) d.bytes(bp, bn);
             continue;
         }
         const uint32_t n = f.count ? f.count : 1, vs = dyn::valueSize(f.type);
@@ -112,7 +290,23 @@ struct QueryEntry {
     std::vector<EngAccess> access;        // per term
     std::vector<flecs::entity_t> ids;     // per term
     std::vector<uint32_t> sizes;          // per term
+    std::vector<const CompEntry*> blobTerms;  // per term: the component when a WRITE column holds blobs
+    std::vector<uint32_t> users;          // systems that run it (indices)
 };
+
+// ── Systems ──
+struct SystemEntry {
+    std::string name;
+    EngPhase phase = 0;
+    EngQuery query = 0;
+    EngSystemFn fn = nullptr;
+    void* user = nullptr;
+    std::vector<std::string> after;
+    uint64_t seq = 0;      // creation order
+    uint16_t gen = 0;
+    bool live = false;
+};
+constexpr uint32_t kPhases = 3;
 
 } // namespace
 
@@ -123,13 +317,20 @@ struct EngWorld {
     std::vector<QueryEntry> queries;
     std::vector<changes::StreamId> streams;
     uint32_t openIters = 0;
+    // Systems. A deque: creating one from inside a system moves nothing.
+    std::deque<SystemEntry> systems;
+    std::vector<uint32_t> order[kPhases];   // indices, in run order
+    bool orderDirty[kPhases] = {false, false, false};
+    uint64_t nextSeq = 1;
+    uint32_t running = 0;                   // phases running right now
+    std::unique_ptr<IEnginePlugin> first, last;   // the plugin registry's edges
 };
 
 struct EngQueryIter {
     EngWorld* world = nullptr;
     uint32_t query = 0;              // index
     ecs_iter_t it{};
-    bool started = false, done = false;
+    bool started = false, done = false, batch = false;
     std::vector<void*> cols;
 };
 
@@ -193,9 +394,10 @@ EngResult checkFields(const EngComponentDesc& d, std::vector<EntitySerde::Dynami
         const std::string where = std::string(d.name) + " field " + std::to_string(i);
         if (!f.name || !*f.name) return fail(ENG_ERROR_INVALID_ARGUMENT, where + " has no name");
         if (f.reserved) return fail(ENG_ERROR_INVALID_ARGUMENT, where + " ('" + f.name + "'): reserved must be zero");
-        if (f.type == ENG_FIELD_ASSET || f.type == ENG_FIELD_BLOB)
-            return fail(ENG_ERROR_UNSUPPORTED, where + " ('" + f.name + "'): " +
-                        (f.type == ENG_FIELD_ASSET ? "ASSET" : "BLOB") + " fields are not in this version");
+        if (f.type == ENG_FIELD_ASSET)
+            return fail(ENG_ERROR_UNSUPPORTED, where + " ('" + f.name + "'): ASSET fields are not in this version");
+        if (f.type == ENG_FIELD_BLOB && f.count > 1)
+            return fail(ENG_ERROR_INVALID_ARGUMENT, where + " ('" + f.name + "'): a BLOB field is one handle (count 0 or 1)");
         const uint32_t vs = dyn::valueSize(f.type);
         if (!vs || f.type > ENG_FIELD_BLOB)
             return fail(ENG_ERROR_INVALID_ARGUMENT, where + " ('" + f.name + "'): unknown field type " + std::to_string(f.type));
@@ -260,6 +462,146 @@ void markRows(EngWorld* w, flecs::entity_t id, const EngEntity* es, uint32_t n) 
         s->changed(id, es, n);
 }
 
+// The batch a query handed out is done with: every row of a WRITE column
+// holding blob fields is reconciled, as a set would be (no OnSet fires for a
+// write in place). Costs nothing for a query that writes no blob component.
+void settleBatch(EngQueryIter* it) {
+    if (!it->batch) return;
+    it->batch = false;
+    const QueryEntry& qe = it->world->queries[it->query - 1];
+    for (size_t i = 0; i < qe.blobTerms.size(); ++i) {
+        const CompEntry* c = qe.blobTerms[i];
+        if (!c || !it->cols[i]) continue;
+        uint8_t* col = static_cast<uint8_t*>(it->cols[i]);
+        for (int32_t r = 0; r < it->it.count; ++r)
+            c->blobs->reconcile(it->it.entities[r], c->id, c->blobOffsets, col + (size_t)r * c->size);
+    }
+}
+
+// ── Systems: order ──
+// The live systems of `phase`, plus `extra` (index into w->systems, or -1),
+// sorted by creation order and moved only as run_after requires: of the
+// systems whose predecessors have all run, the earliest created goes next.
+// A name not created yet has no edge. On a cycle, `cycle` names it and the
+// result is empty.
+std::vector<uint32_t> sortPhase(EngWorld* w, EngPhase phase, int64_t extra, std::string* cycle) {
+    std::vector<uint32_t> nodes;
+    for (uint32_t i = 0; i < w->systems.size(); ++i)
+        if ((w->systems[i].live || (int64_t)i == extra) && w->systems[i].phase == phase) nodes.push_back(i);
+    std::sort(nodes.begin(), nodes.end(), [&](uint32_t a, uint32_t b) { return w->systems[a].seq < w->systems[b].seq; });
+    const size_t n = nodes.size();
+    std::vector<std::vector<size_t>> preds(n);   // positions in nodes
+    for (size_t a = 0; a < n; ++a)
+        for (const std::string& name : w->systems[nodes[a]].after)
+            for (size_t b = 0; b < n; ++b)
+                if (w->systems[nodes[b]].name == name) preds[a].push_back(b);
+    std::vector<bool> done(n, false);
+    std::vector<uint32_t> out;
+    out.reserve(n);
+    for (size_t round = 0; round < n; ++round) {
+        size_t pick = n;
+        for (size_t a = 0; a < n && pick == n; ++a) {
+            if (done[a]) continue;
+            bool ready = true;
+            for (size_t b : preds[a]) ready = ready && done[b];
+            if (ready) pick = a;
+        }
+        if (pick == n) break;
+        done[pick] = true;
+        out.push_back(nodes[pick]);
+    }
+    if (out.size() == n) return out;
+    if (cycle) {
+        // Walk predecessors among what is left until a system repeats.
+        size_t at = 0;
+        while (done[at]) ++at;
+        std::vector<size_t> path;
+        std::vector<int> seen(n, -1);
+        while (seen[at] < 0) {
+            seen[at] = (int)path.size();
+            path.push_back(at);
+            for (size_t b : preds[at]) if (!done[b]) { at = b; break; }
+        }
+        std::string text;
+        for (size_t k = path.size(); k-- > (size_t)seen[at];) text += w->systems[nodes[path[k]]].name + " -> ";
+        *cycle = text + w->systems[nodes[path.back()]].name;
+    }
+    return {};
+}
+
+// ── Systems: running a phase ──
+void runPhase(EngWorld* w, EngPhase phase, double dt) {
+    if (w->orderDirty[phase]) {
+        w->order[phase] = sortPhase(w, phase, -1, nullptr);
+        w->orderDirty[phase] = false;
+    }
+    if (w->order[phase].empty()) return;
+    const std::vector<uint32_t> order = w->order[phase];   // a system may create or destroy systems
+    EngineRuntime* rt = engInternalRuntime(w->engine);
+    ++w->running;
+    for (uint32_t idx : order) {
+        const SystemEntry& s = w->systems[idx];
+        if (!s.live) continue;
+        const uint16_t gen = s.gen;
+        auto stillLive = [&] { return w->systems[idx].live && w->systems[idx].gen == gen; };
+        EngSystemContext ctx{};
+        ctx.struct_size = sizeof ctx;
+        ctx.delta_seconds = dt;
+        ctx.tick = rt ? rt->simulationTicks() : 0;
+        ctx.world = w;
+        ctx.user = s.user;
+        const EngSystemFn fn = s.fn;
+        if (!s.query) { fn(&ctx, nullptr); continue; }
+        EngQueryIter* it = nullptr;
+        if (engQueryBegin(w, s.query, &it) != ENG_OK) {
+            LOG_ERROR("EngWorld", "system '%s' could not run its query: %s", s.name.c_str(), engGetLastErrorMessage());
+            continue;
+        }
+        ctx.iter = it;
+        EngQueryBatch b{};
+        b.struct_size = sizeof b;
+        while (stillLive() && engQueryNext(it, &b)) fn(&ctx, &b);
+        engQueryEnd(it);
+    }
+    --w->running;
+}
+
+// The plugin registry's edges: the first runs FIXED_UPDATE (each step) and
+// UPDATE (each frame) before every kit; the last runs LATE_UPDATE after all.
+class PhaseEdge final : public IEnginePlugin {
+public:
+    PhaseEdge(EngWorld* w, bool first) : m_w(w), m_first(first) {}
+    const char* name() const override { return m_first ? "eng.world (first edge)" : "eng.world (last edge)"; }
+    const char* version() const override { return "1"; }
+    void onAttach(RuntimeContext&) override {}
+    void onDetach() override {}
+    void onSimulationStart(flecs::world&) override {}
+    void onSimulationStop() override {}
+    void onUpdate(flecs::world& gw, float) override {
+        if (m_first && gw.c_ptr() == raw(m_w)) runPhase(m_w, ENG_PHASE_FIXED_UPDATE, 1.0 / 60.0);   // kSimDt, exactly
+    }
+    void onFrame(flecs::world& gw, float dt) override {
+        if (gw.c_ptr() == raw(m_w)) runPhase(m_w, m_first ? ENG_PHASE_UPDATE : ENG_PHASE_LATE_UPDATE, dt);
+    }
+private:
+    EngWorld* m_w;
+    bool m_first;
+};
+
+EngSystem systemHandle(const EngWorld* w, uint32_t i) { return ((EngSystem)w->systems[i].gen << 16) | (EngSystem)(i + 1); }
+SystemEntry* systemOf(EngWorld* w, EngSystem h, uint32_t* index = nullptr) {
+    const uint32_t i = h & 0xFFFFu, gen = h >> 16;
+    if (!i || i > w->systems.size()) return nullptr;
+    SystemEntry& s = w->systems[i - 1];
+    if (!s.live || s.gen != gen) return nullptr;
+    if (index) *index = i - 1;
+    return &s;
+}
+BlobStore* storeOf(EngWorld* w) {
+    const EntitySerde::DynamicBlobsRef* r = w->w->try_get<EntitySerde::DynamicBlobsRef>();
+    return r ? static_cast<BlobStore*>(r->store.get()) : nullptr;
+}
+
 } // namespace
 
 uint64_t engInternalComponentId(EngWorld* w, EngComponent c) {
@@ -269,6 +611,7 @@ uint64_t engInternalComponentId(EngWorld* w, EngComponent c) {
 
 void engInternalDestroyWorld(EngWorld* w) {
     if (!w) return;
+    if (EngineRuntime* rt = engInternalRuntime(w->engine)) rt->plugins().setEdges(nullptr, nullptr);
     for (QueryEntry& q : w->queries)
         if (q.q) ecs_query_fini(q.q);
     if (changes::Streams* s = changes::Streams::of(raw(w)))
@@ -303,6 +646,9 @@ EngResult engCreateWorld(EngEngine* engine, const EngWorldDesc* desc, EngWorld**
         w->engine = engine;
         w->w = &rt->simWorld();
         w->table = tableOf(*w->w);
+        w->first = std::make_unique<PhaseEdge>(w.get(), true);
+        w->last = std::make_unique<PhaseEdge>(w.get(), false);
+        rt->plugins().setEdges(w->first.get(), w->last.get());
         slot = w.get();
         *out = w.release();
         return ENG_OK;
@@ -314,6 +660,10 @@ void engDestroyWorld(EngWorld* w) {
         if (!w) return 0;
         if (w->openIters) {
             engInternalSetError("engDestroyWorld refused: a query iteration is open (engQueryEnd it first)");
+            return 0;
+        }
+        if (w->running) {
+            engInternalSetError("engDestroyWorld refused: called from inside a system");
             return 0;
         }
         engInternalWorldSlot(w->engine) = nullptr;
@@ -421,6 +771,14 @@ EngResult engRegisterComponent(EngWorld* w, const EngComponentDesc* in, EngCompo
         if (EngResult r = checkFields(d, fields); r != ENG_OK) return r;
         std::vector<uint8_t> defaults(d.size, 0);
         if (d.defaults) std::memcpy(defaults.data(), d.defaults, d.size);
+        std::vector<uint32_t> blobOffsets;
+        for (const auto& f : fields) {
+            if (f.type != ENG_FIELD_BLOB) continue;
+            uint64_t h; std::memcpy(&h, defaults.data() + f.offset, 8);
+            if (h) return fail(ENG_ERROR_INVALID_ARGUMENT, name + ": the default of BLOB field '" + f.name +
+                                                           "' must be 0 (a default cannot hold bytes)");
+            blobOffsets.push_back(f.offset);
+        }
 
         for (size_t i = 0; i < w->table->comps.size(); ++i) {
             const CompEntry& c = w->table->comps[i];
@@ -452,8 +810,12 @@ EngResult engRegisterComponent(EngWorld* w, const EngComponentDesc* in, EngCompo
         c.revision = d.revision;
         c.fields = fields;
         c.defaults = defaults;
+        c.blobOffsets = blobOffsets;
+        if (!blobOffsets.empty()) c.blobs = blobsOf(*w->w).get();
         w->table->comps.push_back(std::move(c));
         const CompEntry& kept = w->table->comps.back();
+        // Blob fields own their blobs: taken on every set, freed on remove.
+        if (!kept.blobOffsets.empty()) watchBlobs(*w->w, kept);
         // Simulation state: a kit's component is gameplay unless it says
         // otherwise, and a hash over each field never reads padding.
         simhash::declareIdWithContext(*w->w, flecs::entity(*w->w, id), hashFields, &kept);
@@ -574,6 +936,8 @@ EngResult engCreateQuery(EngWorld* w, const EngQueryDesc* in, EngQuery* out) {
             qe.access.push_back(t.access);
             qe.ids.push_back(ce->id);
             qe.sizes.push_back(ce->size);
+            const bool writes = t.access == ENG_ACCESS_WRITE || t.access == ENG_ACCESS_WRITE_MARKED;
+            qe.blobTerms.push_back(writes && !ce->blobOffsets.empty() ? ce : nullptr);
         }
         if (!anyColumnOrWith) return fail(ENG_ERROR_INVALID_ARGUMENT, "a query of WITHOUT terms only would match every entity");
         qd.cache_kind = EcsQueryCacheAuto;
@@ -602,6 +966,11 @@ void engDestroyQuery(EngWorld* w, EngQuery q) {
         QueryEntry* qe = queryOf(w, q);
         if (!qe) { engInternalSetError("engDestroyQuery: not a live query of this world"); return 0; }
         if (qe->open) { engInternalSetError("engDestroyQuery refused: the query has an open iteration"); return 0; }
+        for (uint32_t u : qe->users)
+            if (w->systems[u].live) {
+                engInternalSetError("engDestroyQuery refused: system '" + w->systems[u].name + "' runs it (engDestroySystem it first)");
+                return 0;
+            }
         ecs_query_fini(qe->q);
         qe->q = nullptr;
         return 0;
@@ -636,6 +1005,7 @@ EngBool engQueryNext(EngQueryIter* it, EngQueryBatch* out) {
         if (it->done) return ENG_FALSE;
         EngWorld* w = it->world;
         QueryEntry& qe = w->queries[it->query - 1];
+        settleBatch(it);
         for (;;) {
             if (!ecs_query_next(&it->it)) { it->done = true; return ENG_FALSE; }
             if (it->it.count) break;
@@ -654,6 +1024,7 @@ EngBool engQueryNext(EngQueryIter* it, EngQueryBatch* out) {
         b.entities = it->it.entities;
         b.columns = it->cols.data();
         std::memcpy(out, &b, std::min<size_t>(out->struct_size, sizeof b));
+        it->batch = true;
         return ENG_TRUE;
     });
 }
@@ -662,6 +1033,7 @@ void engQueryEnd(EngQueryIter* it) {
     guard<int>(0, [&] {
         if (!it) return 0;
         EngWorld* w = it->world;
+        settleBatch(it);
         if (!it->done) ecs_iter_fini(&it->it);
         QueryEntry& qe = w->queries[it->query - 1];
         if (qe.open) --qe.open;
@@ -688,6 +1060,141 @@ void engMarkChanged(EngQueryIter* it, uint32_t term, uint32_t first, uint32_t co
             return 0;
         }
         markRows(w, qe.ids[term], it->it.entities + first, count);
+        return 0;
+    });
+}
+
+// ── Blobs ────────────────────────────────────────────────────────────────────
+EngResult engCreateBlob(EngWorld* w, const void* bytes, uint32_t size, EngBlob* out) {
+    return guard<EngResult>(ENG_ERROR_INTERNAL, [&]() -> EngResult {
+        if (EngResult r = checkWorld(w); r != ENG_OK) return r;
+        if (!out) return fail(ENG_ERROR_INVALID_ARGUMENT, "out is NULL");
+        *out = 0;
+        if (size > kMaxBlobBytes)
+            return fail(ENG_ERROR_INVALID_ARGUMENT, "a blob is at most 16 MiB in this version; size was " + std::to_string(size));
+        *out = blobsOf(*w->w)->create(static_cast<const uint8_t*>(bytes), size);
+        return ENG_OK;
+    });
+}
+
+EngResult engGetBlob(EngWorld* w, EngBlob blob, const void** outBytes, uint32_t* outSize) {
+    return guard<EngResult>(ENG_ERROR_INTERNAL, [&]() -> EngResult {
+        if (EngResult r = checkWorld(w); r != ENG_OK) return r;
+        if (!outBytes || !outSize) return fail(ENG_ERROR_INVALID_ARGUMENT, "out_bytes or out_size is NULL");
+        *outBytes = nullptr;
+        *outSize = 0;
+        if (!blob) return fail(ENG_ERROR_INVALID_ARGUMENT, "blob is 0");
+        const BlobStore* st = storeOf(w);
+        const uint8_t* p = nullptr;
+        uint32_t n = 0;
+        if (!st || !st->bytes(blob, p, n)) return fail(ENG_ERROR_STALE_HANDLE, "blob " + std::to_string(blob) + " is not live");
+        *outBytes = p;
+        *outSize = n;
+        return ENG_OK;
+    });
+}
+
+EngResult engSetBlob(EngWorld* w, EngBlob blob, const void* bytes, uint32_t size) {
+    return guard<EngResult>(ENG_ERROR_INTERNAL, [&]() -> EngResult {
+        if (EngResult r = checkWorld(w); r != ENG_OK) return r;
+        if (!blob) return fail(ENG_ERROR_INVALID_ARGUMENT, "blob is 0");
+        if (size > kMaxBlobBytes)
+            return fail(ENG_ERROR_INVALID_ARGUMENT, "a blob is at most 16 MiB in this version; size was " + std::to_string(size));
+        BlobStore* st = storeOf(w);
+        BlobStore::Slot* sl = st ? st->find(blob) : nullptr;
+        if (!sl) return fail(ENG_ERROR_STALE_HANDLE, "blob " + std::to_string(blob) + " is not live");
+        if (bytes) sl->bytes.assign(static_cast<const uint8_t*>(bytes), static_cast<const uint8_t*>(bytes) + size);
+        else sl->bytes.assign(size, 0);
+        // A change of the component that holds it.
+        if (sl->held) { const EngEntity e = sl->entity; markRows(w, sl->component, &e, 1); }
+        return ENG_OK;
+    });
+}
+
+// ── Systems ──────────────────────────────────────────────────────────────────
+EngResult engCreateSystem(EngWorld* w, const EngSystemDesc* in, EngSystem* out) {
+    return guard<EngResult>(ENG_ERROR_INTERNAL, [&]() -> EngResult {
+        if (EngResult r = checkWorld(w); r != ENG_OK) return r;
+        if (!out) return fail(ENG_ERROR_INVALID_ARGUMENT, "out is NULL");
+        *out = 0;
+        if (!in || in->struct_size < sizeof(uint32_t)) return fail(ENG_ERROR_INVALID_ARGUMENT, "desc is NULL or has no struct_size (start it with ENG_INIT)");
+        EngSystemDesc d{};
+        std::memcpy(&d, in, std::min<size_t>(in->struct_size, sizeof d));
+        if (!d.name || !*d.name) return fail(ENG_ERROR_INVALID_ARGUMENT, "the system has no name");
+        const std::string name = d.name;
+        if (name.find('.') == std::string::npos || name.front() == '.' || name.back() == '.')
+            return fail(ENG_ERROR_INVALID_ARGUMENT, "'" + name + "' is not namespaced (\"kit.name\")");
+        if (d.reserved) return fail(ENG_ERROR_INVALID_ARGUMENT, name + ": reserved must be zero");
+        if (d.phase >= kPhases) return fail(ENG_ERROR_INVALID_ARGUMENT, name + ": unknown phase " + std::to_string(d.phase));
+        if (!d.fn) return fail(ENG_ERROR_INVALID_ARGUMENT, name + ": fn is NULL");
+        if (d.parallel) return fail(ENG_ERROR_UNSUPPORTED, name + ": parallel systems are not in this version");
+        if (d.run_after_count && !d.run_after) return fail(ENG_ERROR_INVALID_ARGUMENT, name + ": run_after_count is not zero but run_after is NULL");
+        QueryEntry* qe = nullptr;
+        if (d.query && !(qe = queryOf(w, d.query)))
+            return fail(ENG_ERROR_STALE_HANDLE, name + ": query " + std::to_string(d.query) + " is not a live query of this world");
+        static const char* kPhaseName[kPhases] = {"FIXED_UPDATE", "UPDATE", "LATE_UPDATE"};
+        SystemEntry se;
+        se.name = name;
+        se.phase = d.phase;
+        se.query = d.query;
+        se.fn = d.fn;
+        se.user = d.user;
+        for (uint32_t i = 0; i < d.run_after_count; ++i) {
+            if (!d.run_after[i] || !*d.run_after[i])
+                return fail(ENG_ERROR_INVALID_ARGUMENT, name + ": run_after[" + std::to_string(i) + "] is empty");
+            if (name == d.run_after[i]) return fail(ENG_ERROR_INVALID_ARGUMENT, name + ": runs after itself");
+            se.after.emplace_back(d.run_after[i]);
+        }
+        for (const SystemEntry& o : w->systems) {
+            if (!o.live) continue;
+            if (o.name == name) return fail(ENG_ERROR_REFUSED, "a system named '" + name + "' exists");
+            if (o.phase == d.phase) continue;
+            for (const std::string& a : se.after)
+                if (a == o.name)
+                    return fail(ENG_ERROR_REFUSED, name + " (" + kPhaseName[d.phase] + ") runs after " + a +
+                                                   ", which is in " + kPhaseName[o.phase] + ": run_after names a system of the same phase");
+            for (const std::string& a : o.after)
+                if (a == name)
+                    return fail(ENG_ERROR_REFUSED, o.name + " (" + kPhaseName[o.phase] + ") runs after " + name +
+                                                   ", which would be in " + kPhaseName[d.phase] + ": run_after names a system of the same phase");
+        }
+        // A free slot, its generation bumped, or a new one.
+        uint32_t idx = (uint32_t)w->systems.size();
+        for (uint32_t i = 0; i < w->systems.size(); ++i)
+            if (!w->systems[i].live && w->systems[i].gen != 0xFFFF) { idx = i; break; }
+        if (idx == w->systems.size()) {
+            if (idx >= 0xFFFF) return fail(ENG_ERROR_OUT_OF_MEMORY, "65 535 systems are held");
+            w->systems.emplace_back();
+        }
+        se.gen = (uint16_t)(w->systems[idx].gen + 1);
+        se.seq = w->nextSeq++;
+        SystemEntry before = std::move(w->systems[idx]);
+        w->systems[idx] = std::move(se);
+        std::string cycle;
+        if (sortPhase(w, d.phase, idx, &cycle).empty() && !cycle.empty()) {
+            const uint16_t gen = before.gen;
+            w->systems[idx] = std::move(before);
+            w->systems[idx].gen = gen;
+            return fail(ENG_ERROR_REFUSED, name + ": run_after would make a cycle: " + cycle);
+        }
+        w->systems[idx].live = true;
+        w->orderDirty[d.phase] = true;
+        if (qe) qe->users.push_back(idx);
+        *out = systemHandle(w, idx);
+        return ENG_OK;
+    });
+}
+
+void engDestroySystem(EngWorld* w, EngSystem h) {
+    guard<int>(0, [&] {
+        if (checkWorld(w) != ENG_OK) return 0;
+        uint32_t idx = 0;
+        SystemEntry* s = systemOf(w, h, &idx);
+        if (!s) { engInternalSetError("engDestroySystem: not a live system of this world"); return 0; }
+        s->live = false;
+        w->orderDirty[s->phase] = true;
+        if (QueryEntry* qe = queryOf(w, s->query))
+            qe->users.erase(std::remove(qe->users.begin(), qe->users.end(), idx), qe->users.end());
         return 0;
     });
 }

@@ -178,6 +178,18 @@ is saved back unchanged, with a warning naming it. So is a component saved at a
 newer revision than this engine reads (`"$rev"` in its object), rather than being
 read as if it were the old one (DR-0034).
 
+**A kit's component registered through the C API** (`engRegisterComponent`,
+`eng_world.h`) is saved under its full name (`"apollo.Thruster": {...}`), one
+key per field. An entity field is the target's stable id, like any other. A
+**blob field** (`ENG_FIELD_BLOB`: variable-length bytes, such as a path's
+points) is its bytes as a base64 string (`"points": "YWJjAP8="`), and `""` when
+it holds none. Text that is not padded base64 keeps the field's default, which
+is no bytes, and the rest of the component loads.
+
+```json
+{ "name": "Lander", "apollo.Route": { "points": "YWJjAP8=", "width": 1.5 } }
+```
+
 ---
 
 ## How wrong values behave

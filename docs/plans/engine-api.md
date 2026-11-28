@@ -298,7 +298,8 @@ said:
 `include/eng/eng_world.h` now holds entities, components by schema, one-entity
 access, batched queries and the change stream, implemented over flecs in
 `src/capi/eng_world.cpp` (`eng_world_test` in plain C, `eng_world_scene_test`,
-`eng_query_bench`). Systems and blobs come next, then modules and a kit.
+`eng_query_bench`). Systems and blobs followed (§10c); modules and a kit come
+next.
 
 1. **One world, the engine's own.** `engCreateWorld` hands out the simulation
    world, and a second one held at once is refused. `engDestroyWorld` releases
@@ -326,6 +327,35 @@ access, batched queries and the change stream, implemented over flecs in
 6. **`core.Transform` is the only engine component exposed as bytes.** Its
    bytes are `EngTransform`'s. Others come as their C layouts are frozen in
    `eng_components.h`.
+
+## 10c. What systems and blobs taught (WO-073 part 2, 2026-11-28)
+
+1. **The phases are the plugin hooks, at their edges.** FIXED_UPDATE is where
+   kits' `onUpdate` runs (each step, before physics, inside the command
+   window and the authority check). UPDATE and LATE_UPDATE are the frame's
+   `onFrame`, before every kit and after every kit. The plugin registry gained
+   two edges for this, so the order survives kits loading and hot-reloading
+   in any order. No new hook in the runtime's step.
+2. **`run_after` names, not handles.** Systems run in creation order, moved
+   only as run_after requires, so two kits' systems order by name without
+   either linking the other. A name not created yet is not an error (kits
+   load in any order). A cycle is, and so is a name in another phase:
+   whichever system completes either one is refused, and the message names it.
+3. **`parallel` is refused.** Running a system's batches on the pool needs the
+   change stream's marks to be thread-safe. It comes with that, not before.
+4. **A blob belongs to a field, and copying a handle copies the bytes.** The
+   draft said "owned by the component that holds it". What made that exact:
+   - one function settles a component's blob fields after every way its bytes
+     can change: OnSet (add, set, load) and every row a query's WRITE column
+     handed out, which fires no OnSet;
+   - a handle another field already holds is copied, so duplicating an entity
+     can never make two fields free the same bytes.
+5. **Bytes, not handles, reach the hash.** Handles depend on creation order;
+   bytes are the state.
+6. **On disk a blob is base64,** under the field's name like every other
+   field (`scene-format.md`). The schema registry is the process's and blobs
+   are the world's, so a schema finds the store through a world singleton,
+   never a pointer it captured.
 
 ## 11. Questions for the owner
 

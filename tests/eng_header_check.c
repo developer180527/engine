@@ -33,5 +33,7 @@ int eng_header_check_anchor(void) {
         + sizeof(EngQueryTerm)
         + sizeof(EngQueryDesc)
         + sizeof(EngQueryBatch)
+        + sizeof(EngSystemContext)
+        + sizeof(EngSystemDesc)
         + sizeof(EngChange));
 }

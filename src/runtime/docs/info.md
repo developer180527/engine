@@ -226,7 +226,11 @@ required.
 - **`PluginRegistry`** (`plugin_registry.h`) + **`IEnginePlugin`**
   (`plugin.h`) — engine subsystem plugins (physics, scripting, audio) with a
   strict per-frame phase order: `onUpdate` → `onPhysicsStep` →
-  `onPostPhysics`. Editor UI is `onEditorUI()`, drawn through the engineUi*
+  `onPostPhysics`. Two optional **edges** (`setEdges`) are broadcast before
+  every plugin and after every one, whatever order plugins were added or
+  hot-reloaded in. The C world API (`src/capi/eng_world.cpp`) runs its systems
+  there: FIXED_UPDATE and UPDATE on the first edge, LATE_UPDATE on the last.
+  Editor UI is `onEditorUI()`, drawn through the engineUi*
   facade rather than any toolkit — see `EngineUiBackend` in
   `include/engine/engine_api.h`.
 - **`AssetService`/`SceneService`** — async asset loading (worker thread
