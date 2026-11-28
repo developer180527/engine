@@ -12,22 +12,21 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 
 ## In progress
 
-- [WO-073](WO-073-world-c-api.md) **The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary** — 5/5 done. Still open:
-  - (all ticked: close it)
+Nothing. Start the first order under **Next up**.
+
 
 ## Next up
 
-1. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
-2. [WO-053](WO-053-bone-maps-per-section.md) **Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128** · P1 · size L — WO-040 made 128 bones per skinned mesh a hard limit, and production rigs (facial, full body) exceed it, so those characters now fail to cook.
-3. [WO-057](WO-057-rhi-module-home.md) **The RHI's home — a module that builds, tests and ships without the engine** · P1 · size S — DR-0012 makes the RHI a library for more than this engine. Independence that
+1. [WO-074](WO-074-physics-on-the-world-api.md) **Physics as the first provider on the world API** · P1 · size M — Physics is the one provider that reaches into flecs directly (`jolt_plugin.h` takes `flecs::world`). (The provider registry that was part of this order is WO-076, which does not need the world API.) Physics is the smallest real provider, so it proves the world API for providers before the renderer contract does.
+2. [WO-075](WO-075-renderer-contract-headers.md) **The renderer contract as headers, with a conformance suite the null renderer passes first** · P1 · size M — `IRenderer` is shaped like bgfx (it takes the engine's bgfx-handle registries, asks for `homogeneousDepth`, returns `gpu::TextureHandle`s), and `runtime_boot.cpp` picks a renderer in code. The librhi renderer and a web renderer both need a contract that names no GPU API; it should be written and proven before either is built on it.
+3. [WO-052](WO-052-collision-events-v2.md) **CollisionEvents v2 — a plain-data view into an engine-owned contact stream** · P1 · size M — `CollisionEvents` carries two `std::vector`s across the kit boundary, and "no contact this tick" is only an empty list, which kits must know to check.
 
 ## P1 — cheap, and makes everything after it cheaper (process, gates, small fixes).
 
 | order | title | area | size | status | contracts |
 |---|---|---|---|---|---|
-| [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | Providers & modules | L | **active** 5/5 | kit-abi |
-| [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API | Providers & modules | M | blocked by WO-073 | engine-plugin |
-| [WO-075](WO-075-renderer-contract-headers.md) | The renderer contract as headers, with a conformance suite the null renderer passes first | Renderer & RHI | M | blocked by WO-073 | renderer |
+| [WO-074](WO-074-physics-on-the-world-api.md) | Physics as the first provider on the world API | Providers & modules | M | **ready** | engine-plugin |
+| [WO-075](WO-075-renderer-contract-headers.md) | The renderer contract as headers, with a conformance suite the null renderer passes first | Renderer & RHI | M | **ready** | renderer |
 | [WO-052](WO-052-collision-events-v2.md) | CollisionEvents v2 — a plain-data view into an engine-owned contact stream | Providers & modules | M | **ready** | kit-abi, engine-plugin, script-services |
 | [WO-053](WO-053-bone-maps-per-section.md) | Skeletons up to 1 024 bones — a bone map per mesh section, splitting what touches more than 128 | Asset import & cooking | L | **ready** | cooker, kit-abi |
 | [WO-057](WO-057-rhi-module-home.md) | The RHI's home — a module that builds, tests and ships without the engine | Renderer & RHI | S | **ready** | — |
@@ -37,7 +36,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | [WO-063](WO-063-shutdown-leak-cook-help-boot-twice.md) | Small idle-cost bugs: a program reference leaked at shutdown, `engine_cook --help` cooks, boot does work twice | Providers & modules | S | **ready** | — |
 | [WO-080](WO-080-perf-ci-every-platform.md) | The core measured and fuzzed in CI on six platforms — Windows and Linux on x64 and arm64, macOS arm64, Android | Process & context | S | **ready** | — |
 | [WO-090](WO-090-first-librhi-renderer.md) | The first librhi renderer — a provider beside bgfx, the forward pipeline ported pass by pass, each bgfx assumption removed where the port meets it | Renderer & RHI | L | blocked by WO-075 | renderer, gpu-seam |
-| [WO-094](WO-094-c-kits-in-the-editor-and-player.md) | C kits in the editor and engine_player — the manifest loads C modules, and Play is a C world | Providers & modules | L | blocked by WO-073 | kit-abi |
+| [WO-094](WO-094-c-kits-in-the-editor-and-player.md) | C kits in the editor and engine_player — the manifest loads C modules, and Play is a C world | Providers & modules | L | **ready** | kit-abi |
 
 ## P2 — the planned programmes, in dependency order.
 
@@ -87,6 +86,7 @@ this directory; how they work is in [README.md](README.md). In a terminal,
 | order | title | done | evidence |
 |---|---|---|---|
 | [WO-092](WO-092-cooked-scene-loads-as-fast-as-the-fixed-record.md) | The cooked scene loads as fast as the fixed record did — a schema-driven binary payload, read straight into components | 2026-11-28 | CI push run 45951559897 and nightly 45984556986 (e3d375d) green on every leg; 50 000 cooked entities load in 29.7–31.3 ms against format 3's 32 ms (tests/scene_load_bench.cpp, release, this Mac) |
+| [WO-073](WO-073-world-c-api.md) | The world through the C API — entities, components, queries, systems, blobs — and flecs off the boundary | 2026-11-28 | CI run 46092514201 (38f4e72), full matrix green; eng_world_test, eng_systems_test and eng_module_test (plain C) and KIT-01 on every leg |
 | [WO-072](WO-072-change-stream.md) | One change stream per registered component — free without subscribers, merged per read | 2026-11-28 | CI run 46061007680 (6760c49) green on the full matrix, sanitizers included; change_stream_test (38 checks) mutation-checked four ways; diff mode green on the 50 000-object fuzz scene for 900 frames with its spinners turning and 1 500 with 12 506 falling bodies |
 | [WO-093](WO-093-conformance-in-the-shipped-player.md) | Conformance suites run against the providers a shipped player links | 2026-11-27 | CI run 45926707390 (bfdce2d), full matrix green; on all six desktop legs the packaged player ran the audio suite (49 checks) against its linked provider and the mutation failed it |
 | [WO-089](WO-089-rhi-backend-order-and-capabilities.md) | librhi's backend order from project.json, and device capabilities refused by name | 2026-11-27 | CI run 45918980872 (aeeba9c) green on all six desktop legs, device_select_test on each; engine_host on macOS logs the backend and refuses a wrong rhi order by name |

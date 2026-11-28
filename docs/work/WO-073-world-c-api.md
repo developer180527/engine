@@ -6,7 +6,9 @@ program: providers
 priority: P1
 rank: 5
 size: L
-state: active
+state: done
+done: 2026-11-28
+evidence: CI run 46092514201 (38f4e72), full matrix green; eng_world_test, eng_systems_test and eng_module_test (plain C) and KIT-01 on every leg
 depends: [WO-071, WO-072]
 contracts: [kit-abi]
 touches:
@@ -203,4 +205,4 @@ Nothing: today's kit ABI keeps loading old kits until `engine-api.md` §11.3 is 
     `engAddComponent` refuses a component the entity has, so `Died` is added
     once either way. `eng_step_test`'s check that modules are refused now
     checks a count with no list.
-
+- 2026-11-28 — **Done.** Part 3 green on push (46092512022) and the full matrix (46092514201). Follow-up: WO-094 (C kits in the editor and engine_player).
