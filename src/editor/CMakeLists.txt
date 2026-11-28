@@ -37,7 +37,7 @@ target_include_directories(editor PRIVATE
 )
 
 target_link_libraries(editor PRIVATE
-    engine_runtime
+    engine_capi            # engine_runtime, and the C API a project's C kits run on at Play (WO-094)
     engine_cooking         # the CookService: the editor is the cook provider (WO-017, WO-018)
     editor_core
     imgui

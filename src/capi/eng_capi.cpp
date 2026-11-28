@@ -213,6 +213,7 @@ EngResult start(EngEngine* e, const EngWindowDesc* wd) {
     }
     rt->attachPlugins();
     rt->kits().setReloadPolicy(modload::ModuleLibrary::Reload::Never);
+    engInternalHostCModules(rt.get());   // a project's C kits load beside its C++ ones
 
     if (rt->hasProject()) {
         const std::string stem = fs::path(rt->project().lastScene).stem().string();
@@ -337,6 +338,21 @@ EngResult applyFlags(EngEngine* e, EngWindowFlags flags) {
 extern "C" {
 
 const char* engGetLastErrorMessage(void) { return t_lastError.c_str(); }
+
+// Every C API function by name (eng_procs.inc, generated from the headers by
+// scripts/gen_eng_client.py). Linear: a module asks once per function at load.
+EngProc engGetProc(const char* name) {
+    struct Proc { const char* name; EngProc fn; };
+#define ENG_PROC(n) { #n, reinterpret_cast<EngProc>(&n) },
+    static const Proc procs[] = {
+#include "eng_procs.inc"
+    };
+#undef ENG_PROC
+    if (!name) return nullptr;
+    for (const Proc& p : procs)
+        if (std::strcmp(p.name, name) == 0) return p.fn;
+    return nullptr;
+}
 uint32_t engGetApiVersion(void) { return ENG_API_VERSION; }
 
 // ── Engine ──────────────────────────────────────────────────────────────────
@@ -354,16 +370,11 @@ EngResult engCreateEngine(const EngEngineDesc* in, EngEngine** out) {
             return fail(ENG_ERROR_INVALID_ARGUMENT, "module_count is not zero but modules is NULL");
         std::vector<EngEngine::Module> mods;
         for (uint32_t i = 0; i < d.module_count; ++i) {
-            const std::string at = "modules[" + std::to_string(i) + "]";
             EngEngine::Module m;
-            if (!readIn(d.modules[i], m.d)) return fail(ENG_ERROR_INVALID_ARGUMENT, at + " is NULL or has no struct_size");
-            if (!m.d.name || !*m.d.name) return fail(ENG_ERROR_INVALID_ARGUMENT, at + " has no name");
+            std::string why;
+            if (EngResult r = engInternalReadModule(d.modules[i], "modules[" + std::to_string(i) + "]", m.d, why); r != ENG_OK)
+                return fail(r, why);
             m.name = m.d.name;
-            const std::string who = "module '" + m.name + "'" + (m.d.version ? std::string(" ") + m.d.version : "");
-            if (const char* why = versionMismatch(m.d.api_version)) return fail(ENG_ERROR_ABI_MISMATCH, who + ": " + why);
-            if (m.d.reserved) return fail(ENG_ERROR_INVALID_ARGUMENT, who + ": reserved must be zero");
-            if (m.d.requires_service_count)
-                return fail(ENG_ERROR_UNSUPPORTED, who + " requires services, which are not in this version");
             for (const EngEngine::Module& o : mods)
                 if (o.name == m.name) return fail(ENG_ERROR_INVALID_ARGUMENT, "two modules are named '" + m.name + "'");
             mods.push_back(std::move(m));
@@ -837,6 +848,16 @@ EngBool engNextEvent(EngEngine* e, EngEvent* out) {
 
 void engInternalSetError(std::string message) { t_lastError = std::move(message); }
 EngWorld*& engInternalWorldSlot(EngEngine* e) { return e->world; }
+
+EngResult engInternalReadModule(const EngModuleDesc* in, const std::string& at, EngModuleDesc& d, std::string& why) {
+    if (!readIn(in, d)) { why = at + " is NULL or has no struct_size"; return ENG_ERROR_INVALID_ARGUMENT; }
+    if (!d.name || !*d.name) { why = at + " has no name"; return ENG_ERROR_INVALID_ARGUMENT; }
+    const std::string who = "module '" + std::string(d.name) + "'" + (d.version ? std::string(" ") + d.version : "");
+    if (const char* v = versionMismatch(d.api_version)) { why = who + ": " + v; return ENG_ERROR_ABI_MISMATCH; }
+    if (d.reserved) { why = who + ": reserved must be zero"; return ENG_ERROR_INVALID_ARGUMENT; }
+    if (d.requires_service_count) { why = who + " requires services, which are not in this version"; return ENG_ERROR_UNSUPPORTED; }
+    return ENG_OK;
+}
 
 bool engInternalInModuleCall(EngEngine* e) { return e && e->inModuleCall; }
 

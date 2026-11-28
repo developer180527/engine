@@ -683,14 +683,14 @@ add_library(engine::headers ALIAS engine_headers)
 # them) are not built that way; turning that on for the whole build is a
 # decision of its own (WO-070's log). Not on Windows: there a DLL exports only
 # what is marked dllexport, so the property holds by construction.
-add_library(engine_capi STATIC capi/eng_capi.cpp capi/eng_world.cpp)
+add_library(engine_capi STATIC capi/eng_capi.cpp capi/eng_world.cpp capi/eng_kits.cpp)
 target_link_libraries(engine_capi PUBLIC engine_runtime)
 target_include_directories(engine_capi PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_compile_definitions(engine_capi PUBLIC ENG_STATIC)
 add_library(engine::capi ALIAS engine_capi)
 
 if(APPLE)
-    add_library(eng SHARED capi/eng_capi.cpp capi/eng_world.cpp)
+    add_library(eng SHARED capi/eng_capi.cpp capi/eng_world.cpp capi/eng_kits.cpp)
     target_link_libraries(eng PRIVATE engine_runtime)
     target_include_directories(eng PUBLIC ${CMAKE_SOURCE_DIR}/include)
     set_target_properties(eng PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})

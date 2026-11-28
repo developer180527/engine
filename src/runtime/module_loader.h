@@ -19,6 +19,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <map>
 #include <string>
@@ -140,8 +141,18 @@ inline std::map<std::string, ContractPin>& contractRegistry() {
     return r;
 }
 
+// ── C modules (eng_module.h, WO-094) ─────────────────────────────────────────
+// A library exporting engModuleEntry is a C module: no C++ table, no ABI
+// fingerprint, nothing of the engine's linked. The runtime cannot run one
+// itself (src/capi depends on src/runtime, not the other way), so the C API
+// installs this on a host (engInternalHostCModules). It builds the plugin
+// from the entry, or says why not.
+using CModuleFactory = std::function<std::shared_ptr<IEnginePlugin>(void* entry, std::string& why)>;
+
 class ModuleLibrary {
 public:
+    // The host's C module factory, or null: a C module is then refused by name.
+    void setCModules(const CModuleFactory* f) { m_cModules = f; }
     ModuleLibrary() = default;
     ~ModuleLibrary() { unload(); }
     void releaseContracts() {
@@ -234,6 +245,23 @@ private:
 
     bool finishLoad(const fs::path& sourcePath) {
         (void)sourcePath;
+        if (void* entry = libSym(m_handle, "engModuleEntry")) {
+            if (!m_cModules || !*m_cModules) {
+                LOG_ERROR("Module", "%s is a C module (engModuleEntry), and this host "
+                          "cannot run C modules (it was built without the C API)",
+                          sourcePath.string().c_str());
+                unload();
+                return false;
+            }
+            std::string why;
+            m_plugin = (*m_cModules)(entry, why);
+            if (!m_plugin) {
+                LOG_ERROR("Module", "C module %s refused: %s", sourcePath.string().c_str(), why.c_str());
+                unload();
+                return false;
+            }
+            return true;
+        }
         auto create  = (EngineGameModuleCreateV1Fn) libSym(m_handle, "engineGameModuleCreateV1");
         auto destroy = (EngineGameModuleDestroyV1Fn)libSym(m_handle, "engineGameModuleDestroyV1");
         if (!create || !destroy) {
@@ -421,6 +449,7 @@ private:
     EngineGameModuleV1*            m_table   = nullptr; // module-owned
     EngineGameModuleDestroyV1Fn    m_destroy = nullptr;
     fs::path                       m_tempPath;
+    const CModuleFactory*          m_cModules = nullptr;
     int                            m_loadCount = 0;
 };
 

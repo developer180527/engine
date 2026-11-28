@@ -5,6 +5,7 @@
 #include "runtime/platform/window_ops.h"
 #include "runtime/platform/title_bar.h"  // traffic-light inset for the menu bar
 #include "runtime/runtime.h"
+#include "capi/eng_internal.h"   // engInternalHostCModules: C kits at Play
 #include "scene/scene_serializer.h"
 #include <imgui.h>
 #include <imgui_internal.h>   // DockBuilder (Reset Layout)
@@ -150,6 +151,9 @@ public:
         // editor opens without providers rather than with different ones.
         addProviders(m_rt);
         m_rt.attachPlugins();
+        // The project's C kits (eng_module.h) load at Play beside its C++
+        // ones, through the C API (WO-094).
+        engInternalHostCModules(&m_rt);
 
         // ── Engine detail becomes demand-driven from here on ─────────────────
         // Armed AFTER init, not before: boot is the one stretch of the session

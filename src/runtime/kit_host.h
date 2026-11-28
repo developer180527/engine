@@ -49,6 +49,9 @@ public:
     // forgets to opt in loses a little startup time rather than the ability to
     // reload. Getting it wrong the other way would silently break iteration.
     void setReloadPolicy(modload::ModuleLibrary::Reload r) { m_reload = r; }
+    // C modules (eng_module.h) in the manifest, beside C++ kits: the C API
+    // installs this (engInternalHostCModules). Without it, one is refused by name.
+    void setCModuleFactory(modload::CModuleFactory f) { m_cModules = std::move(f); }
     // Per-manifest-kit outcome of the last start() — the truth the editor shows
     // instead of guessing from "is the sim running". Lives only while playing.
     struct KitStatus {
@@ -196,6 +199,7 @@ private:
 
     modload::ModuleLibrary::Reload m_reload =
         modload::ModuleLibrary::Reload::Allowed;
+    modload::CModuleFactory m_cModules;
 
     // Absolute manifest paths pass through; relative ones resolve against the
     // project root (kits typically live under <engine>/Kits/<name>).
@@ -227,6 +231,7 @@ private:
             return false;
         }
         auto e = std::make_unique<Entry>(k.name, path);
+        e->lib.setCModules(&m_cModules);
         if (!e->lib.load(path, m_reload)) {
             LOG_ERROR("Kit", "failed to load '%s'", k.name.c_str());
             setStatus(k.name, path, KitStatus::State::LoadFailed,

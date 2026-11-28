@@ -19,8 +19,17 @@
 #define ENG_API_VERSION_MINOR 1
 #define ENG_API_VERSION ((ENG_API_VERSION_MAJOR << 16) | ENG_API_VERSION_MINOR)
 
+/* ENG_CLIENT: a module built with eng_client.h, whose eng* functions are its
+ * own forwarding stubs (eng_module.h), so they are neither imported nor
+ * exported. */
 #if defined(ENG_STATIC)
 #  define ENG_API
+#elif defined(ENG_CLIENT)
+#  if defined(__GNUC__) && !defined(_WIN32)
+#    define ENG_API __attribute__((visibility("hidden")))
+#  else
+#    define ENG_API
+#  endif
 #elif defined(_WIN32)
 #  if defined(ENG_BUILDING)
 #    define ENG_API __declspec(dllexport)

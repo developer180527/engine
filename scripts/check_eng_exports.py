@@ -38,6 +38,8 @@ def exported(lib: str) -> set[str]:
 def declared(include: str) -> set[str]:
     names = set()
     for h in sorted(Path(include).glob("*.h")):
+        if h.name == "eng_client.h":   # a module's own stubs (generated), never the engine's exports
+            continue
         text = re.sub(r"/\*.*?\*/", "", h.read_text(), flags=re.S)
         names.update(re.findall(r"ENG_API\s+[\w\s\*]+?\b(eng[A-Z]\w*)\s*\(", text))
     return names

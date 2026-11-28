@@ -292,6 +292,7 @@ struct QueryEntry {
     std::vector<uint32_t> sizes;          // per term
     std::vector<const CompEntry*> blobTerms;  // per term: the component when a WRITE column holds blobs
     std::vector<uint32_t> users;          // systems that run it (indices)
+    const void* owner = nullptr;          // the C kit whose callback made it, or null
 };
 
 // ── Systems ──
@@ -305,13 +306,19 @@ struct SystemEntry {
     uint64_t seq = 0;      // creation order
     uint16_t gen = 0;
     bool live = false;
+    const void* owner = nullptr;   // the C kit whose callback made it, or null
 };
 constexpr uint32_t kPhases = 3;
 
 } // namespace
 
 struct EngWorld {
+    // Who holds it: the program (engCreateWorld; engine set), and the C kits
+    // a project loaded (kitHolders). One world per simulation world, gone
+    // when the last lets go.
     EngEngine*      engine = nullptr;
+    EngineRuntime*  rt = nullptr;
+    uint32_t        kitHolders = 0;
     flecs::world*   w = nullptr;
     CapiComponents* table = nullptr;
     std::vector<QueryEntry> queries;
@@ -324,6 +331,9 @@ struct EngWorld {
     uint64_t nextSeq = 1;
     uint32_t running = 0;                   // phases running right now
     std::unique_ptr<IEnginePlugin> first, last;   // the plugin registry's edges
+    // The C kit whose code runs right now (its callback, or a system it made):
+    // what is created is its, and goes when it stops (engInternalDropOwned).
+    const void* owner = nullptr;
 };
 
 struct EngQueryIter {
@@ -537,7 +547,7 @@ void runPhase(EngWorld* w, EngPhase phase, double dt) {
     }
     if (w->order[phase].empty()) return;
     const std::vector<uint32_t> order = w->order[phase];   // a system may create or destroy systems
-    EngineRuntime* rt = engInternalRuntime(w->engine);
+    EngineRuntime* rt = w->rt;
     ++w->running;
     for (uint32_t idx : order) {
         const SystemEntry& s = w->systems[idx];
@@ -551,6 +561,11 @@ void runPhase(EngWorld* w, EngPhase phase, double dt) {
         ctx.world = w;
         ctx.user = s.user;
         const EngSystemFn fn = s.fn;
+        struct OwnerScope {
+            EngWorld* w; const void* was;
+            OwnerScope(EngWorld* w_, const void* o) : w(w_), was(w_->owner) { w->owner = o; }
+            ~OwnerScope() { w->owner = was; }
+        } scope(w, s.owner);
         if (!s.query) { fn(&ctx, nullptr); continue; }
         EngQueryIter* it = nullptr;
         if (engQueryBegin(w, s.query, &it) != ENG_OK) {
@@ -609,14 +624,79 @@ uint64_t engInternalComponentId(EngWorld* w, EngComponent c) {
     return ce ? ce->id : 0;
 }
 
-void engInternalDestroyWorld(EngWorld* w) {
-    if (!w) return;
-    if (EngineRuntime* rt = engInternalRuntime(w->engine)) rt->plugins().setEdges(nullptr, nullptr);
+namespace {
+// The C world of each simulation world, while someone holds it.
+std::unordered_map<flecs::world_t*, EngWorld*>& worlds() {
+    static std::unordered_map<flecs::world_t*, EngWorld*> m;
+    return m;
+}
+
+EngWorld* makeWorld(EngineRuntime* rt, flecs::world& fw) {
+    auto w = std::make_unique<EngWorld>();
+    w->rt = rt;
+    w->w = &fw;
+    w->table = tableOf(fw);
+    w->first = std::make_unique<PhaseEdge>(w.get(), true);
+    w->last = std::make_unique<PhaseEdge>(w.get(), false);
+    rt->plugins().setEdges(w->first.get(), w->last.get());
+    worlds()[fw.c_ptr()] = w.get();
+    return w.release();
+}
+
+void destroyIfUnheld(EngWorld* w) {
+    if (w->engine || w->kitHolders) return;
+    w->rt->plugins().setEdges(nullptr, nullptr);
     for (QueryEntry& q : w->queries)
         if (q.q) ecs_query_fini(q.q);
     if (changes::Streams* s = changes::Streams::of(raw(w)))
         for (changes::StreamId id : w->streams) s->unsubscribe(id);
+    worlds().erase(raw(w));
     delete w;
+}
+} // namespace
+
+// The program lets go (engDestroyWorld, engDestroyEngine, a failed create).
+void engInternalDestroyWorld(EngWorld* w) {
+    if (!w) return;
+    w->engine = nullptr;
+    destroyIfUnheld(w);
+}
+
+EngWorld* engInternalAcquireKitWorld(EngineRuntime* rt, flecs::world& fw) {
+    auto it = worlds().find(fw.c_ptr());
+    EngWorld* w = it != worlds().end() ? it->second : makeWorld(rt, fw);
+    ++w->kitHolders;
+    return w;
+}
+
+void engInternalReleaseKitWorld(EngWorld* w) {
+    if (!w || !w->kitHolders) return;
+    --w->kitHolders;
+    destroyIfUnheld(w);
+}
+
+bool engInternalWorldBusy(EngWorld* w) { return w && (w->running || w->openIters); }
+
+const void* engInternalSetOwner(EngWorld* w, const void* owner) {
+    const void* was = w->owner;
+    w->owner = owner;
+    return was;
+}
+
+uint32_t engInternalDropOwned(EngWorld* w, const void* owner) {
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < w->systems.size(); ++i) {
+        SystemEntry& s = w->systems[i];
+        if (!s.live || s.owner != owner) continue;
+        s.live = false;
+        w->orderDirty[s.phase] = true;
+        if (QueryEntry* qe = queryOf(w, s.query))
+            qe->users.erase(std::remove(qe->users.begin(), qe->users.end(), i), qe->users.end());
+        ++n;
+    }
+    for (QueryEntry& q : w->queries)
+        if (q.q && q.owner == owner && !q.open) { ecs_query_fini(q.q); q.q = nullptr; ++n; }
+    return n;
 }
 
 extern "C" {
@@ -644,22 +724,20 @@ EngResult engCreateWorld(EngEngine* engine, const EngWorldDesc* desc, EngWorld**
                                                      "(engDestroyWorld it first)");
         EngineRuntime* rt = engInternalRuntime(engine);
         if (!rt) return ENG_ERROR_UNSUPPORTED;   // the message is the start's
-        auto w = std::make_unique<EngWorld>();
+        // The project's C kits may hold this simulation's world already: the
+        // program shares it.
+        auto it = worlds().find(rt->simWorld().c_ptr());
+        EngWorld* w = it != worlds().end() ? it->second : makeWorld(rt, rt->simWorld());
         w->engine = engine;
-        w->w = &rt->simWorld();
-        w->table = tableOf(*w->w);
-        w->first = std::make_unique<PhaseEdge>(w.get(), true);
-        w->last = std::make_unique<PhaseEdge>(w.get(), false);
-        rt->plugins().setEdges(w->first.get(), w->last.get());
-        slot = w.get();
-        // The modules' on_world_start, in order. One failing: the world is
-        // gone again and the slot free, as if the call had not happened.
-        if (EngResult r = engInternalStartModules(engine, w.get()); r != ENG_OK) {
+        slot = w;
+        // The modules' on_world_start, in order. One failing: the program's
+        // hold is gone again and the slot free, as if the call had not happened.
+        if (EngResult r = engInternalStartModules(engine, w); r != ENG_OK) {
             slot = nullptr;
-            engInternalDestroyWorld(w.release());
+            engInternalDestroyWorld(w);
             return r;
         }
-        *out = w.release();
+        *out = w;
         return ENG_OK;
     });
 }
@@ -673,6 +751,11 @@ void engDestroyWorld(EngWorld* w) {
         }
         if (w->running) {
             engInternalSetError("engDestroyWorld refused: called from inside a system");
+            return 0;
+        }
+        if (!w->engine) {
+            engInternalSetError("engDestroyWorld refused: this world is the project's simulation, "
+                                "and only its program's engCreateWorld handle can be destroyed");
             return 0;
         }
         if (engInternalInModuleCall(w->engine)) {
@@ -969,6 +1052,7 @@ EngResult engCreateQuery(EngWorld* w, const EngQueryDesc* in, EngQuery* out) {
         }
         if (w->queries.size() >= 0xFFFF) { ecs_query_fini(qe.q); return fail(ENG_ERROR_OUT_OF_MEMORY, "65 535 queries are held"); }
         qe.gen = 1;
+        qe.owner = w->owner;
         w->queries.push_back(std::move(qe));
         *out = ((EngQuery)1 << 16) | (EngQuery)w->queries.size();
         return ENG_OK;
@@ -1182,6 +1266,7 @@ EngResult engCreateSystem(EngWorld* w, const EngSystemDesc* in, EngSystem* out) 
             w->systems.emplace_back();
         }
         se.gen = (uint16_t)(w->systems[idx].gen + 1);
+        se.owner = w->owner;
         se.seq = w->nextSeq++;
         SystemEntry before = std::move(w->systems[idx]);
         w->systems[idx] = std::move(se);

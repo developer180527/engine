@@ -999,6 +999,21 @@ modules need `ENABLE_EXPORTS` so kits resolve engine symbols (engine_host,
 editor). A shipped game instead LINKS the kit library and registers the plugin
 directly — no manifest, no dlopen.
 
+**C kits (WO-094).** A manifest kit may also be a C module (`eng_module.h`):
+a shared library exporting `engModuleEntry`, built against `include/eng/`
+only. `ModuleLibrary` sees that export and hands the library to a
+`CModuleFactory` instead of the C++ gauntlet, and that factory comes from the
+C API (`engInternalHostCModules`, `src/capi/eng_kits.cpp`): the runtime cannot
+call the C API itself, which depends on it. The editor and `engine_player`
+install it; a host that does not (engine_host, a bare `EngineRuntime`) refuses
+a C module by name. The plugin it builds runs the module in the simulation's
+C world, shared by every C kit and the program's handle: `on_world_start` at
+the plugin's `onSimulationStart`, `on_world_stop` at its `onSimulationStop`,
+and then every system and query the module made is destroyed, so a reload, a
+mid-play load or the next Play never finds the old code's systems still
+running. `c_kit_host_test` loads the C combat kit and a counter fixture this
+way.
+
 ## Public API
 `include/engine/*.h` umbrella headers are the supported surface; consumers
 link the `engine::runtime` alias target. `samples/minimal_game` is the

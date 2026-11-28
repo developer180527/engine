@@ -103,7 +103,10 @@ what the rules have caught and closed:
 
 *(2026-11-28: 72 baselined, 0 new. Among the newest are three edges added by
 design: the C world API, `src/capi`, reaching `components`, `core` and `scene`
-(WO-073), because a C component is a real scene component.)*
+(WO-073), because a C component is a real scene component. Then 85: KIT-01's
+12 kit-facing files that reach flecs (WO-073), and `src/editor` reaching
+`src/capi` by design (WO-094), because the editor runs a project's C kits at
+Play through the C API.)*
 
 - **The module graph was one cycle (found 2026-09-30, by hand, not by a
   rule).** Eight of 13 modules, `core` among them, were strongly connected:

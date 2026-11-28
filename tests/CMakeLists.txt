@@ -270,6 +270,24 @@ set_target_properties(eng_module_test PROPERTIES LINKER_LANGUAGE CXX
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR} C_STANDARD 11 C_STANDARD_REQUIRED ON)
 add_test(NAME eng_module_test COMMAND eng_module_test)
 set_tests_properties(eng_module_test PROPERTIES LABELS unit TIMEOUT 120)
+# C modules as shared libraries, loaded from a project's manifest (WO-094).
+# Each is built with only include/eng/ (and its own sources) on its path,
+# links nothing of the engine's, and exports only engModuleEntry: its eng*
+# calls are eng_client.h's stubs, filled from the engine's get_proc.
+function(eng_c_module name)
+    add_library(${name} MODULE ${ARGN})
+    target_include_directories(${name} PRIVATE ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/samples/combat_c)
+    target_compile_definitions(${name} PRIVATE ENG_CLIENT)
+    set_target_properties(${name} PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON PREFIX ""
+                          C_VISIBILITY_PRESET hidden LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c_modules)
+endfunction()
+eng_c_module(combat_c_module ${CMAKE_SOURCE_DIR}/samples/combat_c/combat.c ${CMAKE_SOURCE_DIR}/samples/combat_c/combat_module.c)
+eng_c_module(c_module_counter fixtures/c_module_counter.c)
+engine_test(c_kit_host_test LIB engine_capi)
+target_include_directories(c_kit_host_test PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/samples/combat_c)
+target_compile_definitions(c_kit_host_test PRIVATE
+    C_KIT_COMBAT="$<TARGET_FILE:combat_c_module>" C_KIT_COUNTER="$<TARGET_FILE:c_module_counter>")
+add_dependencies(c_kit_host_test combat_c_module c_module_counter)
 # And what C cannot see: a C API component saved and loaded with scenes (an
 # entity field linked again), and classified and hashed by the sim hash.
 engine_test(eng_world_scene_test LIB engine_capi)
@@ -864,6 +882,13 @@ if(TARGET eng AND Python3_EXECUTABLE)
                      $<TARGET_FILE:eng> ${CMAKE_SOURCE_DIR}/include/eng
                      ${CMAKE_CURRENT_SOURCE_DIR}/eng_header_check.c)
     set_tests_properties(eng_exports PROPERTIES LABELS unit TIMEOUT 60)
+endif()
+# The C API's functions by name are generated from its headers: the client
+# stub kits build against and the engine's get_proc table (WO-094).
+if(Python3_Interpreter_FOUND)
+    add_test(NAME eng_client_current
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/gen_eng_client.py --check)
+    set_tests_properties(eng_client_current PROPERTIES LABELS unit TIMEOUT 60)
 endif()
 if(Python3_Interpreter_FOUND)
     add_test(NAME docs_contract
